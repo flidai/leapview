@@ -69,6 +69,27 @@ func TestCatalogOperationsNormalizeProjectAndReleaseOneLeaseEach(t *testing.T) {
 	}
 }
 
+func TestAuthorizeDashboardManageUsesArchivePolicy(t *testing.T) {
+	repo := &applicationRepository{lifecycle: authoring.DashboardLifecycle{
+		ProjectID: "sales", ID: "dashboard-owned", OwnerPrincipalID: "owner", SemanticModel: "sales-model",
+		Visibility: authoring.VisibilityPrivate, Status: authoring.LifecycleStatusDraft,
+	}}
+	auth := &applicationAuthorizer{}
+	app, err := application.New(application.Options{
+		Authoring: newApplicationService(t, repo, auth), Repository: repo, Authorizer: auth,
+		AcquireRuntime: func(context.Context) (projectruntime.Lease, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.AuthorizeDashboardManage(t.Context(), "sales", "owner", "dashboard-owned"); err != nil {
+		t.Fatal(err)
+	}
+	if len(auth.calls) != 1 || auth.calls[0].Action != authoring.AuthorizationActionArchive {
+		t.Fatalf("authorization calls = %#v", auth.calls)
+	}
+}
+
 func newApplicationService(t *testing.T, repo *applicationRepository, auth *applicationAuthorizer) *service.Service {
 	t.Helper()
 	svc, err := service.NewService(service.Options{Repository: repo, Authorizer: auth, Compiler: applicationCompiler{}, Now: func() time.Time { return time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC) }, NewDashboardID: func() (authoring.DashboardID, error) { return "dashboard", nil }, NewDraftID: func() (authoring.DraftID, error) { return "draft", nil }, NewRevisionID: func() (authoring.RevisionID, error) { return "revision", nil }})
@@ -78,9 +99,12 @@ func newApplicationService(t *testing.T, repo *applicationRepository, auth *appl
 	return svc
 }
 
-type applicationAuthorizer struct{}
+type applicationAuthorizer struct {
+	calls []service.AuthorizationRequest
+}
 
-func (*applicationAuthorizer) Authorize(context.Context, service.AuthorizationRequest) error {
+func (a *applicationAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
+	a.calls = append(a.calls, request)
 	return nil
 }
 
@@ -90,13 +114,22 @@ func (applicationCompiler) Compile(context.Context, graph.ResourceID, graph.Reso
 	return service.Compilation{Definition: definition.Definition{ID: "dashboard", SemanticModel: "sales"}}, nil
 }
 
-type applicationRepository struct{}
+type applicationRepository struct {
+	lifecycle    authoring.DashboardLifecycle
+	revisions    map[authoring.RevisionID]authoring.Revision
+	commands     map[authoring.CommandID]authoring.CommandResult
+	fingerprints map[authoring.CommandID]string
+	appendCalls  int
+}
 
 func (*applicationRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
 	panic("unused")
 }
-func (*applicationRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
-	return authoring.DashboardLifecycle{}, authoring.ErrNotFound
+func (r *applicationRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
+	if r.lifecycle.ID == "" {
+		return authoring.DashboardLifecycle{}, authoring.ErrNotFound
+	}
+	return r.lifecycle, nil
 }
 func (*applicationRepository) List(context.Context, graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	return nil, nil
@@ -104,17 +137,45 @@ func (*applicationRepository) List(context.Context, graph.ResourceID) ([]authori
 func (*applicationRepository) CountBySemanticModel(context.Context, graph.ResourceID) ([]authoring.SemanticModelUsage, error) {
 	return nil, nil
 }
-func (*applicationRepository) GetRevision(context.Context, graph.ResourceID, authoring.DashboardID, authoring.RevisionID) (authoring.Revision, error) {
-	return authoring.Revision{}, authoring.ErrNotFound
+func (r *applicationRepository) GetRevision(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, id authoring.RevisionID) (authoring.Revision, error) {
+	revision, ok := r.revisions[id]
+	if !ok {
+		return authoring.Revision{}, authoring.ErrNotFound
+	}
+	return revision, nil
 }
-func (*applicationRepository) LookupCommandResult(context.Context, graph.ResourceID, authoring.DashboardID, authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
-	return authoring.CommandResult{}, false, nil
+func (r *applicationRepository) LookupCommandResult(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
+	result, ok := r.commands[evidence.ID]
+	if !ok {
+		return authoring.CommandResult{}, false, nil
+	}
+	if r.fingerprints[evidence.ID] != evidence.Fingerprint {
+		return authoring.CommandResult{}, false, authoring.ErrCommandReuse
+	}
+	return result, true, nil
 }
 func (*applicationRepository) LookupCreateOperation(context.Context, authoring.CreateOperation) (authoring.CreateOperationResult, bool, error) {
 	return authoring.CreateOperationResult{}, false, nil
 }
-func (*applicationRepository) AppendDraft(context.Context, authoring.AppendDraftInput) (authoring.Revision, error) {
-	panic("unused")
+func (r *applicationRepository) AppendDraft(_ context.Context, input authoring.AppendDraftInput) (authoring.Revision, error) {
+	if r.lifecycle.Draft == nil || r.lifecycle.Draft.Revision != input.ExpectedDraftRevision {
+		return authoring.Revision{}, authoring.ErrStaleRevision
+	}
+	r.appendCalls++
+	r.lifecycle = input.Next
+	if r.revisions == nil {
+		r.revisions = map[authoring.RevisionID]authoring.Revision{}
+	}
+	r.revisions[input.Revision.ID] = input.Revision
+	if r.commands == nil {
+		r.commands = map[authoring.CommandID]authoring.CommandResult{}
+	}
+	if r.fingerprints == nil {
+		r.fingerprints = map[authoring.CommandID]string{}
+	}
+	r.commands[input.Evidence.ID] = authoring.CommandResult{Revision: input.Revision.Token()}
+	r.fingerprints[input.Evidence.ID] = input.Evidence.Fingerprint
+	return input.Revision, nil
 }
 func (*applicationRepository) Publish(context.Context, authoring.PublishInput) (authoring.DashboardLifecycle, error) {
 	panic("unused")

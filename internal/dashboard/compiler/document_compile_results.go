@@ -259,6 +259,9 @@ func canonicalPhysicalDataType(model *semanticmodel.Model, source string) visual
 
 func canonicalSemanticDataType(model *semanticmodel.Model, source string, metric bool) visualizationir.VisualizationDataType {
 	if model == nil {
+		if metric {
+			return visualizationir.VisualizationDataTypeDecimal
+		}
 		return visualizationir.VisualizationDataTypeString
 	}
 	if metric {

@@ -39,6 +39,35 @@ func authoringDevelopmentBypass(ctx context.Context, principalID string) bool {
 	return ok && principal.DevBypass && principal.ID == strings.TrimSpace(principalID)
 }
 
+func authorizeAuthoringResource(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resource access.ResourceRef,
+	capability access.Capability,
+) (bool, error) {
+	if authoringDevelopmentBypass(ctx, principalID) {
+		return true, nil
+	}
+	return authorizeProjectResources(ctx, accessModule, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+}
+
+func authorizeAuthoringProject(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	capability access.Capability,
+) (bool, error) {
+	if authoringDevelopmentBypass(ctx, principalID) {
+		return true, nil
+	}
+	return authorizeProjectRole(ctx, accessModule, runtimeHost, principalID, projectID, capability)
+}
+
 // bootstrapAwareConnectionAuthorization permits managed-data handlers to
 // consume the opaque request marker emitted by the APIGen bootstrap guard.
 // The marker is accepted only while the durable serving-state repository has
@@ -279,6 +308,7 @@ func protectProjectResources(
 
 type repositoryDashboardAuthorizer interface {
 	AuthorizeDashboardEdit(context.Context, projectgraph.ResourceID, string, authoring.DashboardID) error
+	AuthorizeDashboardManage(context.Context, projectgraph.ResourceID, string, authoring.DashboardID) error
 }
 
 // protectProjectAuthoringResource authenticates and authorizes builder routes
@@ -292,7 +322,7 @@ func protectProjectAuthoringResource(
 	capability access.Capability,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || authorizer == nil || capability != access.CapabilityResourceEdit {
+	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -317,7 +347,13 @@ func protectProjectAuthoringResource(
 			next(w, r)
 			return
 		}
-		if err := authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID)); err != nil {
+		var err error
+		if capability == access.CapabilityResourceManage {
+			err = authorizer.AuthorizeDashboardManage(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
+		} else {
+			err = authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
+		}
+		if err != nil {
 			if errors.Is(err, access.ErrForbidden) {
 				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 				return

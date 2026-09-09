@@ -207,6 +207,31 @@ BEGIN
 END;
 $$;
 
+-- Runtime mutations remain owner-controlled, but replay-safe command
+-- append needs to serialize its read-before-write sequence with the guarded
+-- authoring functions. Keep row-lock authority behind this narrow definer
+-- capability rather than granting UPDATE on an authored projection.
+CREATE OR REPLACE FUNCTION dashboard.lock_authoring_dashboard(
+    p_project_id text,
+    p_dashboard_id text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, dashboard
+AS $$
+DECLARE
+    locked boolean;
+BEGIN
+    SELECT true INTO locked
+      FROM dashboard.authoring_dashboards
+     WHERE project_id = p_project_id
+       AND dashboard_id = p_dashboard_id
+     FOR UPDATE;
+    RETURN COALESCE(locked, false);
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION dashboard.guard_authoring_draft_update()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -678,10 +703,27 @@ RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, dashboard, event, audit
 AS $$
-DECLARE v_ok boolean;
+DECLARE
+    v_ok boolean;
+    v_required_capability text := 'RESOURCE_EDIT';
 BEGIN
     IF NEW.last_event_id IS NULL THEN
         RAISE EXCEPTION 'authoring dashboard mutation requires canonical event identity';
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        SELECT CASE c.action
+                 WHEN 'publish' THEN 'RESOURCE_PUBLISH'
+                 WHEN 'archive' THEN 'RESOURCE_MANAGE'
+                 ELSE 'RESOURCE_EDIT'
+               END
+          INTO v_required_capability
+          FROM dashboard.authoring_commands c
+         WHERE c.project_id = NEW.project_id
+           AND c.dashboard_id = NEW.dashboard_id
+           AND c.command_id = NEW.last_event_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'authoring dashboard mutation requires linked command evidence';
+        END IF;
     END IF;
     SELECT EXISTS (
         SELECT 1
@@ -694,7 +736,7 @@ BEGIN
            AND e.aggregate_version > 0
            AND a.scope_id = e.scope_id
            AND a.source = 'dashboard.authoring'
-           AND a.capability = 'RESOURCE_EDIT'
+           AND a.capability = v_required_capability
            AND a.outcome = 'success'
            AND a.actor_id IS NOT NULL
            AND a.resource_kind = 'dashboard'
@@ -747,6 +789,7 @@ END $$;
 REVOKE ALL ON SCHEMA dashboard FROM PUBLIC;
 REVOKE ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_dashboard_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_draft_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.guard_authoring_published_update() FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid) FROM PUBLIC;
@@ -760,18 +803,19 @@ DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_owner') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_owner;
   GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_owner;
-  GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_owner;
+  GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.lock_authoring_dashboard(text,text), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_owner;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_migrator') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_migrator;
   GRANT ALL ON TABLE dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_migrator;
-  GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_migrator;
+  GRANT ALL ON FUNCTION dashboard.guard_authoring_dashboard_update(), dashboard.lock_authoring_dashboard(text,text), dashboard.guard_authoring_draft_update(), dashboard.guard_authoring_published_update(), dashboard.guard_authoring_dashboard_evidence(), dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid), dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid), dashboard.authoring_commit_revalidation(text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,timestamptz,uuid,bigint,text,text,text), dashboard.authoring_record_revalidation_failure(text,text,text,uuid,jsonb,text,jsonb,uuid,bigint,text,jsonb,text,text,timestamptz) TO leapview_control_migrator;
  END IF;
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
  GRANT USAGE ON SCHEMA dashboard TO leapview_control_runtime;
   GRANT SELECT ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts TO leapview_control_runtime;
   REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards,dashboard.authoring_revisions,dashboard.authoring_drafts,dashboard.authoring_compiled_revisions,dashboard.authoring_published,dashboard.authoring_commands,dashboard.authoring_create_operations,dashboard.authoring_revalidation_attempts FROM leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_create_dashboard(text,text,uuid,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,uuid,jsonb,boolean,text,text,text,text,text,text,uuid) TO leapview_control_runtime;
+  GRANT EXECUTE ON FUNCTION dashboard.lock_authoring_dashboard(text,text) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_append_draft(text,text,text,text,text,text,text,uuid,bigint,jsonb,text,jsonb,timestamptz,jsonb,uuid,bigint,text,uuid,text,text,jsonb,timestamptz,uuid) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_publish_dashboard(text,text,text,text,text,text,text,uuid,bigint,text,jsonb,text,text,jsonb,timestamptz,jsonb,timestamptz,uuid,text,text,jsonb,timestamptz,uuid) TO leapview_control_runtime;
   GRANT EXECUTE ON FUNCTION dashboard.authoring_archive_dashboard(text,text,uuid,bigint,text,uuid,text, text,jsonb,timestamptz,uuid) TO leapview_control_runtime;

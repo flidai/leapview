@@ -68,16 +68,46 @@ GET /dashboards/{dashboard}/edit
 
 The route requires dashboard edit access. It resolves the repository's current draft pointer and exact retained revision on the server, then streams a typed builder projection. The page shows the governed semantic-model fields, pages, visuals, source origin, visibility, lifecycle, revision number, save state, diagnostics, and source evidence. It never accepts a client-supplied document as authority.
 
-The builder currently exposes four bounded intents:
+The browser builder is a closed command surface. Each row below is a browser command emitted by the current builder and translated by the server into a typed authoring payload. The last column is part of the contract: values not listed as editable remain unchanged when that command is applied, or are intentionally code-only.
 
-| Intent | Browser action | Required governed identity |
-| --- | --- | --- |
-| **Set visibility** | Choose a visibility state | `private`, `restricted`, or `organization` |
-| **Add page** | Select **Add page** (including the empty-page state) | The new page ID and optional title; the server allocates missing IDs |
-| **Add visual** | Choose a type and select **Add visual** | Target page, visual type, and optional visual/component IDs and title |
-| **Assign governed field** | Click **Add** beside a field or drag it onto a visual slot | Target page and visual, semantic field ID, and `metric`, `dimension`, or `detail` role |
+<!-- browser-action-parity:start -->
+| Browser surface | Command | Browser-editable properties | Preserved or code-only properties |
+| --- | --- | --- | --- |
+| Dashboard appearance | `update_appearance` | Dashboard icon and color | Dashboard title, description, slug, semantic model, visibility, pages, visuals, and advanced appearance metadata remain unchanged or code-only |
+| Dashboard visibility | `set_visibility` | `private` or `organization` visibility | Dashboard document, lifecycle revision history, and restricted/access policy details remain server-owned or code-only |
+| Dashboard metadata | `update_dashboard_metadata` | Dashboard title and description | Slug, semantic model, visibility, icon/color, pages, visuals, and advanced metadata remain unchanged or code-only |
+| Publish | `publish` | The exact current draft revision selected by the browser | Draft bytes, revision history, publication evidence, and serving deployment remain server-owned; publish does not deploy a full project |
+| Archive | `archive` | Dashboard lifecycle state | Retained revisions, authored source, and evidence remain preserved; archive does not delete the document |
+| Add page | `add_page` | Page title and optional page ID | The server allocates missing IDs; description, grid, components, and advanced page metadata use canonical defaults or remain code-only |
+| Rename page | `rename_page` | Page title | Page ID, description, grid, components, and page bindings remain unchanged; description is code-only here |
+| Page metadata | `update_page_metadata` | Page description; the current title is carried to preserve it | Page ID, grid, components, bindings, and advanced page metadata remain unchanged or code-only |
+| Duplicate page | `duplicate_page` | Source page and optional duplicate title or ID | The server clones authored content and allocates collision-free visual/component IDs; the source page remains unchanged |
+| Reorder page | `move_page` | Page order index | Page identity, title, description, grid, components, and visual definitions remain unchanged |
+| Page grid | `update_page_layout` | Columns, row height, gap, and padding | Page title, description, components, canvas geometry, and visual/filter properties remain unchanged or code-only |
+| Remove page | `remove_page` | The selected page | Other pages, dashboard metadata, visual definitions not removed by canonical cleanup, and revision history remain preserved |
+| Add visual | `add_visual` | Target page, visual type, title, and optional governed field plus role | The server allocates IDs and canonical query/presentation defaults; arbitrary query expressions, advanced presentation, and interactions are code-only |
+| Change visual type | `set_visual_type` | Target visual and visual type | The server resolves compatible governed bindings; unsupported query-family options and advanced presentation settings remain code-only or are reset by the target family |
+| Duplicate visual | `duplicate_visual` | Source visual, optional title, and optional IDs | The server clones the authored definition and allocates collision-free IDs; source visual fields, formatting, filters, and interactions remain unchanged |
+| Remove visual | `remove_visual` | Selected visual placement/definition | Other visuals, page layout, filters, interactions, and dashboard metadata remain unchanged |
+| Move or resize components | `set_placements` | Selected page component positions and spans | Visual queries, formatting, filter definitions, interactions, and all untouched component placements remain unchanged |
+| Add governed field | `assign_field` | Target visual, semantic field ID, and `metric`, `dimension`, or `detail` role | The active semantic model validates the field; arbitrary physical fields, expressions, query options, and presentation remain code-only |
+| Remove governed field | `remove_field` | Target visual, field ID, and role | Remaining field selections, query family, formatting, filters, and interactions remain unchanged; required scalar bindings cannot be removed |
+| Reorder governed field | `move_field` | Field order within a compatible role | Cross-role conversion, semantic meaning, query expressions, and physical bindings remain server-governed or code-only |
+| Visual query options | `set_visual_query_options` | Selected field alias, temporal grain, bounded sort, and result limit | Semantic field identity, query family, calculations, filters, interactions, and unexposed query options remain unchanged or code-only |
+| Visual formatting | `update_visual_format` | Visual title, title visibility, and catalog-provided renderer-neutral format options | Query/semantic selections, interactions, and presentation options not exposed by the catalog remain unchanged or code-only |
+| Add report filter | `add_filter` | Governed dimension, label, option dataset, and control type | Filter defaults, operators, targets, advanced option settings, and physical expressions use canonical defaults or remain code-only |
+| Add filter slicer | `add_slicer` | Governed dimension, label, option dataset, control type, and target page | The server atomically creates the filter and page component with generated IDs; defaults, operators, targets, and advanced filter settings remain code-only |
+| Update filter | `update_filter` | Label, description, option dataset, control type, required, reader-editable, and URL parameter | Authored defaults, operators, targets, and advanced option settings are deliberately preserved |
+| Set filter scope | `set_filter_scope` | Report/page scope and optional visual targets | Filter defaults, operators, reader-editable policy, and advanced options remain unchanged |
+| Remove report filter | `remove_filter` | Selected filter definition | Other filters, visuals, pages, and dashboard metadata remain unchanged; canonical cleanup handles its placements |
+| Place existing filter | `add_filter_component` | Target page, filter ID, and optional component ID | Filter definition and its defaults/options remain unchanged; the server allocates missing component IDs |
+| Remove filter slicer | `remove_filter_component` | Selected page component | The underlying filter definition, defaults, targets, and other placements remain unchanged |
+| Set visual interaction target | `set_interaction_target` | Source visual, target visual, and `filter`, `highlight`, or `none` effect | Existing governed mappings and unsupported/spatial interaction forms remain server-owned or code-only |
+| Header metadata | `update_header_metadata` | Selected header title and description | Header ID, placement, kind, page identity, and unsupported header properties remain unchanged or code-only |
+| Undo or redo exact revision | `restore_revision` | Exact retained target revision selected by browser history | Restore appends a new revision; the target and intervening revisions remain retained, and no implicit “latest” lookup is allowed |
+<!-- browser-action-parity:end -->
 
-Field assignment is validated against the active governed semantic model before the edit is appended. Formatting, filters, interactions, arbitrary YAML patches, and model edits are outside this bounded builder surface; use the project authoring guides for those changes.
+Field assignment is validated against the active governed semantic model before the edit is appended. The browser also has local-only controls (theme, canvas zoom, pane collapse, field search, and selection); they do not create authoring revisions. Preview, export, and **Make a copy** are links or read operations, not builder commands. The server accepts a few additional typed actions for headless/API callers, including `set_filter_targets` and `rename_visual`; they are not browser actions today. Arbitrary YAML patches, model edits, and properties marked code-only above require the project authoring guides or the headless/agent surfaces.
 
 Every builder mutation carries the dashboard ID, draft ID, and a complete expected revision token (`revisionId`, `number`, and `contentHash`). The browser supplies a request ID (`X-Request-ID`, with `Idempotency-Key` as a fallback); the authenticated principal is the actor. A successful intent appends one immutable revision, increments the revision number, updates the draft pointer, and leaves an already published revision unchanged. Replaying the same command identity and fingerprint returns the recorded result without appending a second revision. A token that is no longer current returns a stale-revision conflict; reload the current draft and submit the intent again.
 

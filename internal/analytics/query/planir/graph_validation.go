@@ -455,7 +455,7 @@ func validateNode(node Node, nodes map[string]Node) error {
 			if n.Spatial.Latitude == n.Spatial.Longitude {
 				return fmt.Errorf("spatial bucket coordinates must be distinct")
 			}
-			if n.Spatial.Zoom < 0 || n.Spatial.Zoom > 30 || n.Spatial.CellPixels <= 0 {
+			if n.Spatial.Zoom < 0 || n.Spatial.Zoom > 30 || n.Spatial.CellPixels <= 0 || n.Spatial.ClusterRadius < 0 || n.Spatial.ClusterRadius > 512 {
 				return fmt.Errorf("spatial bucket zoom and cell size are invalid")
 			}
 			if !sourceFields[n.Spatial.Latitude] || !sourceFields[n.Spatial.Longitude] {
@@ -634,6 +634,10 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 		if len(inputs) > 2 {
 			return fmt.Errorf("spatial metadata envelope accepts at most two inputs")
 		}
+	} else if n.Operation == SpatialEnvelopeTileAggregate && n.MemberInput != "" {
+		if len(inputs) != 2 {
+			return fmt.Errorf("spatial aggregate member input requires two inputs")
+		}
 	} else if len(inputs) != 1 {
 		return fmt.Errorf("spatial envelope operation %q requires one input", n.Operation)
 	}
@@ -642,8 +646,23 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 		if n.Zoom < 0 || n.Zoom > 30 || n.TargetZoom <= n.Zoom || n.TargetZoom > 30 || n.CellPixels <= 0 || n.Buffer < 0 || n.Buffer > 4096 {
 			return fmt.Errorf("spatial aggregate envelope options are invalid")
 		}
+		if err := validateSpatialClusterPolicy(n.Cluster, 30); err != nil {
+			return err
+		}
 		if n.Latitude == "" || n.Longitude == "" || (len(n.Metrics) == 0 && len(n.MetricProperties) == 0) {
 			return fmt.Errorf("spatial aggregate envelope coordinates and metrics are required")
+		}
+		requiresMembers := n.Cluster != nil && n.Cluster.Enabled && n.Cluster.MinimumPoints > 1
+		hasMembers := n.MemberInput != ""
+		if requiresMembers != hasMembers {
+			return fmt.Errorf("spatial aggregate member input must be present exactly when clustering requires below-threshold members")
+		}
+		if hasMembers {
+			if len(inputs) != 2 || inputs[1] != n.MemberInput || len(n.MemberProperties) == 0 {
+				return fmt.Errorf("spatial aggregate member input and properties are inconsistent")
+			}
+		} else if len(n.MemberProperties) > 0 || len(n.MemberIdentity) > 0 {
+			return fmt.Errorf("spatial aggregate member properties require a member input")
 		}
 	case SpatialEnvelopeTileRaw:
 		if n.Zoom < 0 || n.Zoom > 30 || n.Buffer < 0 || n.Buffer > 4096 || n.FeatureCap <= 0 {
@@ -663,10 +682,13 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 		if n.Latitude == "" || n.Longitude == "" || n.FeatureCap <= 0 || n.RawMinimumZoom < 0 || n.MaximumZoom < n.RawMinimumZoom || n.MaximumZoom > 30 {
 			return fmt.Errorf("spatial metadata envelope options are invalid")
 		}
+		if err := validateSpatialClusterPolicy(n.Cluster, n.MaximumZoom); err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported spatial envelope operation %q", n.Operation)
 	}
-	for _, input := range inputs {
+	for inputIndex, input := range inputs {
 		parent, ok := nodes[input]
 		if !ok || parent == nil {
 			return fmt.Errorf("spatial envelope input %q is unavailable", input)
@@ -700,7 +722,7 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 				return fmt.Errorf("spatial envelope coordinates are unavailable")
 			}
 		}
-		if n.Operation == SpatialEnvelopeTileAggregate {
+		if n.Operation == SpatialEnvelopeTileAggregate && inputIndex == 0 {
 			for _, metric := range n.Metrics {
 				if !available[metric] {
 					return fmt.Errorf("spatial aggregate metric %q is unavailable", metric)
@@ -712,6 +734,21 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 				}
 				if metric.Type != "decimal" && metric.Type != "integer" && metric.Type != "float" {
 					return fmt.Errorf("spatial aggregate metric property %q has unsupported type %q", metric.Name, metric.Type)
+				}
+			}
+		}
+		if n.Operation == SpatialEnvelopeTileAggregate && inputIndex == 1 {
+			for _, property := range n.MemberProperties {
+				if property.Name == "" || property.Source == "" || !available[property.Source] {
+					return fmt.Errorf("spatial aggregate member property %q is unavailable", property.Name)
+				}
+				if property.Type != "decimal" && property.Type != "integer" && property.Type != "float" && property.Type != "string" {
+					return fmt.Errorf("spatial aggregate member property %q has unsupported type %q", property.Name, property.Type)
+				}
+			}
+			for _, identity := range n.MemberIdentity {
+				if !available[identity] {
+					return fmt.Errorf("spatial aggregate member identity %q is unavailable", identity)
 				}
 			}
 		}
@@ -727,6 +764,19 @@ func validateSpatialEnvelope(n SpatialEnvelope, nodes map[string]Node) error {
 		if property.Name == "" || property.Source == "" {
 			return fmt.Errorf("spatial property name and source are required")
 		}
+	}
+	return nil
+}
+
+func validateSpatialClusterPolicy(policy *SpatialClusterPolicy, maximumZoom int) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.Radius < 1 || policy.Radius > 512 {
+		return fmt.Errorf("spatial envelope cluster radius must be between 1 and 512 CSS pixels")
+	}
+	if policy.MaximumZoom < 0 || int(policy.MaximumZoom) > maximumZoom || policy.MinimumPoints < 2 {
+		return fmt.Errorf("spatial envelope cluster policy is invalid")
 	}
 	return nil
 }

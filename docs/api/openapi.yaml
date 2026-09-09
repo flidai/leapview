@@ -23966,6 +23966,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -24038,6 +24046,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 draftId: example
                 lifecycle:
@@ -24911,6 +24920,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -24983,6 +25000,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 projectId: example
                 provenance:
@@ -25332,6 +25350,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -25404,6 +25430,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 projectId: example
                 provenance:
@@ -26034,6 +26061,8 @@ paths:
               title: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -26061,6 +26090,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: dashboard.builder.create
   /api/v1/projects/{project}/authoring/forks:
     post:
       operationId: forkDashboardAuthoringDraft
@@ -26429,6 +26460,8 @@ paths:
               title: example
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -26456,6 +26489,8 @@ paths:
         target:
           parameter: project
           type: project
+        ui:
+          action_id: dashboard.builder.fork
   /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export:
     get:
       operationId: exportDashboardAuthoringSource
@@ -62425,6 +62460,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         stacking:
@@ -62461,18 +62506,42 @@ components:
             - axis: primary
               field: example
               mark: line
+        seriesIntent:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardSeriesIntent'
+          description: Stable per-series color and order policy. Category values may
+            be data-dependent for non-combo Cartesian series.
+          example:
+            - color: accent
+              order: 1
+              value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain color; omitted values use the active theme
+            success color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss color; omitted values use the active theme
+            danger color.
         axes:
           type: array
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62503,15 +62572,26 @@ components:
               id: example
               label: example
               tone: neutral
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         dataZoom: true
@@ -62522,6 +62602,7 @@ components:
             id: example
             label: example
             tone: neutral
+        gainColor: accent
         labelPosition: automatic
         labels:
           density: hidden
@@ -62531,6 +62612,11 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
+        lossColor: accent
         orientation: horizontal
         referenceBands:
           - axis: x
@@ -62546,11 +62632,16 @@ components:
           - axis: primary
             field: example
             mark: line
+        seriesIntent:
+          - color: accent
+            order: 1
+            value: example
         showSymbols: true
         smooth: true
         stacking: none
         step: true
         symbolSize: 1
+        tooltip: []
         type: example
     CartesianVisualizationPresentation:
       type: object
@@ -62612,6 +62703,14 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain intent; omitted values use the theme success
+            color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss intent; omitted values use the theme danger
+            color.
       example:
         area: true
         comboSeries:
@@ -62619,8 +62718,10 @@ components:
             mark: line
             seriesValue: example
         dataZoom: true
+        gainColor: accent
         histogramBins: 1
         labelPosition: automatic
+        lossColor: accent
         orientation: horizontal
         seriesIntent:
           - color: accent
@@ -62666,13 +62767,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62714,13 +62821,19 @@ components:
           $ref: '#/components/schemas/CartesianVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         eventAnnotations:
@@ -62738,8 +62851,10 @@ components:
               mark: line
               seriesValue: example
           dataZoom: true
+          gainColor: accent
           histogramBins: 1
           labelPosition: automatic
+          lossColor: accent
           orientation: horizontal
           seriesIntent:
             - color: accent
@@ -62837,6 +62952,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Currency display format; the default fraction range is 2..2. One-sided
+        bounds follow the numeric format rule.
       example:
         currency: example
         kind: example
@@ -63488,10 +63605,21 @@ components:
     DashboardAuthoringCommandRequest:
       oneOf:
         - $ref: '#/components/schemas/DashboardAuthoringMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdatePageMetadataCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAddPageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAddVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAssignFieldCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRemoveFieldCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringMoveFieldCommand'
         - $ref: '#/components/schemas/DashboardAuthoringUpsertPageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRemovePageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringUpsertVisualCommand'
@@ -63499,6 +63627,7 @@ components:
         - $ref: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetInteractionTargetCommand'
         - $ref: '#/components/schemas/DashboardAuthoringPublishCommand'
         - $ref: '#/components/schemas/DashboardAuthoringArchiveCommand'
       discriminator:
@@ -63508,14 +63637,26 @@ components:
           addVisual: '#/components/schemas/DashboardAuthoringAddVisualCommand'
           archive: '#/components/schemas/DashboardAuthoringArchiveCommand'
           assignField: '#/components/schemas/DashboardAuthoringAssignFieldCommand'
+          duplicateVisual: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
           metadata: '#/components/schemas/DashboardAuthoringMetadataCommand'
+          moveField: '#/components/schemas/DashboardAuthoringMoveFieldCommand'
           publish: '#/components/schemas/DashboardAuthoringPublishCommand'
+          removeField: '#/components/schemas/DashboardAuthoringRemoveFieldCommand'
           removePage: '#/components/schemas/DashboardAuthoringRemovePageCommand'
           removeVisual: '#/components/schemas/DashboardAuthoringRemoveVisualCommand'
+          renameVisual: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
+          restoreRevision: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
           setFilters: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
           setInteraction: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
+          setInteractionTarget: '#/components/schemas/DashboardAuthoringSetInteractionTargetCommand'
           setLayout: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
           setVisibility: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
+          setVisualQueryOptions: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsCommand'
+          setVisualType: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+          updateDashboardMetadata: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataCommand'
+          updateHeaderMetadata: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataCommand'
+          updatePageMetadata: '#/components/schemas/DashboardAuthoringUpdatePageMetadataCommand'
+          updateVisualFormat: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
           upsertPage: '#/components/schemas/DashboardAuthoringUpsertPageCommand'
           upsertVisual: '#/components/schemas/DashboardAuthoringUpsertVisualCommand'
     DashboardAuthoringCommandRequestBase:
@@ -63745,6 +63886,14 @@ components:
             pages:
               - components: []
                 description: example
+                filterBindings:
+                  - filter: example
+                    id: example
+                    readerEditable: true
+                    required: true
+                    targets:
+                      - example
+                    urlParameter: example
                 id: example
                 layout:
                   columns: 1
@@ -63817,6 +63966,7 @@ components:
                     suffix: example
                 subtitle: example
                 title: example
+                titleVisible: true
                 type: line
         draftId: example
         lifecycle:
@@ -63899,6 +64049,56 @@ components:
           contentHash: example
           number: 1
           revisionId: example
+    DashboardAuthoringDuplicateVisualCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - duplicateVisual
+      properties:
+        kind:
+          type: string
+          enum:
+            - duplicateVisual
+          example: example
+        duplicateVisual:
+          $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualIntent'
+      example:
+        duplicateVisual:
+          newComponentId: example
+          newVisualId: example
+          pageId: example
+          title: example
+          visualId: example
+        kind: example
+    DashboardAuthoringDuplicateVisualIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        newVisualId:
+          type: string
+          example: example
+        newComponentId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+      example:
+        newComponentId: example
+        newVisualId: example
+        pageId: example
+        title: example
+        visualId: example
     DashboardAuthoringEmptyPayload:
       type: object
       example: {}
@@ -64199,6 +64399,77 @@ components:
         slug: example
         title: example
         visibility: example
+    DashboardAuthoringMoveFieldCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - moveField
+      properties:
+        kind:
+          type: string
+          enum:
+            - moveField
+          example: example
+        moveField:
+          $ref: '#/components/schemas/DashboardAuthoringMoveFieldIntent'
+      example:
+        kind: example
+        moveField:
+          direction: example
+          fieldId: example
+          index: 1
+          pageId: example
+          role: example
+          targetRole: example
+          visualId: example
+    DashboardAuthoringMoveFieldIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - fieldId
+        - role
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        role:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        targetRole:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        direction:
+          type: string
+          example: example
+        index:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        direction: example
+        fieldId: example
+        index: 1
+        pageId: example
+        role: example
+        targetRole: example
+        visualId: example
     DashboardAuthoringMutationResponse:
       type: object
       required:
@@ -66184,6 +66455,57 @@ components:
           contentHash: example
           number: 1
           revisionId: example
+    DashboardAuthoringRemoveFieldCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - removeField
+      properties:
+        kind:
+          type: string
+          enum:
+            - removeField
+          example: example
+        removeField:
+          $ref: '#/components/schemas/DashboardAuthoringRemoveFieldIntent'
+      example:
+        kind: example
+        removeField:
+          fieldId: example
+          pageId: example
+          role: example
+          visualId: example
+    DashboardAuthoringRemoveFieldIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - fieldId
+        - role
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        role:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+      example:
+        fieldId: example
+        pageId: example
+        role: example
+        visualId: example
     DashboardAuthoringRemovePageCommand:
       type: object
       allOf:
@@ -66231,17 +66553,97 @@ components:
       example:
         kind: example
         removeVisual:
+          pageId: example
           visualId: example
     DashboardAuthoringRemoveVisualIntent:
       type: object
       required:
         - visualId
       properties:
+        pageId:
+          type: string
+          example: example
         visualId:
           type: string
           example: example
       example:
+        pageId: example
         visualId: example
+    DashboardAuthoringRenameVisualCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - renameVisual
+      properties:
+        kind:
+          type: string
+          enum:
+            - renameVisual
+          example: example
+        renameVisual:
+          $ref: '#/components/schemas/DashboardAuthoringRenameVisualIntent'
+      example:
+        kind: example
+        renameVisual:
+          pageId: example
+          title: example
+          visualId: example
+    DashboardAuthoringRenameVisualIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - title
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+      example:
+        pageId: example
+        title: example
+        visualId: example
+    DashboardAuthoringRestoreRevisionCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - restoreRevision
+      properties:
+        kind:
+          type: string
+          enum:
+            - restoreRevision
+          example: example
+        restoreRevision:
+          $ref: '#/components/schemas/DashboardAuthoringRestoreRevisionIntent'
+      example:
+        kind: example
+        restoreRevision:
+          targetRevision:
+            contentHash: example
+            number: 1
+            revisionId: example
+    DashboardAuthoringRestoreRevisionIntent:
+      type: object
+      required:
+        - targetRevision
+      properties:
+        targetRevision:
+          $ref: '#/components/schemas/DashboardAuthoringRevisionToken'
+      example:
+        targetRevision:
+          contentHash: example
+          number: 1
+          revisionId: example
     DashboardAuthoringRevalidationFailure:
       type: object
       required:
@@ -66389,6 +66791,14 @@ components:
             pages:
               - components: []
                 description: example
+                filterBindings:
+                  - filter: example
+                    id: example
+                    readerEditable: true
+                    required: true
+                    targets:
+                      - example
+                    urlParameter: example
                 id: example
                 layout:
                   columns: 1
@@ -66461,6 +66871,7 @@ components:
                     suffix: example
                 subtitle: example
                 title: example
+                titleVisible: true
                 type: line
         projectId: example
         provenance:
@@ -66636,6 +67047,57 @@ components:
         clear: true
         pageId: example
         visualId: example
+    DashboardAuthoringSetInteractionTargetCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setInteractionTarget
+      properties:
+        kind:
+          type: string
+          enum:
+            - setInteractionTarget
+          example: example
+        setInteractionTarget:
+          $ref: '#/components/schemas/DashboardAuthoringSetInteractionTargetIntent'
+      example:
+        kind: example
+        setInteractionTarget:
+          effect: example
+          pageId: example
+          targetVisualId: example
+          visualId: example
+    DashboardAuthoringSetInteractionTargetIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - targetVisualId
+        - effect
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        targetVisualId:
+          type: string
+          example: example
+        effect:
+          type: string
+          enum:
+            - filter
+            - highlight
+            - none
+          example: example
+      example:
+        effect: example
+        pageId: example
+        targetVisualId: example
+        visualId: example
     DashboardAuthoringSetLayoutCommand:
       type: object
       allOf:
@@ -66710,6 +67172,135 @@ components:
           example: example
       example:
         visibility: example
+    DashboardAuthoringSetVisualQueryOptionsCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setVisualQueryOptions
+      properties:
+        kind:
+          type: string
+          enum:
+            - setVisualQueryOptions
+          example: example
+        setVisualQueryOptions:
+          $ref: '#/components/schemas/DashboardAuthoringSetVisualQueryOptionsIntent'
+      example:
+        kind: example
+        setVisualQueryOptions:
+          alias: example
+          clearGrain: true
+          clearLimit: true
+          fieldId: example
+          fieldRole: example
+          grain: second
+          limit: 1
+          pageId: example
+          sort:
+            - direction: asc
+              field: example
+          visualId: example
+    DashboardAuthoringSetVisualQueryOptionsIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        fieldRole:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        alias:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        grain:
+          $ref: '#/components/schemas/DashboardTimeGrain'
+        clearGrain:
+          type: boolean
+          example: true
+        sort:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardSort'
+          example:
+            - direction: asc
+              field: example
+        limit:
+          type: integer
+          format: int32
+          example: 1
+        clearLimit:
+          type: boolean
+          example: true
+      example:
+        alias: example
+        clearGrain: true
+        clearLimit: true
+        fieldId: example
+        fieldRole: example
+        grain: second
+        limit: 1
+        pageId: example
+        sort:
+          - direction: asc
+            field: example
+        visualId: example
+    DashboardAuthoringSetVisualTypeCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setVisualType
+      properties:
+        kind:
+          type: string
+          enum:
+            - setVisualType
+          example: example
+        setVisualType:
+          $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeIntent'
+      example:
+        kind: example
+        setVisualType:
+          pageId: example
+          type: line
+          visualId: example
+    DashboardAuthoringSetVisualTypeIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - type
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        type:
+          $ref: '#/components/schemas/DashboardVisualType'
+      example:
+        pageId: example
+        type: line
+        visualId: example
     DashboardAuthoringSourceMetadata:
       type: object
       properties:
@@ -66880,6 +67471,194 @@ components:
           - example
         title: example
         visibility: example
+    DashboardAuthoringUpdateDashboardMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateDashboardMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateDashboardMetadata
+          example: example
+        updateDashboardMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateDashboardMetadataIntent'
+      example:
+        kind: example
+        updateDashboardMetadata:
+          description: example
+          title: example
+    DashboardAuthoringUpdateDashboardMetadataIntent:
+      type: object
+      properties:
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      description: Narrow browser-builder metadata edits; broader metadata remains
+        API-only.
+      example:
+        description: example
+        title: example
+    DashboardAuthoringUpdateHeaderMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateHeaderMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateHeaderMetadata
+          example: example
+        updateHeaderMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateHeaderMetadataIntent'
+      example:
+        kind: example
+        updateHeaderMetadata:
+          description: example
+          headerId: example
+          pageId: example
+          title: example
+    DashboardAuthoringUpdateHeaderMetadataIntent:
+      type: object
+      required:
+        - pageId
+        - headerId
+      properties:
+        pageId:
+          type: string
+          example: example
+        headerId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      example:
+        description: example
+        headerId: example
+        pageId: example
+        title: example
+    DashboardAuthoringUpdatePageMetadataCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updatePageMetadata
+      properties:
+        kind:
+          type: string
+          enum:
+            - updatePageMetadata
+          example: example
+        updatePageMetadata:
+          $ref: '#/components/schemas/DashboardAuthoringUpdatePageMetadataIntent'
+      example:
+        kind: example
+        updatePageMetadata:
+          description: example
+          pageId: example
+          title: example
+    DashboardAuthoringUpdatePageMetadataIntent:
+      type: object
+      required:
+        - pageId
+      properties:
+        pageId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+      example:
+        description: example
+        pageId: example
+        title: example
+    DashboardAuthoringUpdateVisualFormatCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateVisualFormat
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateVisualFormat
+          example: example
+        updateVisualFormat:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateVisualFormatIntent'
+      example:
+        kind: example
+        updateVisualFormat:
+          axisVisible: true
+          dataLabelsVisible: true
+          formatKey: example
+          formatValue: example
+          legendVisible: true
+          pageId: example
+          title: example
+          titleVisible: true
+          visualId: example
+    DashboardAuthoringUpdateVisualFormatIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        titleVisible:
+          type: boolean
+          example: true
+        legendVisible:
+          type: boolean
+          example: true
+        axisVisible:
+          type: boolean
+          example: true
+        dataLabelsVisible:
+          type: boolean
+          example: true
+        formatKey:
+          type: string
+          example: example
+        formatValue:
+          type: string
+          example: example
+      example:
+        axisVisible: true
+        dataLabelsVisible: true
+        formatKey: example
+        formatValue: example
+        legendVisible: true
+        pageId: example
+        title: example
+        titleVisible: true
+        visualId: example
     DashboardAuthoringUpsertPageCommand:
       type: object
       allOf:
@@ -66900,6 +67679,14 @@ components:
         upsertPage:
           components: []
           description: example
+          filterBindings:
+            - filter: example
+              id: example
+              readerEditable: true
+              required: true
+              targets:
+                - example
+              urlParameter: example
           id: example
           layout:
             columns: 1
@@ -66988,6 +67775,7 @@ components:
                 suffix: example
             subtitle: example
             title: example
+            titleVisible: true
             type: line
           visualId: example
     DashboardAuthoringUpsertVisualIntent:
@@ -67065,6 +67853,7 @@ components:
               suffix: example
           subtitle: example
           title: example
+          titleVisible: true
           type: line
         visualId: example
     DashboardAxisConfiguration:
@@ -67080,10 +67869,14 @@ components:
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -67099,15 +67892,29 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       description: A renderer-neutral axis policy for Cartesian and point visuals.
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
     DashboardCalculation:
@@ -67239,6 +68046,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         color:
           $ref: '#/components/schemas/DashboardMapColorScale'
         stroke:
@@ -67260,6 +68072,7 @@ components:
         geometryAsset: example
         join: example
         kind: example
+        label: example
         opacity: 1
         stroke:
           color: example
@@ -67840,6 +68653,14 @@ components:
           pages:
             - components: []
               description: example
+              filterBindings:
+                - filter: example
+                  id: example
+                  readerEditable: true
+                  required: true
+                  targets:
+                    - example
+                  urlParameter: example
               id: example
               layout:
                 columns: 1
@@ -67912,6 +68733,7 @@ components:
                   suffix: example
               subtitle: example
               title: example
+              titleVisible: true
               type: line
     DashboardEventAnnotation:
       type: object
@@ -68040,8 +68862,8 @@ components:
           items:
             type: string
             minLength: 1
-            maxLength: 128
-            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+            maxLength: 257
+            pattern: ^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$
           example:
             - example
         urlParameter:
@@ -68495,19 +69317,11 @@ components:
           maxLength: 128
           pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
           example: example
-        label:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         minimumZoom:
@@ -68520,12 +69334,10 @@ components:
           example: 1
       example:
         id: example
-        label: example
         maximumZoom: 1
         minimumZoom: 1
         position: below_labels
-        tooltip:
-          - example
+        tooltip: []
     DashboardGradientConditionalRule:
       type: object
       allOf:
@@ -68929,6 +69741,21 @@ components:
         gap: 1
         padding: 1
         rowHeight: 1
+    DashboardLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: One canonical legend value. Array order is the display order.
+      example:
+        label: example
+        value: example
     DashboardLegendPosition:
       type: string
       enum:
@@ -69172,6 +69999,13 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
+          description: |-
+            Approximate CSS-pixel clustering target for tiled maps. The server uses a
+            globally aligned grid with max(1, floor(256 / radius)) cells per tile;
+            radii 129–512 therefore share one cell per tile. This does not promise
+            pixel-identical cluster membership between inline and tiled data.
           example: 1
         maximumZoom:
           type: integer
@@ -69261,12 +70095,7 @@ components:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     DashboardMapSizeScale:
       type: object
@@ -69452,6 +70281,18 @@ components:
           example: example
         layout:
           $ref: '#/components/schemas/DashboardLayoutOverride'
+        filterBindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardPageFilterBinding'
+          example:
+            - filter: example
+              id: example
+              readerEditable: true
+              required: true
+              targets:
+                - example
+              urlParameter: example
         components:
           type: array
           items:
@@ -69460,6 +70301,14 @@ components:
       example:
         components: []
         description: example
+        filterBindings:
+          - filter: example
+            id: example
+            readerEditable: true
+            required: true
+            targets:
+              - example
+            urlParameter: example
         id: example
         layout:
           columns: 1
@@ -69504,6 +70353,59 @@ components:
           row: 1
           rowSpan: 1
         type: example
+    DashboardPageFilterBinding:
+      type: object
+      required:
+        - id
+        - filter
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        filter:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        default:
+          $ref: '#/components/schemas/DashboardFilterExpression'
+        required:
+          type: boolean
+          example: true
+        readerEditable:
+          type: boolean
+          example: true
+        targets:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example:
+            - example
+        urlParameter:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[A-Za-z][A-Za-z0-9_-]{0,63}$
+          example: example
+      description: |-
+        A page-scoped state binding for one governed dashboard filter definition.
+        The binding identity is local to its page and is independent from any
+        in-canvas filter component that presents the same filter.
+      example:
+        filter: example
+        id: example
+        readerEditable: true
+        required: true
+        targets:
+          - example
+        urlParameter: example
     DashboardPageQueryRequest:
       type: object
       properties:
@@ -69766,7 +70668,6 @@ components:
         kind: example
         latitude: example
         line:
-          curvature: 1
           width: 1
         longitude: example
         opacity: 1
@@ -69872,6 +70773,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         size:
           $ref: '#/components/schemas/DashboardMapSizeScale'
         color:
@@ -69901,6 +70807,7 @@ components:
           palette: example
           reverse: true
         kind: example
+        label: example
         latitude: example
         longitude: example
         opacity: 1
@@ -69951,9 +70858,17 @@ components:
             - field: example
               id: example
               target: mark_fill
+        axisVisible:
+          type: boolean
+          description: |-
+            Whether axes are rendered for Cartesian marks and point (scatter)
+            visuals. Omit this field to use the renderer default; an authored value
+            on another presentation family is invalid rather than silently ignored.
+          example: true
       description: Renderer-neutral presentation policies; renderer options are intentionally
         absent.
       example:
+        axisVisible: true
         conditionalFormatting:
           - field: example
             id: example
@@ -70411,6 +71326,25 @@ components:
         - single
         - multiple
       example: single
+    DashboardSeriesIntent:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        order:
+          type: integer
+          format: int32
+          example: 1
+        color:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+      description: A stable renderer-neutral policy for one named chart series.
+      example:
+        color: accent
+        order: 1
+        value: example
     DashboardSlicerComponentResponse:
       type: object
       allOf:
@@ -70677,6 +71611,7 @@ components:
                   suffix: example
               subtitle: example
               title: example
+              titleVisible: true
               type: line
         pages:
           type: array
@@ -70685,6 +71620,14 @@ components:
           example:
             - components: []
               description: example
+              filterBindings:
+                - filter: example
+                  id: example
+                  readerEditable: true
+                  required: true
+                  targets:
+                    - example
+                  urlParameter: example
               id: example
               layout:
                 columns: 1
@@ -70727,6 +71670,14 @@ components:
         pages:
           - components: []
             description: example
+            filterBindings:
+              - filter: example
+                id: example
+                readerEditable: true
+                required: true
+                targets:
+                  - example
+                urlParameter: example
             id: example
             layout:
               columns: 1
@@ -70799,6 +71750,7 @@ components:
                 suffix: example
             subtitle: example
             title: example
+            titleVisible: true
             type: line
     DashboardStackingMode:
       type: string
@@ -70900,6 +71852,32 @@ components:
         - quarter
         - year
       example: second
+    DashboardTooltip:
+      oneOf:
+        - type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+        - $ref: '#/components/schemas/DashboardTooltipItem'
+    DashboardTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: One ordered tooltip field projection. Compact string entries remain
+        supported.
+      example:
+        field: example
+        label: example
     DashboardVisual:
       type: object
       required:
@@ -70912,6 +71890,11 @@ components:
         title:
           type: string
           example: example
+        titleVisible:
+          type: boolean
+          description: Controls whether the authored title is shown in the visual
+            frame.
+          example: true
         subtitle:
           type: string
           example: example
@@ -71030,6 +72013,7 @@ components:
             suffix: example
         subtitle: example
         title: example
+        titleVisible: true
         type: line
     DashboardVisualComponentResponse:
       type: object
@@ -73415,8 +74399,6 @@ components:
           enum:
             - geographic
           example: example
-        labels:
-          $ref: '#/components/schemas/DashboardLabelPolicy'
         theme:
           $ref: '#/components/schemas/VisualizationMapTheme'
         basemap:
@@ -73451,13 +74433,6 @@ components:
           reset: true
           zoom: true
         labelDensity: hidden
-        labels:
-          density: hidden
-          maxCharacters: 1
-          minimumSpacing: 1
-          priority:
-            - selected
-          tooltipFallback: true
         layers: []
         roam: true
         theme: auto
@@ -74100,6 +75075,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         orientation:
@@ -74140,6 +75125,10 @@ components:
           tooltipFallback: true
         layout: standard
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         nodeGap: 1
         orientation: horizontal
         roam: true
@@ -74405,13 +75394,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
         comparison:
           $ref: '#/components/schemas/DashboardKPIValueBinding'
         goal:
@@ -74447,9 +75429,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
         trend:
           category: example
@@ -74489,13 +75468,6 @@ components:
           example: example
         tone:
           $ref: '#/components/schemas/VisualizationTone'
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
       example:
         delta: absolute
         displayUnits: auto
@@ -74508,9 +75480,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
     KPIVisualizationSpec:
       type: object
@@ -74562,9 +75531,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-          thresholds:
-            - tone: neutral
-              value: 1
           tone: neutral
         trend:
           category:
@@ -75692,6 +76658,11 @@ components:
           type: integer
           format: int32
           example: 1
+      description: |-
+        Numeric display format. With no fraction bounds, values use 0..3 digits.
+        A one-sided bound preserves that default on the unconstrained side unless
+        it would make the range invalid: a maximum below the default minimum lowers
+        the minimum, and a minimum above the default maximum raises the maximum.
       example:
         kind: example
         maximumFractionDigits: 1
@@ -75758,6 +76729,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Percent display format; the default fraction range is 0..1. One-sided
+        bounds follow the numeric format rule.
       example:
         kind: example
         maximumFractionDigits: 1
@@ -75898,15 +76871,11 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       description: A governed result-frame binding used by a point/scatter visual.
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointDashboardOverplot:
       type: object
       required:
@@ -75947,6 +76916,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         identity:
@@ -75977,11 +76956,6 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
-        series:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         label:
           type: string
           minLength: 1
@@ -75990,11 +76964,8 @@ components:
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         colorScale:
           $ref: '#/components/schemas/PointDashboardColorScale'
         sizeScale:
@@ -76012,13 +76983,19 @@ components:
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -76053,13 +77030,19 @@ components:
         channels.
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         brush:
@@ -76069,7 +77052,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example
@@ -76087,6 +77069,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         overplot:
           largeMode: automatic
           largeThreshold: 1
@@ -76102,15 +77088,13 @@ components:
             id: example
             label: example
             tone: neutral
-        series: example
         size: example
         sizeScale:
           maximum: 1
           maximumPixels: 1
           minimum: 1
           minimumPixels: 1
-        tooltip:
-          - example
+        tooltip: []
         type: example
         x: example
         'y': example
@@ -76157,14 +77141,10 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointVisualizationPresentation:
       type: object
       allOf:
@@ -76259,8 +77239,6 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         color:
           $ref: '#/components/schemas/VisualizationFieldRef'
-        series:
-          $ref: '#/components/schemas/VisualizationFieldRef'
         label:
           $ref: '#/components/schemas/VisualizationFieldRef'
         tooltip:
@@ -76279,13 +77257,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -76320,13 +77304,19 @@ components:
           $ref: '#/components/schemas/PointVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         color:
@@ -76336,7 +77326,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example
@@ -76367,9 +77356,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series:
-          dataset: example
-          field: example
         size:
           dataset: example
           field: example
@@ -76401,6 +77387,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -76445,6 +77441,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         maximum: 1
         minimum: 1
         progressWidth: 1
@@ -77439,6 +78439,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -77465,6 +78475,11 @@ components:
           $ref: '#/components/schemas/DashboardProportionalAlignment'
         sort:
           $ref: '#/components/schemas/VisualizationSortDirection'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         align: left
         centerLabel: example
@@ -77479,10 +78494,15 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         orientation: horizontal
         outerRadius: 1
         rose: true
         sort: ascending
+        tooltip: []
         type: example
     ProportionalVisualizationPresentation:
       type: object
@@ -77548,6 +78568,13 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         series:
           $ref: '#/components/schemas/VisualizationFieldRef'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationFieldRef'
+          example:
+            - dataset: example
+              field: example
         presentation:
           $ref: '#/components/schemas/ProportionalVisualizationPresentation'
       example:
@@ -77568,6 +78595,9 @@ components:
         series:
           dataset: example
           field: example
+        tooltip:
+          - dataset: example
+            field: example
         value:
           dataset: example
           field: example
@@ -83106,19 +84136,29 @@ components:
       type: object
       required:
         - id
+        - type
         - scale
         - zero
+        - inversion
         - tickDensity
+        - ticks
+        - grid
+        - labelRotation
+        - dateUnit
       properties:
         id:
           $ref: '#/components/schemas/VisualizationCartesianAxis'
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -83134,16 +84174,54 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
+    VisualizationAxisGridVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisInversion:
+      type: string
+      enum:
+        - automatic
+        - normal
+        - inverted
+      description: Renderer-neutral axis direction. Automatic keeps the conventional
+        direction.
+      example: automatic
+    VisualizationAxisLabelRotation:
+      type: string
+      enum:
+        - automatic
+        - horizontal
+        - diagonal
+        - vertical
+      example: automatic
     VisualizationAxisScale:
       type: string
       enum:
@@ -83158,6 +84236,23 @@ components:
         - sparse
         - normal
         - dense
+      example: automatic
+    VisualizationAxisTickVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisType:
+      type: string
+      enum:
+        - automatic
+        - category
+        - value
+        - time
+      description: Renderer-neutral axis coordinate type. Automatic preserves the
+        established chart-family default while temporal axes remain time axes.
       example: automatic
     VisualizationAxisZeroPolicy:
       type: string
@@ -83565,7 +84660,6 @@ components:
       type: string
       enum:
         - mark_fill
-        - mark_stroke
         - series_color
         - label_foreground
         - visual_background
@@ -83731,6 +84825,20 @@ components:
               timezone: example
               weekStart: monday
         id: example
+    VisualizationDateDisplayUnit:
+      type: string
+      enum:
+        - automatic
+        - year
+        - quarter
+        - month
+        - week
+        - day
+        - hour
+        - minute
+        - second
+      description: Semantic date granularity for labels on a temporal axis.
+      example: automatic
     VisualizationDatumRef:
       type: object
       required:
@@ -84190,6 +85298,15 @@ components:
           example:
             - dataset: example
               field: example
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         visibility:
@@ -84204,6 +85321,11 @@ components:
         tooltip:
           - dataset: example
             field: example
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
         visibility:
           maximumZoom: 1
           minimumZoom: 1
@@ -84801,6 +85923,21 @@ components:
         - anomaly
         - threshold
       example: selected
+    VisualizationLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: Canonical legend value with an optional display label.
+      example:
+        label: example
+        value: example
     VisualizationLegendPosition:
       type: string
       enum:
@@ -84873,6 +86010,8 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
           example: 1
         maximumZoom:
           type: integer
@@ -84991,18 +86130,12 @@ components:
       type: object
       required:
         - width
-        - curvature
       properties:
         width:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     VisualizationMapSizeScale:
       type: object
@@ -85268,7 +86401,6 @@ components:
           dataset: example
           field: example
         line:
-          curvature: 1
           width: 1
         longitude:
           dataset: example
@@ -85405,9 +86537,27 @@ components:
           $ref: '#/components/schemas/VisualizationLegendPosition'
         labelPolicy:
           $ref: '#/components/schemas/VisualizationLabelPolicy'
+        axisVisible:
+          type: boolean
+          description: |-
+            Whether axes are rendered for Cartesian and point (scatter) visuals.
+            Omission retains the renderer default; authored values on other visual
+            families are rejected by IR validation.
+          example: true
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationLegendItem'
+          example:
+            - label: example
+              value: example
       example:
+        axisVisible: true
         displayUnits: auto
         labelPolicy:
           density: hidden
@@ -85417,6 +86567,10 @@ components:
             - selected
           tooltipFallback: true
         legend: hidden
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
     VisualizationProportionalMark:
       type: string
       enum:
@@ -85956,6 +87110,11 @@ components:
         title:
           type: string
           example: example
+        titleVisible:
+          type: boolean
+          description: False hides the visual-frame title without removing its accessible
+            name.
+          example: true
         subtitle:
           type: string
           example: example
@@ -86064,6 +87223,15 @@ components:
                 field: example
               template: running_total
               window: 1
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
       example:
         accessibility:
           announceChanges: true
@@ -86192,6 +87360,12 @@ components:
             suffix: example
         subtitle: example
         title: example
+        titleVisible: true
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
     VisualizationSpecKind:
       type: string
       enum:
@@ -86324,6 +87498,24 @@ components:
         - warning
         - danger
       example: neutral
+    VisualizationTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          $ref: '#/components/schemas/VisualizationFieldRef'
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: Ordered tooltip projection; labels and formats are display-only.
+      example:
+        field:
+          dataset: example
+          field: example
+        label: example
     VisualizationWeekStart:
       type: string
       enum:

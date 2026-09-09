@@ -42,7 +42,9 @@ candidate, then run selected APIGen, Go package/application, frontend, docs/site
 dbt, and spatial validation lanes concurrently. Unknown and cross-cutting inputs, manual
 dispatch, the `ci:full` label, and deterministic audit PRs run the full PR tier. The repository validation jobs execute `task ci:prepare`; the independent APIGen module
 does not need generated or embedded application assets and skips that preparation. The merge queue
-adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:extras`. Local
+adds bounded overlap through `task ci:full:extras:hosted`; local and nightly full validation retain
+the sequential `task ci:full:extras` contract, and the daily schedule also runs
+`task ci:nightly:extras`. Local
 composition remains available through the tier targets; the workflow does not duplicate individual
 test commands or introduce a runner-specific container wrapper.
 
@@ -57,17 +59,33 @@ same bounded shards sequentially to avoid browser and bundler contention on a sh
 
 ## Toolchain and caches
 
-`.github/actions/setup-ci` installs pinned Go, Node.js, Bun, Task, and Buf versions. Jobs opt
+`.github/actions/setup-ci` installs pinned Go, Node.js, Bun, and Task versions. Jobs opt
 into the pinned Terraform and Playwright installations only when their validation requires
 them. The action is shared by pull-request, merge, nightly, and production qualification jobs
 so a toolchain change has one reviewable source.
 
 The setup action uses separate GitHub Actions cache entries for:
 
-- Go modules and compiler outputs, keyed by the Go dependency graph;
+- Go modules and compiler outputs, scoped by validation workload, runner platform,
+  installed Go version, module manifests and pinned tool definitions;
 - Bun downloads, keyed by the root and desktop lockfiles;
 - the pinned Playwright Chromium build;
 - Terraform providers, keyed by the deployment lockfiles.
+
+Go validation uses the `go-validation-v1` cache namespace and the stable workflow
+job ID as its workload scope. Application, package and frontend
+validation jobs reuse their respective entries across PR, merge and nightly runs;
+full validation shares its scope between merge and nightly runs. Frontend matrix shards share their preparation scope. APIGen, security and
+native packaging cannot win another validation workload's cache key. Native
+packaging retains its separate setup-go cache.
+
+The validation key covers root and nested `go.mod`/`go.sum` files, `Taskfile.yml`
+and the shared setup action, including pinned SQLC and toolchain definitions.
+There is no fallback to the old shared Go cache or another workload. Each successful
+job may publish its own scope; a cache hit never skips preparation or validation.
+Default-branch nightly runs can populate the scopes for subsequent candidates,
+subject to GitHub's branch access rules. More scopes consume more cache storage;
+eviction must remain a performance concern only.
 
 Production and public-site image builds export BuildKit layers to independently scoped
 GitHub Actions caches. LeapView does not cache `node_modules`, `/var/lib/docker`, mutable

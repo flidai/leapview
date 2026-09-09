@@ -47,6 +47,244 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('catalog introduces authoring as an explicit New dashboard action with a creation icon', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href'), hasIcon: Boolean(trigger?.querySelector('svg')) }
+    })
+    expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new', hasIcon: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('new dashboard trigger opens an accessible native dialog with the create form contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([
+        { id: 'semantic:sales_overview', title: 'sales_overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-modal')
+      element.setAttribute('create-draft-idempotency-key', 'idem-modal')
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const form = root.querySelector('.catalog-create-dialog-form') as HTMLFormElement
+      const shell = root.querySelector('.catalog-create-dialog-shell') as HTMLElement
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
+      return {
+        tagName: trigger.tagName,
+        href: trigger.getAttribute('href'),
+        hasDialogHint: trigger.getAttribute('aria-haspopup'),
+        controls: trigger.getAttribute('aria-controls'),
+        open: dialog.open,
+        labelledBy: dialog.getAttribute('aria-labelledby'),
+        title: root.querySelector('#catalog-create-draft-title')?.textContent?.trim(),
+		activeField: root.activeElement?.id ?? '',
+        method: form.method,
+        action: new URL(form.action).pathname,
+        nameRequired: root.querySelector<HTMLInputElement>('[name="title"]')?.required,
+        modelOptions: Array.from(root.querySelectorAll('#catalog-create-draft-model option')).map((option) => ({ id: option.getAttribute('value'), title: option.textContent?.trim() })),
+        selectedModel: root.querySelector<HTMLSelectElement>('#catalog-create-draft-model')?.value,
+        csrf: root.querySelector<HTMLInputElement>('[name="gorilla.csrf.Token"]')?.value,
+        idempotency: root.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value,
+        advanced: dialog.querySelector('summary')?.textContent?.trim(),
+        closeHasSVG: Boolean(close.querySelector('svg')),
+        closeText: close.textContent?.trim(),
+        noHorizontalOverflow: shell.scrollWidth <= shell.clientWidth,
+      }
+    })
+
+    expect(state).toEqual({
+      tagName: 'A',
+      href: '/dashboards/new',
+      hasDialogHint: 'dialog',
+      controls: 'catalog-create-draft-dialog',
+      open: true,
+      labelledBy: 'catalog-create-draft-title',
+      title: 'New dashboard',
+      activeField: 'catalog-create-draft-name',
+      method: 'post',
+      action: '/dashboards/new',
+      nameRequired: true,
+      modelOptions: [
+        { id: '', title: 'Select a data model' },
+        { id: 'semantic:sales_overview', title: 'Sales Overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ],
+      selectedModel: '',
+      csrf: 'csrf-modal',
+      idempotency: 'idem-modal',
+      advanced: 'Advanced settings',
+      closeHasSVG: true,
+      closeText: '',
+      noHorizontalOverflow: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create query auto-opens with the semantic model preselected and dismissal restores focus', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(`${baseURL}/?create=dashboard&semanticModel=semantic%3Asales_overview`)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'semantic:sales_overview', title: 'sales_overview' }]))
+      await element.updateComplete
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const select = root.querySelector('#catalog-create-draft-model') as HTMLSelectElement
+      const autoOpened = dialog.open
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
+      close.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return {
+        autoOpened,
+        selectedModel: select.value,
+        closed: !dialog.open,
+        restoredFocus: root.activeElement?.classList.contains('catalog-create-draft') ?? false,
+        query: window.location.search,
+      }
+    })
+
+    expect(state).toEqual({
+      autoOpened: true,
+      selectedModel: 'semantic:sales_overview',
+      closed: true,
+      restoredFocus: false,
+      query: '?create=dashboard&semanticModel=semantic%3Asales_overview',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('native Escape and backdrop dismissal close the create dialog', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      const dialog = () => root.querySelector('dialog') as HTMLDialogElement
+      trigger.click()
+      await element.updateComplete
+      const escapedOpen = dialog().open
+      dialog().dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const closedAfterEscape = !dialog().open
+      const focusAfterEscape = root.activeElement === trigger
+      trigger.click()
+      await element.updateComplete
+      dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return { escapedOpen, closedAfterEscape, focusAfterEscape, closedAfterBackdrop: !dialog().open, focusAfterBackdrop: root.activeElement === trigger }
+    })
+
+    expect(state).toEqual({ escapedOpen: true, closedAfterEscape: true, focusAfterEscape: true, closedAfterBackdrop: true, focusAfterBackdrop: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile create dialog stays within the viewport and disables submission without models', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', '[]')
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const rect = dialog.getBoundingClientRect()
+      const select = root.querySelector('#catalog-create-draft-model') as HTMLSelectElement
+      const submit = root.querySelector('[type="submit"]') as HTMLButtonElement
+      return {
+        withinViewport: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight,
+        noHorizontalOverflow: dialog.scrollWidth <= dialog.clientWidth,
+        selectDisabled: select.disabled,
+        submitDisabled: submit.disabled,
+        help: root.querySelector('#catalog-create-draft-model-help')?.textContent?.trim(),
+      }
+    })
+
+    expect(state).toEqual({
+      withinViewport: true,
+      noHorizontalOverflow: true,
+      selectDisabled: true,
+      submitDisabled: true,
+      help: 'No data models are available. Add one in Develop, then try again.',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create form submits natively to the builder with hidden request values', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  let postData = ''
+  try {
+    await page.route('**/dashboards/new', async (route) => {
+      postData = route.request().postData() ?? ''
+      await route.fulfill({ status: 200, contentType: 'text/html', body: 'builder' })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-submit')
+      element.setAttribute('create-draft-idempotency-key', 'idem-submit')
+      await element.updateComplete
+      const root = element.shadowRoot
+      ;(root.querySelector('.catalog-create-draft') as HTMLAnchorElement).click()
+      await element.updateComplete
+      ;(root.querySelector('[name="title"]') as HTMLInputElement).value = 'Sales overview'
+      ;(root.querySelector('[name="semanticModel"]') as HTMLSelectElement).value = 'sales'
+      ;(root.querySelector('.catalog-create-dialog-form') as HTMLFormElement).requestSubmit()
+    })
+    await page.waitForTimeout(100)
+    expect(postData).toContain('title=Sales+overview')
+    expect(postData).toContain('semanticModel=sales')
+    expect(postData).toContain('gorilla.csrf.Token=csrf-submit')
+    expect(postData).toContain('idempotencyKey=idem-submit')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'compact desktop', width: 706, height: 793 },
   { name: 'mobile', width: 390, height: 820 },
@@ -73,24 +311,29 @@ for (const viewport of [
           rowCount: rows.length,
           hrefs: rows.map((row) => row.querySelector('.entity-list-identity')?.getAttribute('href')),
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
-          descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
+          descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          refreshed: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
-          refreshedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.getAttribute('title')),
+          dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
+          ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
+          statuses: rows.map((row) => row.querySelector('.entity-list-status')?.textContent?.trim() ?? ''),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.querySelector('.entity-list-datetime')?.getAttribute('aria-label') ?? ''),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
-          popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
-          popularityLevels: rows.map((row) => row.querySelector('.entity-list-badge')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-badge')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-badge')?.classList.contains('is-low') ? 'low' : ''),
-          emptyPopularityLabels: rows.map((row) => row.querySelector('.entity-list-badge-empty')?.getAttribute('aria-label') ?? ''),
-          emptyPopularityOpacity: getComputedStyle(rows[3].querySelector('.entity-list-badge-empty') as HTMLElement).color,
+          popularityLabels: rows.map((row) => row.querySelector('.entity-list-popularity')?.getAttribute('aria-label') ?? ''),
+          popularityLevels: rows.map((row) => row.querySelector('.entity-list-popularity')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-popularity')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-popularity')?.classList.contains('is-low') ? 'low' : ''),
           popularityColoredBars: rows.slice(0, 3).map((row) => {
-            const paths = Array.from(row.querySelectorAll('.entity-list-badge path'))
-            const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-badge path')[2]).stroke
+            const paths = Array.from(row.querySelectorAll('.entity-list-popularity path'))
+            const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-popularity path')[2]).stroke
             return paths.filter((path) => getComputedStyle(path).stroke !== mutedStroke).length
           }),
           iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
           framedIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
           framedIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+          originBadges: rows.filter((row) => row.querySelector('.entity-list-label-badge')).length,
+          tabs: Array.from(root.querySelectorAll('.catalog-tab')).map((tab) => tab.textContent?.trim()),
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
@@ -99,6 +342,7 @@ for (const viewport of [
           hasOpenLabel: rows.some((row) => row.textContent?.includes('Open')),
           sectionWidth: Math.round(sectionRect.width),
           centeredDelta: Math.round(Math.abs((sectionRect.left + sectionRect.width / 2) - window.innerWidth / 2)),
+          actionLabels: rows.map((row) => row.querySelector('.entity-list-row-action')?.getAttribute('aria-label')),
         }
       })
 
@@ -107,20 +351,25 @@ for (const viewport of [
         rowCount: 4,
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
-        descriptions: ['Fixture report', 'Fulfillment and delivery performance.', 'Stock exposure and replenishment.', 'Customer profile details.'],
-        headers: ['Dashboard', 'Popularity', 'Last refreshed'],
-        refreshed: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
-        refreshedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        descriptionCount: 0,
+        headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
+        dataModels: ['Olist', 'Operations', 'Inventory', 'Customers'],
+        owners: ['Analytics', 'Operations', 'Supply chain', '—'],
+        statuses: ['', '', '', ''],
+        updated: ['Aug 12', 'Aug 11', 'Aug 10', '—'],
+        updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        lastOpened: ['—', '—', '—', '—'],
+        ownerAvatars: [true, true, true, false],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
-        popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
+        popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.'],
         popularityLevels: ['high', 'medium', 'low', ''],
-        emptyPopularityLabels: ['', '', '', 'No popularity data'],
-        emptyPopularityOpacity: 'rgb(129, 139, 152)',
         popularityColoredBars: [3, 2, 1],
         iconsAreFramed: true,
         framedIconBorderWidth: '1px',
         framedIconBackground: 'rgb(251, 239, 255)',
+        originBadges: 0,
+        tabs: ['All dashboards', 'Favorites', 'My dashboards'],
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
@@ -129,6 +378,12 @@ for (const viewport of [
         hasOpenLabel: false,
         sectionWidth: Math.min(viewport.width, 1152),
         centeredDelta: 0,
+        actionLabels: [
+          'More actions for Executive Sales Dashboard',
+          'More actions for Operations Health',
+          'More actions for Inventory Risk',
+          'More actions for Customer Detail',
+        ],
       })
     } finally {
       await page.close()
@@ -136,36 +391,553 @@ for (const viewport of [
   })
 }
 
-test('shared entity list sorts rows by popularity rank', async () => {
+test('dashboard tabs expose favorites and owned dashboards without hiding either from All', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const dashboards = element.page.dashboards.map((dashboard: any, index: number) => ({
+        ...dashboard,
+        catalogScope: index === 0 ? 'mine' : index === 1 ? 'shared' : 'managed',
+      }))
+      mergePatch({ page: { ...element.page, dashboards } })
+      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health', 'inventory-risk']))
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const all = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      await element.updateComplete
+      const favorites = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { all, favorites, mine: rows() }
+    })
+
+    expect(state.all).toEqual(['Operations Health', 'Inventory Risk', 'Executive Sales Dashboard', 'Customer Detail'])
+    expect(state.favorites).toEqual(['Operations Health', 'Inventory Risk'])
+    expect(state.mine).toEqual(['Executive Sales Dashboard'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('recording a recent dashboard does not retarget the activated link during reordering', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => localStorage.removeItem('leapview.dashboard-catalog.recents.v1'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page') && customElements.get('lv-entity-list'))
+    const target = page.locator('a[href="/dashboards/inventory-risk"]')
+    let focused = false
+    for (let count = 0; count < 40; count++) {
+      await page.keyboard.press('Tab')
+      focused = await target.evaluate((element) => {
+        let active: Element | null = element.ownerDocument.activeElement
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+        return active === element
+      })
+      if (focused) break
+    }
+    expect(focused).toBe(true)
+    await Promise.all([
+      page.waitForURL((url) => url.pathname !== '/'),
+      page.keyboard.press('Enter'),
+    ])
+    expect(new URL(page.url()).pathname).toBe('/dashboards/inventory-risk')
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard favorites use resource ids when catalog ids are qualified', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const dashboards = element.page.dashboards.map((dashboard: any) => ({
+        ...dashboard,
+        id: `instance:project:test:${dashboard.dashboardId}`,
+      }))
+      mergePatch({ page: { ...element.page, dashboards } })
+      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health']))
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const button = list.querySelector('.entity-list-favorite') as HTMLButtonElement
+      const titles = Array.from(list.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const pressedBeforeToggle = button.getAttribute('aria-pressed')
+      button.click()
+      await element.updateComplete
+      return {
+        titles,
+        pressedBeforeToggle,
+        stored: JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]'),
+      }
+    })
+
+    expect(state.titles).toEqual(['Operations Health'])
+    expect(state.pressedBeforeToggle).toBe('true')
+    expect(state.stored).toEqual([])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard overflow actions open a permission-aware menu and details drawer', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
+          ...dashboard,
+          catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
+          href: index === 0 ? '/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone' : dashboard.href,
+        })),
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      let copiedLink = ''
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (value: string) => { copiedLink = value } },
+      })
+      const trigger = list.querySelector('.entity-list-row-action') as HTMLButtonElement
+      trigger.click()
+      await element.updateComplete
+      const menu = root.querySelector('[role="menu"]') as HTMLElement
+      const menuLabels = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item: Element) => item.textContent?.trim())
+      const rowHref = list.querySelector('.entity-list-identity')?.getAttribute('href')
+      const editHref = menu.querySelector('a[role="menuitem"]')?.getAttribute('href')
+      ;(menu.querySelector('[data-action="copy-link"]') as HTMLButtonElement).click()
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      trigger.click()
+      await element.updateComplete
+      const reopenedMenu = root.querySelector('[role="menu"]') as HTMLElement
+      ;(reopenedMenu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const drawer = root.querySelector('.catalog-details-drawer') as HTMLElement
+      const details = Array.from(drawer.querySelectorAll('dt, dd')).map((item: Element) => item.textContent?.trim())
+      const title = drawer.querySelector('h2')?.textContent?.trim()
+      const description = drawer.querySelector('.catalog-details-description')?.textContent?.trim()
+      ;(drawer.querySelector('.catalog-details-close') as HTMLButtonElement).click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return {
+        menuLabels,
+        rowHref,
+        editHref,
+        copiedLink,
+        title,
+        description,
+        details,
+        drawerClosed: !root.querySelector('.catalog-details-drawer'),
+        focusRestored: root.activeElement === trigger,
+      }
+    })
+
+    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive'])
+    expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
+    expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
+    expect(state.copiedLink).toBe(`${baseURL}/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone`)
+    expect(state.title).toBe('Executive Sales Dashboard')
+    expect(state.description).toBe('Fixture report')
+    expect(state.details).toEqual(expect.arrayContaining(['Data model', 'Olist model', 'Owner', 'Analytics', 'Status', 'Published', 'Pages', '1']))
+    expect(state.drawerClosed).toBe(true)
+    expect(state.focusRestored).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('managed dashboard menu offers an editable copy without edit or archive actions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const menu = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      return Array.from(root.querySelectorAll('[role="menuitem"]')).map((item: Element) => ({
+        label: item.textContent?.trim(),
+        href: item.getAttribute('href'),
+      }))
+    })
+
+    expect(menu).toEqual([
+      { label: 'Make an editable copy', href: '/dashboards/executive-sales/fork' },
+      { label: 'View details', href: null },
+      { label: 'Copy link', href: null },
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+test('My dashboards removes the redundant owner column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const headers = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any) => ({ ...dashboard, catalogScope: 'mine', owner: 'You' })),
+      } })
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+    })
+    expect(headers).toEqual(['Dashboard', 'Data model', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('data model is a dedicated sortable column instead of dashboard subtitle metadata', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
-      const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const popularityHeader = list.querySelector('button[aria-label="Sort by Popularity"]') as HTMLButtonElement
-      const before = rows()
-      popularityHeader.click()
       await list.updateComplete
-      const ascending = rows()
-      const ascendingSort = popularityHeader.closest('th')?.getAttribute('aria-sort')
-      popularityHeader.click()
-      await list.updateComplete
-      return { before, ascending, ascendingSort, descending: rows(), descendingSort: popularityHeader.closest('th')?.getAttribute('aria-sort') }
+      const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
+      return {
+        headers: Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim()),
+        models: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+        subtitles: rows.map((row) => row.querySelector('.entity-list-meta')?.textContent?.trim() ?? ''),
+        sortable: Boolean(list.querySelector('button[aria-label="Sort by Data model"]')),
+      }
     })
 
-    expect(state.before).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.ascending).toEqual(['Customer Detail', 'Inventory Risk', 'Operations Health', 'Executive Sales Dashboard'])
-    expect(state.ascendingSort).toBe('ascending')
-    expect(state.descending).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.descendingSort).toBe('descending')
+    expect(state).toEqual({
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
+      models: ['Olist', 'Operations', 'Inventory', 'Customers'],
+      subtitles: ['', '', '', ''],
+      sortable: true,
+    })
   } finally {
     await page.close()
   }
 })
 
-test('last refreshed sorting uses timestamps rather than relative labels', async () => {
+test('owned dashboards use the signed-in display name and avatar instead of You', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const owner = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => index === 0
+          ? { ...dashboard, catalogScope: 'mine', owner: 'You' }
+          : dashboard),
+      } })
+      await element.updateComplete
+      const cell = element.shadowRoot.querySelectorAll('.entity-list-cell')[1] as HTMLElement
+      const avatar = cell.querySelector('lv-user-avatar') as any
+      return {
+        text: cell.textContent?.trim(),
+        label: cell.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label'),
+        avatarName: avatar?.name,
+        avatarURL: avatar?.imageUrl,
+        title: cell.getAttribute('title'),
+      }
+    })
+
+    expect(owner).toEqual({
+      text: 'Jacob Nielsen',
+      label: 'Jacob Nielsen',
+      avatarName: 'Jacob Nielsen',
+      avatarURL: '/profile/avatars/jacob/avatar-digest',
+      title: '',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard owners render as compact accessible avatars with hover labels', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+    })
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-person-avatar').first().hover()
+    const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const ownerCell = list.querySelector('tbody tr.entity-list-table-row')?.querySelectorAll('.entity-list-cell')[1] as HTMLElement
+      const owner = ownerCell.querySelector('.entity-list-person-avatar') as HTMLElement
+      const tooltip = owner?.querySelector('.entity-list-hover-tooltip') as HTMLElement
+      return {
+        cellTitle: ownerCell.title,
+        label: owner?.getAttribute('aria-label'),
+        hasAvatar: Boolean(owner?.querySelector('lv-user-avatar')),
+        hasVisibleName: Boolean(ownerCell.querySelector('.entity-list-person-name')),
+        hovered: owner?.matches(':hover'),
+        tooltipText: tooltip?.textContent?.trim(),
+        tooltipVisibleOnHover: getComputedStyle(tooltip).visibility,
+      }
+    })
+
+    expect(state).toEqual({
+      cellTitle: '',
+      label: 'Analytics',
+      hasAvatar: true,
+      hasVisibleName: false,
+      hovered: true,
+      tooltipText: 'Analytics',
+      tooltipVisibleOnHover: 'visible',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard titles use regular emphasis and popularity has a dedicated hoverable column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+    })
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-popularity').first().hover()
+    const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
+      const firstPopularity = rows[0].querySelector('.entity-list-popularity') as HTMLElement
+      const missingPopularity = rows[3].querySelector('.entity-list-popularity') as HTMLElement
+      return {
+        headers: Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim()),
+        titleWeight: getComputedStyle(rows[0].querySelector('.entity-list-title') as HTMLElement).fontWeight,
+        firstLabel: firstPopularity?.getAttribute('aria-label'),
+        firstTooltip: firstPopularity?.querySelector('.entity-list-hover-tooltip')?.textContent?.trim(),
+        firstTooltipVisibility: getComputedStyle(firstPopularity?.querySelector('.entity-list-hover-tooltip') as HTMLElement).visibility,
+        missingLabel: missingPopularity?.getAttribute('aria-label'),
+      }
+    })
+
+    expect(state).toEqual({
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'],
+      titleWeight: '400',
+      firstLabel: 'High popularity — top 10% in the last 30 days',
+      firstTooltip: 'High popularity — top 10% in the last 30 days',
+      firstTooltipVisibility: 'visible',
+      missingLabel: 'Not ranked — popularity is based on distinct viewers, not opens; at least 3 viewers and a top-30% rank over 30 days are required.',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('catalog omits deferred filter and recommendation controls for v1', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      return {
+        hasFilter: Boolean(root.querySelector('[aria-label="Filter dashboards"]')),
+        hasSort: Boolean(root.querySelector('[aria-label="Sort dashboards"]')),
+        searchPlaceholder: list.getAttribute('search-placeholder'),
+      }
+    })
+
+    expect(state).toEqual({
+      hasFilter: false,
+      hasSort: false,
+      searchPlaceholder: 'Search dashboards',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard favorites persist and rank first while dashboard opens are recorded', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      localStorage.clear()
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      let list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const favorites = () => Array.from(list.querySelectorAll('.entity-list-favorite')).map((button: Element) => button.getAttribute('aria-label'))
+      const titles = () => Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim())
+      const favoriteLabels = favorites()
+      ;(list.querySelectorAll('.entity-list-favorite')[2] as HTMLButtonElement).click()
+      await element.updateComplete
+      list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const ranked = titles()
+      const pressed = (list.querySelector('.entity-list-favorite') as HTMLButtonElement).getAttribute('aria-pressed')
+      const storedFavorites = JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]')
+      const operations = list.querySelector('a[data-item-id="operations-health"]') as HTMLAnchorElement
+      operations.addEventListener('click', (event) => event.preventDefault(), { once: true })
+      operations.click()
+      const storedRecents = JSON.parse(localStorage.getItem('leapview.dashboard-catalog.recents.v1') ?? '{}')
+      return { favoriteLabels, ranked, pressed, storedFavorites, storedRecents }
+    })
+
+    expect(state.favoriteLabels).toContain('Add Inventory Risk to favorites')
+    expect(state.ranked[0]).toBe('Inventory Risk')
+    expect(state.pressed).toBe('true')
+    expect(state.storedFavorites).toContain('inventory-risk')
+    expect(state.storedRecents['operations-health']).toEqual(expect.any(String))
+  } finally {
+    await page.close()
+  }
+})
+
+test('date columns reveal exact localized date and time on hover and focus', async () => {
+  for (const scenario of [
+    { timezoneId: 'UTC', updatedTime: '9:42 AM', lastOpenedTime: '8:15 AM' },
+    { timezoneId: 'Europe/Berlin', updatedTime: '11:42 AM', lastOpenedTime: '10:15 AM' },
+  ]) {
+    const context = await browser.newContext({ timezoneId: scenario.timezoneId, locale: 'en-US', viewport: { width: 1280, height: 820 } })
+    const page = await context.newPage()
+    try {
+      await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+      const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+        localStorage.setItem('leapview.dashboard-catalog.recents.v1', JSON.stringify({
+          'executive-sales': '2026-08-12T08:15:00Z',
+          'operations-health': '2025-12-31T19:30:00Z',
+        }))
+        element.reloadDiscoveryPreferences()
+        await element.updateComplete
+        const list = element.shadowRoot.querySelector('lv-entity-list') as any
+        await list.updateComplete
+        return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
+          title: row.querySelector('.entity-list-title')?.textContent?.trim(),
+          updated: row.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
+          updatedLabel: row.querySelector('.entity-list-datetime[data-column="updated"]')?.getAttribute('aria-label'),
+          lastOpened: row.querySelector('.entity-list-datetime[data-column="lastOpened"] .entity-list-datetime-value')?.textContent?.trim(),
+          lastOpenedLabel: row.querySelector('.entity-list-datetime[data-column="lastOpened"]')?.getAttribute('aria-label'),
+        }))
+      })
+
+      expect(state[0]).toEqual({
+        title: 'Executive Sales Dashboard',
+        updated: 'Aug 12',
+        updatedLabel: expect.stringContaining(`Updated: Aug 12, 2026, ${scenario.updatedTime}`),
+        lastOpened: 'Aug 12',
+        lastOpenedLabel: expect.stringContaining(`Last opened: Aug 12, 2026, ${scenario.lastOpenedTime}`),
+      })
+      expect(state[1]).toEqual({
+        title: 'Operations Health',
+        updated: 'Aug 11',
+        updatedLabel: expect.stringContaining('Updated: Aug 11, 2026'),
+        lastOpened: 'Dec 31, 2025',
+        lastOpenedLabel: expect.stringContaining('Last opened: Dec 31, 2025'),
+      })
+      expect(state[2].lastOpened).toBeUndefined()
+
+      await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"]').first().hover()
+      const visibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+      expect(visibility).toBe('visible')
+      await page.mouse.move(0, 0)
+      await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"]').first().focus()
+      const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+      expect(focusVisibility).toBe('visible')
+    } finally {
+      await context.close()
+    }
+  }
+})
+
+test('dashboard lifecycle status is implicit in discovery views and explicit in My dashboards', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const lifecycleStatuses = ['published', 'private_draft', 'unpublished_changes', 'published']
+      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, catalogScope: 'mine', owner: 'You', status: lifecycleStatuses[index] })) } })
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const discoveryHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+      const discoveryBadges = Array.from(list.querySelectorAll('.entity-list-title-row .entity-list-badge')).map((badge: Element) => ({
+        label: badge.textContent?.trim(),
+        title: badge.getAttribute('title'),
+      }))
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      await list.updateComplete
+      const mineHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+      const statusPresentations = Array.from(list.querySelectorAll('.entity-list-status')).map((status: Element) => ({
+        className: status.className,
+        label: status.textContent?.trim(),
+        icon: status.querySelector('.entity-list-status-icon')?.innerHTML,
+        iconWidth: Math.round(status.querySelector('.entity-list-status-icon svg')?.getBoundingClientRect().width ?? 0),
+        fontWeight: getComputedStyle(status).fontWeight,
+        title: status.closest('td')?.getAttribute('title'),
+      }))
+      return { discoveryHeaders, discoveryBadges, mineHeaders, statuses: statusPresentations, mineBadges: list.querySelectorAll('.entity-list-title-row .entity-list-badge').length }
+    })
+
+    expect(state.discoveryHeaders).toEqual(['Dashboard', 'Data model', 'Owner', 'Popularity', 'Updated', 'Last opened', 'Actions'])
+    expect(state.discoveryBadges).toEqual([
+      { label: 'Draft', title: 'Private draft — only visible to you until published' },
+      { label: 'Changes', title: 'Unpublished changes — the published version remains live' },
+    ])
+    expect(state.mineHeaders).toEqual(['Dashboard', 'Data model', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'])
+    expect(state.mineBadges).toBe(0)
+    expect(state.statuses.map(({ label, className }) => ({ label, className }))).toEqual([
+      { label: 'Published', className: 'entity-list-status is-success is-quiet' },
+      { label: 'Draft', className: 'entity-list-status is-muted is-quiet' },
+      { label: 'Changes pending', className: 'entity-list-status is-attention is-quiet' },
+      { label: 'Published', className: 'entity-list-status is-success is-quiet' },
+    ])
+    expect(state.statuses.every(({ fontWeight }) => fontWeight === '400')).toBe(true)
+    expect(state.statuses.every(({ iconWidth }) => iconWidth === 14)).toBe(true)
+    expect(state.statuses[1].title).toContain('Private draft')
+    expect(state.statuses[2].title).toContain('Unpublished changes')
+    expect(state.statuses[1].icon).toContain('cx="12" cy="16" r="1"')
+    expect(state.statuses[2].icon).toContain('M14.364 13.634')
+    expect(state.statuses[0].icon).not.toEqual(state.statuses[1].icon)
+    expect(state.statuses[1].icon).not.toEqual(state.statuses[2].icon)
+  } finally {
+    await page.close()
+  }
+})
+
+test('updated sorting uses timestamps rather than relative labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -174,7 +946,7 @@ test('last refreshed sorting uses timestamps rather than relative labels', async
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
       const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const header = list.querySelector('button[aria-label="Sort by Last refreshed"]') as HTMLButtonElement
+      const header = list.querySelector('button[aria-label="Sort by Updated"]') as HTMLButtonElement
       header.click()
       await list.updateComplete
       const ascending = rows()
@@ -190,7 +962,7 @@ test('last refreshed sorting uses timestamps rather than relative labels', async
   }
 })
 
-test('CSV export uses displayed values instead of internal sort keys', async () => {
+test('CSV export uses compact displayed dates instead of internal sort keys', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -211,27 +983,27 @@ test('CSV export uses displayed values instead of internal sort keys', async () 
       return exported?.text()
     })
 
-    expect(csv).toContain('"High"')
-    expect(csv).toContain('"2 hr ago"')
+    expect(csv).toContain('"Analytics"')
+    expect(csv).not.toContain('"Status"')
+    expect(csv).not.toContain('"Published"')
+    expect(csv).toContain('"Aug 12"')
     expect(csv).not.toContain('2026-08-12T09:42:00Z')
   } finally {
     await page.close()
   }
 })
 
-test('relative freshness labels update while the catalog remains open', async () => {
+test('updated dates include the year when it differs from the current year', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.clock.install({ time: new Date('2026-08-12T10:41:00Z') })
+    await page.clock.install({ time: new Date('2027-01-02T10:41:00Z') })
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
-    const freshness = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim(),
+    const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
+      element.shadowRoot.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
     )
 
-    expect(await freshness()).toBe('59 min ago')
-    await page.clock.fastForward(60_000)
-    expect(await freshness()).toBe('1 hr ago')
+    expect(await updated()).toBe('Aug 12, 2026')
   } finally {
     await page.close()
   }
@@ -245,10 +1017,8 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
     const colors = async () => page.locator('lv-catalog-page').evaluate((element: any) => {
       const root = element.shadowRoot
       const highPaths = Array.from(root.querySelectorAll('.entity-list-badge-popularity.is-high path')) as SVGPathElement[]
-      const empty = root.querySelector('.entity-list-badge-empty') as HTMLElement
       return {
         bars: highPaths.map((path) => getComputedStyle(path).stroke),
-        empty: getComputedStyle(empty).color,
       }
     })
 
@@ -258,11 +1028,9 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
 
     expect(light).toEqual({
       bars: ['rgb(31, 111, 235)', 'rgb(31, 111, 235)', 'rgb(31, 111, 235)'],
-      empty: 'rgb(129, 139, 152)',
     })
     expect(dark).toEqual({
       bars: ['rgb(77, 160, 255)', 'rgb(77, 160, 255)', 'rgb(77, 160, 255)'],
-      empty: 'rgb(101, 108, 118)',
     })
   } finally {
     await page.close()
@@ -330,6 +1098,9 @@ function testDocument(): string {
         dashboardId: 'executive-sales',
         appearanceIcon: 'chart-no-axes-combined',
         appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Analytics',
         title: 'Executive Sales Dashboard',
         description: 'Fixture report',
         semanticModel: 'olist',
@@ -344,6 +1115,9 @@ function testDocument(): string {
         dashboardId: 'operations-health',
         appearanceIcon: 'package-check',
         appearanceColor: 'orange',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Operations',
         title: 'Operations Health',
         description: 'Fulfillment and delivery performance.',
         semanticModel: 'operations',
@@ -355,6 +1129,12 @@ function testDocument(): string {
       },
       {
         id: 'inventory-risk',
+        dashboardId: 'inventory-risk',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Supply chain',
         title: 'Inventory Risk',
         description: 'Stock exposure and replenishment.',
         semanticModel: 'inventory',
@@ -366,6 +1146,11 @@ function testDocument(): string {
       },
       {
         id: 'customer-detail',
+        dashboardId: 'customer-detail',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
         title: 'Customer Detail',
         description: 'Customer profile details.',
         semanticModel: 'customers',
@@ -386,7 +1171,7 @@ function testDocument(): string {
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page }))}">
+        <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
           <lv-catalog-page></lv-catalog-page>
         </main>
         <script type="module" src="/catalog-page-under-test.js"></script>

@@ -10,18 +10,26 @@ import (
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	project "github.com/flidai/leapview/internal/project"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/release"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const admissionInstanceID = "lvinst_0123456789abcdefghijklmnopqrstuv"
 
 func admissionDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
@@ -68,12 +76,24 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	leaseID := "0198f2c0-7c7a-7f00-8a11-000000000107"
 	pool := "pool-admission"
 	artifactDigest := admissionDigest('e')
-	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, nil)
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "connection-admission", Kind: projectgraph.KindConnection, Name: "admission"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
+		Connections: map[string]semanticmodel.Connection{
+			"connection-admission": {Kind: "postgres"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("source bundle: %v", err)
+	}
+	resourceInventory, err := project.NewResourceUIDInventory(portableArtifact)
+	if err != nil {
+		t.Fatalf("resource inventory: %v", err)
+	}
 	planRecord := nativePlanFixture(t, deploymentnative.PlanInput{
-		PlanID: planID, TargetID: "target-admission", PlanRevision: 1,
+		PlanID: planID, TargetID: admissionInstanceID, PlanRevision: 1,
 		CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'),
 		SecurityDomainFingerprint: admissionDigest('d'), ArtifactDigest: artifactDigest,
 		QualificationDigest: admissionDigest('3'),
@@ -103,20 +123,39 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
 		QualificationDigest: admissionDigest('3'),
 		CandidateExpiresAt:  time.Date(2099, 1, 1, 13, 0, 0, 0, time.UTC),
-		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: "target-admission", OwnerID: "builder-admission", FencingEpoch: 1},
-		Generation:          GenerationEvidence{GenerationID: genID, TargetID: "target-admission", CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
-		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: admissionDigest('b'), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
+		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: admissionInstanceID, OwnerID: "builder-admission", FencingEpoch: 1},
+		Generation:          GenerationEvidence{GenerationID: genID, TargetID: admissionInstanceID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
+		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: portableArtifact.Digest(), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
 		Graph:               graph,
+		ResourceInventory:   resourceInventory,
 		ManagedDataPins:     []release.ManagedDataPin{},
 		Provenance: release.ProvenanceInput{
-			Artifact:  release.ProjectArtifactProvenance{SourceDigest: admissionDigest('a'), ProjectDigest: admissionDigest('b'), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1},
+			Artifact:  release.ProjectArtifactProvenance{SourceDigest: admissionDigest('a'), ProjectDigest: portableArtifact.Digest(), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1},
 			Candidate: release.CandidateProvenance{ID: candidateID, OwnerID: "builder-admission"},
 			Plan: release.GenerationPlanProvenance{
-				Identity: projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: genID}, TargetID: "target-admission", RuntimeVersion: "runtime", PolicyDigest: admissionDigest('d'), DataRevision: "sources:admission", DataMode: release.GenerationDataRefreshSources,
-				AuthoredConnections: []release.AuthoredConnectionEvidence{{ConnectionID: "connection_admission", ConnectorKind: "postgres"}}, GateEvidence: &gate,
+				Identity: projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: genID}, TargetID: admissionInstanceID, RuntimeVersion: "runtime", PolicyDigest: admissionDigest('d'), DataRevision: "sources:admission", DataMode: release.GenerationDataRefreshSources,
+				AuthoredConnections: []release.AuthoredConnectionEvidence{{ConnectionID: "connection-admission", ConnectorKind: "postgres"}}, GateEvidence: &gate,
 			},
 		},
 	}
+}
+
+func admissionSourceBundle(t *testing.T, graphID projectgraph.ResourceID, title string) projectartifact.SourceBundle {
+	t.Helper()
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: graphID, Kind: projectgraph.KindConnection, Name: "admission"}}, nil)
+	if err != nil {
+		t.Fatalf("source graph: %v", err)
+	}
+	bundle, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
+		Title: title,
+		Connections: map[string]semanticmodel.Connection{
+			graphID.String(): {Kind: "postgres"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("source bundle: %v", err)
+	}
+	return bundle
 }
 
 func TestNormalizeGenerationAdmissionAcceptsExactEvidence(t *testing.T) {
@@ -127,6 +166,44 @@ func TestNormalizeGenerationAdmissionAcceptsExactEvidence(t *testing.T) {
 	}
 	if string(got.Commit.CommitMarker) != string(input.Commit.CommitMarker) {
 		t.Fatal("normalization changed canonical commit marker")
+	}
+}
+
+func TestNormalizeGenerationAdmissionRejectsResourceInventoryAuthorityDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*GenerationAdmissionInput)
+	}{
+		{name: "missing inventory", mutate: func(input *GenerationAdmissionInput) {
+			input.ResourceInventory = project.ResourceUIDInventory{}
+		}},
+		{name: "different graph", mutate: func(input *GenerationAdmissionInput) {
+			bundle := admissionSourceBundle(t, "connection-other", "")
+			inventory, err := project.NewResourceUIDInventory(bundle)
+			if err != nil {
+				t.Fatalf("other graph inventory: %v", err)
+			}
+			input.ResourceInventory = inventory
+		}},
+		{name: "different bundle digest", mutate: func(input *GenerationAdmissionInput) {
+			bundle := admissionSourceBundle(t, "connection-admission", "different")
+			inventory, err := project.NewResourceUIDInventory(bundle)
+			if err != nil {
+				t.Fatalf("other bundle inventory: %v", err)
+			}
+			input.ResourceInventory = inventory
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := validGenerationAdmissionInput(t)
+			test.mutate(&input)
+			if _, err := normalizeInput(input); err == nil {
+				t.Fatal("normalize unexpectedly accepted resource inventory authority drift")
+			} else if !errors.Is(err, deploymentnative.ErrInvalid) && !errors.Is(err, deploymentnative.ErrConflict) {
+				t.Fatalf("normalize error = %v, want native invalid/conflict", err)
+			}
+		})
 	}
 }
 
@@ -258,11 +335,23 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := platformbootstrappostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := projectpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := deploymentnative.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	if err := servingnative.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), projectpostgres.ResourceUIDSchemaSQL()); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -281,7 +370,28 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	seedGenerationAdmissionBootstrap(t, p, admissionInstanceID, "project_admission", "prod")
 	return p
+}
+
+func seedGenerationAdmissionBootstrap(t *testing.T, db *pgxpool.Pool, instanceID, projectID, environment string) {
+	t.Helper()
+	bootstrap := platformbootstrappostgres.New(db)
+	if err := bootstrap.EnsureInstanceID(t.Context(), instanceID); err != nil {
+		t.Fatalf("ensure instance identity: %v", err)
+	}
+	if err := bootstrap.BindInstanceEnvironment(t.Context(), environment); err != nil {
+		t.Fatalf("bind instance environment: %v", err)
+	}
+	if _, err := projectpostgres.New(db).Ensure(t.Context(), projectpostgres.EnsureInput{ID: projectgraph.ResourceID(projectID), Title: projectID}); err != nil {
+		t.Fatalf("ensure project identity: %v", err)
+	}
+	if _, err := bootstrap.ClaimProject(t.Context(), platformbootstrappostgres.ProjectClaimInput{
+		ProjectID: projectID, Environment: environment, ClaimedBy: "bootstrap-admin",
+		ClaimedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("claim project: %v", err)
+	}
 }
 
 func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, input GenerationAdmissionInput) {
@@ -379,6 +489,17 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if lineageDigest != expectedLineage.Digest || lineageProject != input.Bundle.ProjectID.String() {
 		t.Fatalf("committed lineage binding = digest %q project %q, want digest %q project %q", lineageDigest, lineageProject, expectedLineage.Digest, input.Bundle.ProjectID)
 	}
+	var inventoryInstance, inventoryProject, inventoryEnvironment, inventoryTarget, inventoryGraphDigest, inventoryBundleDigest, inventoryJSON string
+	if err := p.QueryRow(t.Context(), `SELECT instance_id,project_id,environment,target_id,graph_digest,bundle_digest,inventory_json::text FROM project.resource_uid_inventory WHERE generation_id=$1::uuid`, input.Generation.GenerationID).Scan(&inventoryInstance, &inventoryProject, &inventoryEnvironment, &inventoryTarget, &inventoryGraphDigest, &inventoryBundleDigest, &inventoryJSON); err != nil {
+		t.Fatalf("load committed resource UID inventory: %v", err)
+	}
+	expectedInventoryJSON, err := input.ResourceInventory.JSON()
+	if err != nil {
+		t.Fatalf("encode expected resource UID inventory: %v", err)
+	}
+	if inventoryInstance != input.Generation.TargetID || inventoryProject != input.Bundle.ProjectID.String() || inventoryEnvironment != string(input.Bundle.Environment) || inventoryTarget != input.Generation.TargetID || inventoryGraphDigest != input.Graph.Digest() || inventoryBundleDigest != input.Bundle.ProjectDigest || !sameJSON([]byte(inventoryJSON), expectedInventoryJSON) {
+		t.Fatalf("committed resource UID inventory = %q %q %q %q graph=%q bundle=%q json=%s, want exact admission scope and evidence", inventoryInstance, inventoryProject, inventoryEnvironment, inventoryTarget, inventoryGraphDigest, inventoryBundleDigest, inventoryJSON)
+	}
 	if _, err := lineage.LoadBound(t.Context(), input.Generation.TargetID, input.Generation.GenerationID); err != nil {
 		t.Fatalf("load committed lineage graph by canonical target/generation binding: %v", err)
 	}
@@ -445,12 +566,12 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if attemptState != string(deploymentnative.AttemptRunning) {
 		t.Fatalf("rollback left attempt state %q", attemptState)
 	}
-	var bindings, seals, generations, bundles, lineageGraphs, lineageBindings int
-	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid), (SELECT count(*) FROM lineage.graphs WHERE project_id=$4), (SELECT count(*) FROM lineage.bindings WHERE delivery_id=$5 AND generation_id=$3::text)`, rollbackInput.Commit.AttemptID, rollbackInput.Seal.SealID, rollbackInput.Generation.GenerationID, rollbackInput.Bundle.ProjectID.String(), rollbackInput.Generation.TargetID).Scan(&bindings, &seals, &generations, &bundles, &lineageGraphs, &lineageBindings); err != nil {
+	var bindings, seals, generations, bundles, inventoryRows, lineageGraphs, lineageBindings int
+	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid), (SELECT count(*) FROM project.resource_uid_inventory WHERE generation_id=$3::uuid), (SELECT count(*) FROM lineage.graphs WHERE project_id=$4), (SELECT count(*) FROM lineage.bindings WHERE delivery_id=$5 AND generation_id=$3::text)`, rollbackInput.Commit.AttemptID, rollbackInput.Seal.SealID, rollbackInput.Generation.GenerationID, rollbackInput.Bundle.ProjectID.String(), rollbackInput.Generation.TargetID).Scan(&bindings, &seals, &generations, &bundles, &inventoryRows, &lineageGraphs, &lineageBindings); err != nil {
 		t.Fatal(err)
 	}
-	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 || lineageGraphs != lineageGraphCountBefore || lineageBindings != 0 {
-		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d lineage_graphs=%d lineage_bindings=%d", bindings, seals, generations, bundles, lineageGraphs, lineageBindings)
+	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 || inventoryRows != 0 || lineageGraphs != lineageGraphCountBefore || lineageBindings != 0 {
+		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d inventory=%d lineage_graphs=%d lineage_bindings=%d", bindings, seals, generations, bundles, inventoryRows, lineageGraphs, lineageBindings)
 	}
 	var retentionRoots int
 	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, rollbackInput.Generation.CandidateID).Scan(&retentionRoots); err != nil {

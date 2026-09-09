@@ -78,7 +78,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	forkHandler := protectResource(
 		access.CapabilityResourceEdit,
 		dashboardhttp.ProjectObjectRefs,
-		protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
+		protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
 	)
 	r.Get("/dashboards/{dashboard}/fork", forkHandler)
 	r.Post("/dashboards/{dashboard}/fork", forkHandler)
@@ -86,9 +86,15 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilder))
+	r.Post("/dashboards/{dashboard}/archive", protectAuthoring(access.CapabilityResourceManage, h.DashboardArchive))
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderPreview))
 	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderCommand))
+	// Builder filter state is a read-side exact-draft preview capability. It
+	// shares authoring authorization but has dedicated endpoints and never
+	// enters the published dashboard command/session routes.
+	r.Post("/dashboards/{dashboard}/draft/filter", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderFilterCommand))
+	r.Post("/dashboards/{dashboard}/draft/filter-options", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderFilterOptions))
 	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
 	r.Post("/dashboards/{dashboard}/commands/visual-window", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.VisualWindow))
 	r.Post("/dashboards/{dashboard}/commands/select", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Select))

@@ -80,15 +80,34 @@ implementation behind the projection package.
 
 ## Downstream ownership
 
-FAI-620 supplies canonical inputs for future FAI-622 compatibility/security
-classification and immutable publication evidence. This package does not
-implement that classifier, widening approvals, publication storage, replay
-transactions, or deployment-history integration.
+FAI-620 supplies the only canonical inputs consumed by FAI-622 compatibility
+and publication authority. The pure `contractversion` classifier compares
+already-canonical bytes; it does not project, serialize, or hash resources.
+The separate `contractpublication` domain binds an explicit genesis or exact
+existing baseline to the candidate profile, authored identity, version,
+canonical bytes, digest, validation checks, compatibility/security result, and
+the directly published affected-resource identity, and any required widening
+approval. The direct identity is the immutable seed for later Project-owned
+dependency-graph expansion; it does not claim to contain the consumer graph.
+PostgreSQL appends and replays that evidence through caller-owned transactions.
+Reusing a version with different bytes, using a stale or mismatched baseline,
+omitting required widening approval, or reading tampered evidence fails closed.
 
-FAI-662's sealed-input and coverage safeguards belong at this boundary. Its
-database publication-integrity requirements remain with publication storage.
-FAI-670 retains Project-qualified ResourceUID authority. FAI-645 remains a
-downstream consumer; its cache, lifecycle, and audit implementation is not
-part of this reconciliation.
+Publication does not authorize activation. The approval evidence is an exact,
+bounded input to later deployment policy, not an approval workflow or a
+consumer authorization decision. FAI-645 consumes the stable publication and
+policy identities for lifecycle/history integration; FAI-649 owns activation
+and cutover.
+
+FAI-662's sealed-input and coverage safeguards remain at this boundary. Its
+database publication-integrity requirements are enforced by append-only
+publication storage and replay validation. FAI-622 stores the existing
+instance-qualified authored ID and kind; it does not allocate or resolve a
+ResourceUID. FAI-670 retains
+[Project-qualified ResourceUID authority](/docs/architecture/resource-uid-registry).
+Its inventory distinguishes canonical contract evidence from unversioned and
+non-contract-bearing resources; allocation does not invent publication
+authority. FAI-645 remains a downstream consumer; its cache, lifecycle, and
+audit implementation is not part of FAI-622.
 
 This boundary is not a claim that ADR-0016 or ADR-0017 qualification is complete.

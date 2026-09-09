@@ -13,7 +13,7 @@ func (p *Planner) spatialAggregatePlanIR(request SpatialTileRequest, filters []F
 		Metrics:       request.Metrics,
 		Filters:       filters,
 		ColumnMasks:   request.ColumnMasks,
-		SpatialBucket: &SpatialBucket{Latitude: request.Latitude, Longitude: request.Longitude, Zoom: request.Zoom, CellPixels: request.CellPixels},
+		SpatialBucket: &SpatialBucket{Latitude: request.Latitude, Longitude: request.Longitude, Zoom: request.Zoom, CellPixels: request.CellPixels, ClusterRadius: spatialClusterRadius(request.Cluster)},
 	}
 	resolved, err := p.resolveAggregate(semantic)
 	if err != nil {

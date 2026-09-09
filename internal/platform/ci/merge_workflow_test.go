@@ -49,7 +49,7 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 		if step.Run == "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare" && step.If == "" {
 			prepared = true
 		}
-		if step.Run == "task ci:full:extras" && step.If == "" {
+		if step.Run == "task ci:full:extras:hosted" && step.If == "" {
 			if !prepared {
 				t.Fatal("independent extras must prepare their own inputs first")
 			}

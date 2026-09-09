@@ -28,14 +28,17 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 	if kind != expected {
 		return nil, fmt.Errorf("visual type %q requires %s presentation, got %s", visualType, expected, kind)
 	}
+	if err := validateCanonicalPresentationApplicability(value, visualType); err != nil {
+		return nil, err
+	}
 	switch variant := value.Value.(type) {
 	case *document.CartesianDashboardPresentation:
-		if variant.Series != nil && visualType != document.DashboardVisualTypeCombo {
-			return nil, fmt.Errorf("presentation.series is only supported for combo visuals")
-		}
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
+		}
+		if visualType == document.DashboardVisualTypeCandlestick || visualType == document.DashboardVisualTypeBoxplot {
+			base.LabelPolicy = hiddenCanonicalLabelPolicy()
 		}
 		out := visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: base}
 		if variant.Smooth != nil {
@@ -51,8 +54,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			out.Step = *variant.Step
 		}
 		if variant.SymbolSize != nil {
+			if !finiteDashboardFloat(*variant.SymbolSize) {
+				return nil, fmt.Errorf("presentation.symbolSize must be finite")
+			}
 			if *variant.SymbolSize <= 0 {
-				return nil, fmt.Errorf("cartesian symbolSize must be greater than zero")
+				return nil, fmt.Errorf("presentation.symbolSize must be greater than zero")
 			}
 			out.SymbolSize = variant.SymbolSize
 		}
@@ -85,9 +91,30 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.ComboSeries = &series
 		}
+		if variant.SeriesIntent != nil {
+			seriesIntent, err := lowerCanonicalSeriesIntent(*variant.SeriesIntent)
+			if err != nil {
+				return nil, err
+			}
+			out.SeriesIntent = &seriesIntent
+		}
+		if variant.GainColor != nil {
+			if !validCanonicalColorIntent(*variant.GainColor) {
+				return nil, fmt.Errorf("presentation.gainColor %q is unsupported", *variant.GainColor)
+			}
+			color := visualizationir.VisualizationColorIntent(*variant.GainColor)
+			out.GainColor = &color
+		}
+		if variant.LossColor != nil {
+			if !validCanonicalColorIntent(*variant.LossColor) {
+				return nil, fmt.Errorf("presentation.lossColor %q is unsupported", *variant.LossColor)
+			}
+			color := visualizationir.VisualizationColorIntent(*variant.LossColor)
+			out.LossColor = &color
+		}
 		return out, nil
 	case *document.PointDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -108,8 +135,11 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 			}
 			out.Overplot = overplot.Strategy
 			if overplot.Opacity != nil {
+				if !finiteDashboardFloat(*overplot.Opacity) {
+					return nil, fmt.Errorf("presentation.overplot.opacity must be finite")
+				}
 				if *overplot.Opacity <= 0 || *overplot.Opacity > 1 {
-					return nil, fmt.Errorf("point overplot opacity must be greater than 0 and at most 1")
+					return nil, fmt.Errorf("presentation.overplot.opacity must be greater than 0 and at most 1")
 				}
 				out.Opacity = *overplot.Opacity
 			}
@@ -133,9 +163,12 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.ProportionalDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
+		}
+		if visualType == document.DashboardVisualTypeDonut && variant.CenterLabel != nil && strings.TrimSpace(*variant.CenterLabel) == "" {
+			return nil, fmt.Errorf("presentation.centerLabel must not be empty")
 		}
 		out := visualizationir.ProportionalVisualizationPresentation{VisualizationPresentation: base, Orientation: visualizationir.VisualizationOrientationVertical}
 		if variant.Orientation != nil {
@@ -158,23 +191,45 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		out.InnerRadius = variant.InnerRadius
 		out.OuterRadius = variant.OuterRadius
-		if out.InnerRadius != nil && (*out.InnerRadius < 0 || *out.InnerRadius > 1) {
-			return nil, fmt.Errorf("proportional innerRadius must be between zero and one")
+		if out.InnerRadius != nil {
+			if !finiteDashboardFloat(*out.InnerRadius) {
+				return nil, fmt.Errorf("presentation.innerRadius must be finite")
+			}
+			if *out.InnerRadius < 0 || *out.InnerRadius > 1 {
+				return nil, fmt.Errorf("presentation.innerRadius must be between zero and one")
+			}
 		}
-		if out.OuterRadius != nil && (*out.OuterRadius <= 0 || *out.OuterRadius > 1) {
-			return nil, fmt.Errorf("proportional outerRadius must be greater than zero and at most one")
+		if out.OuterRadius != nil {
+			if !finiteDashboardFloat(*out.OuterRadius) {
+				return nil, fmt.Errorf("presentation.outerRadius must be finite")
+			}
+			if *out.OuterRadius <= 0 || *out.OuterRadius > 1 {
+				return nil, fmt.Errorf("presentation.outerRadius must be greater than zero and at most one")
+			}
 		}
 		if out.InnerRadius != nil && out.OuterRadius != nil && *out.InnerRadius >= *out.OuterRadius {
-			return nil, fmt.Errorf("proportional innerRadius must be less than outerRadius")
+			return nil, fmt.Errorf("presentation.innerRadius must be less than outerRadius")
 		}
 		if variant.Align != nil {
+			switch *variant.Align {
+			case document.DashboardProportionalAlignmentLeft, document.DashboardProportionalAlignmentCenter, document.DashboardProportionalAlignmentRight:
+			default:
+				return nil, fmt.Errorf("presentation.align must be left, center, or right")
+			}
 			align := string(*variant.Align)
 			out.Align = &align
+		}
+		if variant.Sort != nil {
+			switch *variant.Sort {
+			case visualizationir.VisualizationSortDirectionAscending, visualizationir.VisualizationSortDirectionDescending:
+			default:
+				return nil, fmt.Errorf("presentation.sort must be ascending or descending")
+			}
 		}
 		out.Sort = variant.Sort
 		return out, nil
 	case *document.HierarchyDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, nil)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -190,11 +245,25 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.Roam != nil {
 			out.Roam = *variant.Roam
 		}
-		out.Layout = variant.Layout
+		if variant.Layout != nil {
+			switch *variant.Layout {
+			case visualizationir.VisualizationHierarchyLayoutStandard, visualizationir.VisualizationHierarchyLayoutCircular:
+				out.Layout = variant.Layout
+			default:
+				return nil, fmt.Errorf("presentation.layout must be standard or circular")
+			}
+		}
 		out.Breadcrumb = variant.Breadcrumb
 		out.NodeGap = variant.NodeGap
 		out.Curveness = variant.Curveness
-		out.Focus = variant.Focus
+		if variant.Focus != nil {
+			switch *variant.Focus {
+			case visualizationir.VisualizationGraphFocusNone, visualizationir.VisualizationGraphFocusAdjacency:
+				out.Focus = variant.Focus
+			default:
+				return nil, fmt.Errorf("presentation.focus must be none or adjacency")
+			}
+		}
 		if out.InitialDepth != nil && *out.InitialDepth < 0 {
 			return nil, fmt.Errorf("hierarchy initialDepth must not be negative")
 		}
@@ -206,7 +275,7 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		return out, nil
 	case *document.PolarDashboardPresentation:
-		base, err := lowerBasePresentation(variant.Legend, variant.Labels, variant.DisplayUnits)
+		base, err := lowerBasePresentation(variant.Legend, variant.LegendTitle, variant.LegendItems, variant.Labels, variant.DisplayUnits, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
@@ -223,25 +292,59 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.ShowPointer != nil {
 			out.ShowPointer = *variant.ShowPointer
 		}
-		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
-			return nil, fmt.Errorf("polar minimum must be less than maximum")
+		if out.Minimum != nil && !finiteDashboardFloat(*out.Minimum) {
+			return nil, fmt.Errorf("presentation.minimum must be finite")
 		}
-		if out.ProgressWidth != nil && *out.ProgressWidth <= 0 {
-			return nil, fmt.Errorf("polar progressWidth must be greater than zero")
+		if out.Maximum != nil && !finiteDashboardFloat(*out.Maximum) {
+			return nil, fmt.Errorf("presentation.maximum must be finite")
+		}
+		if visualType == document.DashboardVisualTypeGauge && (out.Minimum == nil || out.Maximum == nil) {
+			return nil, fmt.Errorf("presentation.minimum and presentation.maximum are required for gauge visuals")
+		}
+		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
+			return nil, fmt.Errorf("presentation.minimum must be less than maximum")
+		}
+		if visualType == document.DashboardVisualTypeRadar && out.Maximum != nil && *out.Maximum <= 0 {
+			return nil, fmt.Errorf("presentation.maximum must be greater than zero for radar visuals")
+		}
+		if out.Target != nil {
+			if !finiteDashboardFloat(*out.Target) {
+				return nil, fmt.Errorf("presentation.target must be finite")
+			}
+			if out.Minimum != nil && out.Maximum != nil && (*out.Target < *out.Minimum || *out.Target > *out.Maximum) {
+				return nil, fmt.Errorf("presentation.target must be within the gauge domain")
+			}
+		}
+		if out.ProgressWidth != nil {
+			if !finiteDashboardFloat(*out.ProgressWidth) {
+				return nil, fmt.Errorf("presentation.progressWidth must be finite")
+			}
+			if *out.ProgressWidth <= 0 {
+				return nil, fmt.Errorf("presentation.progressWidth must be greater than zero")
+			}
+		}
+		if out.Thresholds != nil {
+			var previous float64
+			for index, threshold := range *out.Thresholds {
+				if !finiteDashboardFloat(threshold.Value) {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be finite", index)
+				}
+				if out.Minimum != nil && out.Maximum != nil && (threshold.Value < *out.Minimum || threshold.Value > *out.Maximum) {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be within the gauge domain", index)
+				}
+				if index > 0 && threshold.Value <= previous {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be greater than the previous threshold", index)
+				}
+				previous = threshold.Value
+			}
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
-		base, err := lowerBasePresentation(nil, variant.Labels, nil)
+		base, err := lowerBasePresentation(nil, nil, nil, nil, nil, variant.AxisVisible)
 		if err != nil {
 			return nil, err
 		}
 		base.LabelPolicy = visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
-		if variant.Labels != nil {
-			base.LabelPolicy, err = lowerLabelPolicy(*variant.Labels)
-			if err != nil {
-				return nil, err
-			}
-		}
 		out := visualizationir.GeographicVisualizationPresentation{
 			VisualizationPresentation: base,
 			Roam:                      true, Theme: visualizationir.VisualizationMapThemeAuto,
@@ -260,6 +363,9 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		if variant.Camera != nil {
 			camera := variant.Camera
+			if err := validateDashboardMapCamera(camera); err != nil {
+				return nil, err
+			}
 			if camera.Mode != nil {
 				out.Camera.Mode = *camera.Mode
 			}
@@ -317,13 +423,90 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.Ranges != nil {
 			out.Ranges = append([]visualizationir.VisualizationKPIQualitativeRange(nil), (*variant.Ranges)...)
 		}
-		if variant.Thresholds != nil {
-			out.Thresholds = variant.Thresholds
-		}
 		return out, nil
 	default:
 		return nil, fmt.Errorf("unsupported Dashboard presentation variant %T", value.Value)
 	}
+}
+
+func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
+	mode := visualizationir.VisualizationMapCameraModeFitData
+	center := (*[]float64)(nil)
+	zoom := (*float64)(nil)
+	padding := int32(32)
+	minimumZoom, maximumZoom := float64(0), float64(14)
+	if camera != nil {
+		if camera.Mode != nil {
+			mode = *camera.Mode
+		}
+		center, zoom = camera.Center, camera.Zoom
+		if camera.Padding != nil {
+			padding = *camera.Padding
+		}
+		if camera.MinimumZoom != nil {
+			minimumZoom = *camera.MinimumZoom
+		}
+		if camera.MaximumZoom != nil {
+			maximumZoom = *camera.MaximumZoom
+		}
+	}
+	switch mode {
+	case visualizationir.VisualizationMapCameraModeFitData, visualizationir.VisualizationMapCameraModeFixed, visualizationir.VisualizationMapCameraModePreserve:
+	default:
+		return fmt.Errorf("presentation.camera.mode must be fit_data, fixed, or preserve")
+	}
+	if center != nil {
+		if len(*center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *center {
+			if !finiteDashboardFloat(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+			if index == 0 && (coordinate < -180 || coordinate > 180) {
+				return fmt.Errorf("presentation.camera.center[0] must be between -180 and 180")
+			}
+			if index == 1 && (coordinate < -90 || coordinate > 90) {
+				return fmt.Errorf("presentation.camera.center[1] must be between -90 and 90")
+			}
+		}
+	}
+	if zoom != nil && !finiteDashboardFloat(*zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if zoom != nil && (*zoom < 0 || *zoom > 24) {
+		return fmt.Errorf("presentation.camera.zoom must be between 0 and 24")
+	}
+	if padding < 0 {
+		return fmt.Errorf("presentation.camera.padding must be non-negative")
+	}
+	if !finiteDashboardFloat(minimumZoom) {
+		return fmt.Errorf("presentation.camera.minimumZoom must be finite")
+	}
+	if minimumZoom < 0 || minimumZoom > 24 {
+		return fmt.Errorf("presentation.camera.minimumZoom must be between 0 and 24")
+	}
+	if !finiteDashboardFloat(maximumZoom) {
+		return fmt.Errorf("presentation.camera.maximumZoom must be finite")
+	}
+	if maximumZoom < 0 || maximumZoom > 24 {
+		return fmt.Errorf("presentation.camera.maximumZoom must be between 0 and 24")
+	}
+	if minimumZoom > maximumZoom {
+		return fmt.Errorf("presentation.camera.minimumZoom must be less than or equal to maximumZoom")
+	}
+	if mode == visualizationir.VisualizationMapCameraModeFixed {
+		if center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+		if *zoom < minimumZoom || *zoom > maximumZoom {
+			return fmt.Errorf("presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom")
+		}
+	}
+	return nil
 }
 
 // ValidateCanonicalPresentationResultReferences keeps any future result-name
@@ -349,7 +532,186 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 			return nil, err
 		}
 	}
+	if err := validateCanonicalSeriesIntent(value, visualType, query); err != nil {
+		return nil, err
+	}
+	if err := validateCanonicalLegendQueryApplicability(value, visualType, query); err != nil {
+		return nil, err
+	}
 	return lowered, nil
+}
+
+func validateCanonicalPresentationApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType) error {
+	if base, err := value.Base(); err != nil {
+		return err
+	} else if base.AxisVisible != nil && !document.SupportsPresentationField(visualType, "axisVisible") {
+		return fmt.Errorf("presentation.axisVisible is not supported for %s visuals", visualType)
+	}
+	optionSupported := func(option string, present bool, supported bool) error {
+		if present && !supported {
+			return fmt.Errorf("presentation.%s is not supported for %s visuals", option, visualType)
+		}
+		return nil
+	}
+	switch variant := value.Value.(type) {
+	case *document.CartesianDashboardPresentation:
+		return validateCanonicalCartesianPresentationApplicability(variant, visualType)
+	case *document.HierarchyDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("legend", variant.Legend != nil, document.SupportsPresentationField(visualType, "legend")); err != nil {
+			return err
+		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
+			return err
+		}
+		if err := optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems")); err != nil {
+			return err
+		}
+		if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
+			return err
+		}
+		if err := optionSupported("initialDepth", variant.InitialDepth != nil, document.SupportsPresentationField(visualType, "initialDepth")); err != nil {
+			return err
+		}
+		if err := optionSupported("roam", variant.Roam != nil, document.SupportsPresentationField(visualType, "roam")); err != nil {
+			return err
+		}
+		if err := optionSupported("layout", variant.Layout != nil, document.SupportsPresentationField(visualType, "layout")); err != nil {
+			return err
+		}
+		if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, document.SupportsPresentationField(visualType, "breadcrumb")); err != nil {
+			return err
+		}
+		if err := optionSupported("nodeGap", variant.NodeGap != nil, document.SupportsPresentationField(visualType, "nodeGap")); err != nil {
+			return err
+		}
+		if err := optionSupported("curveness", variant.Curveness != nil, document.SupportsPresentationField(visualType, "curveness")); err != nil {
+			return err
+		}
+		if err := optionSupported("focus", variant.Focus != nil, document.SupportsPresentationField(visualType, "focus")); err != nil {
+			return err
+		}
+	case *document.PointDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if variant.Legend != nil && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legend requires a categorical point color series")
+		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
+			return err
+		}
+		return optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems"))
+	case *document.ProportionalDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("orientation", variant.Orientation != nil, document.SupportsPresentationField(visualType, "orientation")); err != nil {
+			return err
+		}
+		if err := optionSupported("rose", variant.Rose != nil, document.SupportsPresentationField(visualType, "rose")); err != nil {
+			return err
+		}
+		if err := optionSupported("centerLabel", variant.CenterLabel != nil, document.SupportsPresentationField(visualType, "centerLabel")); err != nil {
+			return err
+		}
+		if err := optionSupported("innerRadius", variant.InnerRadius != nil, document.SupportsPresentationField(visualType, "innerRadius")); err != nil {
+			return err
+		}
+		if err := optionSupported("outerRadius", variant.OuterRadius != nil, document.SupportsPresentationField(visualType, "outerRadius")); err != nil {
+			return err
+		}
+		if err := optionSupported("align", variant.Align != nil, document.SupportsPresentationField(visualType, "align")); err != nil {
+			return err
+		}
+		return optionSupported("sort", variant.Sort != nil, document.SupportsPresentationField(visualType, "sort"))
+	case *document.PolarDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("legend", variant.Legend != nil, document.SupportsPresentationField(visualType, "legend")); err != nil {
+			return err
+		}
+		if err := optionSupported("legendTitle", variant.LegendTitle != nil, document.SupportsPresentationField(visualType, "legendTitle")); err != nil {
+			return err
+		}
+		if err := optionSupported("legendItems", variant.LegendItems != nil, document.SupportsPresentationField(visualType, "legendItems")); err != nil {
+			return err
+		}
+		if err := optionSupported("minimum", variant.Minimum != nil, document.SupportsPresentationField(visualType, "minimum")); err != nil {
+			return err
+		}
+		if err := optionSupported("maximum", variant.Maximum != nil, document.SupportsPresentationField(visualType, "maximum")); err != nil {
+			return err
+		}
+		if err := optionSupported("target", variant.Target != nil, document.SupportsPresentationField(visualType, "target")); err != nil {
+			return err
+		}
+		if err := optionSupported("showPointer", variant.ShowPointer != nil, document.SupportsPresentationField(visualType, "showPointer")); err != nil {
+			return err
+		}
+		if err := optionSupported("area", variant.Area != nil, document.SupportsPresentationField(visualType, "area")); err != nil {
+			return err
+		}
+		if err := optionSupported("progressWidth", variant.ProgressWidth != nil, document.SupportsPresentationField(visualType, "progressWidth")); err != nil {
+			return err
+		}
+		return optionSupported("thresholds", variant.Thresholds != nil, document.SupportsPresentationField(visualType, "thresholds"))
+	default:
+		return nil
+	}
+	return nil
+}
+
+func validateCanonicalLegendQueryApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType, query LoweredDashboardQuery) error {
+	var title, items bool
+	switch variant := value.Value.(type) {
+	case *document.CartesianDashboardPresentation:
+		if variant != nil && visualType == document.DashboardVisualTypeCandlestick && variant.LegendItems != nil {
+			return fmt.Errorf("presentation.legendItems is not supported for candlestick visuals")
+		}
+		if variant == nil || variant.LegendItems == nil || query.Binding.Aggregate == nil || query.Binding.Aggregate.Series != nil {
+			return nil
+		}
+		metrics := make(map[string]struct{}, len(query.Binding.Aggregate.Metrics))
+		for _, metric := range query.Binding.Aggregate.Metrics {
+			alias := strings.TrimSpace(metric.Alias)
+			if alias != "" {
+				metrics[alias] = struct{}{}
+			}
+		}
+		for index, item := range *variant.LegendItems {
+			itemValue := strings.TrimSpace(item.Value)
+			if _, ok := metrics[itemValue]; !ok {
+				return fmt.Errorf("presentation.legendItems[%d].value %q is not a compiled metric alias", index, itemValue)
+			}
+		}
+	case *document.PointDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		title, items = variant.LegendTitle != nil, variant.LegendItems != nil
+		if title && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legendTitle requires a categorical point color series")
+		}
+		if items && (variant.Color == nil || variant.ColorScale == nil || variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("presentation.legendItems requires a categorical point color series")
+		}
+	case *document.PolarDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		title, items = variant.LegendTitle != nil, variant.LegendItems != nil
+		if (title || items) && visualType == document.DashboardVisualTypeRadar && (query.Binding.Aggregate == nil || query.Binding.Aggregate.Series == nil) {
+			if title {
+				return fmt.Errorf("presentation.legendTitle requires a radar series")
+			}
+			return fmt.Errorf("presentation.legendItems requires a radar series")
+		}
+	}
+	return nil
 }
 
 // lowerCanonicalComboSeries maps the closed Dashboard combo policy into the
@@ -361,8 +723,13 @@ func lowerCanonicalComboSeries(values []document.DashboardComboSeries) ([]visual
 	}
 	result := make([]visualizationir.VisualizationComboSeries, len(values))
 	seen := make(map[string]int, len(values))
+	hasBar, hasColumn := false, false
 	for index, value := range values {
-		field := strings.TrimSpace(string(value.Field))
+		rawField := string(value.Field)
+		field := strings.TrimSpace(rawField)
+		if rawField != field {
+			return nil, fmt.Errorf("combo presentation.series[%d].field %q must not contain surrounding whitespace", index, rawField)
+		}
 		if field == "" {
 			return nil, fmt.Errorf("combo presentation.series[%d].field is required", index)
 		}
@@ -374,13 +741,81 @@ func lowerCanonicalComboSeries(values []document.DashboardComboSeries) ([]visual
 		if err != nil {
 			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
 		}
+		if mark == visualizationir.VisualizationCartesianMarkBar {
+			hasBar = true
+		}
+		if mark == visualizationir.VisualizationCartesianMarkColumn {
+			hasColumn = true
+		}
 		axis, err := lowerComboSeriesAxis(value.Axis)
 		if err != nil {
 			return nil, fmt.Errorf("combo presentation.series[%d]: %w", index, err)
 		}
 		result[index] = visualizationir.VisualizationComboSeries{SeriesValue: field, Mark: mark, Axis: axis}
 	}
+	if hasBar && hasColumn {
+		return nil, fmt.Errorf("combo presentation.series cannot mix bar and column marks because they require different orientations")
+	}
 	return result, nil
+}
+
+// lowerCanonicalSeriesIntent maps the authoring policy into the closed IR
+// enum and validates the fields that do not require a query result frame.
+// Result-name applicability is checked by validateCanonicalSeriesIntent once
+// the governed query has been lowered.
+func lowerCanonicalSeriesIntent(values []document.DashboardSeriesIntent) ([]visualizationir.VisualizationSeriesIntent, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("presentation.seriesIntent must contain at least one intent")
+	}
+	result := make([]visualizationir.VisualizationSeriesIntent, len(values))
+	seenValues := make(map[string]int, len(values))
+	seenOrders := make(map[int32]int, len(values))
+	for index, value := range values {
+		rawValue := string(value.Value)
+		seriesValue := strings.TrimSpace(rawValue)
+		if rawValue != seriesValue {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value %q must not contain surrounding whitespace", index, rawValue)
+		}
+		if seriesValue == "" {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value is required", index)
+		}
+		if previous, ok := seenValues[seriesValue]; ok {
+			return nil, fmt.Errorf("presentation.seriesIntent[%d].value %q duplicates seriesIntent[%d]", index, seriesValue, previous)
+		}
+		seenValues[seriesValue] = index
+		if value.Order != nil {
+			if *value.Order < 0 {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].order must be non-negative", index)
+			}
+			if previous, ok := seenOrders[*value.Order]; ok {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].order %d duplicates seriesIntent[%d]", index, *value.Order, previous)
+			}
+			seenOrders[*value.Order] = index
+		}
+		intent := visualizationir.VisualizationSeriesIntent{Value: seriesValue, Order: value.Order}
+		if value.Color != nil {
+			if !validCanonicalColorIntent(*value.Color) {
+				return nil, fmt.Errorf("presentation.seriesIntent[%d].color %q is unsupported", index, *value.Color)
+			}
+			color := visualizationir.VisualizationColorIntent(*value.Color)
+			intent.Color = &color
+		}
+		result[index] = intent
+	}
+	return result, nil
+}
+
+func validCanonicalColorIntent(intent visualizationir.VisualizationColorIntent) bool {
+	switch intent {
+	case visualizationir.VisualizationColorIntentAccent, visualizationir.VisualizationColorIntentNeutral, visualizationir.VisualizationColorIntentInk,
+		visualizationir.VisualizationColorIntentSuccess, visualizationir.VisualizationColorIntentWarning, visualizationir.VisualizationColorIntentDanger,
+		visualizationir.VisualizationColorIntentData1, visualizationir.VisualizationColorIntentData2, visualizationir.VisualizationColorIntentData3,
+		visualizationir.VisualizationColorIntentData4, visualizationir.VisualizationColorIntentData5, visualizationir.VisualizationColorIntentData6,
+		visualizationir.VisualizationColorIntentData7, visualizationir.VisualizationColorIntentData8:
+		return true
+	default:
+		return false
+	}
 }
 
 func lowerComboSeriesMark(value document.DashboardComboSeriesMark) (visualizationir.VisualizationCartesianMark, error) {
@@ -446,14 +881,90 @@ func validateCanonicalComboSeries(value document.DashboardPresentation, query Lo
 	return nil
 }
 
-func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits) (visualizationir.VisualizationPresentation, error) {
-	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), DisplayUnits: units}
+// validateCanonicalSeriesIntent checks static series policies against compiled
+// metric aliases. Aggregate queries with a category-series binding deliberately
+// defer value resolution to runtime for the ordinary category-series families:
+// category values are data-dependent and a filtered result may legitimately
+// omit an authored value. Combo intents remain metric aliases only.
+func validateCanonicalSeriesIntent(value document.DashboardPresentation, visualType document.DashboardVisualType, query LoweredDashboardQuery) error {
+	variant, ok := value.Value.(*document.CartesianDashboardPresentation)
+	if !ok || variant == nil || variant.SeriesIntent == nil {
+		return nil
+	}
+	if query.Binding.Aggregate == nil {
+		return fmt.Errorf("presentation.seriesIntent requires an aggregate query")
+	}
+	if query.Binding.Aggregate.Series != nil {
+		if visualType == document.DashboardVisualTypeCombo {
+			for index, intent := range *variant.SeriesIntent {
+				return fmt.Errorf("presentation.seriesIntent[%d].value %q must reference a compiled metric alias for combo visuals; dynamic category values are not supported", index, intent.Value)
+			}
+		}
+		return nil
+	}
+	metrics := make(map[string]struct{}, len(query.Binding.Aggregate.Metrics))
+	for _, metric := range query.Binding.Aggregate.Metrics {
+		metrics[metric.Alias] = struct{}{}
+	}
+	for index, intent := range *variant.SeriesIntent {
+		seriesValue := string(intent.Value)
+		if len(metrics) == 1 && intent.Order != nil {
+			return fmt.Errorf("presentation.seriesIntent[%d].order cannot be used with a single compiled metric", index)
+		}
+		if _, ok := metrics[seriesValue]; !ok {
+			return fmt.Errorf("presentation.seriesIntent[%d].value %q must reference a compiled metric result for %s visuals", index, seriesValue, visualType)
+		}
+	}
+	return nil
+}
+
+func lowerBasePresentation(legend *document.DashboardLegendPosition, legendTitle *string, legendItems *[]document.DashboardLegendItem, labels *document.DashboardLabelPolicy, units *visualizationir.VisualizationDisplayUnits, axisVisible *bool) (visualizationir.VisualizationPresentation, error) {
+	out := visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionBottom, LabelPolicy: defaultCanonicalLabelPolicy(), AxisVisible: axisVisible, DisplayUnits: units}
 	if legend != nil {
 		value, err := lowerLegend(*legend)
 		if err != nil {
 			return visualizationir.VisualizationPresentation{}, err
 		}
 		out.Legend = value
+	}
+	if out.Legend == visualizationir.VisualizationLegendPositionHidden {
+		if legendTitle != nil {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendTitle cannot be used with a hidden legend")
+		}
+		if legendItems != nil {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems cannot be used with a hidden legend")
+		}
+	}
+	if legendTitle != nil {
+		if err := validatePresentationText(*legendTitle, "presentation.legendTitle", false); err != nil {
+			return visualizationir.VisualizationPresentation{}, err
+		}
+		out.LegendTitle = legendTitle
+	}
+	if legendItems != nil {
+		items := make([]visualizationir.VisualizationLegendItem, 0, len(*legendItems))
+		seen := make(map[string]int, len(*legendItems))
+		for index, item := range *legendItems {
+			value := strings.TrimSpace(item.Value)
+			if value == "" {
+				return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems[%d].value must not be empty", index)
+			}
+			if previous, ok := seen[value]; ok {
+				return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems[%d].value %q duplicates legendItems[%d]", index, value, previous)
+			}
+			seen[value] = index
+			label := item.Label
+			if label != nil {
+				if err := validatePresentationText(*label, fmt.Sprintf("presentation.legendItems[%d].label", index), false); err != nil {
+					return visualizationir.VisualizationPresentation{}, err
+				}
+			}
+			items = append(items, visualizationir.VisualizationLegendItem{Value: value, Label: label})
+		}
+		if len(items) == 0 {
+			return visualizationir.VisualizationPresentation{}, fmt.Errorf("presentation.legendItems must contain at least one item")
+		}
+		out.LegendItems = &items
 	}
 	if labels != nil {
 		value, err := lowerLabelPolicy(*labels)
@@ -465,8 +976,23 @@ func lowerBasePresentation(legend *document.DashboardLegendPosition, labels *doc
 	return out, nil
 }
 
+func validatePresentationText(value, path string, allowEmpty bool) error {
+	trimmed := strings.TrimSpace(value)
+	if !allowEmpty && trimmed == "" {
+		return fmt.Errorf("%s must not be empty", path)
+	}
+	if len([]rune(value)) > 128 {
+		return fmt.Errorf("%s must not exceed 128 characters", path)
+	}
+	return nil
+}
+
 func defaultCanonicalLabelPolicy() visualizationir.VisualizationLabelPolicy {
 	return visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityAutomatic, Priority: []visualizationir.VisualizationLabelPriority{visualizationir.VisualizationLabelPrioritySelected, visualizationir.VisualizationLabelPriorityAnomaly, visualizationir.VisualizationLabelPriorityThreshold}, MaxCharacters: 24, MinimumSpacing: 6, TooltipFallback: true}
+}
+
+func hiddenCanonicalLabelPolicy() visualizationir.VisualizationLabelPolicy {
+	return visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, Priority: []visualizationir.VisualizationLabelPriority{}, MaxCharacters: 24, MinimumSpacing: 0, TooltipFallback: true}
 }
 
 func lowerLabelPolicy(value document.DashboardLabelPolicy) (visualizationir.VisualizationLabelPolicy, error) {

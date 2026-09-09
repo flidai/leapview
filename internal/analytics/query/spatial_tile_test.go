@@ -141,6 +141,28 @@ func TestPlanSpatialTileAggregateUsesNativeMVTAndAlignedMetatile(t *testing.T) {
 	}
 }
 
+func TestPlanSpatialTileAggregateCarriesAuthoredClusterPolicyWithoutChangingTransportCell(t *testing.T) {
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+		Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+		Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+		Cluster: &SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 3, ShowCount: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan.SQL, "__lv_coordinate_count >= 3") {
+		t.Fatalf("cluster minimum-points property missing from SQL:\n%s", plan.SQL)
+	}
+	if !strings.Contains(plan.SQL, "member_buckets") || !strings.Contains(plan.SQL, "__lv_coordinate_count < 3") || !strings.Contains(plan.SQL, "FALSE AS \"__lv_aggregate\"") {
+		t.Fatalf("below-threshold cluster members missing from SQL:\n%s", plan.SQL)
+	}
+	canonical, canonicalErr := plan.IR.Canonical()
+	if canonicalErr != nil || !strings.Contains(string(canonical), `"cluster_radius":40`) {
+		t.Fatalf("cluster radius missing from PlanIR identity: %v\n%s", canonicalErr, canonical)
+	}
+}
+
 func TestSpatialMVTUsesTypedMetricPropertyCasts(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileRaw(SpatialTileRawRequest{
 		Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id", Alias: "order_id"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
@@ -149,7 +171,7 @@ func TestSpatialMVTUsesTypedMetricPropertyCasts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(plan.SQL, `CAST("revenue" AS VARCHAR)`) || !strings.Contains(plan.SQL, `CAST("latitude" AS DOUBLE)`) {
+	if !strings.Contains(plan.SQL, `CAST("revenue" AS VARCHAR)`) || !strings.Contains(plan.SQL, `CAST("latitude" AS DOUBLE)`) || !strings.Contains(plan.SQL, "1 AS __lv_coordinate_count") {
 		t.Fatalf("typed MVT property casts missing:\n%s", plan.SQL)
 	}
 }
@@ -167,6 +189,92 @@ func TestSpatialTileAggregateRequiresForwardTargetZoom(t *testing.T) {
 	if _, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "target zoom") {
 		t.Fatalf("out-of-range aggregate target error = %v", err)
 	}
+}
+
+func TestSpatialTileRejectsEnabledClusterAtTerminalZoom(t *testing.T) {
+	request := SpatialTileRequest{
+		Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+		Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+		Cluster: &SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: SpatialTileMaximumZoom, MinimumPoints: 2},
+	}
+	if _, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(request); err == nil || !strings.Contains(err.Error(), "cluster policy is invalid") {
+		t.Fatalf("terminal cluster zoom error = %v", err)
+	}
+}
+
+func TestSpatialTileClusterRadiusBounds(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	for _, radius := range []int32{0, 1, 512, 513} {
+		_, err := planner.PlanSpatialTileAggregate(SpatialTileRequest{
+			Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+			Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+			Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+			Cluster: &SpatialClusterPolicy{Enabled: true, Radius: radius, MaximumZoom: 14, MinimumPoints: 2},
+		})
+		if radius < 1 || radius > 512 {
+			if err == nil || !strings.Contains(err.Error(), "cluster radius must be between 1 and 512") {
+				t.Errorf("radius %d: error = %v, want cluster radius diagnostic", radius, err)
+			}
+		} else if err != nil {
+			t.Errorf("radius %d: %v", radius, err)
+		}
+	}
+}
+
+func TestSpatialTileClusterRadiusUsesQuantizedGlobalBuckets(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	tests := []struct {
+		name        string
+		radius      *int32
+		globalCells int
+		members     bool
+	}{
+		{name: "radius 40", radius: int32ptr(40), globalCells: 96, members: true},
+		{name: "nearby radius 41", radius: int32ptr(41), globalCells: 96, members: true},
+		{name: "radius 128", radius: int32ptr(128), globalCells: 32, members: true},
+		{name: "radius 129 saturates", radius: int32ptr(129), globalCells: 16, members: true},
+		{name: "radius 512 saturates", radius: int32ptr(512), globalCells: 16, members: true},
+		{name: "zero uses transport cell fallback", globalCells: 80},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := SpatialTileRequest{
+				Dataset: "orders", Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+				Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+				Zoom: 4, TargetZoom: 6, MetatileX: 4, MetatileY: 8, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+			}
+			if test.radius != nil {
+				request.Cluster = &SpatialClusterPolicy{Enabled: true, Radius: *test.radius, MaximumZoom: 14, MinimumPoints: 3, ShowCount: true}
+			}
+			plan, err := planner.PlanSpatialTileAggregate(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := fmt.Sprintf("* %d)))", test.globalCells)
+			aggregateStart := strings.Index(plan.SQL, "p_aggregate_0 AS")
+			aggregateEnd := strings.Index(plan.SQL, "p_sort_limit AS")
+			if aggregateStart < 0 || aggregateEnd <= aggregateStart || !strings.Contains(plan.SQL[aggregateStart:aggregateEnd], token) {
+				t.Fatalf("aggregate bucket token %q missing from PlanIR SQL:\n%s", token, plan.SQL)
+			}
+			memberStart := strings.Index(plan.SQL, "member_buckets AS")
+			if test.members {
+				if memberStart < 0 {
+					t.Fatalf("member bucket branch missing from PlanIR SQL:\n%s", plan.SQL)
+				}
+				memberEnd := strings.Index(plan.SQL[memberStart:], "tile_features AS")
+				if memberEnd < 0 || !strings.Contains(plan.SQL[memberStart:memberStart+memberEnd], token) {
+					t.Fatalf("member bucket token %q missing from PlanIR SQL:\n%s", token, plan.SQL)
+				}
+			} else if memberStart >= 0 {
+				t.Fatalf("zero cluster radius unexpectedly created a member bucket branch:\n%s", plan.SQL)
+			}
+		})
+	}
+}
+
+func int32ptr(value int32) *int32 {
+	return &value
 }
 
 func TestSpatialTilePlansCrossDatasetCoordinatesWithoutTableScope(t *testing.T) {
@@ -224,6 +332,100 @@ func TestSpatialTilePlanExecutesNativeMVT(t *testing.T) {
 	}
 	if x != 0 || y != 0 || features <= 0 || len(tile) == 0 || len(tile) > 512*1024 {
 		t.Fatalf("MVT result = %d/%d, %d features, %d bytes", x, y, features, len(tile))
+	}
+}
+
+func TestSpatialTileClusterMembersExecuteAsUnclusteredFeatures(t *testing.T) {
+	db := spatialScaleFixture(t, 1_000)
+	defer db.Close()
+	for _, statement := range []string{"INSTALL spatial FROM core", "LOAD spatial"} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Skipf("DuckDB spatial extension unavailable: %v", err)
+		}
+	}
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+		Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id", Alias: "order_id"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Identity: []Field{{Field: "orders.order_id", Alias: "order_id"}}, Metrics: []Field{{Field: "revenue", Alias: "__lv_revenue"}},
+		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+		Zoom: 0, TargetZoom: 2, MetatileX: 0, MetatileY: 0, MetatileSize: 4, CellPixels: 48, Buffer: 768,
+		Cluster: &SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 3, ShowCount: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var x, y, features int
+	var tile []byte
+	if err := db.QueryRow(plan.SQL, plan.Args...).Scan(&x, &y, &features, &tile); err != nil {
+		t.Fatalf("execute clustered member MVT plan: %v\n%s", err, plan.SQL)
+	}
+	if x != 0 || y != 0 || features <= 0 || len(tile) == 0 {
+		t.Fatalf("clustered member MVT result = %d/%d, %d features, %d bytes", x, y, features, len(tile))
+	}
+}
+
+func TestSpatialTileClusterMinimumPointsPreservesLowBucketsAndAggregatesBoundaryBuckets(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"INSTALL spatial FROM core", "LOAD spatial", "CREATE SCHEMA model",
+		"CREATE TABLE model.orders(order_id VARCHAR, latitude DOUBLE, longitude DOUBLE, revenue DOUBLE)",
+		"INSERT INTO model.orders VALUES ('low-1', -1, -1, 10), ('low-2', -1, -0.5, 20), ('high-1', 40, 40, 30), ('high-2', 40, 40.5, 40), ('high-3', 40, 41, 50), ('high-4', 40, 40, 60)",
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			if strings.HasPrefix(statement, "INSTALL") || strings.HasPrefix(statement, "LOAD") {
+				t.Skipf("DuckDB spatial extension unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+	}
+	plan, err := mustNewCompiledPlanner(t, testModel()).PlanSpatialTileAggregate(SpatialTileRequest{
+		Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id", Alias: "order_id"}, {Field: "orders.latitude", Alias: "latitude"}, {Field: "orders.longitude", Alias: "longitude"}}, Identity: []Field{{Field: "orders.order_id", Alias: "order_id"}}, Metrics: []Field{{Field: "revenue", Alias: "revenue"}},
+		Latitude: Field{Field: "orders.latitude", Alias: "latitude"}, Longitude: Field{Field: "orders.longitude", Alias: "longitude"},
+		Zoom: 0, TargetZoom: 2, MetatileX: 0, MetatileY: 0, MetatileSize: 1, CellPixels: 48, Buffer: 768,
+		Cluster: &SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 3, ShowCount: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := strings.Index(plan.SQL, "\nSELECT __tile_x")
+	if cut < 0 {
+		t.Fatalf("clustered tile SQL has no tile feature result: %s", plan.SQL)
+	}
+	rows, err := db.Query(plan.SQL[:cut]+"\nSELECT \"__lv_id\", \"__lv_aggregate\", \"__lv_clustered\", \"__lv_count\", \"__lv_coordinate_count\", \"order_id\" FROM tile_features ORDER BY \"__lv_id\"", plan.Args...)
+	if err != nil {
+		t.Fatalf("inspect clustered tile features: %v\n%s", err, plan.SQL)
+	}
+	defer rows.Close()
+	var aggregateCount, memberCount int
+	var memberIDs []string
+	for rows.Next() {
+		var id string
+		var aggregate, clustered bool
+		var rowCount, coordinateCount int
+		var orderID sql.NullString
+		if err := rows.Scan(&id, &aggregate, &clustered, &rowCount, &coordinateCount, &orderID); err != nil {
+			t.Fatal(err)
+		}
+		if aggregate {
+			aggregateCount++
+			if !clustered || rowCount != 4 || coordinateCount != 3 || orderID.Valid {
+				t.Fatalf("boundary aggregate = id %q clustered %t row_count %d coordinate_count %d order_id %v", id, clustered, rowCount, coordinateCount, orderID)
+			}
+		} else {
+			memberCount++
+			if clustered || rowCount != 1 || coordinateCount != 1 || !orderID.Valid {
+				t.Fatalf("below-threshold member = id %q clustered %t row_count %d coordinate_count %d order_id %v", id, clustered, rowCount, coordinateCount, orderID)
+			}
+			memberIDs = append(memberIDs, orderID.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if aggregateCount != 1 || memberCount != 2 || strings.Join(memberIDs, ",") != "low-1,low-2" {
+		t.Fatalf("cluster minimum-points features = %d aggregate, %d members %v; want one aggregate and low members", aggregateCount, memberCount, memberIDs)
 	}
 }
 

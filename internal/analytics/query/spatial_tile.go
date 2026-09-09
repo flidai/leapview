@@ -17,6 +17,20 @@ func containsOutputColumn(columns []string, target string) bool {
 	return false
 }
 
+func spatialPlanIRCluster(policy *SpatialClusterPolicy) *planir.SpatialClusterPolicy {
+	if policy == nil {
+		return nil
+	}
+	return &planir.SpatialClusterPolicy{Enabled: policy.Enabled, Radius: policy.Radius, MaximumZoom: policy.MaximumZoom, MinimumPoints: policy.MinimumPoints, ShowCount: policy.ShowCount}
+}
+
+func spatialClusterRadius(policy *SpatialClusterPolicy) int32 {
+	if policy == nil || !policy.Enabled {
+		return 0
+	}
+	return policy.Radius
+}
+
 const (
 	SpatialTileMinimumZoom           = 0
 	SpatialTileMaximumZoom           = 18
@@ -76,9 +90,136 @@ func (p *Planner) PlanSpatialTileAggregate(request SpatialTileRequest) (Plan, er
 		metricProperties = append(metricProperties, planir.SpatialProperty{Name: alias, Source: alias, Type: typ})
 	}
 
+	memberInput := ""
+	var memberProperties []planir.SpatialProperty
+	var memberIdentity []string
+	if request.Cluster != nil && request.Cluster.Enabled && request.Cluster.MinimumPoints > 1 {
+		memberDimensions := append([]Field(nil), request.Dimensions...)
+		if len(memberDimensions) == 0 {
+			memberDimensions = []Field{request.Latitude, request.Longitude}
+		}
+		member, memberErr := p.planSpatialRawSource(spatialRawSourceRequest{
+			Dataset: request.Dataset, Dimensions: memberDimensions, Metrics: request.Metrics, Identity: request.Identity,
+			Filters: filters, ColumnMasks: request.ColumnMasks, Latitude: request.Latitude, Longitude: request.Longitude,
+		})
+		if memberErr != nil {
+			return Plan{}, fmt.Errorf("plan spatial cluster members: %w", memberErr)
+		}
+		memberInput, err = mergeSpatialMemberPlanIR(irGraph, member.plan.IR)
+		if err != nil {
+			return Plan{}, err
+		}
+		memberProperties, memberIdentity = member.properties, member.identity
+	}
 	meta := spatialEnvelopeMeta(irGraph, []string{"__tile_x", "__tile_y", "feature_count", "mvt"}, "spatial_mvt_aggregate")
-	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeTileAggregate, Input: irGraph.Output, Latitude: latitude, Longitude: longitude, Metrics: metricColumns, MetricProperties: metricProperties, Zoom: request.Zoom, TargetZoom: targetZoom, CellPixels: request.CellPixels, Buffer: request.Buffer}
+	envelope := planir.SpatialEnvelope{NodeMeta: meta, Operation: planir.SpatialEnvelopeTileAggregate, Input: irGraph.Output, Latitude: latitude, Longitude: longitude, Metrics: metricColumns, MetricProperties: metricProperties, Zoom: request.Zoom, TargetZoom: targetZoom, CellPixels: request.CellPixels, Buffer: request.Buffer, Cluster: spatialPlanIRCluster(request.Cluster), MemberInput: memberInput, MemberProperties: memberProperties, MemberIdentity: memberIdentity}
 	return p.renderSpatialEnvelopePlan(irGraph, envelope, "spatial_mvt_aggregated", spatialTileMemberRefs(p, request))
+}
+
+// mergeSpatialMemberPlanIR adds a coordinate-grain branch to the governed
+// aggregate graph. Scan, relationship, and request-filter nodes are shared so
+// security and tile bounds remain identical; only the member projection stays
+// branch-local. The envelope references both outputs and selects members only
+// for buckets below minimumPoints.
+func mergeSpatialMemberPlanIR(base, member *planir.Graph) (string, error) {
+	if base == nil || member == nil {
+		return "", fmt.Errorf("spatial member plan graph is unavailable")
+	}
+	sharedScans := map[string]string{}
+	sharedTraverses := map[string]string{}
+	sharedFilters := map[string]string{}
+	for id, node := range base.Nodes {
+		switch value := node.(type) {
+		case planir.ScanDataset:
+			sharedScans[value.Dataset] = id
+		case *planir.ScanDataset:
+			if value != nil {
+				sharedScans[value.Dataset] = id
+			}
+		}
+	}
+	for id, node := range base.Nodes {
+		switch value := node.(type) {
+		case planir.TraverseRelationship:
+			sharedTraverses[planIRRelationshipKey(value.Input, value.Path)] = id
+		case *planir.TraverseRelationship:
+			if value != nil {
+				sharedTraverses[planIRRelationshipKey(value.Input, value.Path)] = id
+			}
+		case planir.FilterRows:
+			sharedFilters[planIRFilterKey(value)] = id
+		case *planir.FilterRows:
+			if value != nil {
+				sharedFilters[planIRFilterKey(*value)] = id
+			}
+		}
+	}
+	mapping := map[string]string{}
+	for _, oldID := range planIRTopologicalIDs(member) {
+		node := member.Nodes[oldID]
+		switch value := node.(type) {
+		case planir.ScanDataset, *planir.ScanDataset:
+			scan := planIRScan(value)
+			if existing, ok := sharedScans[scan.Dataset]; ok {
+				mapping[oldID] = existing
+				base.Nodes[existing] = withMergedPlanIRMeta(base.Nodes[existing], scan.NodeMeta)
+				continue
+			}
+			newID := "spatial_member_scan_" + fmt.Sprint(len(sharedScans))
+			scan.NodeID = newID
+			sharedScans[scan.Dataset] = newID
+			mapping[oldID] = newID
+			base.Nodes[newID] = scan
+			base.Roots = append(base.Roots, newID)
+		case planir.TraverseRelationship, *planir.TraverseRelationship:
+			traverse := planIRTraverse(value)
+			input := mapping[traverse.Input]
+			if input == "" {
+				return "", fmt.Errorf("spatial member traversal %q input is not mapped", oldID)
+			}
+			key := planIRRelationshipKey(input, traverse.Path)
+			if existing, ok := sharedTraverses[key]; ok {
+				mapping[oldID] = existing
+				base.Nodes[existing] = withMergedPlanIRMeta(base.Nodes[existing], traverse.NodeMeta)
+				continue
+			}
+			newID := "spatial_member_traverse_" + fmt.Sprint(len(sharedTraverses))
+			traverse.NodeID, traverse.Input = newID, input
+			sharedTraverses[key] = newID
+			mapping[oldID] = newID
+			base.Nodes[newID] = traverse
+		case planir.FilterRows, *planir.FilterRows:
+			filter := planIRFilter(value)
+			input := mapping[filter.Input]
+			if input == "" {
+				return "", fmt.Errorf("spatial member filter %q input is not mapped", oldID)
+			}
+			filter.Input = input
+			key := planIRFilterKey(filter)
+			if existing, ok := sharedFilters[key]; ok {
+				mapping[oldID] = existing
+				base.Nodes[existing] = withMergedPlanIRMeta(base.Nodes[existing], filter.NodeMeta)
+				continue
+			}
+			newID := "spatial_member_filter_" + fmt.Sprint(len(sharedFilters))
+			filter.NodeID = newID
+			sharedFilters[key] = newID
+			mapping[oldID] = newID
+			base.Nodes[newID] = filter
+		default:
+			cloned, cloneErr := clonePlanIRNode(node, "spatial_member_"+oldID, mapping)
+			if cloneErr != nil {
+				return "", cloneErr
+			}
+			mapping[oldID] = cloned.Meta().NodeID
+			base.Nodes[cloned.Meta().NodeID] = cloned
+		}
+	}
+	output := mapping[member.Output]
+	if output == "" {
+		return "", fmt.Errorf("spatial member plan output is not mapped")
+	}
+	return output, nil
 }
 
 // PlanSpatialTileRaw emits coordinate-grain MVT features for child tiles that
@@ -300,6 +441,22 @@ func validateSpatialTileRequest(request SpatialTileRequest) error {
 	if request.Buffer < 0 || request.Buffer > SpatialTileExtent {
 		return fmt.Errorf("spatial tile buffer is outside the MVT extent")
 	}
+	if err := validateSpatialClusterPolicy(request.Cluster, SpatialTileMaximumZoom); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSpatialClusterPolicy(policy *SpatialClusterPolicy, maximumZoom int) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.Radius < 1 || policy.Radius > 512 {
+		return fmt.Errorf("spatial tile cluster radius must be between 1 and 512 CSS pixels")
+	}
+	if policy.MaximumZoom < 0 || int(policy.MaximumZoom) > maximumZoom || (policy.Enabled && int(policy.MaximumZoom) >= maximumZoom) || policy.MinimumPoints < 2 {
+		return fmt.Errorf("spatial tile cluster policy is invalid")
+	}
 	return nil
 }
 
@@ -329,6 +486,9 @@ func validateSpatialTileBudgetRequest(request SpatialTileBudgetRequest) error {
 	}
 	if request.Latitude.Field == "" || request.Longitude.Field == "" {
 		return fmt.Errorf("spatial tile requires coordinate fields")
+	}
+	if err := validateSpatialClusterPolicy(request.Cluster, SpatialTileMaximumZoom); err != nil {
+		return err
 	}
 	return nil
 }

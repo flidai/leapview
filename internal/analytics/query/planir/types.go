@@ -705,6 +705,10 @@ type SpatialBucket struct {
 	Longitude  string `json:"longitude"`
 	Zoom       int    `json:"zoom"`
 	CellPixels int    `json:"cell_pixels"`
+	// ClusterRadius is the authored point-cluster radius. A zero value means
+	// that the transport cell grid is also the aggregate grid (heat/density or
+	// legacy callers without a point policy).
+	ClusterRadius int32 `json:"cluster_radius,omitempty"`
 }
 
 type TimeBucket struct {
@@ -848,6 +852,17 @@ type SpatialProperty struct {
 	Type   string `json:"type,omitempty"`
 }
 
+// SpatialClusterPolicy is the renderer-neutral authored point-cluster policy
+// carried by tiled spatial envelopes. It is intentionally not the transport
+// CellPixels setting on SpatialEnvelope.
+type SpatialClusterPolicy struct {
+	Enabled       bool  `json:"enabled"`
+	Radius        int32 `json:"radius"`
+	MaximumZoom   int32 `json:"maximum_zoom"`
+	MinimumPoints int32 `json:"minimum_points"`
+	ShowCount     bool  `json:"show_count"`
+}
+
 type SpatialEnvelope struct {
 	NodeMeta
 	Operation        SpatialEnvelopeOperation `json:"operation"`
@@ -867,6 +882,10 @@ type SpatialEnvelope struct {
 	MaximumBytes     int64                    `json:"maximum_bytes,omitempty"`
 	RawMinimumZoom   int                      `json:"raw_minimum_zoom,omitempty"`
 	MaximumZoom      int                      `json:"maximum_zoom,omitempty"`
+	Cluster          *SpatialClusterPolicy    `json:"cluster,omitempty"`
+	MemberInput      string                   `json:"member_input,omitempty"`
+	MemberProperties []SpatialProperty        `json:"member_properties,omitempty"`
+	MemberIdentity   []string                 `json:"member_identity,omitempty"`
 }
 
 func (SpatialEnvelope) Kind() Kind       { return KindSpatialEnvelope }
@@ -875,10 +894,14 @@ func (n SpatialEnvelope) Inputs() []string {
 	if len(n.InputsList) > 0 {
 		return append([]string(nil), n.InputsList...)
 	}
+	inputs := make([]string, 0, 2)
 	if n.Input != "" {
-		return []string{n.Input}
+		inputs = append(inputs, n.Input)
 	}
-	return nil
+	if n.MemberInput != "" {
+		inputs = append(inputs, n.MemberInput)
+	}
+	return inputs
 }
 func (SpatialEnvelope) nodeMarker() {}
 

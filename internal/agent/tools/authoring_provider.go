@@ -27,6 +27,8 @@ const (
 	ListDashboardsToolName          = "list_dashboards"
 	GetDashboardToolName            = "get_dashboard"
 	GetDashboardDraftToolName       = "get_dashboard_draft"
+	ReadDashboardSourceToolName     = "read_dashboard_source"
+	EditDashboardSourceToolName     = "edit_dashboard_source"
 	CreateDashboardDraftToolName    = "create_dashboard_draft"
 	ExecuteDashboardCommandToolName = "execute_dashboard_command"
 	ForkDashboardToolName           = "fork_dashboard"
@@ -50,6 +52,8 @@ type DashboardAuthoring interface {
 	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
 	Preview(context.Context, previewservice.PreviewRequest) (previewservice.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+	ReadSource(context.Context, authoringapplication.DraftRequest) (authoringapplication.SourceRead, error)
+	EditSource(context.Context, authoringapplication.SourceEditRequest) (authoringapplication.SourceEditResult, error)
 }
 
 type DashboardAuthoringProvider struct {
@@ -138,6 +142,13 @@ type dashboardAuthoringExportInput struct {
 	DashboardID dashboardauthoring.DashboardID `json:"dashboardId"`
 }
 
+type dashboardAuthoringSourceEditInput struct {
+	DashboardID      dashboardauthoring.DashboardID    `json:"dashboardId"`
+	DraftID          dashboardauthoring.DraftID        `json:"draftId"`
+	ExpectedRevision dashboardauthoring.RevisionToken  `json:"expectedRevision"`
+	Edits            []authoringapplication.SourceEdit `json:"edits"`
+}
+
 func (p DashboardAuthoringProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	if p.Application == nil {
 		return nil
@@ -207,6 +218,49 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 				return authoringToolError(err)
 			}
 			return agentcore.ToolResult{Content: map[string]any{"lifecycle": value.Lifecycle, "revision": value.Revision}}
+		}),
+		p.definition(ReadDashboardSourceToolName, "Read the exact current private dashboard draft as canonical YAML for a subsequent source edit.", "read", agentcontracts.DashboardAuthoringSourceReadInputSchemaJSON, agentcontracts.DashboardAuthoringSourceReadResultSchemaJSON, []string{"dashboard", "authoring", "source"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+			var input dashboardAuthoringGetInput
+			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
+				return ToolError("invalid_arguments", err.Error())
+			}
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
+			if !ok {
+				return result
+			}
+			id, result, ok := authoredDashboardID(input.DashboardID)
+			if !ok {
+				return result
+			}
+			value, err := p.Application.ReadSource(ctx, authoringapplication.DraftRequest{ProjectID: project, ActorID: scope.PrincipalID, DashboardID: id})
+			if err != nil {
+				return authoringToolError(err)
+			}
+			return agentcore.ToolResult{Content: value, DisplayContent: map[string]any{"type": "code", "language": "yaml", "content": value.YAML}}
+		}),
+		p.definition(EditDashboardSourceToolName, "Apply atomic exact-text replacements to one canonical dashboard YAML revision. Each oldText must match exactly once; invalid, ambiguous, overlapping, or stale edits leave the draft unchanged.", "write", agentcontracts.DashboardAuthoringSourceEditInputSchemaJSON, agentcontracts.DashboardAuthoringSourceEditResultSchemaJSON, []string{"dashboard", "authoring", "source"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
+			var input dashboardAuthoringSourceEditInput
+			if err := decodeAuthoringArguments(call.Arguments, &input); err != nil {
+				return ToolError("invalid_arguments", err.Error())
+			}
+			project, result, ok := p.prepare(ctx, scope, dashboardauthoring.AuthorizationActionEdit)
+			if !ok {
+				return result
+			}
+			id, result, ok := authoredDashboardID(string(input.DashboardID))
+			if !ok {
+				return result
+			}
+			value, err := p.Application.EditSource(ctx, authoringapplication.SourceEditRequest{
+				ProjectID: project, ActorID: scope.PrincipalID, DashboardID: id,
+				DraftID: input.DraftID, ExpectedRevision: input.ExpectedRevision, Edits: input.Edits,
+				CommandID:  dashboardauthoring.CommandID(strings.TrimSpace(call.ID)),
+				Provenance: dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: scope.PrincipalID, ConversationID: scope.ConversationID, ToolCallID: call.ID},
+			})
+			if err != nil {
+				return authoringToolError(err)
+			}
+			return agentcore.ToolResult{Content: value, DisplayContent: map[string]any{"type": "code", "language": "diff", "content": value.Diff}}
 		}),
 		p.definition(SetDashboardVisibilityToolName, "Set a private dashboard draft's visibility using an exact expected revision.", "write", agentcontracts.DashboardAuthoringSetVisibilityInputSchemaJSON, agentcontracts.DashboardAuthoringResultSchemaJSON, []string{"dashboard", "authoring", "intent"}, func(ctx context.Context, call agentcore.ToolCall) agentcore.ToolResult {
 			var input dashboardAuthoringVisibilityInput

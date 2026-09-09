@@ -1,9 +1,38 @@
 import type { FeatureCollection } from 'geojson'
-import type { SpatialTiledVisualizationDataState, VisualizationGeographicLayer } from '../../../../../generated/visualization'
+import type { SpatialTiledVisualizationDataState, VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../../generated/visualization'
 
 export function tiledPrecisionLayerIDs(family: 'hidden' | 'raw' | 'aggregate', rawLayerIDs: readonly string[], aggregateLayerIDs: readonly string[], candidates?: readonly string[]): string[] {
 	const layerIDs = family === 'raw' ? [...rawLayerIDs] : family === 'aggregate' ? [...aggregateLayerIDs] : []
 	return candidates ? layerIDs.filter((id) => candidates.includes(id)) : layerIDs
+}
+
+export type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filter?: unknown[]; minzoom?: number; maxzoom?: number }
+
+export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID: string): TiledLayerStyleUpdate[] {
+	if (envelope.dataState.kind !== 'spatial_tiled' || envelope.spec.kind !== 'geographic') return []
+	const updates: TiledLayerStyleUpdate[] = []
+	for (const layer of envelope.spec.layers) {
+		if (layer.kind !== 'point' && layer.kind !== 'heat' && layer.kind !== 'density') continue
+		const id = `lv-${layer.id}`
+		const raw = mapLayer(id, layer, envelope.dataState, sourceID)
+		updates.push({ id, paint: raw.paint, filter: raw.filter, minzoom: raw.minzoom, maxzoom: raw.maxzoom })
+		if (layer.kind === 'point') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregatePointLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+			if (layer.cluster.enabled && layer.cluster.showCount) {
+				const countID = `${id}-aggregate-count`
+				const count = tiledAggregateCountLayer(countID, sourceID, layer, envelope.dataState)
+				updates.push({ id: countID, filter: count.filter, minzoom: count.minzoom, maxzoom: count.maxzoom })
+			}
+		}
+		if (layer.kind === 'heat' || layer.kind === 'density') {
+			const aggregateID = `${id}-aggregate`
+			const aggregate = tiledAggregateHeatLayer(aggregateID, sourceID, layer, envelope.dataState)
+			updates.push({ id: aggregateID, paint: aggregate.paint, filter: aggregate.filter, minzoom: aggregate.minzoom, maxzoom: aggregate.maxzoom })
+		}
+	}
+	return updates
 }
 
 export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer | VisualizationGeographicLayer['kind'], tiled?: SpatialTiledVisualizationDataState, sourceID = id): any {
@@ -29,7 +58,7 @@ export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer |
 	if (kind === 'point') {
 		const point = layer?.kind === 'point' ? layer : undefined
 		const minimumRadius = point?.size?.minimumRadius ?? 5, maximumRadius = point?.size?.maximumRadius ?? 10
-		const weight = tiled && point ? tiledWeightExpression(point, tiled) : ['get', '__lv_weight']
+		const weight = tiled && point ? tiledWeightExpression(point, tiled, point.size) : ['get', '__lv_weight']
 		const aggregateMinimumRadius = Math.max(12, minimumRadius)
 		const aggregateMaximumRadius = Math.max(50, maximumRadius)
 		const radius = tiled
@@ -39,7 +68,7 @@ export function mapLayer(id: string, layerOrKind: VisualizationGeographicLayer |
 	}
 	const heat = layer?.kind === 'heat' || layer?.kind === 'density' ? layer : undefined
 	const colors = paletteColors(heat?.color)
-	const weight = tiled && heat ? tiledWeightExpression(heat, tiled) : ['get', '__lv_weight']
+	const weight = tiled && heat ? tiledWeightExpression(heat, tiled, heat.color) : ['get', '__lv_weight']
 	return { id, source: sourceID, ...(tiled ? { 'source-layer': 'primary', filter: ['==', ['boolean', ['get', '__lv_aggregate'], false], false], minzoom: Math.max(heat?.visibility.minimumZoom ?? 0, tiled.rawMinimumZoom), maxzoom: heat?.visibility.maximumZoom } : {}), type: 'heatmap', paint: {
 		'heatmap-weight': ['*', weight, ['case', featureFlag('__lv_selected'), 1, featureFlag('__lv_has_selection'), 0.75, featureFlag('__lv_highlighted'), 1, featureFlag('__lv_has_highlight'), 0.15, 0.75]],
     'heatmap-intensity': heat?.heat.intensity ?? (kind === 'density' ? 1.35 : 1),
@@ -53,7 +82,10 @@ export function tiledAggregatePointLayer(id: string, sourceID: string, layer: Ex
 	const result = mapLayer(id, layer, state, sourceID)
 	return {
 		...result,
-		filter: ['all', ['==', ['geometry-type'], 'Point'], ['==', ['boolean', ['get', '__lv_aggregate'], false], true]],
+		// Aggregate precision can also carry below-minimum cluster members. Keep
+		// those exact, selectable observations in this visible family while
+		// reserving the raw family for fully raw tiles.
+		filter: ['all', ['==', ['geometry-type'], 'Point'], ['any', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], false], ['==', ['boolean', ['get', '__lv_clustered'], false], false]]]],
 		minzoom: layer.visibility.minimumZoom,
 		maxzoom: Math.min(layer.visibility.maximumZoom, state.rawMinimumZoom),
 	}
@@ -95,10 +127,13 @@ function tiledAggregateHeatIntensityExpression(layer: Extract<VisualizationGeogr
 }
 
 export function tiledAggregateCountLayer(id: string, sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' }>, state?: SpatialTiledVisualizationDataState): any {
-	const valueField = tiledValueField(layer)
+	// Cluster labels describe contained coordinates, never an authored
+	// business metric. The aggregate SQL exposes this as the stable
+	// __lv_coordinate_count property in both precision families.
+	const valueField = '__lv_coordinate_count'
 	return {
 		id, source: sourceID, 'source-layer': 'primary', type: 'symbol',
-		filter: ['==', ['boolean', ['get', '__lv_aggregate'], false], true],
+		filter: ['all', ['==', ['boolean', ['get', '__lv_aggregate'], false], true], ['==', ['boolean', ['get', '__lv_clustered'], false], true]],
 		minzoom: layer.visibility.minimumZoom, maxzoom: Math.min(layer.visibility.maximumZoom, state?.rawMinimumZoom ?? layer.visibility.maximumZoom),
 		layout: {
 			'text-field': layer.cluster.showCount ? abbreviatedNumberExpression(valueField) : '',
@@ -113,24 +148,30 @@ function tiledValueField(layer: Extract<VisualizationGeographicLayer, { kind: 'p
 	return layer.value?.field ?? '__lv_count'
 }
 
-function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
+type TiledScaleDomain = { minimum?: number; maximum?: number; total?: number }
+type AuthoredScaleDomain = { domainMinimum?: number; domainMidpoint?: number; domainMaximum?: number }
+
+function tiledWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState, authored?: AuthoredScaleDomain): unknown[] {
 	const field = tiledValueField(layer)
 	const raw = state.rawDomains.find((domain) => domain.field === field)
 	const aggregate = state.aggregateDomains.find((domain) => domain.field === field)
-	const normalize = (domain: typeof raw): unknown[] => {
-		const minimum = domain?.minimum ?? 0, maximum = domain?.maximum ?? Math.max(minimum + 1, 1)
-		if (minimum === maximum) return ['case', ['==', ['to-number', ['get', field], 0], 0], 0, 1]
-		return ['max', 0, ['min', 1, ['/', ['-', ['to-number', ['get', field], 0], minimum], maximum - minimum]]]
+	if (!layer.value) {
+		// Raw tiles represent one observation while aggregate tiles carry the
+		// contained row count. Coordinate counts are reserved for cluster labels.
+		const countDomain = aggregate ?? countFallbackDomain(state)
+		const rawDomain = resolveTiledDomain(raw, authored, { minimum: 1, maximum: 1 })
+		const aggregateDomain = resolveTiledDomain(countDomain, authored, countFallbackDomain(state))
+		return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue('__lv_count', aggregateDomain, 1), authoredDomainSpecified(authored) ? normalizeTiledValue('__lv_count', rawDomain, 1) : 1]
 	}
-	return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalize(aggregate), normalize(raw)]
+	const rawDomain = resolveTiledDomain(raw, authored)
+	const aggregateDomain = resolveTiledDomain(aggregate, authored)
+	return ['case', ['boolean', ['get', '__lv_aggregate'], false], normalizeTiledValue(field, aggregateDomain), normalizeTiledValue(field, rawDomain)]
 }
 
 function tiledAggregateHeatWeightExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
 	const field = tiledValueField(layer)
-	const domain = state.aggregateDomains.find((candidate) => candidate.field === field)
-	const minimum = domain?.minimum ?? 0, maximum = domain?.maximum ?? Math.max(minimum + 1, 1)
-	if (minimum === maximum) return ['case', ['==', ['to-number', ['get', field], 0], 0], 0, 1]
-	const normalized = ['max', 0, ['min', 1, ['/', ['-', ['to-number', ['get', field], 0], minimum], maximum - minimum]]]
+	const domain = resolveTiledDomain(state.aggregateDomains.find((candidate) => candidate.field === field), layer.color, !layer.value ? countFallbackDomain(state) : undefined)
+	const normalized = normalizeTiledValue(field, domain, 1)
 	// Whole-filter totals provide a stable aggregate domain across tile loads,
 	// but make low-zoom cell values tiny on large datasets. Square-root scaling
 	// preserves that stable domain while retaining visible differences.
@@ -139,10 +180,49 @@ function tiledAggregateHeatWeightExpression(layer: Extract<VisualizationGeograph
 
 function tiledColorExpression(layer: Extract<VisualizationGeographicLayer, { kind: 'point' | 'heat' | 'density' }>, state: SpatialTiledVisualizationDataState): unknown[] {
 	const colors = paletteColors(layer.color)
-	const weight = tiledWeightExpression(layer, state)
+	const weight = tiledWeightExpression(layer, state, layer.color)
 	const raw = ['interpolate', ['linear'], weight, 0, colors[0], 0.25, colors[1], 0.5, colors[2], 0.75, colors[3], 1, colors[4]]
 	const aggregate = ['interpolate', ['linear'], ['sqrt', weight], 0, colors[2], 0.5, colors[3], 1, colors[4]]
 	return ['case', ['boolean', ['get', '__lv_aggregate'], false], aggregate, raw]
+}
+
+function countFallbackDomain(state: SpatialTiledVisualizationDataState): TiledScaleDomain {
+	const cardinality = state.cardinality.kind === 'exact' && typeof state.cardinality.count === 'number' && Number.isFinite(state.cardinality.count)
+		? Math.max(1, state.cardinality.count)
+		: 1
+	return { minimum: 1, maximum: cardinality }
+}
+
+function authoredDomainSpecified(domain?: AuthoredScaleDomain): boolean {
+	return domain?.domainMinimum !== undefined || domain?.domainMidpoint !== undefined || domain?.domainMaximum !== undefined
+}
+
+function resolveTiledDomain(server: TiledScaleDomain | undefined, authored?: AuthoredScaleDomain, fallback?: TiledScaleDomain): TiledScaleDomain & { midpoint?: number } {
+	let minimum = authored?.domainMinimum ?? server?.minimum ?? fallback?.minimum ?? 0
+	let maximum = authored?.domainMaximum ?? server?.maximum ?? fallback?.maximum ?? Math.max(minimum + 1, 1)
+	// A partial authored domain may be the only bound available (notably for
+	// count-weighted layers, which have no server metric domain). Keep the
+	// existing bounded normalization semantics instead of allowing a negative
+	// span to invert the scale.
+	if (maximum < minimum) {
+		if (authored?.domainMinimum !== undefined && authored.domainMaximum === undefined) maximum = Math.max(minimum + 1, maximum)
+		else if (authored?.domainMaximum !== undefined && authored.domainMinimum === undefined) minimum = Math.min(maximum - 1, minimum)
+		else maximum = minimum
+	}
+	const midpoint = authored?.domainMidpoint
+	return { minimum, maximum, midpoint: midpoint !== undefined && midpoint > minimum && midpoint < maximum ? midpoint : undefined }
+}
+
+function normalizeTiledValue(field: string, domain: TiledScaleDomain & { midpoint?: number }, fallback = 0): unknown[] {
+	const minimum = domain.minimum ?? 0
+	const maximum = domain.maximum ?? Math.max(minimum + 1, 1)
+	const value = ['to-number', ['get', field], fallback]
+	if (minimum === maximum) return ['case', ['==', value, 0], 0, 1]
+	const clamp = (numerator: unknown[], denominator: number): unknown[] => ['max', 0, ['min', 1, ['/', numerator, denominator]]]
+	const linear = clamp(['-', value, minimum], maximum - minimum)
+	if (domain.midpoint === undefined) return linear
+	const midpoint = domain.midpoint
+	return ['case', ['<=', value, midpoint], ['*', 0.5, clamp(['-', value, minimum], midpoint - minimum)], ['+', 0.5, ['*', 0.5, clamp(['-', value, midpoint], maximum - midpoint)]]]
 }
 
 function abbreviatedNumberExpression(field: string): unknown[] {

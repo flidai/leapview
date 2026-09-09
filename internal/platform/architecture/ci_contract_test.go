@@ -105,15 +105,94 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	fullExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras")
 	for _, want := range []string{
 		"- task: desktop:test",
-		"go vet ./...",
-		"go test -race ./pkg/...",
-		"- task: quality:critical:race",
-		"- task: test:go:postgres-multinode-qualification",
+		"- task: ci:full:extras:static",
+		"- task: ci:full:extras:runtime:multinode",
 		"- task: qa:ui-framework",
-		"- task: deploy:check",
+		"- task: ci:full:extras:runtime:tail",
 	} {
 		if !strings.Contains(fullExtras, want) {
 			t.Fatalf("ci:full:extras missing %q", want)
+		}
+	}
+	fullExtrasOrder := []string{
+		"- task: desktop:test",
+		"- task: ci:full:extras:static",
+		"- task: ci:full:extras:runtime:multinode",
+		"- task: qa:ui-framework",
+		"- task: ci:full:extras:runtime:tail",
+	}
+	for index := 1; index < len(fullExtrasOrder); index++ {
+		if strings.Index(fullExtras, fullExtrasOrder[index-1]) > strings.Index(fullExtras, fullExtrasOrder[index]) {
+			t.Fatalf("ci:full:extras changed sequential command order: %q before %q", fullExtrasOrder[index-1], fullExtrasOrder[index])
+		}
+	}
+	staticExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:static")
+	for _, want := range []string{
+		"go vet ./...",
+		"go test -race ./pkg/...",
+		"- task: quality:critical:race",
+		"- task: test:workload:qualify",
+	} {
+		if !strings.Contains(staticExtras, want) {
+			t.Fatalf("ci:full:extras:static missing %q", want)
+		}
+	}
+	if strings.Contains(staticExtras, "test:go:postgres-multinode-qualification") {
+		t.Fatal("container-backed PostgreSQL multinode validation must remain in the runtime branch")
+	}
+	runtimeExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:runtime")
+	for _, want := range []string{
+		"- task: ci:full:extras:runtime:multinode",
+		"- task: ci:full:extras:runtime:tail",
+	} {
+		if !strings.Contains(runtimeExtras, want) {
+			t.Fatalf("ci:full:extras:runtime missing %q", want)
+		}
+	}
+	parallelExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:parallel")
+	for _, want := range []string{
+		"deps:",
+		"- task: ci:full:extras:static",
+		"- task: ci:full:extras:runtime",
+	} {
+		if !strings.Contains(parallelExtras, want) {
+			t.Fatalf("ci:full:extras:parallel missing %q", want)
+		}
+	}
+	runtimeMultinode := taskfileTaskBlock(t, taskfile, "ci:full:extras:runtime:multinode")
+	if !strings.Contains(runtimeMultinode, "- task: test:go:postgres-multinode-qualification") {
+		t.Fatal("runtime multinode group missing PostgreSQL qualification")
+	}
+	runtimeTail := taskfileTaskBlock(t, taskfile, "ci:full:extras:runtime:tail")
+	for _, want := range []string{
+		"- task: deploy:check",
+		"- task: test:go:minio-conformance",
+		"- task: test:go:plan-gc-conformance",
+	} {
+		if !strings.Contains(runtimeTail, want) {
+			t.Fatalf("ci:full:extras:runtime:tail missing %q", want)
+		}
+	}
+	hostedExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:hosted")
+	for _, want := range []string{
+		"- task: desktop:test",
+		"- task: qa:ui-framework",
+		"- task: generate",
+		"- task: ci:full:extras:parallel",
+	} {
+		if !strings.Contains(hostedExtras, want) {
+			t.Fatalf("ci:full:extras:hosted missing %q", want)
+		}
+	}
+	hostedExtrasOrder := []string{
+		"- task: desktop:test",
+		"- task: qa:ui-framework",
+		"- task: generate",
+		"- task: ci:full:extras:parallel",
+	}
+	for index := 1; index < len(hostedExtrasOrder); index++ {
+		if strings.Index(hostedExtras, hostedExtrasOrder[index-1]) > strings.Index(hostedExtras, hostedExtrasOrder[index]) {
+			t.Fatalf("ci:full:extras:hosted changed barrier/order: %q before %q", hostedExtrasOrder[index-1], hostedExtrasOrder[index])
 		}
 	}
 	nightly := taskfileTaskBlock(t, taskfile, "ci:nightly")
@@ -154,7 +233,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		"run: task ci:lane:go:packages",
 		"run: task ci:lane:go:application",
 		"run: task ci:lane:frontend:shard SHARD=${{ matrix.shard }}",
-		"run: task ci:full:extras",
+		"run: task ci:full:extras:hosted",
 	} {
 		if !strings.Contains(mergeWorkflow, want) {
 			t.Fatalf("merge queue must run the split full tier against the exact merge group: missing %q", want)

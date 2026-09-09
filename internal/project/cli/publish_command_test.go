@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -176,6 +177,42 @@ func TestCandidateCheckpointStoreFailsClosedForUnknownOrSecretFields(t *testing.
 	); err == nil {
 		t.Fatal("Load() accepted trailing JSON content")
 	}
+}
+
+func TestCandidateCheckpointStoreMigratesLegacyProjectPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "authoring.json")
+	checkpoint := candidateCheckpoint(t.TempDir())
+	legacy := map[string]any{
+		"projectPath":       checkpoint.SourceRoot,
+		"targetOrigin":      checkpoint.TargetOrigin,
+		"targetId":          checkpoint.TargetID,
+		"environment":       checkpoint.Environment,
+		"projectId":         checkpoint.ProjectID,
+		"candidateId":       checkpoint.CandidateID,
+		"candidateKey":      checkpoint.CandidateKey,
+		"candidateRevision": checkpoint.CandidateRevision,
+		"artifactDigest":    checkpoint.ArtifactDigest,
+		"provenanceDigest":  checkpoint.ProvenanceDigest,
+	}
+	content, err := json.Marshal(map[string]any{
+		"version": candidateCheckpointDocumentVersion,
+		"candidates": map[string]any{
+			candidateCheckpointKey(checkpoint.SourceRoot, checkpoint.TargetOrigin, checkpoint.CandidateKey): legacy,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+
+	store := NewCandidateCheckpointStore(path)
+	loaded, err := store.Load(checkpoint.SourceRoot, checkpoint.TargetOrigin)
+	require.NoError(t, err)
+	require.Equal(t, checkpoint, loaded)
+	require.NoError(t, store.Save(loaded))
+
+	migrated, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(migrated), `"sourceRoot"`)
+	require.NotContains(t, string(migrated), `"projectPath"`)
 }
 
 func TestPublishCommandUsesExactCheckpointWithoutReadingProjectSource(t *testing.T) {

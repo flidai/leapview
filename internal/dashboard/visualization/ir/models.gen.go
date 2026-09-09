@@ -22,6 +22,8 @@ type CartesianVisualizationPresentation struct {
 	ComboSeries   *[]VisualizationComboSeries  `json:"comboSeries,omitempty" yaml:"comboSeries,omitempty"`
 	Stacking      *VisualizationStackingMode   `json:"stacking,omitempty" yaml:"stacking,omitempty"`
 	SeriesIntent  *[]VisualizationSeriesIntent `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
+	GainColor     *VisualizationColorIntent    `json:"gainColor,omitempty" yaml:"gainColor,omitempty"`
+	LossColor     *VisualizationColorIntent    `json:"lossColor,omitempty" yaml:"lossColor,omitempty"`
 }
 
 type CartesianVisualizationSpec struct {
@@ -148,7 +150,6 @@ type KPIVisualizationPresentation struct {
 	DisplayUnits       *VisualizationDisplayUnits         `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Note               *string                            `json:"note,omitempty" yaml:"note,omitempty"`
 	Tone               *VisualizationTone                 `json:"tone,omitempty" yaml:"tone,omitempty"`
-	Thresholds         *[]VisualizationThreshold          `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 }
 
 type KPIVisualizationSpec struct {
@@ -205,7 +206,6 @@ type PointVisualizationColorScale struct {
 	Kind    VisualizationPointColorScaleKind `json:"kind" yaml:"kind"`
 	Minimum *float64                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
 	Maximum *float64                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Scheme  *string                          `json:"scheme,omitempty" yaml:"scheme,omitempty"`
 }
 
 type PointVisualizationPresentation struct {
@@ -232,7 +232,6 @@ type PointVisualizationSpec struct {
 	Y                VisualizationFieldRef             `json:"y" yaml:"y"`
 	Size             *VisualizationFieldRef            `json:"size,omitempty" yaml:"size,omitempty"`
 	Color            *VisualizationFieldRef            `json:"color,omitempty" yaml:"color,omitempty"`
-	Series           *VisualizationFieldRef            `json:"series,omitempty" yaml:"series,omitempty"`
 	Label            *VisualizationFieldRef            `json:"label,omitempty" yaml:"label,omitempty"`
 	Tooltip          *[]VisualizationFieldRef          `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	ColorScale       *PointVisualizationColorScale     `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
@@ -284,6 +283,7 @@ type ProportionalVisualizationSpec struct {
 	Category     VisualizationFieldRef                 `json:"category" yaml:"category"`
 	Value        VisualizationFieldRef                 `json:"value" yaml:"value"`
 	Series       *VisualizationFieldRef                `json:"series,omitempty" yaml:"series,omitempty"`
+	Tooltip      *[]VisualizationFieldRef              `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	Presentation ProportionalVisualizationPresentation `json:"presentation" yaml:"presentation"`
 }
 
@@ -616,16 +616,47 @@ const (
 )
 
 type VisualizationAxisConfiguration struct {
-	ID           VisualizationCartesianAxis   `json:"id" yaml:"id"`
-	Title        *string                      `json:"title,omitempty" yaml:"title,omitempty"`
-	Scale        VisualizationAxisScale       `json:"scale" yaml:"scale"`
-	Zero         VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
-	Minimum      *float64                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum      *float64                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Unit         *string                      `json:"unit,omitempty" yaml:"unit,omitempty"`
-	DisplayUnits *VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	TickDensity  VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
+	ID            VisualizationCartesianAxis      `json:"id" yaml:"id"`
+	Title         *string                         `json:"title,omitempty" yaml:"title,omitempty"`
+	Type          VisualizationAxisType           `json:"type" yaml:"type"`
+	Scale         VisualizationAxisScale          `json:"scale" yaml:"scale"`
+	Zero          VisualizationAxisZeroPolicy     `json:"zero" yaml:"zero"`
+	Inversion     VisualizationAxisInversion      `json:"inversion" yaml:"inversion"`
+	Minimum       *float64                        `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                        `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit          *string                         `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits  *VisualizationDisplayUnits      `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity   VisualizationAxisTickDensity    `json:"tickDensity" yaml:"tickDensity"`
+	Ticks         VisualizationAxisTickVisibility `json:"ticks" yaml:"ticks"`
+	Grid          VisualizationAxisGridVisibility `json:"grid" yaml:"grid"`
+	LabelRotation VisualizationAxisLabelRotation  `json:"labelRotation" yaml:"labelRotation"`
+	DateUnit      VisualizationDateDisplayUnit    `json:"dateUnit" yaml:"dateUnit"`
 }
+
+type VisualizationAxisGridVisibility string
+
+const (
+	VisualizationAxisGridVisibilityAutomatic VisualizationAxisGridVisibility = "automatic"
+	VisualizationAxisGridVisibilityVisible   VisualizationAxisGridVisibility = "visible"
+	VisualizationAxisGridVisibilityHidden    VisualizationAxisGridVisibility = "hidden"
+)
+
+type VisualizationAxisInversion string
+
+const (
+	VisualizationAxisInversionAutomatic VisualizationAxisInversion = "automatic"
+	VisualizationAxisInversionNormal    VisualizationAxisInversion = "normal"
+	VisualizationAxisInversionInverted  VisualizationAxisInversion = "inverted"
+)
+
+type VisualizationAxisLabelRotation string
+
+const (
+	VisualizationAxisLabelRotationAutomatic  VisualizationAxisLabelRotation = "automatic"
+	VisualizationAxisLabelRotationHorizontal VisualizationAxisLabelRotation = "horizontal"
+	VisualizationAxisLabelRotationDiagonal   VisualizationAxisLabelRotation = "diagonal"
+	VisualizationAxisLabelRotationVertical   VisualizationAxisLabelRotation = "vertical"
+)
 
 type VisualizationAxisScale string
 
@@ -642,6 +673,23 @@ const (
 	VisualizationAxisTickDensitySparse    VisualizationAxisTickDensity = "sparse"
 	VisualizationAxisTickDensityNormal    VisualizationAxisTickDensity = "normal"
 	VisualizationAxisTickDensityDense     VisualizationAxisTickDensity = "dense"
+)
+
+type VisualizationAxisTickVisibility string
+
+const (
+	VisualizationAxisTickVisibilityAutomatic VisualizationAxisTickVisibility = "automatic"
+	VisualizationAxisTickVisibilityVisible   VisualizationAxisTickVisibility = "visible"
+	VisualizationAxisTickVisibilityHidden    VisualizationAxisTickVisibility = "hidden"
+)
+
+type VisualizationAxisType string
+
+const (
+	VisualizationAxisTypeAutomatic VisualizationAxisType = "automatic"
+	VisualizationAxisTypeCategory  VisualizationAxisType = "category"
+	VisualizationAxisTypeValue     VisualizationAxisType = "value"
+	VisualizationAxisTypeTime      VisualizationAxisType = "time"
 )
 
 type VisualizationAxisZeroPolicy string
@@ -1043,7 +1091,6 @@ type VisualizationConditionalTarget string
 
 const (
 	VisualizationConditionalTargetMarkFill         VisualizationConditionalTarget = "mark_fill"
-	VisualizationConditionalTargetMarkStroke       VisualizationConditionalTarget = "mark_stroke"
 	VisualizationConditionalTargetSeriesColor      VisualizationConditionalTarget = "series_color"
 	VisualizationConditionalTargetLabelForeground  VisualizationConditionalTarget = "label_foreground"
 	VisualizationConditionalTargetVisualBackground VisualizationConditionalTarget = "visual_background"
@@ -1381,6 +1428,20 @@ type VisualizationDatasetSchema struct {
 	ID     string               `json:"id" yaml:"id"`
 	Fields []VisualizationField `json:"fields" yaml:"fields"`
 }
+
+type VisualizationDateDisplayUnit string
+
+const (
+	VisualizationDateDisplayUnitAutomatic VisualizationDateDisplayUnit = "automatic"
+	VisualizationDateDisplayUnitYear      VisualizationDateDisplayUnit = "year"
+	VisualizationDateDisplayUnitQuarter   VisualizationDateDisplayUnit = "quarter"
+	VisualizationDateDisplayUnitMonth     VisualizationDateDisplayUnit = "month"
+	VisualizationDateDisplayUnitWeek      VisualizationDateDisplayUnit = "week"
+	VisualizationDateDisplayUnitDay       VisualizationDateDisplayUnit = "day"
+	VisualizationDateDisplayUnitHour      VisualizationDateDisplayUnit = "hour"
+	VisualizationDateDisplayUnitMinute    VisualizationDateDisplayUnit = "minute"
+	VisualizationDateDisplayUnitSecond    VisualizationDateDisplayUnit = "second"
+)
 
 type VisualizationDatumRef struct {
 	Dataset      string         `json:"dataset" yaml:"dataset"`
@@ -2228,12 +2289,13 @@ func (value *VisualizationGeographicLayer) Base() (*VisualizationGeographicLayer
 }
 
 type VisualizationGeographicLayerBase struct {
-	ID         string                        `json:"id" yaml:"id"`
-	Kind       string                        `json:"kind" yaml:"kind"`
-	Label      *VisualizationFieldRef        `json:"label,omitempty" yaml:"label,omitempty"`
-	Tooltip    []VisualizationFieldRef       `json:"tooltip" yaml:"tooltip"`
-	Position   VisualizationMapLayerPosition `json:"position" yaml:"position"`
-	Visibility VisualizationMapVisibility    `json:"visibility" yaml:"visibility"`
+	ID           string                        `json:"id" yaml:"id"`
+	Kind         string                        `json:"kind" yaml:"kind"`
+	Label        *VisualizationFieldRef        `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip      []VisualizationFieldRef       `json:"tooltip" yaml:"tooltip"`
+	TooltipItems *[]VisualizationTooltipItem   `json:"tooltipItems,omitempty" yaml:"tooltipItems,omitempty"`
+	Position     VisualizationMapLayerPosition `json:"position" yaml:"position"`
+	Visibility   VisualizationMapVisibility    `json:"visibility" yaml:"visibility"`
 }
 
 type VisualizationGeographicMetadata struct {
@@ -2462,6 +2524,11 @@ const (
 	VisualizationLabelPriorityThreshold VisualizationLabelPriority = "threshold"
 )
 
+type VisualizationLegendItem struct {
+	Value string  `json:"value" yaml:"value"`
+	Label *string `json:"label,omitempty" yaml:"label,omitempty"`
+}
+
 type VisualizationLegendPosition string
 
 const (
@@ -2542,8 +2609,7 @@ const (
 )
 
 type VisualizationMapLineStyle struct {
-	Width     float64 `json:"width" yaml:"width"`
-	Curvature float64 `json:"curvature" yaml:"curvature"`
+	Width float64 `json:"width" yaml:"width"`
 }
 
 type VisualizationMapSizeScale struct {
@@ -2671,7 +2737,10 @@ const (
 type VisualizationPresentation struct {
 	Legend       VisualizationLegendPosition `json:"legend" yaml:"legend"`
 	LabelPolicy  VisualizationLabelPolicy    `json:"labelPolicy" yaml:"labelPolicy"`
+	AxisVisible  *bool                       `json:"axisVisible,omitempty" yaml:"axisVisible,omitempty"`
 	DisplayUnits *VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	LegendTitle  *string                     `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems  *[]VisualizationLegendItem  `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 }
 
 type VisualizationProportionalMark string
@@ -3881,6 +3950,7 @@ func (value *VisualizationSpec) Base() (*VisualizationSpecBase, error) {
 type VisualizationSpecBase struct {
 	Kind                  string                            `json:"kind" yaml:"kind"`
 	Title                 string                            `json:"title" yaml:"title"`
+	TitleVisible          *bool                             `json:"titleVisible,omitempty" yaml:"titleVisible,omitempty"`
 	Subtitle              *string                           `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
 	Datasets              []VisualizationDatasetSchema      `json:"datasets" yaml:"datasets"`
 	DataBudget            VisualizationDataBudget           `json:"dataBudget" yaml:"dataBudget"`
@@ -3889,6 +3959,7 @@ type VisualizationSpecBase struct {
 	ConditionalFormatting *[]VisualizationConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
 	MetadataBindings      *VisualizationMetadataBindings    `json:"metadataBindings,omitempty" yaml:"metadataBindings,omitempty"`
 	Calculations          *[]VisualizationCalculation       `json:"calculations,omitempty" yaml:"calculations,omitempty"`
+	TooltipItems          *[]VisualizationTooltipItem       `json:"tooltipItems,omitempty" yaml:"tooltipItems,omitempty"`
 }
 
 type VisualizationStackingMode string
@@ -3952,6 +4023,12 @@ const (
 	VisualizationToneWarning VisualizationTone = "warning"
 	VisualizationToneDanger  VisualizationTone = "danger"
 )
+
+type VisualizationTooltipItem struct {
+	Field  VisualizationFieldRef `json:"field" yaml:"field"`
+	Label  *string               `json:"label,omitempty" yaml:"label,omitempty"`
+	Format *VisualizationFormat  `json:"format,omitempty" yaml:"format,omitempty"`
+}
 
 type VisualizationWeekStart string
 

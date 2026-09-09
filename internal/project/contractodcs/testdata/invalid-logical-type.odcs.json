@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "kind": "DataContract",
+  "apiVersion": "v3.1.0",
+  "id": "invalid-logical-type",
+  "status": "active",
+  "schema": [{
+    "name": "orders",
+    "logicalType": "object",
+    "properties": [{"name": "id", "logicalType": "not-an-odcs-type"}]
+  }]
+}

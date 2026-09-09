@@ -70,9 +70,16 @@ const rolePolicySQL = `
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION project.bind_resource_uid_generation(uuid) FROM PUBLIC;
 DO $$
 BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_runtime;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb) TO leapview_control_runtime;
+		REVOKE EXECUTE ON FUNCTION project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_runtime;
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_runtime;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
@@ -83,6 +90,7 @@ BEGIN
 		GRANT SELECT, UPDATE ON admin.product_identity TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_runtime;
 		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION dashboard.lock_authoring_dashboard(text, text) TO leapview_control_runtime;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.release_record, release.release_connection
@@ -144,7 +152,9 @@ BEGIN
         -- DELETE stay forbidden for these immutable identity rows.
         GRANT SELECT ON ducklake.catalog_identity TO leapview_control_runtime;
         REVOKE UPDATE, DELETE ON ducklake.catalog_identity FROM leapview_control_runtime;
-        GRANT SELECT ON ducklake.snapshot_retention TO leapview_control_runtime;
+		GRANT SELECT ON ducklake.snapshot_retention TO leapview_control_runtime;
+		GRANT SELECT, INSERT ON project.contract_publication TO leapview_control_runtime;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ducklake.snapshot_retention FROM leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE ON ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification FROM leapview_control_runtime;
@@ -153,6 +163,8 @@ BEGIN
 		GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_runtime;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_runtime;
+		REVOKE ALL ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_runtime;
+		REVOKE EXECUTE ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_runtime;
         GRANT SELECT, INSERT ON serving_state.bundle, serving_state.asset, serving_state.asset_edge TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON serving_state.reader_lease TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid, bigint) TO leapview_control_runtime;
@@ -165,6 +177,12 @@ BEGIN
 		GRANT SELECT, INSERT ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result TO leapview_control_maintenance;
 		REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_maintenance;
 		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result FROM leapview_control_maintenance;
+		GRANT SELECT ON recovery.set_identity_registry TO leapview_control_maintenance;
+		GRANT SELECT ON recovery.successor_trust_generation TO leapview_control_maintenance;
+		GRANT SELECT, INSERT ON recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_maintenance;
+		GRANT EXECUTE ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() TO leapview_control_maintenance;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_trust_generation FROM leapview_control_maintenance;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_maintenance;
 		GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
 		GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
 		GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid), delivery.retire_retention_root(uuid), delivery.expire_retention_root(uuid, interval), delivery.maintain_retention_roots(text, text, interval, integer), delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) TO leapview_control_maintenance;
@@ -180,6 +198,10 @@ BEGIN
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_maintenance;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_readonly;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_readonly;
+		REVOKE EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb), project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_readonly;
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_readonly;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_readonly;
@@ -189,8 +211,13 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA release TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, physical_pool TO leapview_control_readonly;
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
+		GRANT SELECT ON project.contract_publication TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_readonly;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_readonly;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_readonly;
+		GRANT SELECT ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_readonly;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_readonly;
+		REVOKE ALL ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_readonly;
 		GRANT SELECT ON jobs.job_history TO leapview_control_readonly;
 		REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.event_sequence, jobs.event FROM leapview_control_readonly;
@@ -204,16 +231,24 @@ BEGIN
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+		GRANT USAGE ON SCHEMA project TO leapview_control_backup;
+		GRANT SELECT ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.resource_uid_registry, project.resource_uid_generation, project.resource_uid_inventory, project.resource_uid_tombstone, project.resource_uid_restore_authorization FROM leapview_control_backup;
+		REVOKE EXECUTE ON FUNCTION project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb), project.bind_resource_uid_generation(uuid), project.authorize_resource_uid_restore(text,text,text,text,uuid,uuid,text,text,text,text) FROM leapview_control_backup;
 		GRANT USAGE ON SCHEMA project, access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, physical_pool, serving_state, recovery TO leapview_control_backup;
 		GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_backup;
 		GRANT SELECT ON admin.product_identity TO leapview_control_backup;
 		GRANT SELECT ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_backup;
 		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_backup;
-        GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, physical_pool TO leapview_control_backup;
+		GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, physical_pool TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON project.contract_publication FROM leapview_control_backup;
 		GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
 		GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_backup;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_backup;
+		GRANT SELECT ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_backup;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.set_identity_registry, recovery.successor_evidence_v2, recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding, recovery.successor_trust_generation, recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_backup;
+		REVOKE ALL ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea), recovery.lock_successor_generation() FROM leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;

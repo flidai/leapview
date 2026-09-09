@@ -9,15 +9,21 @@ import type { VisualActionDetail } from '../visual-modal'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
+import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
+import { clearInteractionCommand } from './interaction-command'
 import { resolveVisualizationMetadata } from './metadata'
+
+export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
 export class VisualizationHost extends LitElement {
   @property({ attribute: false }) envelope?: VisualizationEnvelope
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ type: Boolean, reflect: true }) authoring = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
   @state() private applying = false
   @state() private presented = false
+  @state() private announcement = ''
   private controller?: VisualizationController
   private resizeObserver?: ResizeObserver
   private applyGeneration = 0
@@ -28,7 +34,14 @@ export class VisualizationHost extends LitElement {
 
   static styles = [visualActionStyles, css`
     :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
-    :host { color: var(--lv-fg-default); background: var(--lv-chart-surface); font-family: var(--fontStack-system); }
+    :host {
+      --lv-visual-inverse-scale: var(--report-canvas-inverse-scale, calc(1 / var(--builder-canvas-scale, 1)));
+      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
+      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
+      color: var(--lv-fg-default);
+      background: var(--lv-chart-surface);
+      font-family: var(--fontStack-system);
+    }
     .surface { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
     .surface.headerless { grid-template-rows: minmax(0, 1fr); }
     .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
@@ -244,8 +257,81 @@ export class VisualizationHost extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .visual-options { position: relative; }
+    .visual-options summary {
+      display: grid;
+      width: var(--lv-visual-action-target);
+      min-width: var(--lv-visual-action-target);
+      height: var(--lv-visual-action-target);
+      min-height: var(--lv-visual-action-target);
+      place-items: center;
+      border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
+      border-radius: var(--lv-radius-tight);
+      background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
+      color: var(--lv-button-invisible-icon-rest, var(--lv-icon-muted, var(--lv-fg-muted)));
+      cursor: pointer;
+      list-style: none;
+    }
+    .visual-options summary::-webkit-details-marker { display: none; }
+    .visual-options summary svg { width: var(--base-size-16); height: var(--base-size-16); }
+    .visual-options summary:hover,
+    .visual-options summary:focus-visible,
+    .visual-options[open] summary {
+      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
+      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
+      color: var(--lv-icon-default, var(--lv-fg-default));
+      outline: var(--focus-outline, var(--lv-border-default));
+      outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
+      outline-offset: var(--focus-outline-offset, var(--base-size-2));
+    }
+    .visual-options .menu {
+      position: absolute;
+      top: calc(100% + var(--base-size-4));
+      right: 0;
+      z-index: var(--zIndex-dropdown);
+      display: grid;
+      width: min(220px, calc(100vw - var(--base-size-24)));
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-overlay);
+      box-shadow: var(--shadow-floating-small);
+      padding: var(--base-size-4);
+    }
+    .visual-options .menu button {
+      display: flex;
+      align-items: center;
+      gap: var(--base-size-8);
+      min-width: var(--lv-visual-menu-target);
+      min-height: var(--lv-visual-menu-target);
+      border: var(--borderWidth-default, var(--lv-border-width)) solid transparent;
+      border-radius: var(--lv-radius-tight);
+      background: transparent;
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      padding: 0 var(--lv-button-padding-inline-xs, var(--control-xsmall-paddingInline-normal));
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+      text-align: left;
+    }
+    .visual-options .menu button:hover,
+    .visual-options .menu button:focus-visible {
+      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
+      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
+      outline: var(--focus-outline, var(--lv-border-default));
+      outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
+      outline-offset: var(--focus-outline-offset, var(--base-size-2));
+    }
+    .visual-options .menu svg { flex: 0 0 auto; width: var(--base-size-16); height: var(--base-size-16); }
+    .visual-options .menu button:disabled { cursor: default; opacity: var(--opacity-disabled); }
+    .announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .error { position: absolute; inset: 0; display: grid; place-items: center; color: var(--lv-fg-danger); padding: 1rem; text-align: center; background: var(--lv-bg-panel); }
     .fallback { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    @media (max-width: 480px) {
+      .toolbar { gap: var(--base-size-4); padding-inline: var(--base-size-8); }
+      .toolbar-subtitle { display: none; }
+      .visual-options .menu { position: fixed; top: var(--base-size-48); right: var(--base-size-8); }
+    }
   `]
 
   protected firstUpdated(): void {
@@ -312,21 +398,26 @@ export class VisualizationHost extends LitElement {
     const error = this.error || statusError
     const header = this.sharedHeader()
     const metadata = this.envelope ? resolveVisualizationMetadata(this.envelope) : undefined
+    const titleVisible = this.envelope?.spec.titleVisible !== false
+    const showHeader = Boolean((header && titleVisible) || this.authoring)
     const showInitialLoading = !this.presented && !error
     const loadingLabel = `Loading ${header ?? 'visualization'}…`
-    return html`<div class=${header ? 'surface' : 'surface headerless'}>
-      ${header ? html`
+    return html`<div class=${showHeader ? 'surface' : 'surface headerless'}>
+      ${showHeader ? html`
         <header class="toolbar">
           <div class="toolbar-title">
-            <h2 data-visualization-title>${metadata?.title}</h2>
+            ${this.authoring
+              ? html`<slot name="authoring-drag-handle"><h2 data-visualization-title>${metadata?.title}</h2></slot>`
+              : html`<h2 data-visualization-title>${metadata?.title}</h2>`}
             ${metadata?.subtitle ? html`<p class="toolbar-subtitle" data-visualization-subtitle>${metadata.subtitle}</p>` : null}
           </div>
           <div class="visual-actions">
             <slot name="agent-action"></slot>
-            <button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>
+            ${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}
+            ${this.visualActions()}
           </div>
         </header>
-      ` : html`<div class="headerless-actions" ?data-table-actions=${this.envelope?.spec.kind === 'table'}><slot name="agent-action"></slot></div>`}
+      ` : html`<div class="headerless-actions" ?data-table-actions=${this.envelope?.spec.kind === 'table'}><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${this.envelope?.spec.kind === 'table' ? null : this.visualActions()}</div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -335,12 +426,14 @@ export class VisualizationHost extends LitElement {
         </div>` : null}
       </div>
       <div id="visualization-fallback" class="fallback">${this.accessibleFallback()}</div>
+      ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
       ${error ? html`<div class="error" role="alert">${error}</div>` : null}
     </div>`
   }
 
   private async applyEnvelope(): Promise<void> {
     if (!this.envelope || !this.controller) return
+    const previous = this.controller.envelope
     if (this.presentedRendererID !== this.envelope.rendererID) {
       this.presentedRendererID = this.envelope.rendererID
       this.presented = false
@@ -352,6 +445,7 @@ export class VisualizationHost extends LitElement {
       if (generation === this.applyGeneration) {
         this.error = ''
         this.presented = true
+        this.announcement = visualizationChangeAnnouncement(previous, this.envelope)
       }
     } catch (error) {
       if (generation === this.applyGeneration) this.error = error instanceof Error ? error.message : String(error)
@@ -392,6 +486,48 @@ export class VisualizationHost extends LitElement {
       bubbles: true,
       composed: true,
       detail,
+    }))
+  }
+
+  private visualActions() {
+    const envelope = this.envelope
+    if (!envelope || !supportsHostDataActions(envelope)) return null
+    return html`<details class="visual-options">
+      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${visualMenuIcon('show-data')}</summary>
+      <div class="menu" role="menu">
+        <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
+        <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
+        <button type="button" role="menuitem" @click=${() => this.runAction('export-csv')}>${visualMenuIcon('export-csv')}<span>Export CSV</span></button>
+        ${envelope.selection.length > 0 && clearInteractionCommand(envelope) ? html`<button type="button" role="menuitem" @click=${() => this.runAction('clear-selection')}>${visualMenuIcon('clear-selection')}<span>Clear selection</span></button>` : null}
+      </div>
+    </details>`
+  }
+
+  private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
+    const envelope = this.envelope
+    if (!envelope || !supportsHostDataActions(envelope)) return
+    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    const data = accessibleVisualizationData(envelope, this.rendererContext())
+    const metadata = resolveVisualizationMetadata(envelope)
+    if (action === 'clear-selection') {
+      const command = clearInteractionCommand(envelope)
+      if (command) this.dispatchEvent(new CustomEvent('lv-interaction-select', { bubbles: true, composed: true, detail: command }))
+    }
+    this.dispatchEvent(new CustomEvent<VisualActionDetail>('lv-visual-action', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        action,
+        visualType: envelope.spec.kind === 'geographic' ? 'map' : this.sharedHeader() === 'chart' ? 'chart' : 'visualization',
+        visualId: envelope.visualID,
+        title: metadata.title,
+        columns: [...data.columns],
+        rows: [...data.rows],
+        selection: envelope.selection.map((entry) => entry.label ?? Object.values(entry.datum.identity).map(displayValue).join(' · ')),
+        totalRows: data.totalRows,
+        truncated: data.truncated,
+        dataStatus: accessibleDataStatus(envelope, data),
+      },
     }))
   }
 
@@ -450,10 +586,12 @@ export class VisualizationHost extends LitElement {
   private accessibleFallback() {
     const envelope = this.envelope
     if (!envelope) return 'Visualization is loading.'
-    const status = envelope.status.message ?? envelope.status.kind.replaceAll('_', ' ')
+    const data = accessibleVisualizationData(envelope, this.rendererContext(), 6)
     const metadata = resolveVisualizationMetadata(envelope)
     const summary = metadata.summary ?? metadata.description
-    return `${metadata.title}.${metadata.subtitle ? ` ${metadata.subtitle}.` : ''} ${summary}. Status: ${status}.`
+    const status = accessibleStatus(envelope)
+    const dataSummary = accessibleDataStatus(envelope, data)
+    return `${metadata.title}.${metadata.subtitle ? ` ${metadata.subtitle}.` : ''} ${summary}. ${status}. ${dataSummary}`
   }
 }
 

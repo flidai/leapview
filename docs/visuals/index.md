@@ -33,7 +33,164 @@ presentation:
 
 Fixed units remain fixed even when the current filtered values are smaller or larger. Use them when comparable visuals must retain the same scale; otherwise prefer `auto`. Label visibility is a separate explicit choice and is never inferred from number formatting.
 
+Numeric, currency, and percent formats accept optional `minimumFractionDigits` and
+`maximumFractionDigits` bounds. With neither bound, number uses `0..3` digits,
+currency uses `2..2`, and percent uses `0..1`. A one-sided bound preserves the
+format's default on the other side when valid; if it would invert the range, the
+default is adapted to the explicit bound. For example, number `maximumFractionDigits: 6`
+keeps a minimum of `0`, while currency `maximumFractionDigits: 0` resolves to
+`0..0`. Explicit pairs must remain ordered and within `0..12`.
+
+Axes are renderer-neutral and may also declare `type` (`automatic`, `category`,
+`value`, or `time`), `minimum`/`maximum`, `zero`, and `inversion` (`normal` or
+`inverted`). Numeric bounds, zero policies, log/linear scales, and number
+display units require an effective numeric axis; `dateUnit` is only valid on an
+effective time axis. `ticks` and `grid` can be `automatic`, `visible`, or
+`hidden`, while `labelRotation` supports `automatic`, `horizontal`, `diagonal`,
+and `vertical`. Omitted values resolve to the automatic policy in the compiled
+IR, keeping defaults explicit and renderer-neutral. Percent stacking owns the
+percent formatter, so it cannot be combined with presentation or primary-axis
+`displayUnits`. An explicit `dateUnit` controls axis labels only; governed field
+formatting continues to control tooltip values.
+
+For example, this keeps a time axis readable while inverting a bounded value
+axis and hiding its grid lines:
+
+```yaml
+presentation:
+  axes:
+  - id: x
+    type: time
+    dateUnit: month
+    ticks: visible
+    labelRotation: diagonal
+    scale: automatic
+    zero: automatic
+    tickDensity: normal
+  - id: primary_y
+    type: value
+    scale: linear
+    zero: exclude
+    minimum: 0
+    maximum: 1000000
+    inversion: inverted
+    grid: hidden
+    displayUnits: millions
+    tickDensity: dense
+```
+
 Policies also bound label length by Unicode grapheme, set minimum collision spacing, and declare whether selected, anomalous, or threshold-crossing data should win a collision. The same frame, locale, dimensions, and policy always produce the same label decision. Full untruncated values remain in governed tooltips when `tooltipFallback` is enabled.
+
+## Curated tooltips and legends
+
+Use the structured `tooltip` item form when a visual needs an explicit tooltip
+contract. Items are shown in authored order; each item may override the field
+label and semantic format. An explicit empty list suppresses tooltip rows. If
+omitted, the renderer preserves the legacy field list and then the visual's
+default fields. Values are HTML-escaped and null values display as `—`.
+
+Visible legends on supported Cartesian marks, categorical points, proportional
+charts, and radar series accept `legendTitle` and `legendItems`. Candlestick
+charts are the exception: they support legend position and title, but not
+per-item overrides because the renderer exposes one visual-title series rather
+than metric aliases. Listed values on other supported series are filtered to
+values present in the current data and rendered in authored order, while
+canonical series/category names remain unchanged for selection events.
+Unlisted values retain deterministic data order. Geographic reference layers
+and hierarchy visuals do not expose legend metadata.
+
+For categorical point legends, `value` addresses the canonical category name:
+null and empty categories use `(null)` and `(empty)`, and values whose string
+forms collide use the displayed type-qualified name (for example,
+`1 [number:1]`).
+
+```yaml
+presentation:
+  tooltip:
+  - field: status
+    label: Order status
+  - field: revenue
+    label: Net revenue
+    format:
+      kind: currency
+      currency: USD
+  legend: right
+  legendTitle: Segment
+  legendItems:
+  - value: Consumer
+    label: Consumer orders
+  - value: Enterprise
+```
+
+## Per-mark presentation
+
+### Axis visibility and builder format options
+
+`presentation.axisVisible` controls axis rendering for Cartesian marks and
+point (scatter) visuals. `true` or `false` is explicit; omission retains the
+renderer default. Do not author this field on proportional, hierarchy, polar,
+geographic, KPI, or table-family visuals: unsupported values fail compilation
+with the authored `presentation.axisVisible` path instead of being silently
+ignored.
+
+The dashboard builder shows only format options consumed by the selected mark.
+When switching between Cartesian marks, authored presentation fields are
+preserved as part of the same-family presentation. If a preserved field is not
+valid for the target mark, the compiler reports that field rather than silently
+discarding it. Cross-family switches carry axis visibility only to Cartesian or
+point targets; unsupported families do not inherit it.
+Map fixed-camera mode is offered only when the YAML already supplies its center
+and zoom; the builder does not author map center coordinates. Format values
+still undergo semantic validation, including numeric domains and the requirement
+for tooltip fallback when labels can be suppressed.
+
+Cartesian marks support the common `labels`, `labelPosition`, `displayUnits`, and `axes` fields where the renderer consumes those channels. Candlestick and boxplot do not render data labels, so `labels` and `labelPosition` are rejected for those marks. Mark-specific fields are scoped to the renderer paths that consume them:
+
+| Mark | Mark-specific presentation fields |
+| --- | --- |
+| Line | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Area | `legend`, `stacking`, `orientation`, `showSymbols`, `smooth`, `step`, `dataZoom`, `symbolSize`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Bar | `legend`, `stacking`, `dataZoom`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Column | `legend`, `stacking`, `orientation`, `dataZoom`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Combo | `legend`, `stacking`, `orientation`, `dataZoom`, `series`, `seriesIntent`, `referenceLines`, `referenceBands`, `eventAnnotations`; conditional line controls (`showSymbols`, `smooth`, `step`, `symbolSize`) apply with the default line series or when a configured series is line or area |
+| Waterfall | `dataZoom`, `referenceLines`, `referenceBands`, `eventAnnotations` |
+| Heatmap | `dataZoom` |
+| Histogram | `dataZoom` |
+| Candlestick | `legend`, `dataZoom`, `gainColor`, `lossColor` (legend title is supported; legend item overrides are not) |
+| Boxplot | `dataZoom` |
+
+Proportional and polar presentations share the common `legend`, `labels`, and `displayUnits` fields where those channels are meaningful. Mark-specific fields are intentionally scoped to the marks that can render them:
+
+| Mark | Mark-specific presentation fields |
+| --- | --- |
+| Pie | `rose`, `labelPosition`, `outerRadius` |
+| Donut | `rose`, `centerLabel`, `labelPosition`, `innerRadius`, `outerRadius` |
+| Funnel | `orientation`, `labelPosition`, `align`, `sort` |
+| Radar | `area`, `maximum` |
+| Gauge | `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+
+Hierarchy controls are mark-scoped. `layout` applies to tree and graph (`standard`
+or `circular`); `initialDepth` applies to tree and treemap; `roam` applies to
+graph, tree, treemap, and sunburst; `breadcrumb` applies to treemap; `nodeGap`
+applies to Sankey; `curveness` applies to graph and Sankey; and `focus` applies
+to graph. Sankey flow rows are intentionally bipartite: the renderer keeps
+source nodes on the source side and target nodes on the target side, with no
+free node-alignment control. Unknown presentation keys such as `nodeAlignment`
+are rejected by the closed dashboard schema.
+
+| Family | Supported controls |
+| --- | --- |
+| Hierarchy | `labels`; mark-scoped `orientation`, `initialDepth`, `roam`, `layout`, `breadcrumb`, `nodeGap`, `curveness`, `focus` as described above |
+| Proportional | `legend`, `labels`, `displayUnits`; pie/donut `rose`, `labelPosition`, `outerRadius`; donut `centerLabel`, `innerRadius`; funnel `orientation`, `labelPosition`, `align`, `sort` |
+| Polar | `labels`, `displayUnits`; radar `legend`, `area`, `maximum`; gauge `minimum`, `maximum`, `target`, `showPointer`, `progressWidth`, `thresholds` |
+
+Candlestick gain/loss colors are renderer-neutral color intents. Omitted values
+use the active theme's `success` and `danger` colors; equal open/close values
+use the active theme's neutral/muted color, so a flat candle is not presented
+as a gain or loss. The same compiled option is used for light, dark, and image
+export rendering.
+
+Gauge has no categorical legend; radar can use `legend` when its aggregate query includes a second governed dimension for series values. A field from another mark's row is rejected during project validation rather than silently changing the rendered visual.
 
 ## Decision-context capability matrix
 
@@ -44,16 +201,35 @@ All entries below describe renderer-neutral compiled contracts. Unsupported comb
 | Line, area, bar, column, combo, scatter, waterfall | Yes | Yes | Yes, on the horizontal axis | Yes | Yes |
 | Heatmap | Yes | No | No | Yes | Yes |
 | Histogram, candlestick, boxplot | Yes | No | No | No | Yes |
-| Pie, donut, funnel | No | No | No | No | Yes |
+| Pie, donut, funnel | No | No | No | Yes (`mark_fill`, `series_color`) | Yes |
 | Treemap, sunburst, tree, Sankey, graph | No | No | No | No | Yes |
 | Radar, gauge | No | No | No | No | Yes |
-| KPI | No | No | No | Value, icon, and background | Yes |
+| KPI | No | No | No | Value and background | Yes |
 | Table, matrix, pivot | Table-owned sorting and formatting | No | No | Cell foreground/background and icons | Static titles; governed cell bindings |
 | Map | Renderer-owned geographic contract | No | No | No | No secondary context datasets |
 
+Conditional-format targets are closed by visual family. Point visuals accept only
+`mark_fill`; its field must be one of the rendered `x`, `y`, `size`, `color`,
+`label`, or tooltip channels, and the icon cue is rendered as the point symbol.
+Supported Cartesian marks retain `mark_fill`, `series_color`, `label_foreground`,
+and `icon`. KPI accepts `visual_background` and `kpi_value`, both bound to the
+current `value` field, while table, matrix, and pivot accept `cell_foreground`,
+`cell_background`, and `icon`. Proportional visuals (`pie`, `donut`, and
+`funnel`) currently accept `mark_fill` and `series_color`, both bound to the
+`value` field; authored icon cues are rendered in sector labels. Cartesian
+conditional formatting is mark-aware across its supported marks.
+Row-level mark stroke variation is not part of the rendering contract; use
+`mark_fill` or a label/icon cue instead.
+
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 
+Reference lines, bands, and events on a numeric value X axis require numeric values or numeric field reducers. Text values remain valid on category axes; date/time axes retain their temporal values. Incompatible value-axis references fail compilation at the authored value path. Numeric literals on a log axis must be strictly positive; nonpositive data-derived line or event values are omitted at render time, and a band is omitted when either resolved endpoint is nonpositive.
+
 Deleted fields, unknown datasets, incompatible reducers, unsupported mark/feature combinations, and unsafe formatting intents are deployment errors with the binding path in the diagnostic. Authorization remains part of governed query execution; an unauthorized or failed context query produces the visual’s normal error state and does not reveal a hidden value through metadata or a renderer message.
+
+## Accessible visual data
+
+Inline charts offer **Show data**, **Copy data**, and **Export CSV** for a bounded preview of up to 100 rows. Multi-dataset visuals, including KPI comparison, goal, and trend data, identify each dataset explicitly and keep its fields separate; rows are not joined across datasets. The row limit applies across all datasets in declared order. The preview and action notices report omitted rows and partial or truncated source data. Server-backed tables and tiled maps use their own data-access surfaces instead of these inline actions.
 
 ## Change over time
 

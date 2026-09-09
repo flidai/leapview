@@ -15,14 +15,28 @@ test('managed UI QA isolates CLI credentials and candidate checkpoints for start
   const startup = source.slice(source.indexOf("devTask = spawn(['task', 'dev']"), source.indexOf('void devTask.exited'))
   expect(startup).toContain('...managedCLIEnv,')
   const publication = source.slice(source.indexOf('async function deployManagedProject'), source.indexOf('async function waitForManagedServer'))
-  expect(publication).toContain('await run(command, managedCLIEnv)')
+  expect(publication).toContain('await run(command, { ...managedCLIEnv, ...qaPostgresEnv })')
   expect(publication).not.toContain('await run(command)')
   expect(source).toContain('env: { ...Bun.env, ...extraEnv }')
+})
+
+test('UI framework QA owns an isolated disposable PostgreSQL topology', async () => {
+  const [runner, postgres] = await Promise.all([
+    readFile('scripts/qa_ui_framework.ts', 'utf8'),
+    readFile('scripts/postgres-dev.sh', 'utf8'),
+  ])
+
+  expect(runner).toContain("LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework'")
+  expect(runner).toContain("LEAPVIEW_POSTGRES_TEST_MODE: '1'")
+  expect(runner).toContain('await destroyManagedPostgres()')
+  expect(postgres).toContain('destroy)')
+  expect(postgres).toContain('compose down --volumes --remove-orphans')
 })
 
 test('UI framework QA waits for asynchronous publication activation', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
+  expect(source).toContain("new URL('/healthz', baseURL)")
   expect(source).toContain('await waitForProjectReady(started)')
   expect(source).toContain("new URL('/explore', baseURL)")
 })
@@ -50,6 +64,14 @@ test('development readiness files are published only after PostgreSQL bootstrap'
   expect(bootstrap).toBeGreaterThanOrEqual(0)
   expect(readiness).toBeGreaterThan(bootstrap)
   expect(source).toContain('Publish the readiness contract only after the final server')
+})
+
+test('development publication can seed a healthy server before a project is active', async () => {
+  const source = await readFile('scripts/dev-server.sh', 'utf8')
+  const publishRunning = source.slice(source.indexOf('publish_running()'), source.indexOf('attach_server()'))
+
+  expect(publishRunning).toContain('"http://localhost:${port}/healthz"')
+  expect(publishRunning).not.toContain('"http://localhost:${port}/"')
 })
 
 test('maintained headless workflows use the managed PostgreSQL dev lifecycle', async () => {
@@ -179,10 +201,11 @@ test('WCAG route QA failures identify the route, rule, element, and remediation'
 })
 
 test('spatial route QA rejects only concurrently visible precision families', () => {
+  expect(hasMixedSpatialPrecision('View visible map data (611 visible features: 610 raw points, 1 aggregate-resolution feature; 14833 total coordinates)')).toBe(true)
   expect(hasMixedSpatialPrecision('View visible map data (611 visible features: 610 raw points, 1 aggregate cell; 14833 total coordinates)')).toBe(true)
-  expect(hasMixedSpatialPrecision('View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 14833 total coordinates)')).toBe(false)
-  expect(hasMixedSpatialPrecision('View visible map data (12 visible features: 0 raw points, 12 aggregate cells; 14833 total coordinates)')).toBe(false)
-  expect(hasMixedSpatialPrecision('View visible map data (12 visible features: 12 raw points, 0 aggregate cells; 14833 total coordinates)')).toBe(false)
+  expect(hasMixedSpatialPrecision('View visible map data (0 visible features: 0 raw points, 0 aggregate-resolution features; 14833 total coordinates)')).toBe(false)
+  expect(hasMixedSpatialPrecision('View visible map data (12 visible features: 0 raw points, 12 aggregate-resolution features; 14833 total coordinates)')).toBe(false)
+  expect(hasMixedSpatialPrecision('View visible map data (12 visible features: 12 raw points, 0 aggregate-resolution features; 14833 total coordinates)')).toBe(false)
 })
 
 function axeViolation(id: string, impact: string): AxeViolation {

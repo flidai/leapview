@@ -93,6 +93,10 @@
           },
           "type": "array"
         },
+        "gainColor": {
+          "$ref": "#/$defs/VisualizationColorIntent",
+          "description": "Candlestick gain color; omitted values use the active theme success color."
+        },
         "labelPosition": {
           "$ref": "#/$defs/DashboardLabelPosition"
         },
@@ -101,6 +105,19 @@
         },
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
+        "lossColor": {
+          "$ref": "#/$defs/VisualizationColorIntent",
+          "description": "Candlestick loss color; omitted values use the active theme danger color."
         },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"
@@ -124,6 +141,13 @@
           },
           "type": "array"
         },
+        "seriesIntent": {
+          "description": "Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series.",
+          "items": {
+            "$ref": "#/$defs/DashboardSeriesIntent"
+          },
+          "type": "array"
+        },
         "showSymbols": {
           "type": "boolean"
         },
@@ -141,6 +165,12 @@
           "format": "double",
           "type": "number"
         },
+        "tooltip": {
+          "items": {
+            "$ref": "#/$defs/DashboardTooltip"
+          },
+          "type": "array"
+        },
         "type": {
           "enum": [
             "cartesian"
@@ -150,6 +180,30 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CompactVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "compact"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -178,6 +232,39 @@
         "operator",
         "type",
         "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "CurrencyVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+      "properties": {
+        "currency": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "currency"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "currency",
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -246,11 +333,23 @@
     "DashboardAxisConfiguration": {
       "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
       "properties": {
+        "dateUnit": {
+          "$ref": "#/$defs/VisualizationDateDisplayUnit"
+        },
         "displayUnits": {
           "$ref": "#/$defs/VisualizationDisplayUnits"
         },
+        "grid": {
+          "$ref": "#/$defs/VisualizationAxisGridVisibility"
+        },
         "id": {
           "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "inversion": {
+          "$ref": "#/$defs/VisualizationAxisInversion"
+        },
+        "labelRotation": {
+          "$ref": "#/$defs/VisualizationAxisLabelRotation"
         },
         "maximum": {
           "format": "double",
@@ -266,8 +365,14 @@
         "tickDensity": {
           "$ref": "#/$defs/VisualizationAxisTickDensity"
         },
+        "ticks": {
+          "$ref": "#/$defs/VisualizationAxisTickVisibility"
+        },
         "title": {
           "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/VisualizationAxisType"
         },
         "unit": {
           "type": "string"
@@ -398,6 +503,11 @@
           "enum": [
             "choropleth"
           ],
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "opacity": {
@@ -814,9 +924,9 @@
         },
         "targets": {
           "items": {
-            "maxLength": 128,
+            "maxLength": 257,
             "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$",
             "type": "string"
           },
           "type": "array"
@@ -1054,11 +1164,6 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string"
         },
-        "label": {
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
         "maximumZoom": {
           "format": "double",
           "type": "number"
@@ -1072,9 +1177,7 @@
         },
         "tooltip": {
           "items": {
-            "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
+            "$ref": "#/$defs/DashboardTooltip"
           },
           "type": "array"
         }
@@ -1456,6 +1559,22 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "DashboardLegendItem": {
+      "description": "One canonical legend value. Array order is the display order.",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DashboardLegendPosition": {
       "enum": [
         "none",
@@ -1512,7 +1631,10 @@
           "type": "integer"
         },
         "radius": {
+          "description": "Approximate CSS-pixel clustering target for tiled maps. The server uses a\nglobally aligned grid with max(1, floor(256 / radius)) cells per tile;\nradii 129–512 therefore share one cell per tile. This does not promise\npixel-identical cluster membership between inline and tiled data.",
           "format": "int32",
+          "maximum": 512,
+          "minimum": 1,
           "type": "integer"
         },
         "showCount": {
@@ -1583,10 +1705,6 @@
     },
     "DashboardMapLineStyle": {
       "properties": {
-        "curvature": {
-          "format": "double",
-          "type": "number"
-        },
         "width": {
           "format": "double",
           "type": "number"
@@ -1745,6 +1863,12 @@
         "description": {
           "type": "string"
         },
+        "filterBindings": {
+          "items": {
+            "$ref": "#/$defs/DashboardPageFilterBinding"
+          },
+          "type": "array"
+        },
         "id": {
           "maxLength": 128,
           "minLength": 1,
@@ -1800,6 +1924,53 @@
         "type"
       ],
       "type": "object"
+    },
+    "DashboardPageFilterBinding": {
+      "description": "A page-scoped state binding for one governed dashboard filter definition.\nThe binding identity is local to its page and is independent from any\nin-canvas filter component that presents the same filter.",
+      "properties": {
+        "default": {
+          "$ref": "#/$defs/DashboardFilterExpression"
+        },
+        "filter": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "readerEditable": {
+          "type": "boolean"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "targets": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "urlParameter": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter",
+        "id"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardPathGeographicLayer": {
       "allOf": [
@@ -1952,6 +2123,11 @@
           ],
           "type": "string"
         },
+        "label": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "latitude": {
           "minLength": 1,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -2017,6 +2193,10 @@
     "DashboardPresentationBase": {
       "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
       "properties": {
+        "axisVisible": {
+          "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
+          "type": "boolean"
+        },
         "conditionalFormatting": {
           "items": {
             "$ref": "#/$defs/DashboardConditionalFormat"
@@ -2305,6 +2485,26 @@
       ],
       "type": "string"
     },
+    "DashboardSeriesIntent": {
+      "description": "A stable renderer-neutral policy for one named chart series.",
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/VisualizationColorIntent"
+        },
+        "order": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DashboardSort": {
       "properties": {
         "direction": {
@@ -2470,6 +2670,39 @@
       ],
       "type": "string"
     },
+    "DashboardTooltip": {
+      "oneOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/DashboardTooltipItem"
+        }
+      ]
+    },
+    "DashboardTooltipItem": {
+      "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+      "properties": {
+        "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/$defs/VisualizationFormat"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DashboardVisual": {
       "properties": {
         "accessibility": {
@@ -2519,6 +2752,10 @@
         },
         "title": {
           "type": "string"
+        },
+        "titleVisible": {
+          "description": "Controls whether the authored title is shown in the visual frame.",
+          "type": "boolean"
         },
         "type": {
           "$ref": "#/$defs/DashboardVisualType"
@@ -2726,6 +2963,30 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "DurationVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "duration"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "FieldDashboardReferenceValue": {
       "allOf": [
         {
@@ -2801,9 +3062,6 @@
         },
         "labelDensity": {
           "$ref": "#/$defs/VisualizationMapLabelDensity"
-        },
-        "labels": {
-          "$ref": "#/$defs/DashboardLabelPolicy"
         },
         "layers": {
           "items": {
@@ -2885,6 +3143,15 @@
         },
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
+        },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
         },
         "nodeGap": {
           "format": "double",
@@ -3011,12 +3278,6 @@
           },
           "type": "array"
         },
-        "thresholds": {
-          "items": {
-            "$ref": "#/$defs/VisualizationThreshold"
-          },
-          "type": "array"
-        },
         "tone": {
           "$ref": "#/$defs/VisualizationTone"
         },
@@ -3112,6 +3373,35 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "NumberVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "number"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NumericRangeDashboardFilterControl": {
       "allOf": [
         {
@@ -3128,6 +3418,35 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PercentVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "percent"
+          ],
+          "type": "string"
+        },
+        "maximumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "minimumFractionDigits": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -3198,9 +3517,6 @@
         "minimum": {
           "format": "double",
           "type": "number"
-        },
-        "scheme": {
-          "type": "string"
         }
       },
       "required": [
@@ -3286,6 +3602,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "overplot": {
           "$ref": "#/$defs/PointDashboardOverplot"
         },
@@ -3301,11 +3626,6 @@
           },
           "type": "array"
         },
-        "series": {
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
         "size": {
           "minLength": 1,
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3316,9 +3636,7 @@
         },
         "tooltip": {
           "items": {
-            "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
+            "$ref": "#/$defs/DashboardTooltip"
           },
           "type": "array"
         },
@@ -3394,6 +3712,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "maximum": {
           "format": "double",
           "type": "number"
@@ -3461,6 +3788,15 @@
         "legend": {
           "$ref": "#/$defs/DashboardLegendPosition"
         },
+        "legendItems": {
+          "items": {
+            "$ref": "#/$defs/DashboardLegendItem"
+          },
+          "type": "array"
+        },
+        "legendTitle": {
+          "type": "string"
+        },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"
         },
@@ -3473,6 +3809,12 @@
         },
         "sort": {
           "$ref": "#/$defs/VisualizationSortDirection"
+        },
+        "tooltip": {
+          "items": {
+            "$ref": "#/$defs/DashboardTooltip"
+          },
+          "type": "array"
         },
         "type": {
           "enum": [
@@ -3865,6 +4207,32 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "TemporalVisualizationFormat": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/VisualizationFormatBase"
+        }
+      ],
+      "properties": {
+        "dateStyle": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "temporal"
+          ],
+          "type": "string"
+        },
+        "timeStyle": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "TextDashboardFilterControl": {
       "allOf": [
         {
@@ -3981,6 +4349,32 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "VisualizationAxisGridVisibility": {
+      "enum": [
+        "automatic",
+        "visible",
+        "hidden"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisInversion": {
+      "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+      "enum": [
+        "automatic",
+        "normal",
+        "inverted"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisLabelRotation": {
+      "enum": [
+        "automatic",
+        "horizontal",
+        "diagonal",
+        "vertical"
+      ],
+      "type": "string"
+    },
     "VisualizationAxisScale": {
       "enum": [
         "automatic",
@@ -3995,6 +4389,24 @@
         "sparse",
         "normal",
         "dense"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisTickVisibility": {
+      "enum": [
+        "automatic",
+        "visible",
+        "hidden"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisType": {
+      "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
+      "enum": [
+        "automatic",
+        "category",
+        "value",
+        "time"
       ],
       "type": "string"
     },
@@ -4087,7 +4499,6 @@
     "VisualizationConditionalTarget": {
       "enum": [
         "mark_fill",
-        "mark_stroke",
         "series_color",
         "label_foreground",
         "visual_background",
@@ -4095,6 +4506,21 @@
         "cell_background",
         "kpi_value",
         "icon"
+      ],
+      "type": "string"
+    },
+    "VisualizationDateDisplayUnit": {
+      "description": "Semantic date granularity for labels on a temporal axis.",
+      "enum": [
+        "automatic",
+        "year",
+        "quarter",
+        "month",
+        "week",
+        "day",
+        "hour",
+        "minute",
+        "second"
       ],
       "type": "string"
     },
@@ -4108,6 +4534,39 @@
         "trillions"
       ],
       "type": "string"
+    },
+    "VisualizationFormat": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NumberVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/CurrencyVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/PercentVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/CompactVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/DurationVisualizationFormat"
+        },
+        {
+          "$ref": "#/$defs/TemporalVisualizationFormat"
+        }
+      ]
+    },
+    "VisualizationFormatBase": {
+      "properties": {
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     },
     "VisualizationGraphFocus": {
       "enum": [

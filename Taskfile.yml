@@ -745,6 +745,8 @@ tasks:
     method: checksum
     sources:
       - Taskfile.yml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - api/typespec/**/*.tsp
       - internal/agent/contracts/**/*.go
@@ -908,6 +910,7 @@ tasks:
   apigen:build:
     desc: Build the vendored APIGen TypeSpec emitter used by generation
     method: checksum
+    run: once
     sources:
       - pkg/apigen/typespec/src/**/*.ts
       - pkg/apigen/typespec/lib/**/*.tsp
@@ -952,6 +955,7 @@ tasks:
     desc: Generate headless API contract artifacts and APIGen Go surfaces
     deps:
       - apigen:build
+      - dashboard-contracts:generate
     method: checksum
     run: once
     sources:
@@ -959,6 +963,7 @@ tasks:
       - api/apigen.yaml
       - api/typespec/**/*.tsp
       - api/visualization/**/*.tsp
+      - schemas/json/dashboard-document.schema.json
       - internal/app/tools/openapidocgen/**/*.go
       - pkg/apigen/**/*.go
       - pkg/apigen/typespec/dist/src/**/*
@@ -1015,6 +1020,8 @@ tasks:
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - internal/agent/contracts/generate/**/*.go
       - pkg/apigen/**/*.go
@@ -1416,6 +1423,11 @@ tasks:
       - task: apigen:test
       - task: test:go:prepared
 
+  odcs:oracle:
+    desc: Validate ODCS 3.1 golden exports with the pinned independent CI-only CLI
+    cmds:
+      - bash scripts/validate_odcs_oracle.sh
+
   ci:lane:go:packages:
     desc: Run non-application Go package tests
     cmds:
@@ -1515,18 +1527,58 @@ tasks:
       - task: ci:full:extras
 
   ci:full:extras:
-    desc: Run merge-only validation on prepared inputs; hosted merge CI runs this alongside base lanes
+    desc: Run merge-only validation sequentially on prepared inputs for local and nightly CI
     cmds:
       - task: desktop:test
+      - task: ci:full:extras:static
+      - task: ci:full:extras:runtime:multinode
+      - task: qa:ui-framework
+      - task: ci:full:extras:runtime:tail
+
+  ci:full:extras:static:
+    internal: true
+    desc: Run static merge-only validation
+    cmds:
       - go vet ./...
       - go test -race ./pkg/...
       - task: quality:critical:race
       - task: test:workload:qualify
+
+  ci:full:extras:runtime:
+    internal: true
+    desc: Run runtime merge-only validation
+    cmds:
+      - task: ci:full:extras:runtime:multinode
+      - task: ci:full:extras:runtime:tail
+
+  ci:full:extras:parallel:
+    internal: true
+    desc: Run independent static and runtime validation concurrently
+    deps:
+      - task: ci:full:extras:static
+      - task: ci:full:extras:runtime
+
+  ci:full:extras:runtime:multinode:
+    internal: true
+    desc: Run container-backed PostgreSQL multinode validation
+    cmds:
       - task: test:go:postgres-multinode-qualification
-      - task: qa:ui-framework
+
+  ci:full:extras:runtime:tail:
+    internal: true
+    desc: Run deployment and object-backed runtime validation
+    cmds:
       - task: deploy:check
       - task: test:go:minio-conformance
       - task: test:go:plan-gc-conformance
+
+  ci:full:extras:hosted:
+    desc: Run merge-only validation with bounded hosted parallelism
+    cmds:
+      - task: desktop:test
+      - task: qa:ui-framework
+      - task: generate
+      - task: ci:full:extras:parallel
 
   ci:nightly:
     desc: Run exhaustive scheduled validation, including dependency security scans

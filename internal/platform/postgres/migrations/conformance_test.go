@@ -2,16 +2,25 @@ package migrations_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/project/contractprojection"
+	"github.com/flidai/leapview/internal/project/contractpublication"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -64,6 +73,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	// LeapView still reconciles its role policy.
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("reapply baseline: %v", err)
+	}
+	assertContractPublicationMigrationChecks(t, ctx, db)
+	// The owner package copy is idempotent and must remain executable against
+	// the freshly migrated database; it is not a second migration authority.
+	if _, err := db.Exec(ctx, recoverypostgres.SuccessorSchemaSQL()); err != nil {
+		t.Fatalf("apply successor owner schema copy: %v", err)
 	}
 	// Recovery verifies Goose through the canonical non-owner maintenance
 	// login. No test-only table grants or substituted baseline verifier.
@@ -130,6 +145,67 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if version != postgresbaseline.CurrentRevision || !applied {
 		t.Fatalf("Goose baseline identity = %d/applied=%t", version, applied)
+	}
+	var successorTables, successorOwners int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'recovery' AND c.relname = ANY($1::text[])`, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&successorTables); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		JOIN pg_roles r ON r.oid = c.relowner
+		WHERE n.nspname = 'recovery' AND c.relname = ANY($1::text[]) AND r.rolname = $2`, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}, owner.Name).Scan(&successorOwners); err != nil {
+		t.Fatal(err)
+	}
+	if successorTables != 7 || successorOwners != 7 {
+		t.Fatalf("successor v3 tables/owners = %d/%d, want 7/7", successorTables, successorOwners)
+	}
+	var maintenanceSelect, maintenanceInsert, maintenanceUpdate, maintenanceDelete bool
+	if err := db.QueryRow(ctx, `
+		SELECT bool_and(has_table_privilege($1, 'recovery.' || table_name, 'SELECT')),
+		       bool_and(has_table_privilege($1, 'recovery.' || table_name, 'INSERT')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'UPDATE')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'DELETE'))
+		FROM unnest($2::text[]) AS names(table_name)
+		WHERE table_name NOT IN ('set_identity_registry', 'successor_trust_generation')`, maintenance.Name, []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&maintenanceSelect, &maintenanceInsert, &maintenanceUpdate, &maintenanceDelete); err != nil {
+		t.Fatal(err)
+	}
+	if !maintenanceSelect || !maintenanceInsert || maintenanceUpdate || maintenanceDelete {
+		t.Fatalf("successor maintenance grants select/insert/update/delete = %t/%t/%t/%t", maintenanceSelect, maintenanceInsert, maintenanceUpdate, maintenanceDelete)
+	}
+	var registrySelect, registryInsert bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege($1, 'recovery.set_identity_registry', 'SELECT'),
+		       has_table_privilege($1, 'recovery.set_identity_registry', 'INSERT')`, maintenance.Name).
+		Scan(&registrySelect, &registryInsert); err != nil {
+		t.Fatal(err)
+	}
+	if !registrySelect || registryInsert {
+		t.Fatalf("successor identity registry maintenance select/insert = %t/%t", registrySelect, registryInsert)
+	}
+	var successorReadonlySelect, successorBackupSelect, successorRuntimeSelect bool
+	var successorReadonlyMutation, successorBackupMutation, successorRuntimeMutation bool
+	if err := db.QueryRow(ctx, `
+		SELECT bool_and(has_table_privilege($1, 'recovery.' || table_name, 'SELECT')),
+		       bool_and(has_table_privilege($2, 'recovery.' || table_name, 'SELECT')),
+		       bool_or(has_table_privilege($3, 'recovery.' || table_name, 'SELECT')),
+		       bool_or(has_table_privilege($1, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($1, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($1, 'recovery.' || table_name, 'DELETE')),
+		       bool_or(has_table_privilege($2, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($2, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($2, 'recovery.' || table_name, 'DELETE')),
+		       bool_or(has_table_privilege($3, 'recovery.' || table_name, 'INSERT') OR has_table_privilege($3, 'recovery.' || table_name, 'UPDATE') OR has_table_privilege($3, 'recovery.' || table_name, 'DELETE'))
+		FROM unnest($4::text[]) AS names(table_name)`, "leapview_control_readonly", "leapview_control_backup", "leapview_control_runtime", []string{
+		"set_identity_registry", "successor_evidence_v2", "successor_evidence_locator_v2", "successor_manifest_binding", "successor_trust_generation", "recovery_set_v3", "recovery_set_v3_root",
+	}).Scan(&successorReadonlySelect, &successorBackupSelect, &successorRuntimeSelect, &successorReadonlyMutation, &successorBackupMutation, &successorRuntimeMutation); err != nil {
+		t.Fatal(err)
+	}
+	if !successorReadonlySelect || !successorBackupSelect || successorRuntimeSelect || successorReadonlyMutation || successorBackupMutation || successorRuntimeMutation {
+		t.Fatalf("successor grants readonly/backup/runtime select=%t/%t/%t mutation=%t/%t/%t", successorReadonlySelect, successorBackupSelect, successorRuntimeSelect, successorReadonlyMutation, successorBackupMutation, successorRuntimeMutation)
 	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
@@ -200,6 +276,29 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if canUpdateAudit || canUpdateGoose || !canReadGoose || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateServingBundle || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || !readonlyJobs || readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential || !physicalRuntimeSelect || physicalRuntimeInsert || physicalRuntimeUpdate || physicalRuntimeDelete || !physicalReadonlySelect || physicalReadonlyInsert || !physicalBackupSelect || physicalBackupInsert || !physicalMaintenanceSelect || !physicalMaintenanceLeaseWrite || physicalMaintenanceAdmissionWrite || !dashboardRuntimeSessionInsert || dashboardRuntimeSessionDelete || !dashboardRuntimeUsageInsert || dashboardRuntimeUsageDelete || !dashboardRuntimeAppearanceInsert || dashboardRuntimeAppearanceDelete || !dashboardMaintenanceSessionDelete || !dashboardMaintenanceUsageDelete || dashboardMaintenanceAppearanceInsert || dashboardReadonlySessionInsert || dashboardReadonlyUsageInsert || dashboardReadonlyAppearanceUpdate {
 		t.Fatalf("least-privilege grants leaked: audit update=%t Goose update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t serving bundle update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t physical runtime select/write=%t/%t/%t/%t readonly select/insert=%t/%t backup select/insert=%t/%t maintenance select/lease-write/admission-write=%t/%t/%t dashboard runtime session insert/delete=%t/%t usage insert/delete=%t/%t appearance insert/delete=%t/%t maintenance session/usage delete=%t/%t appearance insert=%t readonly session/usage insert=%t/%t appearance update=%t", canUpdateAudit, canUpdateGoose, canReadGoose, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential, physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite, dashboardRuntimeSessionInsert, dashboardRuntimeSessionDelete, dashboardRuntimeUsageInsert, dashboardRuntimeUsageDelete, dashboardRuntimeAppearanceInsert, dashboardRuntimeAppearanceDelete, dashboardMaintenanceSessionDelete, dashboardMaintenanceUsageDelete, dashboardMaintenanceAppearanceInsert, dashboardReadonlySessionInsert, dashboardReadonlyUsageInsert, dashboardReadonlyAppearanceUpdate)
+	}
+	var runtimePublicationSelect, runtimePublicationInsert, runtimePublicationUpdate, runtimePublicationDelete, runtimePublicationTruncate bool
+	var readonlyPublicationSelect, readonlyPublicationInsert, readonlyPublicationTruncate bool
+	var backupPublicationSelect, backupPublicationInsert, backupPublicationUpdate, backupPublicationDelete, backupPublicationTruncate bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'DELETE'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'TRUNCATE'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_readonly', 'project.contract_publication', 'TRUNCATE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'SELECT'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'INSERT'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'UPDATE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'DELETE'),
+		       has_table_privilege('leapview_control_backup', 'project.contract_publication', 'TRUNCATE')`).
+		Scan(&runtimePublicationSelect, &runtimePublicationInsert, &runtimePublicationUpdate, &runtimePublicationDelete, &runtimePublicationTruncate, &readonlyPublicationSelect, &readonlyPublicationInsert, &readonlyPublicationTruncate, &backupPublicationSelect, &backupPublicationInsert, &backupPublicationUpdate, &backupPublicationDelete, &backupPublicationTruncate); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimePublicationSelect || !runtimePublicationInsert || runtimePublicationUpdate || runtimePublicationDelete || runtimePublicationTruncate || !readonlyPublicationSelect || readonlyPublicationInsert || readonlyPublicationTruncate || !backupPublicationSelect || backupPublicationInsert || backupPublicationUpdate || backupPublicationDelete || backupPublicationTruncate {
+		t.Fatalf("contract publication replay grants invalid: runtime select/insert/update/delete/truncate=%t/%t/%t/%t/%t readonly select/insert/truncate=%t/%t/%t backup select/insert/update/delete/truncate=%t/%t/%t/%t/%t", runtimePublicationSelect, runtimePublicationInsert, runtimePublicationUpdate, runtimePublicationDelete, runtimePublicationTruncate, readonlyPublicationSelect, readonlyPublicationInsert, readonlyPublicationTruncate, backupPublicationSelect, backupPublicationInsert, backupPublicationUpdate, backupPublicationDelete, backupPublicationTruncate)
 	}
 	var runtimePublicUsage, readonlyPublicUsage, backupPublicUsage bool
 	if err := db.QueryRow(ctx, `
@@ -339,6 +438,34 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if _, err := runtimeConn.Exec(ctx, `SET ROLE leapview_control_runtime`); err != nil {
 		t.Fatal(err)
 	}
+	t.Run("ResourceUID runtime is read and admission only", func(t *testing.T) {
+		for _, table := range []string{"resource_uid_registry", "resource_uid_generation", "resource_uid_inventory", "resource_uid_tombstone", "resource_uid_restore_authorization"} {
+			if _, err := runtimeConn.Exec(ctx, "SELECT * FROM project."+table+" LIMIT 0"); err != nil {
+				t.Fatalf("runtime read %s: %v", table, err)
+			}
+			for _, statement := range []string{"INSERT INTO project." + table + " DEFAULT VALUES", "DELETE FROM project." + table, "TRUNCATE project." + table} {
+				_, err := runtimeConn.Exec(ctx, statement)
+				var denied *pgconn.PgError
+				if !errors.As(err, &denied) || denied.Code != "42501" {
+					t.Fatalf("runtime mutation must fail for privilege denial: %s: %v", statement, err)
+				}
+			}
+		}
+		for _, statement := range []string{
+			"SELECT project.bind_resource_uid_generation(NULL)",
+			"SELECT project.authorize_resource_uid_restore(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL)",
+		} {
+			_, err := runtimeConn.Exec(ctx, statement)
+			var denied *pgconn.PgError
+			if !errors.As(err, &denied) || denied.Code != "42501" {
+				t.Fatalf("runtime authority must fail for privilege denial: %s: %v", statement, err)
+			}
+		}
+		var canAdmit bool
+		if err := runtimeConn.QueryRow(ctx, `SELECT has_function_privilege(current_user, 'project.admit_resource_uid_inventory(text,text,text,uuid,text,text,bytea,jsonb)', 'EXECUTE')`).Scan(&canAdmit); err != nil || !canAdmit {
+			t.Fatalf("runtime inventory admission capability missing: allowed=%t error=%v", canAdmit, err)
+		}
+	})
 	var lockedTarget, lockedKind, lockedState string
 	if err := runtimeConn.QueryRow(ctx, `SELECT target_id,root_kind,state FROM delivery.lock_retention_root($1::uuid)`, retentionLockRoot).Scan(&lockedTarget, &lockedKind, &lockedState); err != nil {
 		t.Fatalf("runtime retention-root lock capability: %v", err)
@@ -546,6 +673,203 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'active', $1::jsonb)`, `{"oversized":"`+strings.Repeat("x", 20000)+`"}`)
 	if err == nil {
 		t.Fatal("oversized principal attributes unexpectedly accepted")
+	}
+}
+
+func assertContractPublicationMigrationChecks(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
+	t.Helper()
+	fields := `"id":{"datatype":"Integer"}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	var source projectcontracts.Source
+	if err := json.Unmarshal([]byte(raw), &source); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := contractprojection.ProjectSource(source, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := contractpublication.Prepare(contractpublication.ContractPublicationInput{
+		InstanceID: "instance:migration",
+		Projection: projection,
+		Validation: contractpublication.ValidationEvidence{
+			Version: contractpublication.ValidationEvidenceVersion,
+			Checks:  []contractpublication.ValidationCheck{{Name: "projection", Outcome: contractpublication.ValidationPassed, Reference: "go test"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name             string
+		mutateCanonical  func(map[string]any)
+		mutateValidation func(map[string]any)
+		valid            bool
+	}{
+		{name: "valid", valid: true},
+		{name: "missing apiVersion", mutateCanonical: func(document map[string]any) { delete(document, "apiVersion") }},
+		{name: "null apiVersion", mutateCanonical: func(document map[string]any) { document["apiVersion"] = nil }},
+		{name: "missing profile", mutateCanonical: func(document map[string]any) { delete(document, "profile") }},
+		{name: "null profile", mutateCanonical: func(document map[string]any) { document["profile"] = nil }},
+		{name: "missing metadata id", mutateCanonical: func(document map[string]any) { delete(document["metadata"].(map[string]any), "id") }},
+		{name: "null metadata id", mutateCanonical: func(document map[string]any) { document["metadata"].(map[string]any)["id"] = nil }},
+		{name: "missing contract version", mutateCanonical: func(document map[string]any) {
+			delete(document["metadata"].(map[string]any)["contract"].(map[string]any), "version")
+		}},
+		{name: "null contract version", mutateCanonical: func(document map[string]any) {
+			document["metadata"].(map[string]any)["contract"].(map[string]any)["version"] = nil
+		}},
+		{name: "missing validation version", mutateValidation: func(evidence map[string]any) { delete(evidence, "version") }},
+		{name: "null validation version", mutateValidation: func(evidence map[string]any) { evidence["version"] = nil }},
+		{name: "missing validation checks", mutateValidation: func(evidence map[string]any) { delete(evidence, "checks") }},
+		{name: "null validation checks", mutateValidation: func(evidence map[string]any) { evidence["checks"] = nil }},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			canonical := append([]byte(nil), prepared.CanonicalBytes...)
+			digest := prepared.Digest
+			if test.mutateCanonical != nil {
+				var document map[string]any
+				if err := json.Unmarshal(canonical, &document); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateCanonical(document)
+				var err error
+				canonical, err = json.Marshal(document)
+				if err != nil {
+					t.Fatal(err)
+				}
+				hash := sha256.Sum256(canonical)
+				digest = "sha256:" + fmt.Sprintf("%x", hash)
+			}
+			validation, err := json.Marshal(prepared.Validation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mutateValidation != nil {
+				var evidence map[string]any
+				if err := json.Unmarshal(validation, &evidence); err != nil {
+					t.Fatal(err)
+				}
+				test.mutateValidation(evidence)
+				validation, err = json.Marshal(evidence)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			tx, err := db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			instanceID := fmt.Sprintf("instance:migration-null-check-%d", index)
+			if test.valid {
+				instanceID = prepared.InstanceID
+			}
+			_, err = tx.Exec(ctx, `
+				INSERT INTO project.contract_publication(
+					instance_id, authored_id, resource_kind, version, version_baseline,
+					projection_profile, canonical_bytes, canonical_digest, validation_evidence_json
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+				instanceID, prepared.AuthoredID.String(), string(prepared.ResourceKind), prepared.Version, prepared.VersionBaseline,
+				prepared.ProjectionProfile, canonical, digest, validation)
+			if test.valid {
+				if err != nil {
+					_ = tx.Rollback(ctx)
+					t.Fatal(err)
+				}
+				if err := tx.Commit(ctx); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			_ = tx.Rollback(ctx)
+			var pgErr *pgconn.PgError
+			if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+				t.Fatalf("invalid migration evidence error = %v, want check_violation (23514)", err)
+			}
+		})
+	}
+}
+
+// TestSuccessorV3UpgradePreservesV1AndRefusesDown exercises the mixed-version
+// path separately from the clean-baseline test: an existing v1 frontier is
+// committed before migration 006, then the additive schema is upgraded,
+// reapplied, and asked to down-migrate.  Down must refuse without touching
+// either the old row or the successor schema.
+func TestSuccessorV3UpgradePreservesV1AndRefusesDown(t *testing.T) {
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "migration-upgrade", Login: true})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-upgrade", Login: true})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "leapview_upgrade")
+	h.GrantDatabase(t, database.Name, owner, "CREATE")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	h.GrantDatabase(t, database.Name, maintenance, "CONNECT")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	admin, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(ctx, `ALTER DATABASE leapview_upgrade OWNER TO leapview_control_owner; REVOKE ALL ON SCHEMA public FROM PUBLIC; GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrationDB.Close()
+	provider, err := platformmigrations.NewProvider(migrationDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 4); err != nil {
+		t.Fatalf("upgrade precondition through migration 004: %v", err)
+	}
+	maintenanceDB, err := pgxpool.New(ctx, database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer maintenanceDB.Close()
+	recoveryRepo := recoverypostgres.New(maintenanceDB)
+	before, err := recoveryRepo.Create(ctx, baselineRecoverySetFixture(t))
+	if err != nil {
+		t.Fatalf("create v1 frontier before successor upgrade: %v", err)
+	}
+	beforeDigest := before.FrontierDigest
+	if _, err := provider.UpTo(ctx, 6); err != nil {
+		t.Fatalf("apply successor migration 006: %v", err)
+	}
+	if _, err := provider.UpTo(ctx, 6); err != nil {
+		t.Fatalf("reapply successor migration 006: %v", err)
+	}
+	var wireVersion int16
+	if err := admin.QueryRow(ctx, `SELECT wire_version FROM recovery.set_identity_registry WHERE set_id=$1::uuid`, before.ID).Scan(&wireVersion); err != nil {
+		t.Fatal(err)
+	}
+	if wireVersion != 1 {
+		t.Fatalf("copied v1 identity wire version = %d, want 1", wireVersion)
+	}
+	after, err := recoveryRepo.ReadExact(ctx, before.ID)
+	if err != nil {
+		t.Fatalf("read v1 frontier after successor upgrade: %v", err)
+	}
+	if after.FrontierDigest != beforeDigest {
+		t.Fatalf("v1 frontier digest changed across successor upgrade: %q -> %q", beforeDigest, after.FrontierDigest)
+	}
+	if _, err := provider.DownTo(ctx, 5); err == nil {
+		t.Fatal("successor migration Down unexpectedly succeeded")
+	}
+	var successorExists bool
+	if err := admin.QueryRow(ctx, `SELECT to_regclass('recovery.recovery_set_v3') IS NOT NULL`).Scan(&successorExists); err != nil {
+		t.Fatal(err)
+	}
+	if !successorExists {
+		t.Fatal("destructive Down removed the successor schema")
 	}
 }
 

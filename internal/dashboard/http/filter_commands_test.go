@@ -3,9 +3,35 @@ package http
 import (
 	"testing"
 
+	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 )
+
+func TestValidateFilterCommandPageScopeRejectsOffPageBindings(t *testing.T) {
+	definition := dashboarddefinition.Definition{
+		FilterBindings: map[string]dashboardfilter.Binding{"report": {Key: "report", ID: "report", Scope: dashboardfilter.ScopeReport}},
+		Pages: []dashboard.Page{
+			{ID: "one", FilterBindings: map[string]dashboardfilter.Binding{"status": {Key: "page-one", ID: "status", Scope: dashboardfilter.ScopePage, PageID: "one"}}},
+			{ID: "two", FilterBindings: map[string]dashboardfilter.Binding{"status": {Key: "page-two", ID: "status", Scope: dashboardfilter.ScopePage, PageID: "two"}}},
+		},
+	}
+	if err := validateFilterCommandPageScope(definition, "two", dashboardfilter.Command{Kind: dashboardfilter.CommandMutate, BindingKey: "page-one"}); err == nil {
+		t.Fatal("off-page mutation was accepted")
+	}
+	if err := validateFilterCommandPageScope(definition, "two", dashboardfilter.Command{Kind: dashboardfilter.CommandMutate, BindingKey: "page-two"}); err != nil {
+		t.Fatalf("active page mutation rejected: %v", err)
+	}
+	if err := validateFilterCommandPageScope(definition, "two", dashboardfilter.Command{Kind: dashboardfilter.CommandMutate, BindingKey: "report"}); err != nil {
+		t.Fatalf("report mutation rejected: %v", err)
+	}
+	if err := validateFilterCommandPageScope(definition, "two", dashboardfilter.Command{Kind: dashboardfilter.CommandReset, ResetScope: dashboardfilter.ResetPage, BindingKeys: []string{"page-one"}}); err == nil {
+		t.Fatal("off-page reset was accepted")
+	}
+	if err := validateFilterCommandPageScope(definition, "two", dashboardfilter.Command{Kind: dashboardfilter.CommandReset, ResetScope: dashboardfilter.ResetDashboard, BindingKeys: []string{"page-one", "page-two"}}); err != nil {
+		t.Fatalf("dashboard reset rejected: %v", err)
+	}
+}
 
 func TestFilterCommandResponseTombstonesOmittedCanonicalURLParameters(t *testing.T) {
 	definition := dashboarddefinition.Definition{

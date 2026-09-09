@@ -147,6 +147,23 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
   }
 })
 
+test('semantic model offers a permission-gated dashboard creation entry', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=semantic-detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const action = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      element.setAttribute('create-dashboard-href', '/dashboards/new?semanticModel=semantic%3Aorders')
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.actions .action-link') as HTMLAnchorElement
+      return { label: link?.textContent?.trim(), href: link?.getAttribute('href'), hasIcon: Boolean(link?.querySelector('svg')) }
+    })
+    expect(action).toEqual({ label: 'Create dashboard', href: '/dashboards/new?semanticModel=semantic%3Aorders', hasIcon: true })
+  } finally {
+    await page.close()
+  }
+})
+
 test('asset data section embeds the shared explorer without a duplicate route header', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {

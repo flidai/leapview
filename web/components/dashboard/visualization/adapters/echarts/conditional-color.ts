@@ -38,6 +38,54 @@ export function conditionalItemColor(
   }
 }
 
+export function conditionalFormatHasColor(
+  envelope: VisualizationEnvelope,
+  ref: VisualizationFieldRef,
+  target: VisualizationConditionalFormat['target'],
+): boolean {
+  const format = envelope.spec.conditionalFormatting?.find((candidate) =>
+    candidate.target === target && candidate.field.dataset === ref.dataset && candidate.field.field === ref.field)
+  if (!format) return false
+  const rule = format.rule
+  if (rule.nullStyle.color) return true
+  if (rule.kind === 'gradient') return Boolean(rule.low.color || rule.high.color)
+  if (rule.defaultStyle.color) return true
+  if (rule.kind === 'rules') return rule.rules.some((candidate) => Boolean(candidate.style.color))
+  return Object.values(rule.values).some((style) => Boolean(style.color))
+}
+
+export function heatmapDefaultColor(
+  envelope: VisualizationEnvelope,
+  ref: VisualizationFieldRef,
+  extent: { minimum: number; maximum: number },
+  primary: string,
+  context: RendererContext,
+): (params: { value?: unknown }) => string {
+  const dataset = inlineDataset(envelope, ref.dataset)
+  const index = dataset?.columns.indexOf(ref.field) ?? -1
+  return (params) => {
+    const raw = Array.isArray(params.value) && index >= 0 ? params.value[index] : params.value
+    if (typeof raw !== 'number' || !Number.isFinite(raw)) return context.colors.muted
+    const ratio = extent.maximum === extent.minimum
+      ? 1
+      : Math.min(1, Math.max(0, (raw - extent.minimum) / (extent.maximum - extent.minimum)))
+    return heatmapValueColor(primary, ratio)
+  }
+}
+
+function heatmapValueColor(primary: string, ratio: number): string {
+  const longHex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(primary)
+  const shortHex = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(primary)
+  const channels = longHex
+    ? longHex.slice(1).map((channel) => Number.parseInt(channel, 16))
+    : shortHex
+      ? shortHex.slice(1).map((channel) => Number.parseInt(channel + channel, 16))
+      : undefined
+  if (!channels) return primary
+  const alpha = Math.round((0.18 + 0.82 * ratio) * 100) / 100
+  return `rgba(${channels[0]}, ${channels[1]}, ${channels[2]}, ${alpha})`
+}
+
 export function conditionalCategoryColor(
   envelope: VisualizationEnvelope,
   ref: VisualizationFieldRef,

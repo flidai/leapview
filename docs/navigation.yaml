@@ -555,6 +555,11 @@ sections:
             type: explanation
             summary: Follow sealed projection inputs, deterministic contract identity, and fail-closed coverage checks.
             source: articles/architecture/contract-projections.md
+          - slug: architecture/resource-uid-registry
+            title: Instance-local resource identity
+            type: explanation
+            summary: Follow activation-owned resource identity, canonical evidence, and scoped lifecycle guarantees.
+            source: articles/architecture/resource-uid-registry.md
           - slug: architecture/semantic-attribute-registry
             title: Semantic attribute registry and control plane
             type: explanation

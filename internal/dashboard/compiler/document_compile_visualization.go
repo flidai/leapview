@@ -12,8 +12,16 @@ import (
 func canonicalVisualizationSpec(id string, visual document.DashboardVisual, query LoweredDashboardQuery, presentation any, secondarySchemas []visualizationir.VisualizationDatasetSchema, model *semanticmodel.Model) (visualizationir.VisualizationSpec, error) {
 	title := valueOrString(visual.Title, id)
 	description := valueOrString(visual.Description, title)
-	datasets := append([]visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: canonicalResultFields(query, model)}}, secondarySchemas...)
-	base := visualizationir.VisualizationSpecBase{Title: title, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
+	primaryFields := canonicalResultFields(query, model)
+	datasets := append([]visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: primaryFields}}, secondarySchemas...)
+	base := visualizationir.VisualizationSpecBase{Title: title, TitleVisible: visual.TitleVisible, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
+	tooltipItems, tooltipRefs, tooltipErr := canonicalDashboardTooltip(visual, query, primaryFields)
+	if tooltipErr != nil {
+		return visualizationir.VisualizationSpec{}, tooltipErr
+	}
+	if tooltipItems != nil {
+		base.TooltipItems = &tooltipItems
+	}
 	if query.Binding.Spatial != nil && query.Binding.Spatial.Tiles != nil {
 		base.DataBudget.MaxRows = 0
 	}
@@ -143,6 +151,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			Mark:                  visualizationir.VisualizationCartesianMarkHeatmap,
 			X:                     dimensions[0],
 			Y:                     []visualizationir.VisualizationFieldRef{dimensions[1], metrics[0]},
+			Tooltip:               tooltipRefs,
 			Presentation:          p,
 		}}, nil
 	case document.DashboardVisualTypePivot:
@@ -196,7 +205,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			return visualizationir.VisualizationSpec{}, err
 		}
 		base.Kind = "proportional"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.ProportionalVisualizationSpec{VisualizationSpecBase: base, Kind: "proportional", Mark: visualizationir.VisualizationProportionalMark(typ), Category: dimRef(0), Value: metricRef(0), Presentation: p}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.ProportionalVisualizationSpec{VisualizationSpecBase: base, Kind: "proportional", Mark: visualizationir.VisualizationProportionalMark(typ), Category: dimRef(0), Value: metricRef(0), Tooltip: tooltipRefs, Presentation: p}}, nil
 	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeSankey, document.DashboardVisualTypeGraph, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
 		p, ok := presentation.(visualizationir.HierarchyVisualizationPresentation)
 		if !ok {
@@ -222,8 +231,12 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if !ok {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("polar presentation lowering returned %T", presentation)
 		}
-		if len(dimensions) > 1 || len(metrics) != 1 {
-			return visualizationir.VisualizationSpec{}, fmt.Errorf("polar requires zero or one dimension and exactly one metric, got %d and %d", len(dimensions), len(metrics))
+		if typ == document.DashboardVisualTypeGauge {
+			if len(dimensions) != 0 || len(metrics) != 1 {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("gauge requires zero dimensions and exactly one metric, got %d and %d", len(dimensions), len(metrics))
+			}
+		} else if len(dimensions) != 1 || len(metrics) != 1 {
+			return visualizationir.VisualizationSpec{}, fmt.Errorf("radar requires exactly one category dimension and exactly one metric, got %d and %d", len(dimensions), len(metrics))
 		}
 		base.Kind = "polar"
 		var category *visualizationir.VisualizationFieldRef
@@ -231,7 +244,12 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			categoryRef := dimensions[0]
 			category = &categoryRef
 		}
-		return visualizationir.VisualizationSpec{Value: &visualizationir.PolarVisualizationSpec{VisualizationSpecBase: base, Kind: "polar", Mark: visualizationir.VisualizationPolarMark(typ), Category: category, Value: metricRef(0), Presentation: p}}, nil
+		var series *visualizationir.VisualizationFieldRef
+		if query.Binding.Aggregate != nil && query.Binding.Aggregate.Series != nil {
+			seriesRef := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: query.Binding.Aggregate.Series.Alias}
+			series = &seriesRef
+		}
+		return visualizationir.VisualizationSpec{Value: &visualizationir.PolarVisualizationSpec{VisualizationSpecBase: base, Kind: "polar", Mark: visualizationir.VisualizationPolarMark(typ), Category: category, Value: metricRef(0), Series: series, Presentation: p}}, nil
 	case document.DashboardVisualTypeScatter:
 		p, ok := presentation.(visualizationir.PointVisualizationPresentation)
 		if !ok {
@@ -281,7 +299,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 				}
 			}
 		}
-		point := &visualizationir.PointVisualizationSpec{VisualizationSpecBase: base, Kind: "point", Identity: identity, X: x, Y: y, Presentation: p}
+		point := &visualizationir.PointVisualizationSpec{VisualizationSpecBase: base, Kind: "point", Identity: identity, X: x, Y: y, Tooltip: tooltipRefs, Presentation: p}
 		if variant.Size != nil {
 			value, refErr := pointRef(*variant.Size, "size")
 			if refErr != nil {
@@ -296,13 +314,6 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			}
 			point.Color = &value
 		}
-		if variant.Series != nil {
-			value, refErr := pointRef(*variant.Series, "series")
-			if refErr != nil {
-				return visualizationir.VisualizationSpec{}, refErr
-			}
-			point.Series = &value
-		}
 		if variant.Label != nil {
 			value, refErr := pointRef(*variant.Label, "label")
 			if refErr != nil {
@@ -310,35 +321,48 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			}
 			point.Label = &value
 		}
-		if variant.Tooltip != nil {
-			tooltip := make([]visualizationir.VisualizationFieldRef, 0, len(*variant.Tooltip))
-			for index, name := range *variant.Tooltip {
-				value, refErr := pointRef(name, fmt.Sprintf("tooltip[%d]", index))
-				if refErr != nil {
-					return visualizationir.VisualizationSpec{}, refErr
-				}
-				tooltip = append(tooltip, value)
-			}
-			point.Tooltip = &tooltip
-		}
 		if variant.ColorScale != nil {
 			if variant.Color == nil {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale requires color")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale requires presentation.color")
+			}
+			if variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindCategorical && variant.ColorScale.Kind != visualizationir.VisualizationPointColorScaleKindQuantitative {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.kind %q is unsupported", variant.ColorScale.Kind)
+			}
+			if variant.ColorScale.Kind == visualizationir.VisualizationPointColorScaleKindCategorical && (variant.ColorScale.Minimum != nil || variant.ColorScale.Maximum != nil) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale minimum and maximum require a quantitative scale")
+			}
+			if variant.ColorScale.Minimum != nil && !finiteDashboardFloat(*variant.ColorScale.Minimum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.minimum must be finite")
+			}
+			if variant.ColorScale.Maximum != nil && !finiteDashboardFloat(*variant.ColorScale.Maximum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.maximum must be finite")
 			}
 			if variant.ColorScale.Minimum != nil && variant.ColorScale.Maximum != nil && *variant.ColorScale.Minimum >= *variant.ColorScale.Maximum {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter colorScale minimum must be less than maximum")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter presentation.colorScale.minimum must be less than maximum")
 			}
-			point.ColorScale = &visualizationir.PointVisualizationColorScale{Kind: variant.ColorScale.Kind, Minimum: variant.ColorScale.Minimum, Maximum: variant.ColorScale.Maximum, Scheme: variant.ColorScale.Scheme}
+			point.ColorScale = &visualizationir.PointVisualizationColorScale{Kind: variant.ColorScale.Kind, Minimum: variant.ColorScale.Minimum, Maximum: variant.ColorScale.Maximum}
 		}
 		if variant.SizeScale != nil {
 			if variant.Size == nil {
 				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale requires size")
 			}
-			if variant.SizeScale.MinimumPixels <= 0 || variant.SizeScale.MaximumPixels <= 0 || variant.SizeScale.MinimumPixels > variant.SizeScale.MaximumPixels {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale pixel bounds are invalid")
+			if variant.SizeScale.Minimum != nil && !finiteDashboardFloat(*variant.SizeScale.Minimum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimum must be finite")
+			}
+			if variant.SizeScale.Maximum != nil && !finiteDashboardFloat(*variant.SizeScale.Maximum) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.maximum must be finite")
+			}
+			if !finiteDashboardFloat(variant.SizeScale.MinimumPixels) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimumPixels must be finite")
+			}
+			if !finiteDashboardFloat(variant.SizeScale.MaximumPixels) {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.maximumPixels must be finite")
+			}
+			if variant.SizeScale.MinimumPixels <= 0 || variant.SizeScale.MaximumPixels <= 0 || variant.SizeScale.MinimumPixels >= variant.SizeScale.MaximumPixels {
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale pixel bounds are invalid")
 			}
 			if variant.SizeScale.Minimum != nil && variant.SizeScale.Maximum != nil && *variant.SizeScale.Minimum >= *variant.SizeScale.Maximum {
-				return visualizationir.VisualizationSpec{}, fmt.Errorf("scatter sizeScale minimum must be less than maximum")
+				return visualizationir.VisualizationSpec{}, fmt.Errorf("presentation.sizeScale.minimum must be less than maximum")
 			}
 			point.SizeScale = &visualizationir.PointVisualizationSizeScale{Minimum: variant.SizeScale.Minimum, Maximum: variant.SizeScale.Maximum, MinimumPixels: variant.SizeScale.MinimumPixels, MaximumPixels: variant.SizeScale.MaximumPixels}
 		}
@@ -364,7 +388,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 		if spatialErr != nil {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("spatial interactions: %w", spatialErr)
 		}
-		layers, layerErr := canonicalGeographicLayers(variant, query)
+		layers, layerErr := canonicalGeographicLayers(variant, query, primaryFields)
 		if layerErr != nil {
 			return visualizationir.VisualizationSpec{}, layerErr
 		}
@@ -400,7 +424,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 				values = append(values, visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field.Name})
 			}
 			base.Kind = "cartesian"
-			return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBoxplot, X: ref(0), Y: values, Presentation: p}}, nil
+			return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBoxplot, X: ref(0), Y: values, Tooltip: tooltipRefs, Presentation: p}}, nil
 		}
 		if len(query.ResultFrame) < 2 {
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("%s query must emit at least two result fields", typ)
@@ -410,7 +434,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			statMark = visualizationir.VisualizationCartesianMarkBoxplot
 		}
 		base.Kind = "cartesian"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: statMark, X: ref(0), Y: []visualizationir.VisualizationFieldRef{ref(1)}, Presentation: p}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: statMark, X: ref(0), Y: []visualizationir.VisualizationFieldRef{ref(1)}, Tooltip: tooltipRefs, Presentation: p}}, nil
 	case document.DashboardVisualTypeCandlestick:
 		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
 		if !ok {
@@ -420,7 +444,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			return visualizationir.VisualizationSpec{}, fmt.Errorf("candlestick requires one dimension and exactly four metrics")
 		}
 		base.Kind = "cartesian"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkCandlestick, X: dimensions[0], Y: metrics, Presentation: p}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkCandlestick, X: dimensions[0], Y: metrics, Tooltip: tooltipRefs, Presentation: p}}, nil
 	case document.DashboardVisualTypeWaterfall:
 		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
 		if !ok {
@@ -430,7 +454,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			return visualizationir.VisualizationSpec{}, err
 		}
 		base.Kind = "cartesian"
-		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkWaterfall, X: dimensions[0], Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "start"}, metrics[0]}, Presentation: p}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkWaterfall, X: dimensions[0], Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "start"}, metrics[0]}, Tooltip: tooltipRefs, Presentation: p}}, nil
 	default:
 		p, ok := presentation.(visualizationir.CartesianVisualizationPresentation)
 		if !ok {
@@ -455,6 +479,6 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 			seriesRef := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: query.Binding.Aggregate.Series.Alias}
 			series = &seriesRef
 		}
-		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: mark, X: x, Y: metrics, Series: series, Presentation: p}}, nil
+		return visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: mark, X: x, Y: metrics, Series: series, Tooltip: tooltipRefs, Presentation: p}}, nil
 	}
 }

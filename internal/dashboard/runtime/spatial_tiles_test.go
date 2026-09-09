@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 )
 
 func TestSpatialTileRevisionTokensAreRandomAndScopeBound(t *testing.T) {
@@ -166,6 +167,16 @@ func TestSpatialRawZoomRequiresBothGlobalBudgets(t *testing.T) {
 	}
 	if spatialRawZoomFits(1, 512*1024+1, 5_000, 512*1024) {
 		t.Fatal("raw zoom accepted encoded-byte overflow")
+	}
+}
+
+func TestSpatialRawBudgetProbeClampsOccupancyFitAboveClusterCutoff(t *testing.T) {
+	cluster := &visualizationdefinition.SpatialClusterBinding{Enabled: true, MaximumZoom: 8}
+	if got, want := spatialRawBudgetProbeMaximumZoom(18, cluster), 9; got != want {
+		t.Fatalf("cluster budget probe maximum zoom = %d, want %d", got, want)
+	}
+	if got, want := spatialRawBudgetProbeMaximumZoom(18, nil), 18; got != want {
+		t.Fatalf("unclustered budget probe maximum zoom = %d, want %d", got, want)
 	}
 }
 

@@ -1,6 +1,8 @@
 import type { Map as MapLibreMap } from 'maplibre-gl'
 
 export type BasemapColors = Readonly<{ boundary: string; land: string; background?: string; water?: string; road?: string; building?: string; label?: string }>
+export type MapTheme = 'auto' | 'light' | 'dark'
+export type DataLabelColors = Readonly<{ text: string; halo: string }>
 
 type FrameScheduler = (callback: () => void) => void
 
@@ -37,10 +39,20 @@ export const scheduleBasemapThemeMutation = createBasemapThemeScheduler((callbac
   queueMicrotask(callback)
 })
 
-export function mapThemeColors(theme: 'auto' | 'light' | 'dark', resolved: 'light' | 'dark'): BasemapColors {
-  const effective = theme === 'auto' ? resolved : theme
+export function effectiveMapTheme(theme: MapTheme, resolved: 'light' | 'dark'): 'light' | 'dark' {
+  return theme === 'auto' ? resolved : theme
+}
+
+export function mapThemeColors(theme: MapTheme, resolved: 'light' | 'dark'): BasemapColors {
+  const effective = effectiveMapTheme(theme, resolved)
   if (effective === 'dark') return { background: '#0d1821', land: '#18232d', water: '#0d1821', boundary: '#657383', road: '#394957', building: '#263540', label: '#d6dee6' }
   return { background: '#aad3df', land: '#f4f1ea', water: '#aad3df', boundary: '#8f918d', road: '#ffffff', building: '#dedbd4', label: '#4b4d49' }
+}
+
+export function mapDataLabelColors(theme: MapTheme, resolved: 'light' | 'dark'): DataLabelColors {
+  return effectiveMapTheme(theme, resolved) === 'dark'
+    ? { text: '#f0f6fc', halo: '#0d1821' }
+    : { text: '#1f2328', halo: '#ffffff' }
 }
 
 export function basemapLayer(id: string, colors: BasemapColors): any {
@@ -67,9 +79,23 @@ export function applyBasemapTheme(map: Pick<MapLibreMap, 'getStyle' | 'getLayer'
     if (role === 'road' && layer.type === 'line') map.setPaintProperty(layer.id, 'line-color', colors.road ?? '#ffffff')
     if (role === 'building' && layer.type === 'fill') map.setPaintProperty(layer.id, 'fill-color', colors.building ?? '#d8dee4')
     if (role === 'label' && layer.type === 'symbol') {
-      map.setLayoutProperty(layer.id, 'visibility', labelDensity === 'hidden' ? 'none' : 'visible')
+      map.setLayoutProperty(layer.id, 'visibility', labelVisibility(layer.id, labelDensity))
       map.setPaintProperty(layer.id, 'text-color', colors.label ?? '#57606a')
       map.setPaintProperty(layer.id, 'text-halo-color', colors.land)
     }
+  }
+}
+
+function labelVisibility(id: string, density: 'hidden' | 'normal' | 'dense'): 'none' | 'visible' {
+  if (density === 'hidden') return 'none'
+  if (density === 'dense') return 'visible'
+  return /^(address_label|pois|places_subplace|roads_labels_minor)$/.test(id) ? 'none' : 'visible'
+}
+
+export function applyDataLabelTheme(map: Pick<MapLibreMap, 'getLayer' | 'setPaintProperty'>, layerIDs: readonly string[], colors: DataLabelColors): void {
+  for (const id of layerIDs) {
+    if (!map.getLayer(id)) continue
+    map.setPaintProperty(id, 'text-color', colors.text)
+    map.setPaintProperty(id, 'text-halo-color', colors.halo)
   }
 }

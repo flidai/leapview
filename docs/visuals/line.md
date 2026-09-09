@@ -35,6 +35,54 @@ visuals:
       limit: 30
 ```
 
+## Explicit axis policies
+
+Use a time axis for date-grained categories and an inverted bounded value axis when lower values should appear higher in the frame. Explicit tick, grid, rotation, and date-unit policies keep the renderer behavior visible in the example.
+
+{{< visual id="revenue_line_axis_policies" >}}
+
+```yaml visual-example=revenue_line_axis_policies
+visuals:
+  revenue_line_axis_policies:
+    title: Revenue with explicit axis policies
+    type: line
+    presentation:
+      type: cartesian
+      axes:
+      - id: x
+        type: time
+        scale: automatic
+        zero: automatic
+        tickDensity: normal
+        ticks: visible
+        grid: hidden
+        labelRotation: diagonal
+        dateUnit: month
+      - id: primary_y
+        type: value
+        scale: linear
+        zero: exclude
+        inversion: inverted
+        minimum: 0
+        maximum: 600
+        tickDensity: dense
+        ticks: visible
+        grid: visible
+        labelRotation: horizontal
+    query:
+      type: aggregate
+      dimensions:
+      - dimension: purchase_date
+        grain: month
+        alias: purchase_month
+      metrics:
+      - revenue
+      sort:
+      - field: purchase_month
+        direction: asc
+      limit: 30
+```
+
 ## Multiple series
 
 Use two ordered `query.dimensions` fields to split the metric into one line per status. The first dimension supplies the category axis and the second supplies the series identity.
@@ -48,6 +96,41 @@ visuals:
     type: line
     presentation:
       type: cartesian
+      legend: right
+      legendTitle: Fulfillment status
+      legendItems:
+      - value: delivered
+        label: Delivered
+      - value: processing
+        label: Processing
+      - value: shipped
+        label: Shipped
+      - value: canceled
+        label: Canceled
+      seriesIntent:
+      - value: delivered
+        order: 0
+        color: success
+      - value: processing
+        order: 1
+        color: warning
+      - value: shipped
+        order: 2
+        color: data_2
+      - value: canceled
+        order: 3
+        color: danger
+      tooltip:
+      - field: purchase_month
+        label: Purchase month
+      - field: status
+        label: Order status
+      - field: revenue
+        label: Revenue
+        format:
+          kind: currency
+          currency: USD
+          maximumFractionDigits: 0
     query:
       type: aggregate
       dimensions:
@@ -124,7 +207,11 @@ visuals:
 
 ## Governed decision context
 
+Reference lines, bands, and event annotations on a log axis use the positive numeric domain: authored numeric literals must be greater than zero. Field and reducer references are evaluated after the result is filtered; a nonpositive resolved line or event is omitted, and a band is omitted when either endpoint is nonpositive. A positive reference outside the visible log bounds remains an ordinary out-of-range reference.
+
 Use a named context dataset when a title or description must be recomputed from the same active semantic filters as the chart. Context queries are compiled with the visual and delivered in the typed visualization envelope.
+
+Here the context query summarizes the first status separately; it does not filter the revenue line to that status. Its metadata is labeled as context, independently of the fixed reference target.
 
 {{< visual id="revenue_line_context" >}}
 
@@ -132,7 +219,7 @@ Use a named context dataset when a title or description must be recomputed from 
 visuals:
   revenue_line_context:
     title: Revenue trend
-    subtitle: Current filtered scope
+    subtitle: Total revenue with separate status context
     type: line
     datasets:
       context:
@@ -141,7 +228,7 @@ visuals:
         - status
         metrics:
         - metric: revenue
-          alias: target
+          alias: context_revenue
         sort:
         - field: status
           direction: asc
@@ -151,15 +238,15 @@ visuals:
         dataset: context
         field: status
         reducer: first
-        prefix: "Revenue — "
+        prefix: "Revenue — context status: "
         fallback: Revenue trend
       description:
         dataset: context
-        field: target
+        field: context_revenue
         reducer: mean
-        prefix: "Current target is "
+        prefix: "Context revenue is "
         suffix: " USD."
-        fallback: Current target is unavailable.
+        fallback: Context revenue is unavailable.
     presentation:
       type: cartesian
       axes:
@@ -167,14 +254,14 @@ visuals:
         title: Revenue
         scale: linear
         zero: exclude
-        displayUnits: millions
+        displayUnits: none
         tickDensity: dense
       referenceLines:
       - id: target
         axis: primary_y
         value:
           kind: number
-          value: 1000000
+          value: 400
         label: Target
         tone: success
       referenceBands:
@@ -195,7 +282,7 @@ visuals:
         axis: x
         value:
           kind: text
-          value: "2025-01-01"
+          value: "2025-01"
         label: Fiscal year
         description: Start of fiscal year
         tone: ink

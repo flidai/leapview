@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -21,6 +22,49 @@ func canonicalCartesianDefinition(t *testing.T, id string, fields []ir.Visualiza
 
 func canonicalCartesianFields() []ir.VisualizationField {
 	return []ir.VisualizationField{{ID: "label", Role: ir.VisualizationFieldRoleDimension, DataType: ir.VisualizationDataTypeString, Nullable: true, Label: "Label"}, {ID: "value", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Nullable: true, Label: "Value"}}
+}
+
+func historicalFinancialDefinition(t *testing.T, mark ir.VisualizationCartesianMark) visualizationdefinition.Definition {
+	t.Helper()
+	definition := canonicalCartesianDefinition(t, "financial", canonicalCartesianFields(), nil)
+	value := definition.Spec.Value.(*ir.CartesianVisualizationSpec)
+	value.Mark = mark
+	value.Presentation.LabelPolicy = ir.VisualizationLabelPolicy{
+		Density: ir.VisualizationLabelDensityAutomatic,
+		Priority: []ir.VisualizationLabelPriority{
+			ir.VisualizationLabelPrioritySelected,
+			ir.VisualizationLabelPriorityAnomaly,
+			ir.VisualizationLabelPriorityThreshold,
+		},
+		MaxCharacters: 24, MinimumSpacing: 6, TooltipFallback: true,
+	}
+	revision, err := ir.ComputeSpecRevision(definition.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch mark {
+	case ir.VisualizationCartesianMarkCandlestick:
+		definition.Query.ResultShape = visualizationdefinition.ResultOHLC
+	case ir.VisualizationCartesianMarkBoxplot:
+		definition.Query.ResultShape = visualizationdefinition.ResultDistribution
+		definition.Query.Aggregate.Metrics = nil
+		definition.Query.Aggregate.Distribution = &visualizationdefinition.DistributionQueryBinding{
+			Metric:        visualizationdefinition.FieldBinding{FieldID: "revenue", Alias: "value"},
+			Quantiles:     []float64{0.5},
+			Outliers:      "include",
+			Approximation: "exact",
+		}
+	}
+	definition.SpecRevision = revision.String()
+	encoded, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted visualizationdefinition.Definition
+	if err := json.Unmarshal(encoded, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	return persisted
 }
 
 func canonicalGridDefinition(t *testing.T, id string) visualizationdefinition.Definition {
@@ -46,6 +90,24 @@ func TestCanonicalEnvelopeFromFrameKeepsCompiledSpecAndStreamRevision(t *testing
 	state := envelope.DataState.Value.(*ir.InlineVisualizationDataState)
 	if envelope.DataRevision != 9 || state.DataRevision != 9 || state.Datasets[0].SpecRevision != definition.SpecRevision {
 		t.Fatalf("state=%#v", state)
+	}
+}
+
+func TestHistoricalFinancialAutomaticDefaultDeliversEnvelope(t *testing.T) {
+	for _, mark := range []ir.VisualizationCartesianMark{ir.VisualizationCartesianMarkCandlestick, ir.VisualizationCartesianMarkBoxplot} {
+		t.Run(string(mark), func(t *testing.T) {
+			definition := historicalFinancialDefinition(t, mark)
+			envelope, err := EnvelopeFromFrame(definition, Frame{Columns: []string{"label", "value"}, Rows: [][]any{{"Jan", "10.5"}}}, nil, 9, 4)
+			if err != nil {
+				t.Fatalf("EnvelopeFromFrame() rejected historical automatic default: %v", err)
+			}
+			if envelope.SpecRevision != definition.SpecRevision {
+				t.Fatalf("envelope spec revision = %q, want persisted revision %q", envelope.SpecRevision, definition.SpecRevision)
+			}
+			if envelope.Spec.Value.(*ir.CartesianVisualizationSpec).Presentation.LabelPolicy.Density != ir.VisualizationLabelDensityAutomatic {
+				t.Fatalf("envelope policy = %#v, want historical automatic default", envelope.Spec.Value.(*ir.CartesianVisualizationSpec).Presentation.LabelPolicy)
+			}
+		})
 	}
 }
 

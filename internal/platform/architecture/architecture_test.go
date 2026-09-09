@@ -1739,6 +1739,64 @@ func TestProductionDoesNotImportSupersededDuckDBQueryJSON(t *testing.T) {
 	}
 }
 
+func TestODCSExportIsIsolatedAndIndependentOracleIsCIOnly(t *testing.T) {
+	const (
+		adapter       = modulePath + "/internal/project/contractodcs"
+		canonicalizer = "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	)
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir == "internal/project/contractodcs" {
+			for _, forbidden := range []string{
+				modulePath + "/internal/analytics",
+				modulePath + "/internal/project/compiler",
+				modulePath + "/internal/project/artifact",
+				modulePath + "/internal/release",
+				"crypto/sha256",
+				canonicalizer,
+			} {
+				for _, imported := range file.imports {
+					if imported == forbidden || strings.HasPrefix(imported, forbidden+"/") {
+						t.Errorf("%s crosses the isolated ODCS projection boundary through %s", file.path, imported)
+					}
+				}
+			}
+			continue
+		}
+		if importListContains(file.imports, adapter) {
+			t.Errorf("%s links the FAI-623 export-only adapter into a production transport", file.path)
+		}
+	}
+
+	root := repoRoot(t)
+	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oracle, err := os.ReadFile(filepath.Join(root, "scripts", "validate_odcs_oracle.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{name: "Taskfile", text: string(taskfile), want: []string{"odcs:oracle:", "bash scripts/validate_odcs_oracle.sh"}},
+		{name: "CI workflow", text: string(workflow), want: []string{"pip install --require-hashes -r scripts/odcs-oracle-requirements.txt", "run: task odcs:oracle"}},
+		{name: "oracle", text: string(oracle), want: []string{"expected_cli_version=\"1.1.3\"", "expected_spec_version=\"3.1.0\"", "oracle lint", "--json-schema", "sha256sum --check", "env -i", "PYTHON_DOTENV_DISABLED=1", "--config-file /dev/null", "--no-inline-references", "invalid-unknown.odcs.json", "invalid-version.odcs.json", "invalid-logical-type.odcs.json"}},
+	} {
+		for _, want := range check.want {
+			if !strings.Contains(check.text, want) {
+				t.Errorf("%s is missing pinned ODCS oracle fragment %q", check.name, want)
+			}
+		}
+	}
+}
+
 func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 	runtimehostModule, ok := ClassifyPackage("internal/runtimehost/module")
 	if !ok || runtimehostModule.Layer != LayerModule {
@@ -3078,7 +3136,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Full merge validation",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
-		"run: task ci:full:extras",
+		"run: task ci:full:extras:hosted",
 		"name: CI gate",
 		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]",
 	} {
@@ -3698,7 +3756,7 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 	for _, want := range []string{
 		"actions/setup-go@",
 		"go-version-file: go.mod",
-		"cache: true",
+		"cache: false",
 		"actions/setup-node@",
 		`node-version: "24"`,
 		"oven-sh/setup-bun@",
@@ -3713,7 +3771,6 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 		"for attempt in 1 2 3",
 		"GODEBUG=http2client=0 go install",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
-		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
 		"playwright install --with-deps chromium",
 	} {
 		if !strings.Contains(setupText, want) {
@@ -3793,7 +3850,6 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 		"bun-version: 1.3.14",
 		"terraform_version: 1.13.5",
 		"github.com/go-task/task/v3/cmd/task@v3.50.0",
-		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
 		"@playwright/test@1.61.1",
 		"playwright install --with-deps chromium",
 		"PLAYWRIGHT_BROWSERS_PATH=",

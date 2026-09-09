@@ -260,7 +260,11 @@ func canonicalData(node Node) (json.RawMessage, error) {
 			MaximumBytes     int64                    `json:"maximum_bytes,omitempty"`
 			RawMinimumZoom   int                      `json:"raw_minimum_zoom,omitempty"`
 			MaximumZoom      int                      `json:"maximum_zoom,omitempty"`
-		}{n.Operation, n.Input, append([]string(nil), n.InputsList...), n.Latitude, n.Longitude, append([]string(nil), n.Metrics...), append([]SpatialProperty(nil), n.MetricProperties...), append([]SpatialProperty(nil), n.Properties...), append([]string(nil), n.Identity...), n.Zoom, n.TargetZoom, n.CellPixels, n.Buffer, n.FeatureCap, n.MaximumBytes, n.RawMinimumZoom, n.MaximumZoom}
+			Cluster          *SpatialClusterPolicy    `json:"cluster,omitempty"`
+			MemberInput      string                   `json:"member_input,omitempty"`
+			MemberProperties []SpatialProperty        `json:"member_properties,omitempty"`
+			MemberIdentity   []string                 `json:"member_identity,omitempty"`
+		}{n.Operation, n.Input, append([]string(nil), n.InputsList...), n.Latitude, n.Longitude, append([]string(nil), n.Metrics...), append([]SpatialProperty(nil), n.MetricProperties...), append([]SpatialProperty(nil), n.Properties...), append([]string(nil), n.Identity...), n.Zoom, n.TargetZoom, n.CellPixels, n.Buffer, n.FeatureCap, n.MaximumBytes, n.RawMinimumZoom, n.MaximumZoom, n.Cluster, n.MemberInput, append([]SpatialProperty(nil), n.MemberProperties...), append([]string(nil), n.MemberIdentity...)}
 	case AnalyticalEnvelope:
 		sortKeys := append([]SortKey(nil), n.Sort...)
 		value = struct {

@@ -220,6 +220,10 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 	artifactRootDigest := artifact.ArtifactDigest
 	projectID := artifact.Identity.ProjectID
 	environment := servingstate.Environment(artifact.Identity.Environment)
+	inventory, err := project.NewResourceUIDInventory(input.Artifacts.Compiler.Artifact)
+	if err != nil {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: resource inventory: %v", deploymentnative.ErrInvalid, err)
+	}
 
 	assembled := GenerationAdmissionInput{
 		Commit: CommitEvidence{
@@ -265,8 +269,9 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			DashboardPublicationsJSON: artifact.DashboardPublicationsJSON, DashboardAppearancesJSON: artifact.DashboardAppearancesJSON,
 			CreatedBy: attempt.OwnerID,
 		},
-		ManagedDataPins: append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
-		Graph:           input.Artifacts.Compiler.Graph,
+		ManagedDataPins:   append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		Graph:             input.Artifacts.Compiler.Graph,
+		ResourceInventory: inventory,
 	}
 	// Carry a provenance template through the value-only boundary. Candidate
 	// revision is allocated by delivery during CompleteBuildAndAdmitTx and is
