@@ -47,10 +47,14 @@ five consecutive runs each, retaining the stale-writer assertions.
 The final `task ci` run passed every Go, PostgreSQL conformance, and frontend
 lane. Its last `generated:check` step rejected staged changes because it requires
 a committed worktree; regeneration produced no unstaged changes. That final
-gate must be rerun after the normal merge commit. Evidence:
+gate passed separately on normal merge commit `9ac314d5e` with a clean worktree;
+the final quality-budget check also passed. Thus all required local CI stages
+passed, while the original full invocation's exit status remains recorded
+accurately below. Evidence:
 `/tmp/fai769-conflict-task-ci-3.log` (test lanes passed; overall exit 201 at the
 clean-worktree check), `/tmp/fai769-conflict-native-race.log`, and
-`/tmp/fai769-refresh-fence-after-barrier.log`.
+`/tmp/fai769-refresh-fence-after-barrier.log`, and
+`/tmp/fai769-conflict-generated-final.log` (exit 0).
 Exact-head CI must be checked after the reviewed merge
 is pushed. No force push, main merge, or auto-merge is allowed.
 
