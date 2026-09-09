@@ -5,7 +5,7 @@ import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
-import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test-support'
+import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test'
 
 let server: Server
 let baseURL = ''
