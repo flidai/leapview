@@ -787,10 +787,8 @@ receive production credentials by default.
   evidence boundaries are recorded in the [OpenLineage conformance
   specification](specifications/openlineage-conformance.md).
 - The generated conformance matrix is checked against registered adapters,
-  pinned schemas, documentation, CLI commands, and test fixtures. Every adapter
-  or public compliance claim must have a matching matrix entry; FAI-629
-  claims only projection/document conformance and does not include a collector,
-  transport, import, or round-trip path.
+  pinned schemas, documentation, CLI commands, and test fixtures. No adapter or
+  public compliance claim can exist without a matching matrix entry.
 - Architecture tests keep standards-version DTOs inside interchange or
   telemetry adapters and prevent core compiled-graph, analytics, deployment,
   release, and runtime packages from importing them.
