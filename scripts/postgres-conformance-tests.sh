@@ -41,12 +41,78 @@ case "${1:-list}" in
       printf '%s\n' 'PostgreSQL conformance inventory is empty' >&2
       exit 1
     fi
-    # Bound this conformance lane at four package workers while retaining one
-    # fail-closed inventory. Include integration and DuckDB build tags so
-    # source-inventoried DuckLake PostgreSQL suites are actually compiled and
-    # executed in this lane. MinIO has its own external lane.
-    LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
-      go test -tags 'integration duckdb_arrow' -p 4 -count=1 -v -skip '^TestMinIOParquetSourceRefreshContract$' "${packages[@]}"
+
+    # Keep the app package in its own bounded phase. Its native tests are
+    # discovered and run with the same build tags, while the other inventory
+    # packages retain the package-level four-worker bound. The phases are
+    # intentionally sequential so no more than four conformance test
+    # processes are active at once.
+    app_package="$module/internal/app"
+    non_app_packages=()
+    app_present=0
+    for package in "${packages[@]}"; do
+      if [[ "$package" == "$app_package" ]]; then
+        app_present=1
+      else
+        non_app_packages+=("$package")
+      fi
+    done
+
+    # Include integration and DuckDB build tags so source-inventoried DuckLake
+    # PostgreSQL suites are actually compiled and executed in this lane.
+    # MinIO has its own external lane.
+    if ((${#non_app_packages[@]} > 0)); then
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
+        go test -tags 'integration duckdb_arrow' -p 4 -count=1 -v -skip '^TestMinIOParquetSourceRefreshContract$' "${non_app_packages[@]}"
+    fi
+
+    if ((app_present)); then
+      app_shard_count=4
+      app_patterns=()
+      # Discover every pattern before starting any worker. A failed or empty
+      # discovery result must fail closed without leaving partial execution.
+      for ((shard_index = 0; shard_index < app_shard_count; shard_index++)); do
+        pattern="$(go run ./internal/app/tools/testshard \
+          --package "$app_package" \
+          --shard-index "$shard_index" \
+          --shard-count "$app_shard_count" \
+          --tags 'integration duckdb_arrow')"
+        if [[ -z "$pattern" ]]; then
+          printf 'empty PostgreSQL app test shard pattern for shard %d\n' "$shard_index" >&2
+          exit 1
+        fi
+        app_patterns+=("$pattern")
+      done
+
+      app_pids=()
+      for ((shard_index = 0; shard_index < app_shard_count; shard_index++)); do
+        pattern="${app_patterns[$shard_index]}"
+        (
+          printf 'PostgreSQL app conformance shard %d/%d\n' "$((shard_index + 1))" "$app_shard_count"
+          LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 \
+            go test -tags 'integration duckdb_arrow' -run "$pattern" -count=1 -v \
+              -skip '^TestMinIOParquetSourceRefreshContract$' "$app_package"
+        ) &
+        app_pids+=("$!")
+      done
+
+      app_status=0
+      # Always reap every started worker. Preserve the first non-zero status so
+      # a failed shard cannot be hidden by a later successful shard.
+      for pid in "${app_pids[@]}"; do
+        if wait "$pid"; then
+          :
+        else
+          status=$?
+          if ((app_status == 0)); then
+            app_status=$status
+          fi
+        fi
+      done
+      if ((app_status != 0)); then
+        exit "$app_status"
+      fi
+    fi
     ;;
   *)
     printf 'usage: %s [list|run]\n' "$0" >&2

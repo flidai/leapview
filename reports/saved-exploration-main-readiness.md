@@ -2,6 +2,29 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 9 hosted-CI follow-up
+
+On head `aa38ee0aa`, hosted Go application validation reached its package-wide
+ten-minute timeout in the PostgreSQL conformance lane. The named test,
+`TestAuditedQueryMetricsRecordsExecutionError`, had run for only five seconds
+and was still committing a legacy SQLite fixture migration; no assertion failed.
+Both query-audit tests passed three consecutive targeted local runs (9.816s).
+
+The ordinary application lane already uses stable shards, but the native lane
+reran the entire application package in one process. A coverage-preserving
+native application sharding correction now uses matching build tags, required
+PostgreSQL conformance, unchanged timeouts, and two separate phases bounded to
+four test workers. The real 335-test inventory maps exactly once across shards
+of 84, 84, 84, and 83 tests, including the tagged warehouse qualification. The
+existing MinIO test still runs in its separate external lane.
+
+Runner/sharder contracts passed three consecutive runs, including an inherited
+required/skip environment; tests verify per-worker required flags, discovery
+failure handling, and completion/failure propagation. Canonical generation and
+the quality budget passed. Full checkpoint and exact-head hosted validation
+remain pending. No production behavior or test timeout was changed.
+The PR remains unmerged and is not yet green on GitHub.
+
 ## September 9 conflict-resolution checkpoint
 
 Main advanced to `4f677d4b9` with the interactive dashboard builder. PR #543

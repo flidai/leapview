@@ -46,6 +46,13 @@ adds `task ci:full:extras`, and the daily schedule also runs `task ci:nightly:ex
 composition remains available through the tier targets; the workflow does not duplicate individual
 test commands or introduce a runner-specific container wrapper.
 
+The PostgreSQL conformance runner keeps its source-derived package inventory.
+Non-application packages run with four package workers; the application package
+runs separately in four stable shards so its cumulative fixture setup cannot
+consume one process's entire test timeout. Test discovery and execution use the
+same `integration duckdb_arrow` tags, and every shard requires PostgreSQL
+conformance. All shard failures propagate to the lane; no test timeout is raised.
+
 Frontend validation has five isolated shards: `core`, `reports`, `chat`, `data`, and `site`.
 Each hosted shard runs `task ci:lane:frontend:shard SHARD=<name>` on its own runner with a
 180-second watchdog and at most one retry for a timeout, never for an assertion failure.
