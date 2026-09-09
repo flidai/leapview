@@ -6448,7 +6448,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -8225,7 +8225,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -9959,7 +9959,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -10890,7 +10890,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -11563,7 +11563,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -12255,7 +12255,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -15149,7 +15149,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -15728,7 +15728,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {

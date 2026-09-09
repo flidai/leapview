@@ -707,6 +707,8 @@ tasks:
     method: checksum
     sources:
       - Taskfile.yml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - api/typespec/**/*.tsp
       - internal/agent/contracts/**/*.go
@@ -980,6 +982,8 @@ tasks:
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/dashboard/**/*.tsp
+      - api/visualization/**/*.tsp
       - internal/agent/contracts/typespec/**/*.tsp
       - internal/agent/contracts/generate/**/*.go
       - pkg/apigen/**/*.go
