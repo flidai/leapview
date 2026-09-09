@@ -449,6 +449,18 @@ The reports CI shard runs the host browser lifecycle tests through
 `bun run test:visualization-ir`. These checks establish lifecycle correctness;
 they do not replace runtime latency/memory qualification or prove FAI-551 complete.
 
+`task qa:viewport-qualification` produces paired, local evidence from a fixed
+24-visual dashboard fixture. It compares the production eager default with a
+test-only deferred activation from the same build, discards one warmup per mode,
+alternates five measured repetitions in fresh browser contexts, and records
+commit, fixture, source, lockfile, browser, toolchain, CPU, memory, viewport, raw
+samples, and aggregation. Lifecycle or missing-metric evidence fails closed.
+Timing and heap observations have no universal cross-hardware threshold and are
+not production measurements. FAI-551 owns this optimization-specific evidence;
+FAI-39 continues to own reusable visualization CI budgets and device/visual
+matrices. The runner's forced snapshots establish an awaited qualification path,
+not support for unawaitable native browser-menu printing.
+
 ## Security and trust boundaries
 
 Dashboard authors configure LeapView product concepts. They do not supply executable renderer callbacks.

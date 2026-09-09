@@ -534,6 +534,20 @@ tasks:
     cmds:
       - bun run qa:dashboard-performance
 
+  test:viewport-qualification-harness:
+    desc: Test fail-closed viewport qualification evidence contracts
+    deps:
+      - node:deps
+    cmds:
+      - bun run test:viewport-qualification-harness
+
+  qa:viewport-qualification:
+    desc: Capture paired local eager/deferred dashboard viewport evidence (not part of CI)
+    deps:
+      - node:deps
+    cmds:
+      - bun run qa:viewport-qualification
+
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:

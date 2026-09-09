@@ -28,6 +28,7 @@
     "test:table-selection": "bun test web/components/dashboard/table/block-source.test.ts web/components/dashboard/table/selection.test.ts",
     "test:interaction-selection": "bun test web/components/dashboard/interaction-selection.test.ts web/components/dashboard/visualization/interaction-command.test.ts web/components/dashboard/visualization/adapters/echarts.test.ts web/components/dashboard/visualization/adapters/echarts-series-intent.test.ts web/components/dashboard/visualization/adapters/echarts-point.test.ts web/components/dashboard/visualization/adapters/maplibre.test.ts web/components/dashboard/table/selection.test.ts web/components/dashboard/filters/filter-controller.test.ts",
     "test:movielens-performance-harness": "bun test scripts/movielens_performance.test.ts",
+    "test:viewport-qualification-harness": "bun test scripts/viewport_qualification.test.ts",
     "test:public-site-smoke": "bun test scripts/public_site_smoke.test.ts",
     "test:visual-modal": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts visual-modal && bun test web/components/dashboard/visual-modal-focus.test.ts web/components/dashboard/visual-modal.dom.test.ts",
     "test:catalog-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts catalog-page && bun test web/components/app/catalog-page.dom.test.ts web/components/app/dashboard-icon-picker.test.ts",
@@ -55,7 +56,8 @@
     "test:semantic-model-graph": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts semantic-model-graph && bun test web/components/shared/semantic-model-graph.dom.test.ts",
     "qa:datastar-lit-routes": "node scripts/ensure_playwright.mjs && bun scripts/datastar_lit_route_qa.ts",
     "qa:dashboard-performance": "node scripts/ensure_playwright.mjs && bun scripts/dashboard_performance.ts",
-    "qa:movielens-performance": "LEAPVIEW_PERF_SCENARIO=scripts/performance/movielens.json bun run qa:dashboard-performance"
+    "qa:movielens-performance": "LEAPVIEW_PERF_SCENARIO=scripts/performance/movielens.json bun run qa:dashboard-performance",
+    "qa:viewport-qualification": "node scripts/ensure_playwright.mjs && bun scripts/viewport_qualification.ts"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
