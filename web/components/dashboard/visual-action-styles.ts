@@ -11,10 +11,10 @@ export const visualActionStyles = css`
   .icon-action {
     display: grid;
     flex: 0 0 auto;
-    width: var(--lv-button-height-xs, var(--control-xsmall-size));
-    min-width: var(--lv-button-height-xs, var(--control-xsmall-size));
-    height: var(--lv-button-height-xs, var(--control-xsmall-size));
-    min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
+    width: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
+    min-width: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
+    height: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
+    min-height: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
     place-items: center;
     border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
     border-radius: var(--lv-radius-tight);

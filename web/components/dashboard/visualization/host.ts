@@ -34,7 +34,13 @@ export class VisualizationHost extends LitElement {
 
   static styles = [visualActionStyles, css`
     :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
-    :host { color: var(--lv-fg-default); background: var(--lv-chart-surface); font-family: var(--fontStack-system); }
+    :host {
+      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, 24px))) * var(--report-canvas-inverse-scale, 1));
+      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, 24px))) * var(--report-canvas-inverse-scale, 1));
+      color: var(--lv-fg-default);
+      background: var(--lv-chart-surface);
+      font-family: var(--fontStack-system);
+    }
     .surface { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
     .surface.headerless { grid-template-rows: minmax(0, 1fr); }
     .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
@@ -253,10 +259,10 @@ export class VisualizationHost extends LitElement {
     .visual-options { position: relative; }
     .visual-options summary {
       display: grid;
-      width: var(--lv-button-height-xs, var(--control-xsmall-size));
-      min-width: var(--lv-button-height-xs, var(--control-xsmall-size));
-      height: var(--lv-button-height-xs, var(--control-xsmall-size));
-      min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
+      width: var(--lv-visual-action-target);
+      min-width: var(--lv-visual-action-target);
+      height: var(--lv-visual-action-target);
+      min-height: var(--lv-visual-action-target);
       place-items: center;
       border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
       border-radius: var(--lv-radius-tight);
@@ -294,7 +300,7 @@ export class VisualizationHost extends LitElement {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
-      min-height: var(--lv-button-height-sm, var(--control-small-size));
+      min-height: var(--lv-visual-menu-target);
       border: var(--borderWidth-default, var(--lv-border-width)) solid transparent;
       border-radius: var(--lv-radius-tight);
       background: transparent;
