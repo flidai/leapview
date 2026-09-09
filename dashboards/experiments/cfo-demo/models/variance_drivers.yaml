@@ -1,0 +1,51 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:variance_drivers
+  name: variance_drivers
+  displayName: EBITDA Variance Drivers
+  description: Signed contributions that reconcile actual EBITDA with budget EBITDA.
+spec:
+  fields:
+    variance_row_id: {datatype: String, label: Variance row ID}
+    finance_date: {datatype: Date, label: Date}
+    finance_month: {datatype: String, label: Month}
+    segment: {datatype: String, label: Segment}
+    country: {datatype: String, label: Country}
+    product: {datatype: String, label: Product}
+    driver_order: {datatype: Integer, label: Order}
+    driver: {datatype: String, label: Driver}
+    impact: {datatype: Decimal, label: EBITDA impact}
+  definition:
+    type: sql
+    sql: |
+      WITH drivers AS (
+        SELECT record_id, finance_date, finance_month, segment, country, product, 10 AS driver_order, 'Revenue' AS driver, net_sales - budget_sales AS impact FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, finance_month, segment, country, product, 20, 'Cost of goods sold', budget_cogs - cogs FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, finance_month, segment, country, product, 30, 'Sales and marketing', budget_sales_marketing_expense - sales_marketing_expense FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, finance_month, segment, country, product, 40, 'Operations', budget_operations_expense - operations_expense FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, finance_month, segment, country, product, 50, 'Research and development', budget_research_development_expense - research_development_expense FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, finance_month, segment, country, product, 60, 'General and administrative', budget_general_admin_expense - general_admin_expense FROM model.financial_performance
+      )
+      SELECT
+        record_id || '-' || CAST(driver_order AS VARCHAR) AS variance_row_id,
+        finance_date,
+        finance_month,
+        segment,
+        country,
+        product,
+        driver_order,
+        driver,
+        CAST(round(impact, 2) AS DECIMAL(38,2)) AS impact
+      FROM drivers
+  entities:
+    variance_row:
+      type: primary
+      fields: [variance_row_id]
+  grain:
+    entity: variance_row

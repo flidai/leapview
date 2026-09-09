@@ -1,0 +1,29 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:cash_scenario_summary
+  name: cash_scenario_summary
+  displayName: Cash Scenario Summary
+  description: One governed outcome row for each 13-week cash scenario.
+spec:
+  fields:
+    scenario: {datatype: String, label: Scenario}
+    ending_cash: {datatype: Decimal, label: Ending cash}
+    cash_headroom: {datatype: Decimal, label: Cash headroom}
+    cumulative_net_cash_flow: {datatype: Decimal, label: 13-week net cash flow}
+  definition:
+    type: sql
+    sql: |
+      SELECT
+        scenario,
+        CAST(round(MAX(scenario_ending_cash), 2) AS DECIMAL(38,2)) AS ending_cash,
+        CAST(round(MAX(scenario_headroom), 2) AS DECIMAL(38,2)) AS cash_headroom,
+        CAST(round(SUM(net_cash_flow), 2) AS DECIMAL(38,2)) AS cumulative_net_cash_flow
+      FROM model.cash_forecast
+      GROUP BY scenario
+  entities:
+    scenario:
+      type: primary
+      fields: [scenario]
+  grain:
+    entity: scenario

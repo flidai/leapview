@@ -23,6 +23,16 @@ tasks:
       - task: bootstrap:movielens
       - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
+  dev:cfo:
+    desc: Start the managed LeapView dev server with the CFO finance demo
+    cmds:
+      - task: postgres:dev:up
+      - task: generate
+      - task: build
+      - task: bootstrap:cfo
+      - task: map-assets:install
+      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=finance LEAPVIEW_DEV_MCP_METRIC=net_sales ./scripts/dev-server.sh start dashboards/experiments/cfo-demo finance_files .data/cfo-demo
+
   dbt:warehouse:build:
     desc: Build and verify the pinned dbt-duckdb warehouse-boundary Parquet publication
     sources:
@@ -111,6 +121,11 @@ tasks:
     desc: Download/sync MovieLens 32M CSVs if missing
     cmds:
       - go run ./internal/app/tools/bootstrapmovielens --shared-cache --out .data/movielens
+
+  bootstrap:cfo:
+    desc: Download/sync the pinned Microsoft Financial Sample workbook if missing
+    cmds:
+      - go run ./internal/app/tools/bootstrapfinance --shared-cache --out .data/cfo-demo
 
   dev:stop:
     desc: Stop the managed LeapView dev server for this worktree

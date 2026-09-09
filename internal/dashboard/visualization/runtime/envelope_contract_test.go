@@ -127,6 +127,31 @@ func TestCanonicalTableEnvelopeOmitsUnknownCardinalityCount(t *testing.T) {
 	}
 }
 
+func TestCanonicalPivotColumnsPreserveCompiledMetricFormats(t *testing.T) {
+	digits := int32(1)
+	base := ir.VisualizationSpecBase{Datasets: []ir.VisualizationDatasetSchema{{
+		ID: "primary",
+		Fields: []ir.VisualizationField{
+			{ID: "revenue", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Revenue", Format: &ir.VisualizationFormat{Value: &ir.CurrencyVisualizationFormat{Kind: "currency", Currency: "USD"}}},
+			{ID: "gross_margin", Role: ir.VisualizationFieldRoleMetric, DataType: ir.VisualizationDataTypeDecimal, Label: "Gross margin", Format: &ir.VisualizationFormat{Value: &ir.PercentVisualizationFormat{Kind: "percent", MinimumFractionDigits: &digits, MaximumFractionDigits: &digits}}},
+		},
+	}}}
+	table := dashboard.Table{Columns: []dashboard.TableColumn{
+		{Key: "pivot_performance_revenue", Label: "Net revenue", Role: "metric", Metric: "revenue", Group: "Performance", ColumnValue: "Performance", Format: "currency"},
+		{Key: "pivot_performance_gross_margin", Label: "Gross margin", Role: "metric", Metric: "gross_margin", Group: "Performance", ColumnValue: "Performance", Format: "decimal"},
+	}}
+
+	schema := compiledWindowSchema(base, "primary", table)
+	currency, currencyOK := schema.Fields[0].Format.Value.(*ir.CurrencyVisualizationFormat)
+	percent, percentOK := schema.Fields[1].Format.Value.(*ir.PercentVisualizationFormat)
+	if !currencyOK || currency.Currency != "USD" || !percentOK || percent.MaximumFractionDigits == nil || *percent.MaximumFractionDigits != 1 {
+		t.Fatalf("fields=%#v", schema.Fields)
+	}
+	if schema.Fields[0].ID != "pivot_performance_revenue" || schema.Fields[0].Grid == nil || schema.Fields[0].Grid.Metric == nil || *schema.Fields[0].Grid.Metric != "revenue" {
+		t.Fatalf("pivot field=%#v", schema.Fields[0])
+	}
+}
+
 func TestCanonicalErrorEnvelopePreservesCompiledBoundary(t *testing.T) {
 	definition := canonicalGridDefinition(t, "orders")
 	envelope, err := ErrorEnvelopeFromDefinition(definition, errors.New("query failed"), 7, 3)

@@ -1,0 +1,11 @@
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:finance_files
+  name: finance_files
+  displayName: CFO demo managed files
+spec:
+  type: managed
+  defaults:
+    csv:
+      header: true

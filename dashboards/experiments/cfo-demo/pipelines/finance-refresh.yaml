@@ -1,0 +1,8 @@
+apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:finance-refresh
+  name: finance-refresh
+spec:
+  selection:
+    semanticModel: finance

@@ -1,0 +1,112 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:cash_forecast
+  name: cash_forecast
+  displayName: 13-Week Cash Forecast
+  description: Deterministic fictional base, upside, and downside cash scenarios scaled from public sample revenue.
+spec:
+  fields:
+    cash_row_id: {datatype: String, label: Cash row ID}
+    week_index: {datatype: Integer, label: Week}
+    week_start: {datatype: Date, label: Week starting}
+    week_label: {datatype: String, label: Forecast week}
+    scenario: {datatype: String, label: Scenario}
+    scenario_group: {datatype: String, label: View}
+    collections: {datatype: Decimal, label: Customer collections}
+    supplier_payments: {datatype: Decimal, label: Supplier payments}
+    payroll: {datatype: Decimal, label: Payroll}
+    operating_expenses: {datatype: Decimal, label: Operating expenses}
+    taxes: {datatype: Decimal, label: Taxes}
+    net_cash_flow: {datatype: Decimal, label: Net cash flow}
+    base_collections: {datatype: Decimal, label: Base collections}
+    base_supplier_payments: {datatype: Decimal, label: Base supplier payments}
+    base_net_cash_flow: {datatype: Decimal, label: Base net cash flow}
+    closing_cash: {datatype: Decimal, label: Closing cash}
+    scenario_ending_cash: {datatype: Decimal, label: Scenario ending cash}
+    scenario_headroom: {datatype: Decimal, label: Scenario cash headroom}
+    current_cash: {datatype: Decimal, label: Current cash}
+    base_ending_cash: {datatype: Decimal, label: Base ending cash}
+    base_headroom: {datatype: Decimal, label: Base cash headroom}
+    overdue_receivables: {datatype: Decimal, label: Overdue receivables}
+    dso_days: {datatype: Decimal, label: Days sales outstanding}
+  definition:
+    type: sql
+    sql: |
+      WITH revenue_scale AS (
+        SELECT SUM(net_sales) / 104.0 AS weekly_sales
+        FROM model.financial_performance
+      ),
+      weeks AS (
+        SELECT 0 AS week_index UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
+        UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7
+        UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11
+        UNION ALL SELECT 12
+      ),
+      scenarios AS (
+        SELECT 'Base' AS scenario, 0.98 AS collection_factor, 1.00 AS payment_factor
+        UNION ALL SELECT 'Upside', 1.06, 0.98
+        UNION ALL SELECT 'Downside', 0.82, 1.04
+      ),
+      flows AS (
+        SELECT
+          w.week_index,
+          CAST(DATE '2026-09-07' + CAST(w.week_index * 7 AS INTEGER) AS DATE) AS week_start,
+          s.scenario,
+          r.weekly_sales * s.collection_factor * CASE WHEN w.week_index = 3 OR w.week_index = 8 THEN 1.12 ELSE 1.0 END AS collections,
+          -(r.weekly_sales * 0.66 * s.payment_factor * CASE WHEN w.week_index = 4 OR w.week_index = 9 THEN 1.08 ELSE 1.0 END) AS supplier_payments,
+          -(r.weekly_sales * 0.10) AS payroll,
+          -(r.weekly_sales * 0.12) AS operating_expenses,
+          -(r.weekly_sales * CASE WHEN w.week_index = 5 OR w.week_index = 12 THEN 0.06 ELSE 0.015 END) AS taxes,
+          r.weekly_sales * 10.0 AS opening_cash
+        FROM weeks w
+        JOIN scenarios s ON true
+        JOIN revenue_scale r ON true
+      ),
+      projected AS (
+        SELECT
+          week_index,
+          week_start,
+          scenario,
+          collections,
+          supplier_payments,
+          payroll,
+          operating_expenses,
+          taxes,
+          collections + supplier_payments + payroll + operating_expenses + taxes AS net_cash_flow,
+          opening_cash + SUM(collections + supplier_payments + payroll + operating_expenses + taxes)
+            OVER (PARTITION BY scenario ORDER BY week_index) AS closing_cash,
+          opening_cash
+        FROM flows
+      )
+      SELECT
+        scenario || '-' || printf('%02d', week_index) AS cash_row_id,
+        week_index,
+        week_start,
+        printf('W%02d', week_index + 1) AS week_label,
+        scenario,
+        'Outlook' AS scenario_group,
+        CAST(round(collections, 2) AS DECIMAL(38,2)) AS collections,
+        CAST(round(supplier_payments, 2) AS DECIMAL(38,2)) AS supplier_payments,
+        CAST(round(payroll, 2) AS DECIMAL(38,2)) AS payroll,
+        CAST(round(operating_expenses, 2) AS DECIMAL(38,2)) AS operating_expenses,
+        CAST(round(taxes, 2) AS DECIMAL(38,2)) AS taxes,
+        CAST(round(net_cash_flow, 2) AS DECIMAL(38,2)) AS net_cash_flow,
+        CASE WHEN scenario = 'Base' THEN CAST(round(collections, 2) AS DECIMAL(38,2)) ELSE NULL END AS base_collections,
+        CASE WHEN scenario = 'Base' THEN CAST(round(supplier_payments, 2) AS DECIMAL(38,2)) ELSE NULL END AS base_supplier_payments,
+        CASE WHEN scenario = 'Base' THEN CAST(round(net_cash_flow, 2) AS DECIMAL(38,2)) ELSE NULL END AS base_net_cash_flow,
+        CAST(round(closing_cash, 2) AS DECIMAL(38,2)) AS closing_cash,
+        CASE WHEN week_index = 12 THEN CAST(round(closing_cash, 2) AS DECIMAL(38,2)) ELSE NULL END AS scenario_ending_cash,
+        CASE WHEN week_index = 12 THEN CAST(round(closing_cash - opening_cash * 0.45, 2) AS DECIMAL(38,2)) ELSE NULL END AS scenario_headroom,
+        CASE WHEN scenario = 'Base' AND week_index = 0 THEN CAST(round(opening_cash, 2) AS DECIMAL(38,2)) ELSE NULL END AS current_cash,
+        CASE WHEN scenario = 'Base' AND week_index = 12 THEN CAST(round(closing_cash, 2) AS DECIMAL(38,2)) ELSE NULL END AS base_ending_cash,
+        CASE WHEN scenario = 'Base' AND week_index = 12 THEN CAST(round(closing_cash - opening_cash * 0.45, 2) AS DECIMAL(38,2)) ELSE NULL END AS base_headroom,
+        CASE WHEN scenario = 'Base' AND week_index = 0 THEN CAST(round(opening_cash * 0.31, 2) AS DECIMAL(38,2)) ELSE NULL END AS overdue_receivables,
+        CASE WHEN scenario = 'Base' AND week_index = 0 THEN CAST(47 AS DECIMAL(38,2)) ELSE NULL END AS dso_days
+      FROM projected
+  entities:
+    cash_week:
+      type: primary
+      fields: [cash_row_id]
+  grain:
+    entity: cash_week

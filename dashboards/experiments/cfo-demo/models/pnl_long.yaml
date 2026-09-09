@@ -1,0 +1,35 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:pnl_long
+  name: pnl_long
+  displayName: Profit and Loss Scenarios
+  description: Long-form actual, budget, forecast, and variance statement values for governed matrix rendering.
+spec:
+  fields:
+    pnl_scenario_row_id: {datatype: String, label: P&L scenario row ID}
+    finance_date: {datatype: Date, label: Date}
+    finance_month: {datatype: String, label: Month}
+    segment: {datatype: String, label: Segment}
+    country: {datatype: String, label: Country}
+    product: {datatype: String, label: Product}
+    line_order: {datatype: Integer, label: Order}
+    pnl_line: {datatype: String, label: P&L line}
+    pnl_scenario: {datatype: String, label: Scenario}
+    pnl_amount: {datatype: Decimal, label: Amount}
+  definition:
+    type: sql
+    sql: |
+      SELECT pnl_row_id || '-actual' AS pnl_scenario_row_id, finance_date, finance_month, segment, country, product, line_order, pnl_line, 'Actual' AS pnl_scenario, actual_amount AS pnl_amount FROM model.pnl_statement
+      UNION ALL
+      SELECT pnl_row_id || '-budget', finance_date, finance_month, segment, country, product, line_order, pnl_line, 'Budget', budget_amount FROM model.pnl_statement
+      UNION ALL
+      SELECT pnl_row_id || '-forecast', finance_date, finance_month, segment, country, product, line_order, pnl_line, 'Forecast', forecast_amount FROM model.pnl_statement
+      UNION ALL
+      SELECT pnl_row_id || '-variance', finance_date, finance_month, segment, country, product, line_order, pnl_line, 'Variance', variance_amount FROM model.pnl_statement
+  entities:
+    pnl_scenario_row:
+      type: primary
+      fields: [pnl_scenario_row_id]
+  grain:
+    entity: pnl_scenario_row

@@ -1,0 +1,478 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:cfo-command-center
+  name: cfo-command-center
+  displayName: CFO Command Center
+  description: Executive performance, P&L, liquidity, and profitability in one decision-oriented report.
+  owner: Finance
+  tags: [finance, executive, cfo, budget, cash, profitability]
+spec:
+  appearance:
+    icon: chart-no-axes-combined
+    color: purple
+  semanticModel: finance
+  filters:
+  - id: finance_date
+    label: Reporting period
+    dimension: finance_date
+    control: {type: dateRange}
+    urlParameter: period
+    operators: []
+    targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, variance_by_segment, product_scorecard, pnl_ebitda_kpi, pnl_matrix, pnl_ebitda_bridge, pnl_monthly_ebitda, drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_segment_product_matrix, drivers_discount_analysis]
+  - id: country
+    label: Country
+    dimension: country
+    control:
+      type: multiSelect
+      maxSelectedValues: 6
+      options: {type: distinct, dataset: financial_performance, limit: 10}
+    operators: [in, notIn]
+    urlParameter: country
+    targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, variance_by_segment, product_scorecard, pnl_ebitda_kpi, pnl_matrix, pnl_ebitda_bridge, pnl_monthly_ebitda, drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_segment_product_matrix, drivers_discount_analysis]
+  - id: segment
+    label: Segment
+    dimension: segment
+    control:
+      type: multiSelect
+      maxSelectedValues: 5
+      options: {type: distinct, dataset: financial_performance, limit: 10}
+    operators: [in, notIn]
+    urlParameter: segment
+    targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, variance_by_segment, product_scorecard]
+  - id: product
+    label: Product
+    dimension: product
+    control:
+      type: multiSelect
+      options: {type: distinct, dataset: financial_performance, limit: 10}
+    operators: [in, notIn]
+    urlParameter: product
+    targets: [pnl_ebitda_kpi, pnl_matrix, pnl_ebitda_bridge, pnl_monthly_ebitda]
+  - id: discount_band
+    label: Discount band
+    dimension: discount_band
+    control:
+      type: multiSelect
+      options: {type: distinct, dataset: financial_performance, limit: 10}
+    operators: [in, notIn]
+    urlParameter: discount
+    targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_segment_product_matrix, drivers_discount_analysis]
+  visuals:
+    revenue_kpi:
+      type: kpi
+      title: Net revenue
+      description: Actual revenue compared with the filter-aligned budget.
+      query: {type: aggregate, dimensions: [], metrics: [net_sales]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [budget_sales], limit: 1}
+        trend:
+          type: aggregate
+          dimensions: [finance_month]
+          metrics: [net_sales]
+          sort: [{field: finance_month, direction: asc}]
+          limit: 24
+      presentation:
+        type: kpi
+        mode: compact
+        comparison: {dataset: comparison, field: budget_sales, reducer: first, label: Budget}
+        trend: {dataset: trend, category: finance_month, value: net_sales}
+        delta: relative
+        favorableDirection: increase
+        missingComparison: show_unavailable
+    gross_margin_kpi:
+      type: kpi
+      title: Gross margin
+      query: {type: aggregate, dimensions: [], metrics: [gross_margin]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [budget_gross_margin], limit: 1}
+      presentation:
+        type: kpi
+        mode: compact
+        comparison: {dataset: comparison, field: budget_gross_margin, reducer: first, label: Budget}
+        delta: absolute
+        favorableDirection: increase
+    ebitda_kpi:
+      type: kpi
+      title: EBITDA
+      query: {type: aggregate, dimensions: [], metrics: [ebitda]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [budget_ebitda], limit: 1}
+      presentation:
+        type: kpi
+        mode: compact
+        comparison: {dataset: comparison, field: budget_ebitda, reducer: first, label: Budget}
+        delta: absolute
+        favorableDirection: increase
+    current_cash_kpi:
+      type: kpi
+      title: Current cash
+      description: Fictional opening cash for the 13-week planning scenario.
+      query: {type: aggregate, dimensions: [], metrics: [current_cash]}
+      presentation: {type: kpi, mode: compact, note: Before forecast movements, tone: ink}
+    monthly_plan:
+      type: combo
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: finance_month, value: finance_month, label: finance_month}
+        targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, variance_by_segment, product_scorecard]
+      title: Actual, budget, and forecast revenue
+      description: Monthly performance on one governed scale.
+      query:
+        type: aggregate
+        dimensions: [finance_month]
+        metrics: [net_sales, budget_sales, forecast_sales]
+        sort: [{field: finance_month, direction: asc}]
+        limit: 24
+      presentation:
+        type: cartesian
+        series:
+        - {field: net_sales, mark: column, axis: primary}
+        - {field: budget_sales, mark: line, axis: primary}
+        - {field: forecast_sales, mark: line, axis: primary}
+        labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+    variance_by_segment:
+      type: bar
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: segment, value: segment, label: segment}
+        targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, product_scorecard]
+      title: Revenue variance by segment
+      description: Negative values identify segments below plan.
+      query:
+        type: aggregate
+        dimensions: [segment]
+        metrics: [revenue_variance]
+        sort: [{field: revenue_variance, direction: asc}]
+        limit: 10
+      presentation: {type: cartesian}
+    product_scorecard:
+      type: matrix
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: product, value: product, label: product}
+        targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, variance_by_segment]
+      title: Product performance scorecard
+      query:
+        type: pivot
+        rows: [product]
+        columns: [scorecard_group]
+        metrics: [net_sales, gross_margin, ebitda]
+      presentation: {type: table, rowHeight: 34, showHeader: true, striped: true}
+    pnl_ebitda_kpi:
+      type: kpi
+      title: EBITDA versus budget
+      query: {type: aggregate, dimensions: [], metrics: [ebitda]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [budget_ebitda], limit: 1}
+      presentation:
+        type: kpi
+        comparison: {dataset: comparison, field: budget_ebitda, reducer: first, label: Budget}
+        delta: absolute
+        favorableDirection: increase
+    pnl_matrix:
+      type: matrix
+      title: Profit and loss statement
+      description: Actual, budget, forecast, and actual-minus-budget variance.
+      query:
+        type: pivot
+        rows: [line_order, pnl_line]
+        columns: [pnl_scenario]
+        metrics: [pnl_amount]
+      presentation: {type: table, rowHeight: 38, showHeader: true, striped: true}
+    pnl_ebitda_bridge:
+      type: bar
+      title: EBITDA variance drivers
+      description: Signed contributions reconcile actual EBITDA to budget EBITDA.
+      query:
+        type: aggregate
+        dimensions: [variance_driver]
+        metrics: [variance_impact]
+        sort: [{field: variance_impact, direction: asc}]
+        limit: 10
+      presentation:
+        type: cartesian
+        labels: {density: automatic, priority: [anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
+    pnl_monthly_ebitda:
+      type: combo
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: finance_month, value: finance_month, label: finance_month}
+        targets: [pnl_ebitda_kpi, pnl_matrix, pnl_ebitda_bridge]
+      title: Monthly EBITDA against plan
+      query:
+        type: aggregate
+        dimensions: [finance_month]
+        metrics: [ebitda, budget_ebitda, forecast_ebitda]
+        sort: [{field: finance_month, direction: asc}]
+        limit: 24
+      presentation:
+        type: cartesian
+        series:
+        - {field: ebitda, mark: column, axis: primary}
+        - {field: budget_ebitda, mark: line, axis: primary}
+        - {field: forecast_ebitda, mark: line, axis: primary}
+        labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+    cash_current_kpi:
+      type: kpi
+      title: Current cash
+      query: {type: aggregate, dimensions: [], metrics: [current_cash]}
+      presentation: {type: kpi, mode: compact, note: Opening position, tone: ink}
+    cash_ending_kpi:
+      type: kpi
+      title: Base ending cash
+      query: {type: aggregate, dimensions: [], metrics: [base_ending_cash]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [current_cash], limit: 1}
+      presentation:
+        type: kpi
+        mode: compact
+        comparison: {dataset: comparison, field: current_cash, reducer: first, label: Current}
+        delta: absolute
+        favorableDirection: increase
+    cash_overdue_ar_kpi:
+      type: kpi
+      title: Overdue receivables
+      query: {type: aggregate, dimensions: [], metrics: [overdue_receivables]}
+      presentation: {type: kpi, mode: compact, note: Fictional planning assumption, tone: warning}
+    cash_dso_kpi:
+      type: kpi
+      title: Days sales outstanding
+      query: {type: aggregate, dimensions: [], metrics: [dso_days]}
+      presentation: {type: kpi, mode: compact, note: "Target: 38 days", tone: danger}
+    cash_headroom_kpi:
+      type: kpi
+      title: Liquidity headroom
+      query: {type: aggregate, dimensions: [], metrics: [base_headroom]}
+      presentation: {type: kpi, mode: compact, note: Above the $5.14M management floor, tone: success}
+    cash_scenarios:
+      type: line
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: scenario, value: scenario, label: scenario}
+        targets: [cash_scenario_summary]
+      title: 13-week cash forecast
+      description: Base, upside, and downside liquidity paths.
+      query:
+        type: aggregate
+        dimensions: [week_label, scenario]
+        metrics: [closing_cash]
+        sort: [{field: week_label, direction: asc}]
+        limit: 50
+      presentation:
+        type: cartesian
+        showSymbols: false
+        axes:
+        - {id: primary_y, title: Cash balance, scale: linear, zero: exclude, displayUnits: millions, tickDensity: normal}
+        referenceLines:
+        - id: liquidity_floor
+          axis: primary_y
+          value: {kind: number, value: 5000000}
+          label: Minimum cash
+          tone: danger
+    cash_scenario_summary:
+      type: matrix
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: scenario, value: scenario, label: scenario}
+        targets: [cash_scenarios]
+      title: Scenario outcomes
+      query:
+        type: pivot
+        rows: [scenario]
+        columns: [scenario_group]
+        metrics: [scenario_ending_cash, scenario_headroom, scenario_cumulative_net_cash_flow]
+      presentation: {type: table, rowHeight: 38, showHeader: true, striped: true}
+    cash_movements:
+      type: combo
+      title: Weekly base-case cash movements
+      query:
+        type: aggregate
+        dimensions: [week_label]
+        metrics: [base_collections, base_supplier_payments, base_net_cash_flow]
+        sort: [{field: week_label, direction: asc}]
+        limit: 50
+      presentation:
+        type: cartesian
+        series:
+        - {field: base_collections, mark: column, axis: primary}
+        - {field: base_supplier_payments, mark: column, axis: primary}
+        - {field: base_net_cash_flow, mark: line, axis: primary}
+        labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+    drivers_net_sales_kpi:
+      type: kpi
+      title: Net revenue
+      query: {type: aggregate, dimensions: [], metrics: [net_sales]}
+      presentation: {type: kpi, mode: compact, note: After discounts, tone: success}
+    drivers_gross_profit_kpi:
+      type: kpi
+      title: Gross profit
+      query: {type: aggregate, dimensions: [], metrics: [gross_profit]}
+      presentation: {type: kpi, mode: compact, note: Revenue less COGS, tone: success}
+    drivers_margin_kpi:
+      type: kpi
+      title: Gross margin
+      query: {type: aggregate, dimensions: [], metrics: [gross_margin]}
+      datasets:
+        comparison: {type: aggregate, dimensions: [], metrics: [budget_gross_margin], limit: 1}
+      presentation:
+        type: kpi
+        mode: compact
+        comparison: {dataset: comparison, field: budget_gross_margin, reducer: first, label: Budget}
+        delta: absolute
+        favorableDirection: increase
+    drivers_discount_kpi:
+      type: kpi
+      title: Discount rate
+      query: {type: aggregate, dimensions: [], metrics: [discount_rate]}
+      presentation: {type: kpi, mode: compact, note: Discounts / gross sales, tone: warning}
+    drivers_profit_by_product:
+      type: bar
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: product, value: product, label: product}
+        targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_country_performance, drivers_segment_product_matrix, drivers_discount_analysis]
+      title: Gross profit by product
+      query:
+        type: aggregate
+        dimensions: [product]
+        metrics: [gross_profit]
+        sort: [{field: gross_profit, direction: desc}]
+        limit: 10
+      presentation: {type: cartesian}
+    drivers_country_performance:
+      type: combo
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: country, value: country, label: country}
+        targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_segment_product_matrix, drivers_discount_analysis]
+      title: Revenue and margin by country
+      query:
+        type: aggregate
+        dimensions: [country]
+        metrics: [net_sales, gross_margin]
+        sort: [{field: net_sales, direction: desc}]
+        limit: 10
+      presentation:
+        type: cartesian
+        axes:
+        - {id: x, scale: automatic, zero: automatic, tickDensity: dense}
+        series:
+        - {field: net_sales, mark: column, axis: primary}
+        - {field: gross_margin, mark: line, axis: secondary}
+        labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+    drivers_segment_product_matrix:
+      type: matrix
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: segment, value: segment, label: segment}
+        targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_discount_analysis]
+      title: Segment performance scorecard
+      query:
+        type: pivot
+        rows: [segment]
+        columns: [scorecard_group]
+        metrics: [net_sales, gross_margin, revenue_variance]
+      presentation: {type: table, rowHeight: 36, showHeader: true, striped: true}
+    drivers_discount_analysis:
+      type: combo
+      interactions:
+      - type: selection
+        mode: multiple
+        toggle: true
+        mappings:
+        - {field: discount_band, value: discount_band, label: discount_band}
+        targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_segment_product_matrix]
+      title: Discounting and profitability
+      query:
+        type: aggregate
+        dimensions: [discount_band]
+        metrics: [discount_rate, gross_margin, net_sales]
+        sort: [{field: net_sales, direction: desc}]
+        limit: 10
+      presentation:
+        type: cartesian
+        axes:
+        - {id: x, scale: automatic, zero: automatic, tickDensity: dense}
+        series:
+        - {field: net_sales, mark: column, axis: primary}
+        - {field: discount_rate, mark: line, axis: secondary}
+        - {field: gross_margin, mark: line, axis: secondary}
+        labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
+  pages:
+  - id: overview
+    title: Executive Overview
+    components:
+    - {id: overview-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: overview-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: overview-segment-filter, type: filter, filter: segment, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: overview-revenue-card, type: visual, visual: revenue_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: overview-margin-card, type: visual, visual: gross_margin_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: overview-ebitda-card, type: visual, visual: ebitda_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: overview-cash-card, type: visual, visual: current_cash_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: overview-monthly-performance, type: visual, visual: monthly_plan, placement: {column: 1, row: 7, columnSpan: 8, rowSpan: 7}}
+    - {id: overview-segment-variance, type: visual, visual: variance_by_segment, placement: {column: 9, row: 7, columnSpan: 4, rowSpan: 7}}
+    - {id: overview-product-table, type: visual, visual: product_scorecard, placement: {column: 1, row: 14, columnSpan: 12, rowSpan: 8}}
+  - id: statement
+    title: P&L and Budget
+    components:
+    - {id: pnl-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: pnl-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: pnl-product-filter, type: filter, filter: product, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: pnl-ebitda-card, type: visual, visual: pnl_ebitda_kpi, placement: {column: 1, row: 3, columnSpan: 4, rowSpan: 4}}
+    - {id: pnl-ebitda-trend, type: visual, visual: pnl_monthly_ebitda, placement: {column: 5, row: 3, columnSpan: 8, rowSpan: 7}}
+    - {id: pnl-statement-table, type: visual, visual: pnl_matrix, placement: {column: 1, row: 10, columnSpan: 12, rowSpan: 8}}
+    - {id: pnl-variance-drivers, type: visual, visual: pnl_ebitda_bridge, placement: {column: 1, row: 18, columnSpan: 12, rowSpan: 7}}
+  - id: liquidity
+    title: Cash and Working Capital
+    components:
+    - {id: cash-current-cash, type: visual, visual: cash_current_kpi, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 4}}
+    - {id: cash-ending-cash, type: visual, visual: cash_ending_kpi, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 4}}
+    - {id: cash-dso, type: visual, visual: cash_dso_kpi, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 4}}
+    - {id: cash-overdue-ar, type: visual, visual: cash_overdue_ar_kpi, placement: {column: 1, row: 5, columnSpan: 4, rowSpan: 4}}
+    - {id: cash-headroom, type: visual, visual: cash_headroom_kpi, placement: {column: 1, row: 9, columnSpan: 4, rowSpan: 4}}
+    - {id: cash-scenario-lines, type: visual, visual: cash_scenarios, placement: {column: 5, row: 5, columnSpan: 8, rowSpan: 8}}
+    - {id: cash-scenario-table, type: visual, visual: cash_scenario_summary, placement: {column: 1, row: 13, columnSpan: 6, rowSpan: 7}}
+    - {id: cash-movement-chart, type: visual, visual: cash_movements, placement: {column: 7, row: 13, columnSpan: 6, rowSpan: 7}}
+  - id: drivers
+    title: Profitability Drivers
+    components:
+    - {id: drivers-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: drivers-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: drivers-discount-filter, type: filter, filter: discount_band, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
+    - {id: drivers-revenue-card, type: visual, visual: drivers_net_sales_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: drivers-profit-card, type: visual, visual: drivers_gross_profit_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: drivers-margin-card, type: visual, visual: drivers_margin_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: drivers-discount-card, type: visual, visual: drivers_discount_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 4}}
+    - {id: drivers-product-profit, type: visual, visual: drivers_profit_by_product, placement: {column: 1, row: 7, columnSpan: 6, rowSpan: 7}}
+    - {id: drivers-country-chart, type: visual, visual: drivers_country_performance, placement: {column: 7, row: 7, columnSpan: 6, rowSpan: 7}}
+    - {id: drivers-segment-matrix, type: visual, visual: drivers_segment_product_matrix, placement: {column: 1, row: 14, columnSpan: 7, rowSpan: 8}}
+    - {id: drivers-discount-chart, type: visual, visual: drivers_discount_analysis, placement: {column: 8, row: 14, columnSpan: 5, rowSpan: 8}}
+  layout: {columns: 12, rowHeight: 48, gap: 16, padding: 16}
