@@ -1,0 +1,2 @@
+# CI-only document validator; intentionally no connector/execution extras.
+datacontract-cli==1.1.3

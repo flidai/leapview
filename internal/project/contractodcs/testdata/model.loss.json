@@ -1,0 +1,40 @@
+{
+  "profile": "leapview.dev/odcs-loss/v1",
+  "lossless": false,
+  "entries": [
+    {
+      "kind": "degraded",
+      "sourceField": "contract.checks.customer_link",
+      "odcsTargetField": "schema[].quality",
+      "reason": "ODCS relationships do not retain LeapView quality severity.",
+      "compatibilityImpact": "Document conformance is preserved, but quality round-trip conformance is unavailable."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "contract.checks.email_values",
+      "odcsTargetField": "schema[].quality",
+      "reason": "Accepted values use generic ODCS library arguments without a standardized argument vocabulary.",
+      "compatibilityImpact": "Document conformance is preserved, but quality round-trip conformance is unavailable."
+    },
+    {
+      "kind": "dropped",
+      "sourceField": "contract.definition",
+      "reason": "Executable SQL AST and direct source bindings are never exported to ODCS.",
+      "compatibilityImpact": "Transformation execution and dependency round-trip conformance are unavailable."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "contract.fields.amount.datatype",
+      "odcsTargetField": "schema[].properties[].logicalType",
+      "reason": "ODCS number does not distinguish LeapView exact Decimal from approximate Float.",
+      "compatibilityImpact": "Document conformance is preserved, but numeric round-trip conformance is unavailable."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "publication.publishedAt",
+      "odcsTargetField": "status",
+      "reason": "ODCS combines publication and activation lifecycle concepts; published evidence is exported as active without claiming serving activation.",
+      "compatibilityImpact": "Document conformance is preserved, but lifecycle round-trip conformance is unavailable."
+    }
+  ]
+}
