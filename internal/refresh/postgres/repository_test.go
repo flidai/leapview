@@ -269,65 +269,6 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	}
 }
 
-func waitForRunAndAttemptLeaseExpiry(ctx context.Context, db *pgxpool.Pool, runID string) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		var expired bool
-		if err := db.QueryRow(ctx, `
-			SELECT r.lease_expires_at <= clock_timestamp()
-			   AND a.lease_expires_at <= clock_timestamp()
-			  FROM refresh.run r
-			  JOIN refresh.attempt a ON a.run_id = r.run_id AND a.attempt_number = 1
-			 WHERE r.run_id=$1`, runID).Scan(&expired); err != nil {
-			return err
-		}
-		if expired {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("run lease did not expire before timeout")
-			}
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func waitForPostgresLockWait(ctx context.Context, db *pgxpool.Pool, waitingPID, blockingPID uint32) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		var waiting bool
-		if err := db.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1
-				  FROM pg_stat_activity
-				 WHERE pid = $1::integer
-				   AND $2::integer = ANY(pg_blocking_pids(pid))
-			)`, int64(waitingPID), int64(blockingPID)).Scan(&waiting); err != nil {
-			return err
-		}
-		if waiting {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return errors.New("takeover did not reach the expected PostgreSQL lock wait")
-			}
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
 func TestPostgresRefreshStandaloneRootRequiresCanonicalJob(t *testing.T) {
 	_, admin := refreshTestDB(t)
 	r := New(admin)
@@ -958,9 +899,50 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 	if _, err := r.CreateRun(ctx, RunInput{RunID: "fence-lock-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-fence-lock"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, 2*time.Second); err != nil {
+	// Claim once through the repository to establish a valid running run and
+	// attempt. The fixture immediately replaces its lease with PostgreSQL's
+	// infinity value, so no assertion depends on this setup duration.
+	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, time.Minute); err != nil {
 		t.Fatal(err)
 	}
+	setLeases := func(tx pgx.Tx, owner string, fence int64, expiry string) {
+		t.Helper()
+		// This is test fixture state only. Trigger guards are disabled inside
+		// this transaction so production lease bounds remain intact; restore
+		// them before returning to any repository method under test.
+		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE refresh.run SET lease_expires_at=$1::timestamptz WHERE run_id=$2`, expiry, "fence-lock-run"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `UPDATE refresh.attempt SET lease_expires_at=$1::timestamptz WHERE run_id=$2 AND owner_id=$3 AND fence_generation=$4`, expiry, "fence-lock-run", owner, fence); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fixture.Rollback(ctx)
+	setLeases(fixture, "worker-a", 1, "infinity")
+	if err := fixture.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var runLive, attemptLive bool
+	if err := admin.QueryRow(ctx, `SELECT lease_expires_at > clock_timestamp() FROM refresh.run WHERE run_id=$1`, "fence-lock-run").Scan(&runLive); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT lease_expires_at > clock_timestamp() FROM refresh.attempt WHERE run_id=$1 AND owner_id='worker-a' AND fence_generation=1`, "fence-lock-run").Scan(&attemptLive); err != nil {
+		t.Fatal(err)
+	}
+	if !runLive || !attemptLive {
+		t.Fatalf("infinity fixture was not live: run=%t attempt=%t", runLive, attemptLive)
+	}
+
 	tx1, err := admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -970,40 +952,128 @@ func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
 	if err != nil || !allowed {
 		t.Fatalf("RunMayPublishTx() = %v, %v; want live fence", allowed, err)
 	}
+	var publisherPID int32
+	if err := tx1.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&publisherPID); err != nil {
+		t.Fatal(err)
+	}
+
 	tx2, err := admin.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx2.Rollback(ctx)
-	// The leases expire while tx1 still owns the row lock. A takeover must
-	// remain blocked until the publishing transaction releases that lock; use
-	// PostgreSQL's clock rather than a client-side sleep to observe expiry.
-	if err := waitForRunAndAttemptLeaseExpiry(ctx, admin, "fence-lock-run"); err != nil {
+	var contenderPID int32
+	if err := tx2.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&contenderPID); err != nil {
 		t.Fatal(err)
 	}
-	takeover := make(chan error, 1)
-	go func() {
-		_, claimErr := r.ClaimAttemptTx(ctx, tx2, "fence-lock-run", "worker-b", 2, time.Minute)
-		takeover <- claimErr
+	probeDone := make(chan struct{})
+	var probeErr error
+	probeCtx, cancelProbe := context.WithTimeout(ctx, 10*time.Second)
+	defer func() {
+		cancelProbe()
+		_ = tx1.Rollback(context.Background())
+		<-probeDone
+		_ = tx2.Rollback(context.Background())
 	}()
-	if err := waitForPostgresLockWait(ctx, admin, tx2.Conn().PgConn().PID(), tx1.Conn().PgConn().PID()); err != nil {
+	// This independent lock probe is deliberately separate from takeover. It
+	// must block on the row lock acquired by RunMayPublishTx before tx1 changes
+	// any lease state; otherwise a missing FOR UPDATE in production could hide
+	// behind the takeover UPDATE's own locking behavior.
+	go func() {
+		var lockedRunID string
+		probeErr = tx2.QueryRow(probeCtx, `SELECT run_id FROM refresh.run WHERE run_id=$1 FOR UPDATE`, "fence-lock-run").Scan(&lockedRunID)
+		close(probeDone)
+	}()
+
+	// The contender must be blocked specifically by the publisher's row lock.
+	// pg_blocking_pids observes PostgreSQL's lock graph and avoids inferring
+	// synchronization from goroutine scheduling or a non-blocking channel read.
+	blockCtx, stopBlocking := context.WithTimeout(ctx, 10*time.Second)
+	defer stopBlocking()
+	blockPoll := time.NewTicker(10 * time.Millisecond)
+	defer blockPoll.Stop()
+	for {
+		var blocked bool
+		if err := admin.QueryRow(blockCtx, `SELECT $1::int = ANY(pg_blocking_pids($2::int))`, publisherPID, contenderPID).Scan(&blocked); err != nil {
+			t.Fatalf("wait for contender to block on publisher fence: %v", err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case <-probeDone:
+			t.Fatalf("lock probe completed before publisher lock release: %v", probeErr)
+		case <-blockCtx.Done():
+			t.Fatalf("contender did not block on publisher fence: %v", blockCtx.Err())
+		case <-blockPoll.C:
+		}
+	}
+
+	// Expire both authority rows explicitly while tx1 owns the real lock from
+	// RunMayPublishTx. This is scoped fixture manipulation; trigger mode is
+	// restored before re-entering production code.
+	if _, err := tx1.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case claimErr := <-takeover:
-		t.Fatalf("takeover completed while publication fence lock held: %v", claimErr)
-	default:
+	if _, err := tx1.Exec(ctx, `UPDATE refresh.run SET lease_expires_at='epoch'::timestamptz WHERE run_id=$1`, "fence-lock-run"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx1.Exec(ctx, `UPDATE refresh.attempt SET lease_expires_at='epoch'::timestamptz WHERE run_id=$1 AND owner_id='worker-a' AND fence_generation=1`, "fence-lock-run"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx1.Exec(ctx, `SET LOCAL session_replication_role = origin`); err != nil {
+		t.Fatal(err)
+	}
+	var runExpired, attemptExpired bool
+	if err := tx1.QueryRow(ctx, `SELECT (SELECT lease_expires_at <= clock_timestamp() FROM refresh.run WHERE run_id=$1), (SELECT lease_expires_at <= clock_timestamp() FROM refresh.attempt WHERE run_id=$1 AND owner_id='worker-a' AND fence_generation=1)`, "fence-lock-run").Scan(&runExpired, &attemptExpired); err != nil {
+		t.Fatal(err)
+	}
+	if !runExpired || !attemptExpired {
+		t.Fatalf("server did not observe explicit expiry: run=%t attempt=%t", runExpired, attemptExpired)
+	}
+	allowed, err = r.RunMayPublishTx(ctx, tx1, "fence-lock-run", "worker-a", 1)
+	if err != nil || allowed {
+		t.Fatalf("RunMayPublishTx() after explicit expiry = %v, %v; want rejected", allowed, err)
 	}
 	if err := tx1.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+
+	releaseCtx, cancelRelease := context.WithTimeout(ctx, 10*time.Second)
 	select {
-	case claimErr := <-takeover:
-		if claimErr != nil {
-			t.Fatalf("takeover after fence release: %v", claimErr)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("takeover remained blocked after publication fence release")
+	case <-probeDone:
+		cancelRelease()
+	case <-releaseCtx.Done():
+		cancelRelease()
+		t.Fatalf("lock probe did not resolve after fence release: %v", releaseCtx.Err())
+	}
+	if probeErr != nil {
+		t.Fatalf("lock probe after fence release: %v", probeErr)
+	}
+	takeover, err := r.ClaimAttemptTx(ctx, tx2, "fence-lock-run", "worker-b", 2, time.Minute)
+	if err != nil {
+		t.Fatalf("takeover after fence release: %v", err)
+	}
+	if takeover.OwnerID != "worker-b" || takeover.FenceGeneration != 2 {
+		t.Fatalf("takeover attempt = %#v, want worker-b fence 2", takeover)
+	}
+	if err := tx2.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	newOwnerFixture, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer newOwnerFixture.Rollback(ctx)
+	setLeases(newOwnerFixture, "worker-b", 2, "infinity")
+	if err := newOwnerFixture.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := r.RunMayPublish(ctx, "fence-lock-run", "worker-a", 1); err != nil || allowed {
+		t.Fatalf("old owner/fence remained publishable: %v, %v", allowed, err)
+	}
+	if allowed, err := r.RunMayPublish(ctx, "fence-lock-run", "worker-b", 2); err != nil || !allowed {
+		t.Fatalf("new owner/fence is not publishable: %v, %v", allowed, err)
 	}
 }
 

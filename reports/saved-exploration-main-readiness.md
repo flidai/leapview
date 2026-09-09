@@ -2,6 +2,28 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 9 RecoverySet v3 base refresh
+
+Main advanced again to `285514606` with RecoverySet v3 while validation ran.
+The preceding merge `7545fe9fa` completed full `task ci` successfully (exit 0;
+`/tmp/fai769-project-boundary-ci.log`). Pushed head `e2bfb5963` also completed
+all 28 hosted checks, including CI gate and Security gate. These green results
+are historical and do not validate the new recovery integration.
+
+The current normal merge preserves main's released migrations 001–006 and moves
+only the unmerged saved-exploration migration to 007. Required validation covers
+fresh installation and released revision 6 to 7, retaining the ResourceUID and
+RecoverySet v3 objects and role boundaries. Canonical generation passed; required
+PostgreSQL migration tests passed (34.100s), and both affected refresh tests passed
+three runs (25.381s). The refresh resolution matches main's stronger independent
+lock-probe regression and removes superseded polling helpers. Root reviewed both
+delegated resolutions and the automatic schema/baseline merge. Full CI is pending.
+
+Development databases that applied earlier unmerged saved-exploration migrations
+003, 005, or 006 require migration-history inspection and explicit reconciliation;
+none is interchangeable with the corresponding released main migration. No
+automatic history rewrite, live migration, reset, or data transfer is included.
+
 ## September 9 project-boundary base refresh
 
 While hosted checks ran on `e2bfb5963`, main advanced to `4435ea6c1` with
@@ -10,7 +32,7 @@ but became behind. A subsequent normal merge includes that security-boundary
 change without modifying its guards. Focused Project and SavedExploration tests
 passed in access/module, app, analytics/cache, and app/api/protocol. The prior
 full-CI success below validates the preceding merge; combined full CI for this
-new base is pending. No merge into main, force push, or live database operation
+base subsequently passed, as recorded above. No merge into main, force push, or live database operation
 is authorized or performed.
 
 ## September 9 ResourceUID integration checkpoint
