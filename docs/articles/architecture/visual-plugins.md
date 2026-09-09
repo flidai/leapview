@@ -433,7 +433,10 @@ and chat-artifact callers. The opt-in `deferMount` property delays renderer
 initialization while retaining the host shell and the latest valid signal state.
 An eligible host mounts once; scrolling away does not dispose it. Authoring
 hosts and browsers with unavailable or failing `IntersectionObserver` remain
-eager. The current `600px 0px` observer margin is a rollout parameter, not a
+eager. Dashboard hosts apply the same margin to nested scrollports; browsers
+without `IntersectionObserver.scrollMargin` fall back to eager mounting rather
+than silently losing the prefetch contract. The current
+`600px 0px` observer margin is a rollout parameter, not a
 qualified latency budget or a measured performance improvement.
 
 Explicit `ensureMounted()` and `snapshot()` calls can request mounting without

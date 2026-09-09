@@ -75,9 +75,13 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
         const dashboard = document.querySelector('lv-dashboard-page')
         const hosts = [...(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])] as any[]
         if (hosts.length !== count) return false
+        const root = dashboard?.shadowRoot?.querySelector('lv-report-canvas')?.shadowRoot?.querySelector('.viewport')
+        if (!root) return false
+        const bounds = root.getBoundingClientRect()
         const near = hosts.filter((host) => {
           const rect = host.getBoundingClientRect()
-          return rect.bottom >= -margin && rect.top <= innerHeight + margin && rect.right >= 0 && rect.left <= innerWidth
+          return rect.bottom >= bounds.top - margin && rect.top <= bounds.bottom + margin
+            && rect.right >= bounds.left && rect.left <= bounds.right
         })
         if (near.length === 0 || near.length >= count) return false
         const required = deferred ? near : hosts
@@ -103,13 +107,17 @@ async function runSample(browser: Browser, baseURL: string, variant: ViewportQua
     const initial = await page.evaluate((margin) => {
       const dashboard = document.querySelector('lv-dashboard-page') as any
       const hosts = [...dashboard.shadowRoot.querySelectorAll('lv-visualization-host')] as any[]
+      const root = dashboard.shadowRoot.querySelector('lv-report-canvas')?.shadowRoot?.querySelector('.viewport')
+      if (!root) throw new Error('dashboard visualization intersection root is unavailable')
+      const bounds = root.getBoundingClientRect()
       const observations = (window as any).__viewportQualificationObservations as BrowserObservation[]
       const ids = (entries: BrowserObservation[], stage: string) => entries.filter((entry) => entry.stage === stage && entry.visualID).map((entry) => entry.visualID!)
       return {
         expectedVisualIDs: hosts.map((host) => host.envelope?.visualID).filter(Boolean),
         nearViewportVisualIDs: hosts.filter((host) => {
           const rect = host.getBoundingClientRect()
-          return rect.bottom >= -margin && rect.top <= innerHeight + margin && rect.right >= 0 && rect.left <= innerWidth
+          return rect.bottom >= bounds.top - margin && rect.top <= bounds.bottom + margin
+            && rect.right >= bounds.left && rect.left <= bounds.right
         }).map((host) => host.envelope?.visualID).filter(Boolean),
         shellVisualIDs: hosts.filter((host) => host.shadowRoot?.querySelector('#visualization-fallback')).map((host) => host.envelope?.visualID).filter(Boolean),
         initialMountVisualIDs: ids(observations, 'mount'),

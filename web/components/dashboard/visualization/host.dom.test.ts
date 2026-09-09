@@ -67,11 +67,13 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => {
-      const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }> = []
+      const observers: Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }> = []
       class DeferredIntersectionObserver {
-        readonly record: { callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }
+        readonly record: { callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }
+        readonly scrollMargin: string
         constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-          this.record = { callback, disconnected: false, rootMargin: options?.rootMargin ?? '' }
+          this.scrollMargin = (options as IntersectionObserverInit & { scrollMargin?: string })?.scrollMargin ?? ''
+          this.record = { callback, disconnected: false, root: options?.root ?? null, rootMargin: options?.rootMargin ?? '', scrollMargin: this.scrollMargin }
           observers.push(this.record)
         }
         observe(target: Element): void { this.record.target = target }
@@ -90,10 +92,15 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       const deferred = document.createElement('lv-visualization-host') as any
       deferred.deferMount = true
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
-      document.body.append(deferred)
+      const canvas = document.createElement('lv-report-canvas') as any
+      const viewport = document.createElement('div')
+      viewport.append(document.createElement('slot'))
+      canvas.attachShadow({ mode: 'open' }).append(viewport)
+      canvas.append(deferred)
+      document.body.append(canvas)
       await deferred.updateComplete
 
-      const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; rootMargin: string }>
+      const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }>
       const record = observers.find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
       const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
 
@@ -150,7 +157,9 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
         mountedOnce: controllerBefore === controllerAfter,
         disconnected: record.disconnected,
         observerCount: observers.length,
+        implicitRoot: record.root === null,
         rootMargin: record.rootMargin,
+        scrollMargin: record.scrollMargin,
         disposed: (deferred as any).controller === undefined,
         resurrected: Boolean((deferred as any).controller),
       }
@@ -165,7 +174,9 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       mountedOnce: true,
       disconnected: true,
       observerCount: 1,
+      implicitRoot: true,
       rootMargin: '600px 0px',
+      scrollMargin: '600px 0px',
       disposed: true,
       resurrected: false,
     })
@@ -458,6 +469,43 @@ test('a deferred host can be switched back to eager mounting without leaking its
     expect(state.before).toBe(0)
     expect(state.mounted).toBeGreaterThan(0)
     expect(state.disconnected).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard hosts fall back to eager mounting when nested scroll margins are unsupported', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      const records: Array<{ disconnected: boolean }> = []
+      class LegacyIntersectionObserver {
+        readonly record = { disconnected: false }
+        constructor() { records.push(this.record) }
+        observe(): void {}
+        disconnect(): void { this.record.disconnected = true }
+      }
+      Object.defineProperty(window, 'IntersectionObserver', { configurable: true, value: LegacyIntersectionObserver })
+      Object.defineProperty(window, '__lvIntersectionObservers', { configurable: true, value: records })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-visualization-host') && (window as any).__lvSourceHosts)
+    const state = await page.evaluate(async () => {
+      const source = (window as any).__lvSourceHosts.orders_kpi
+      const canvas = document.createElement('lv-report-canvas')
+      const deferred = document.createElement('lv-visualization-host') as any
+      deferred.deferMount = true
+      deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
+      canvas.append(deferred)
+      document.body.append(canvas)
+      await deferred.updateComplete
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      return {
+        mounted: (deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,
+      }
+    })
+    expect(state).toEqual({ mounted: true, disconnected: true })
   } finally {
     await page.close()
   }

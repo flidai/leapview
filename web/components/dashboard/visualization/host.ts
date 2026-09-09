@@ -389,7 +389,19 @@ export class VisualizationHost extends LitElement {
       observer = new IntersectionObserver((entries) => {
         if (!this.isConnected || this.mountObserver !== observer || this.mountRequested) return
         if (entries.some((entry) => entry.isIntersecting)) this.requestMount()
-      }, { rootMargin: visualizationNearViewportRootMargin })
+      }, {
+        rootMargin: visualizationNearViewportRootMargin,
+        scrollMargin: visualizationNearViewportRootMargin,
+      })
+      // rootMargin does not expand clipping by nested scroll containers.
+      // Browsers without IntersectionObserver.scrollMargin cannot preserve the
+      // dashboard prefetch contract, so keep their existing eager behavior.
+      const supportsScrollMargin = typeof (observer as unknown as { scrollMargin?: unknown }).scrollMargin === 'string'
+      if (this.closest('lv-report-canvas') && !supportsScrollMargin) {
+        observer.disconnect()
+        this.requestMount()
+        return
+      }
       this.mountObserver = observer
       observer.observe(this.rendererContainer)
     } catch {
