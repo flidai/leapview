@@ -559,7 +559,7 @@ func TestSourceBundleRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
 	}}
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed"}
 	projectManifest.Sources["source:orders"] = semanticmodel.Source{Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}
-	projectManifest.Models["model:orders"] = semanticmodel.Table{Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}
+	projectManifest.Models["model:orders"] = semanticmodel.Table{Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, AuthoredFields: map[string]semanticmodel.ModelFieldDeclaration{}, SourceDependencies: []string{"source:orders"}}
 	projectManifest.AuthoredModelDefinitions = map[string]manifest.AuthoredModelDefinition{
 		"model:orders": {Type: "sql", SQL: `SELECT * FROM source."orders"`},
 	}
@@ -569,7 +569,7 @@ func TestSourceBundleRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
 	model.Sources = map[string]semanticmodel.Source{"orders": {Connection: "warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}}
 	minimum, maximum := int64(1), int64(9)
 	model.Tables = map[string]semanticmodel.Table{
-		"orders":     {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}}, Checks: []semanticmodel.ModelCheck{{Fields: []string{"order_id"}, Minimum: &minimum, Maximum: &maximum}}, SourceDependencies: []string{"orders"}},
+		"orders":     {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}, AuthoredFields: map[string]semanticmodel.ModelFieldDeclaration{}, SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}}, Checks: []semanticmodel.ModelCheck{{Fields: []string{"order_id"}, Minimum: &minimum, Maximum: &maximum}}, SourceDependencies: []string{"orders"}},
 		"sql_orders": {Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM orders"}},
 	}
 	project, err := NewSourceBundle(graphValue, projectManifest)
@@ -606,6 +606,9 @@ func TestSourceBundleRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
 	if got := model.Tables["orders"].Execution; got.Source != "orders" || model.Tables["sql_orders"].Execution.SQL != "SELECT * FROM orders" {
 		t.Fatalf("runtime table execution projection was not restored: %#v", model.Tables)
 	}
+	if model.Tables["orders"].AuthoredFields == nil {
+		t.Fatal("runtime projection lost the explicitly empty authored field overlay")
+	}
 	connection := model.Connections["warehouse"]
 	if connection.Kind != "managed" || connection.Path != "" || connection.Host != "" || connection.Auth != nil || connection.Credentials != (semanticmodel.ConnectionCredentials{}) {
 		t.Fatalf("runtime model connection changed: %#v", connection)
@@ -613,6 +616,9 @@ func TestSourceBundleRoundTripPreservesPrivateRuntimeProjection(t *testing.T) {
 	table := decoded.ModelTables()["model:orders"]
 	if table.Execution.Source != "source:orders" {
 		t.Fatalf("physical table execution projection was not restored: %#v", table.Execution)
+	}
+	if table.AuthoredFields == nil {
+		t.Fatal("physical Model artifact lost the explicitly empty authored field overlay")
 	}
 	refreshTable := decoded.RefreshDefinition().ModelTables["orders_model"]
 	if refreshTable.Execution.Source != "orders" || !reflect.DeepEqual(refreshTable.SourceDependencies, []string{"orders"}) {

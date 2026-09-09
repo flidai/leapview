@@ -276,6 +276,11 @@ spec:
 		for name, original := range model.Tables {
 			table := original
 			table.AIContext = nil
+			table.AuthoredFields = maps.Clone(original.AuthoredFields)
+			for field, declaration := range table.AuthoredFields {
+				declaration.AIContext = nil
+				table.AuthoredFields[field] = declaration
+			}
 			table.Columns = maps.Clone(original.Columns)
 			for field, column := range table.Columns {
 				column.AIContext = nil

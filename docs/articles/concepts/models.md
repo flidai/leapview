@@ -8,7 +8,7 @@ Raw inputs often contain transport-oriented names, weakly typed values, duplicat
 
 ## Contract
 
-A Model declares named identity entities (primary, unique, or foreign), a selected grain entity, source dependencies, documented output fields, and a SQL transformation:
+A Model declares named identity entities (primary, unique, or foreign), a selected grain entity, a direct Source or SQL definition, and optional documented output fields:
 
 ```yaml
 apiVersion: leapview.dev/v1
@@ -37,7 +37,7 @@ spec:
     revenue: {datatype: Decimal, label: Revenue}
 ```
 
-The generated [Model configuration](/docs/config/model) is the exact field reference. Governed source/model relations can feed a transformation, and the compiler derives the resulting lineage so downstream semantic models see every exposed field.
+The generated [Model configuration](/docs/config/model) is the exact syntax reference. The definition determines the output; optional `fields` annotate named output fields and assert explicitly declared logical datatypes. Omitted fields and types are discovered. A field declaration never projects or casts data, and additional definition output remains available. Use SQL when the Model must select, rename, or cast columns. Governed source/model relations can feed a transformation, and the compiler derives the resulting lineage so downstream semantic models see every exposed field.
 
 ### Authored contract metadata
 

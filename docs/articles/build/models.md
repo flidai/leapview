@@ -59,7 +59,7 @@ spec:
     revenue: {datatype: Decimal, label: Revenue}
 ```
 
-The quoted source name is important because logical source IDs can contain dots. The compiler derives lineage from the governed SQL definition. `spec.fields` documents the output; it is not a substitute for selecting those columns in SQL.
+The quoted source name is important because logical source IDs can contain dots. The compiler derives lineage from the governed SQL definition. `spec.fields` is optional: declared entries annotate output fields and explicitly declared datatypes are validated, while unlisted fields are discovered and retained. It is not a substitute for selecting, renaming, or casting columns in SQL.
 
 ### Normalize deliberately
 

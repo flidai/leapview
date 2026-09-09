@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLogicalDataTypeFromPhysicalType(t *testing.T) {
 	tests := map[string]LogicalDataType{
@@ -37,7 +40,7 @@ func TestValidateDiscoveredSchemasRejectsIncompatibleAuthoredDatatype(t *testing
 func TestResolveDiscoveredModelFieldsDerivesUndeclaredAndUntypedFields(t *testing.T) {
 	nullable := true
 	model := &Model{Tables: map[string]Table{"customers": {
-		Dimensions: map[string]MetricDimension{"customer_id": {Label: "Customer ID"}},
+		AuthoredFields: map[string]ModelFieldDeclaration{"customer_id": {Label: "Customer ID"}},
 		Schema: TableSchema{Columns: []ColumnSchema{
 			{Name: "customer_id", PhysicalType: "VARCHAR", Nullable: &nullable},
 			{Name: "lifetime_value", PhysicalType: "DECIMAL(18,2)", Nullable: &nullable},
@@ -56,6 +59,52 @@ func TestResolveDiscoveredModelFieldsDerivesUndeclaredAndUntypedFields(t *testin
 	}
 	if got := table.Columns["lifetime_value"]; got.Datatype != DataTypeDecimal || got.SourceField != "lifetime_value" {
 		t.Fatalf("inferred column = %#v", got)
+	}
+}
+
+func TestResolveDiscoveredModelFieldsRebuildsInferredFieldsFromAuthoredOverlay(t *testing.T) {
+	model := &Model{Tables: map[string]Table{"orders": {
+		AuthoredFields: map[string]ModelFieldDeclaration{
+			"order_id": {Datatype: DataTypeString, Label: "Order ID"},
+		},
+		Schema: TableSchema{Columns: []ColumnSchema{
+			{Name: "order_id", PhysicalType: "VARCHAR"},
+			{Name: "legacy_status", PhysicalType: "VARCHAR"},
+		}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatal(err)
+	}
+	table := model.Tables["orders"]
+	table.Schema = TableSchema{Columns: []ColumnSchema{
+		{Name: "order_id", PhysicalType: "VARCHAR"},
+		{Name: "current_status", PhysicalType: "VARCHAR"},
+	}}
+	model.Tables["orders"] = table
+	if err := model.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatalf("rediscovery treated an inferred field as authored: %v", err)
+	}
+	table = model.Tables["orders"]
+	if _, ok := table.Columns["legacy_status"]; ok {
+		t.Fatal("rediscovery retained removed inferred field")
+	}
+	if _, ok := table.Columns["current_status"]; !ok {
+		t.Fatal("rediscovery omitted new inferred field")
+	}
+	if got := table.Dimensions["order_id"]; got.Label != "Order ID" || got.Datatype != DataTypeString {
+		t.Fatalf("authored overlay after rediscovery = %#v", got)
+	}
+}
+
+func TestResolveDiscoveredModelFieldsRejectsMissingAuthoredField(t *testing.T) {
+	model := &Model{Tables: map[string]Table{"orders": {
+		AuthoredFields: map[string]ModelFieldDeclaration{"revenue": {}},
+		Schema:         TableSchema{Columns: []ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err == nil || !strings.Contains(err.Error(), `authored field "revenue" is not in discovered output`) {
+		t.Fatalf("missing authored field error = %v", err)
 	}
 }
 

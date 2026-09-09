@@ -44,8 +44,8 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 
 LeapView already has executable data-contract behavior without a resource named
 `DataContract`. Source owns an optional inferred, compatible, or strict schema
-and typed freshness expectations. Model owns exact output fields, entities,
-grain, and a closed quality-check vocabulary. The compiler derives lineage,
+and typed freshness expectations. Model owns optional output-field assertions
+and metadata, entities, grain, and a closed quality-check vocabulary. The compiler derives lineage,
 validates model output, and evaluates schema, freshness, identity, and quality
 claims against a candidate before activation. Immutable gate evidence records
 the exact source, runtime, binding, and candidate identities used in that
