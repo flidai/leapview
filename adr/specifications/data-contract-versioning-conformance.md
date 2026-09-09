@@ -203,6 +203,10 @@ profile identifier is part of canonical bytes and conformance evidence.
 | SEM-01–SEM-03 | Semantic and access-contract golden fixtures | Pending |
 | SER-01–SER-10 | Cross-language RFC 8785 and typed-normalization corpus | Pending |
 | VER-01–VER-06 | `internal/project/contractversion`, `internal/project/contractpublication`, and `project.contract_publication` classification, immutable append/replay, direct affected-resource identity, profile, digest, and evidence tests | Implemented by FAI-622; dependency-graph expansion and activation remain governed separately |
+| ODX-01–ODX-07 | FAI-623 added the isolated [ODCS 3.1 export adapter](../../internal/project/contractodcs), pinned upstream schema and checksum, explicit mapping manifest, generated mapping/loss reports, sealed provenance extension, security exclusions, and a CI-only independent CLI oracle. The maintained [ODCS export conformance specification](odcs-export-conformance.md) records the exact document/export claim and known loss boundaries. | Implemented by FAI-623; export/document level only |
+
+FAI-623 adds ODCS 3.1 Source/Model export only. ODCS import/round-trip, ODPS,
+DCAT, and runtime transports remain capability-gated.
 
 ## Maintained verification
 
