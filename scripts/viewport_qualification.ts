@@ -271,6 +271,7 @@ async function run(): Promise<void> {
             generatedDashboardBundleSha256: await digestDirectory(fixtureRoot),
             lockfileSha256: await digestFile('bun.lock'),
             hostSha256: await digestFile('web/components/dashboard/visualization/host.ts'),
+            hostStylesSha256: await digestFile('web/components/dashboard/visualization/host-styles.ts'),
             dashboardPageSha256: await digestFile('web/components/dashboard/dashboard-page.ts'),
           },
           variants: {

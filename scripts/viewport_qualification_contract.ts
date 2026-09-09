@@ -48,6 +48,9 @@ export function viewportObservationError(value: unknown): string | undefined {
     && (typeof observation.visualID !== 'string' || observation.visualID.length === 0)) {
     return `${observation.stage} requires visualID`
   }
+  if (observation.stage === 'adapter_error' || observation.stage === 'validation_failure') {
+    return `${observation.stage} reported for ${String(observation.visualID ?? 'unknown visual')}`
+  }
   return undefined
 }
 
@@ -85,18 +88,26 @@ export function validateViewportQualificationSample(sample: ViewportQualificatio
 export function validateViewportQualificationEvidence(samples: ViewportQualificationSample[]): string[] {
   const errors: string[] = []
   for (const sample of samples) {
+    if (sample.variant !== 'eager' && sample.variant !== 'deferred') errors.push('sample variant must be eager or deferred')
+    if (typeof sample.warmup !== 'boolean') errors.push('sample warmup must be a boolean')
     errors.push(...validateViewportQualificationSample(sample).map((error) => `${sample.variant} repetition ${sample.repetition}: ${error}`))
   }
   for (const variant of ['eager', 'deferred'] as const) {
     const warmups = samples.filter((sample) => sample.variant === variant && sample.warmup)
     const measured = samples.filter((sample) => sample.variant === variant && !sample.warmup)
     if (warmups.length !== 1) errors.push(`${variant} must contain exactly one discarded warmup`)
+    if (warmups.some((sample) => sample.repetition !== 0)) errors.push(`${variant} warmup must be repetition 0`)
     if (measured.length !== 5) errors.push(`${variant} must contain exactly five measured repetitions`)
+    if (JSON.stringify(measured.map((sample) => sample.repetition).sort((a, b) => a - b)) !== '[1,2,3,4,5]') {
+      errors.push(`${variant} must contain unique repetitions 1 through 5`)
+    }
   }
   return errors
 }
 
 export function aggregateViewportQualification(samples: ViewportQualificationSample[]): Record<ViewportQualificationVariant, ViewportQualificationSummary> {
+  const errors = validateViewportQualificationEvidence(samples)
+  if (errors.length) throw new Error(errors.join('\n'))
   return Object.fromEntries((['eager', 'deferred'] as const).map((variant) => {
     const measured = samples.filter((sample) => sample.variant === variant && !sample.warmup)
     if (measured.length !== 5) throw new Error(`${variant} requires five measured samples`)

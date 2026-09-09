@@ -86,4 +86,20 @@ describe('viewport qualification evidence', () => {
       'deferred must contain exactly five measured repetitions',
     ]))
   })
+
+  test('rejects repeated samples and mislabelled warmups before aggregation', () => {
+    const samples = (['eager', 'deferred'] as const).flatMap((variant) => [
+      sample(variant, 0, true),
+      ...Array.from({ length: 5 }, () => sample(variant, 1)),
+    ])
+    expect(validateViewportQualificationEvidence(samples).join('\n')).toContain('unique repetitions 1 through 5')
+    expect(() => aggregateViewportQualification(samples)).toThrow('unique repetitions 1 through 5')
+    samples[0]!.repetition = 1
+    expect(validateViewportQualificationEvidence(samples).join('\n')).toContain('warmup must be repetition 0')
+  })
+
+  test('rejects renderer failure telemetry even when mounts complete', () => {
+    expect(viewportObservationError({ stage: 'adapter_error', durationMs: 1, visualID: 'visual-1' })).toContain('adapter_error')
+    expect(viewportObservationError({ stage: 'validation_failure', durationMs: 1, visualID: 'visual-1' })).toContain('validation_failure')
+  })
 })
