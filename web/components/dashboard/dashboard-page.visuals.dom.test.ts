@@ -53,6 +53,59 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('every viewer presentation defers hosts and explicit capture readiness propagates failures', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const modes = [
+        { presentation: 'app', readOnly: false },
+        { presentation: 'public', readOnly: false },
+        { presentation: 'embed', readOnly: false },
+        { presentation: 'app', readOnly: true },
+      ]
+      const deferredByMode: Record<string, boolean> = {}
+      for (const mode of modes) {
+        element.presentation = mode.presentation
+        element.readOnly = mode.readOnly
+        await element.updateComplete
+        const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+        deferredByMode[`${mode.presentation}:${mode.readOnly}`] = hosts.length > 0
+          && hosts.every((host) => host.deferMount && host.hasAttribute('defer-mount'))
+      }
+
+      await element.ensureVisualizationsMounted()
+      const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const original = hosts[0].ensureMounted
+      hosts[0].ensureMounted = async () => { throw new Error('capture mount failed') }
+      let failure = ''
+      try {
+        await element.ensureVisualizationsMounted()
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error)
+      } finally {
+        hosts[0].ensureMounted = original
+      }
+      return {
+        deferredByMode,
+        mounted: hosts.every((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0),
+        failure,
+      }
+    })
+    expect(state.deferredByMode).toEqual({
+      'app:false': true,
+      'public:false': true,
+      'embed:false': true,
+      'app:true': true,
+    })
+    expect(state.mounted).toBe(true)
+    expect(state.failure).toBe('capture mount failed')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: 'mobile', width: 390, height: 820 }]) {
   test(`dashboard composes envelope-native visuals on ${viewport.name}`, async () => {
     const page = await browser.newPage({ viewport })
@@ -68,6 +121,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       })
       const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
         await element.updateComplete
+        await element.ensureVisualizationsMounted()
         const root = element.shadowRoot
         const hosts = Array.from(root.querySelectorAll('lv-visualization-host')) as any[]
         await Promise.all(hosts.map((host) => host.updateComplete))
@@ -85,8 +139,15 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
         const visualFrame = (id: string) => assigned.find((item) => (item.querySelector('lv-visualization-host') as any)?.envelope?.visualID === id)?.getBoundingClientRect()
         const chart = visualFrame('orders_chart')
         const tableFrame = visualFrame('orders')
+        const exploreActions = hosts.map((host) => ({
+          visualID: host.envelope?.visualID,
+          text: host.querySelector('a.explore-visual')?.textContent?.trim(),
+          href: host.querySelector('a.explore-visual')?.getAttribute('href'),
+        }))
         return {
           title: root.querySelector('h1')?.textContent?.trim(), hostCount: hosts.length,
+          deferredHosts: hosts.filter((host) => host.deferMount && host.hasAttribute('defer-mount')).length,
+          exploreActions,
           legacyCount: root.querySelectorAll('lv-echart, lv-kpi-card, lv-report-table').length,
           kinds: hosts.map((host) => host.envelope?.spec?.kind).sort(),
           statuses: Object.fromEntries(hosts.map((host) => [host.envelope?.visualID, host.envelope?.status?.kind])),
@@ -117,6 +178,13 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       })
       expect(state.title).toBe('Executive Sales Dashboard')
       expect(state.hostCount).toBe(3)
+      expect(state.deferredHosts).toBe(state.hostCount)
+      expect(state.exploreActions).toHaveLength(state.hostCount)
+      for (const action of state.exploreActions) {
+        expect(action.text).toBe('Explore')
+        expect(action.href).toContain('/dashboards/executive-sales/pages/overview/components/')
+        expect(action.href).toContain('/explore?')
+      }
       expect(state.legacyCount).toBe(0)
       expect(state.kinds).toEqual(['cartesian', 'kpi', 'table'])
       expect(state.statuses).toEqual({ orders_kpi: 'ready', orders_chart: 'loading', orders: 'error' })

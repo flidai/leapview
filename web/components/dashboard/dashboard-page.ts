@@ -31,8 +31,7 @@ import '../chat/chat-drawer'
 import './filters/filter-dock'
 import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
-import type { FilterMutationDetail } from './filters/filter-control'
-import type { FilterOptionsNeededDetail } from './filters/filter-control'
+import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
 import './report-canvas'
 import './report-footer'
 import './visual-modal'
@@ -741,7 +740,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private get status(): DashboardStatus {
     return this.signal<DashboardStatus>('status', emptyStatus)
   }
-
+  async ensureVisualizationsMounted(): Promise<void> {
+    await this.updateComplete; await Promise.all(Array.from(this.renderRoot.querySelectorAll('lv-visualization-host')).map((host) => host.ensureMounted()))
+  }
   private handleReportZoomState = (event: CustomEvent<{ layout?: unknown }>): void => {
     const layout = event.detail?.layout
     if ((layout === 'desktop' || layout === 'mobile') && layout !== this.reportLayout) {
@@ -1160,7 +1161,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         const exploreHref = this.presentation === 'app' && page
           ? dashboardExploreHref(page, component, this.renderSnapshot?.filterContract ?? this.filterContract, this.renderSnapshot?.filterState ?? this.canonicalFilterState)
           : undefined
-        return html`<lv-visualization-host .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
+        return html`<lv-visualization-host defer-mount .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`
@@ -1181,7 +1182,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     `
   }
 
-  private openVisualFocus = (source: HTMLElement, detail: VisualActionDetail): void => {
+  private openVisualFocus = (source: HTMLElement, detail: import('./visual-modal').VisualActionDetail): void => {
     this.renderRoot.querySelector('lv-visual-modal')?.openVisualFocus(source, detail)
   }
 
