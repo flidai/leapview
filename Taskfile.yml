@@ -1109,12 +1109,12 @@ tasks:
   # because Task runs independent deps in parallel.
   ui-signals:generate:
     desc: Generate UI signal Go and TypeScript contracts from TypeSpec
-    env:
-      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - api:generate
       - exploration-contracts:generate
       - apigen:build
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     method: checksum
     sources:
       - Taskfile.yml

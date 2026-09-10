@@ -1535,7 +1535,7 @@ test('dashboard agent drawer carries page context and explicit visual references
         && customElements.get('lv-chat-drawer')
         && customElements.get('lv-chat-composer')
     ))
-    await page.locator('lv-dashboard-page').evaluate((element: any) => element.updateComplete)
+    await page.locator('lv-dashboard-page').evaluate((element: any) => element.ensureVisualizationsMounted())
 
     const initial = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       const root = element.shadowRoot

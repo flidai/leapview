@@ -97,6 +97,27 @@ passed. The full lean lane then passed exit 0 with fresh cache
 generation contract tests (41 assertions). The failed hosted APIGen run remains
 historical evidence, not an accepted gate.
 
+On `b9a4ce962`, hosted APIGen and Security passed. The application lane exposed
+a literal Taskfile-layout assertion, not a change in dependency ordering;
+moving the UI generator's scoped environment below its dependency list preserves
+the expected layout. All application `TestAPIGen*` tests and the 41 generation
+contract assertions passed after this correction.
+
+The reports lane also reported a destroyed browser context in the agent-drawer
+test. Repeated local tracing observed intermittent timeouts but did not prove
+the hosted error's exact cause. Independent review did identify a missing
+precondition after main's viewport change: the fixture inspects nested renderers
+after only awaiting a host update. It now uses the canonical
+`ensureVisualizationsMounted()` wait before inspection, retaining all assertions
+and timeouts. The final hosted reports result is still required; browser-runner
+instability must not be described as definitively resolved without evidence.
+The full reports shard passed after the readiness adaptation (dashboard DOM
+65/65, visuals 5/5, host 13/13, builder 64/64). Bun's single-process
+`--rerun-each=15` still produced a run-11 timeout; a separate verification using
+15 independent Bun processes passed 15/15 with no timeout
+(`/tmp/fai769-drawer-independent-1.log` through `-15.log`). This distinguishes
+successful independent stress evidence from unresolved repeat-runner behavior.
+
 ## September 10 current-main reconciliation
 
 Main advanced to `372039da7` after the September 9 exact-head verification,
