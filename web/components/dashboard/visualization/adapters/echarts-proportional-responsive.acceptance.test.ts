@@ -41,7 +41,9 @@ test('responsive cue labels retain native side-aware columns with and without a 
       const series = responsiveEChartsPatch(echartsOption(envelope), width, height, envelope).series[0]
       expect(series.left).toBe(0)
       expect(series.right).toBe(0)
-      expect(series.top).toBe(series.bottom)
+      expect(series.top).toBe(0)
+      expect(series.bottom).toBe(title === undefined ? 28 : 52)
+      expect(series.center).toEqual([width / 2, height / 2])
       expect(series.labelLayout).toBeTypeOf('function')
       expect(series.labelLine.length).toBe(10)
       expect(series.labelLine.length2).toBe(8)
@@ -63,7 +65,7 @@ test('responsive cue labels retain native side-aware columns with and without a 
         else expect(lane).toBeLessThan(width / 2 - outer)
         expect(layout.labelLinePoints[3][1]).toBe(labelRect.y + labelRect.height / 2)
       }
-      expect(series.radius[1]).toBeLessThan(Math.min(width, height - series.top - series.bottom) / 2)
+      expect(series.radius[1]).toBeLessThan(Math.min(width, height - series.bottom) / 2)
     }
   }
 })
@@ -74,16 +76,16 @@ test('responsive cue geometry stays finite at narrow widths and short titled hei
   const narrow = responsiveEChartsPatch(echartsOption(envelope), 96, 180, envelope).series[0]
   expect(narrow.left).toBe(0)
   expect(narrow.right).toBe(0)
-  expect(narrow.top).toBe(52)
+  expect(narrow.top).toBe(0)
   expect(narrow.bottom).toBe(52)
   expect(narrow.labelLayout).toBeTypeOf('function')
   expect(narrow.radius.every((value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0)).toBe(true)
   const narrowLayout = narrow.labelLayout({ labelRect: { x: 8, y: 72, width: 24, height: 24 }, labelLinePoints: [[12, 90], [12, 90], [12, 90]] })
   expect(narrowLayout.labelLinePoints.flat().every(Number.isFinite)).toBe(true)
   const short = responsiveEChartsPatch(echartsOption(envelope), 320, 150, envelope).series[0]
-  expect(short.top).toBe(52)
+  expect(short.top).toBe(0)
   expect(short.bottom).toBe(52)
-  expect(short.radius[1]).toBeLessThan((150 - short.top - short.bottom) / 2)
+  expect(short.radius[1]).toBeLessThan((150 - short.bottom) / 2)
 
   const micro = responsiveEChartsPatch(echartsOption(envelope), 1, 120, envelope).series[0]
   expect(micro.left).toBe(0)

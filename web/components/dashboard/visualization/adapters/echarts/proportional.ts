@@ -22,12 +22,17 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
   const outside = presentation.labelPosition !== 'inside'
   const conditionalCue = proportionalConditionalCueFormat(envelope, spec.value)
+  const compactOutsideCueLabels = conditionalCue !== undefined && outside && isPie && presentation.legend === 'bottom'
   const labels = echartsLabelPolicy(envelope, spec.value.dataset, presentation.labelPolicy, ({ value }) => {
     const row = Array.isArray(value) ? value : []
     const cue = conditionalCue && dataset ? resolveConditionalFormat(conditionalCue, dataset.columns, row).style.icon : undefined
     const amount = formatDisplayField(envelope, spec.value, valueIndex >= 0 ? row[valueIndex] : undefined, context)
     if (!outside) return [cue ? conditionalIconGlyph(cue) : '', amount].filter(Boolean).join(' ')
     const category = formatField(envelope, spec.category, categoryIndex >= 0 ? row[categoryIndex] : undefined, context)
+    if (compactOutsideCueLabels) {
+      const cueCategory = [cue ? conditionalIconGlyph(cue) : '', category].filter(Boolean).join(' ')
+      return [cueCategory, amount].filter(Boolean).join('\n')
+    }
     return [cue ? conditionalIconGlyph(cue) : '', `${category}: ${amount}`].filter(Boolean).join(' ')
   }, context)
   // Proportional sectors have no independent icon channel. If an authored

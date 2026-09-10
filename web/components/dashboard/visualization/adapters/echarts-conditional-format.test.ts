@@ -306,9 +306,9 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
       radius: ['54%', '76%'],
     })
     expect(option.graphic?.find((graphic: any) => graphic.id === 'graphic:proportional:center')).toMatchObject({ top: 'middle' })
-    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
-    expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
-    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
+    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing\n—')
+    expect(formatter({ value: ['High', 90] })).toBe('● High\n90')
+    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low\n-1')
   }
 
   const titled = structuredClone(envelope)

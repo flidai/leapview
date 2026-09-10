@@ -1,5 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { proportionalConditionalCueFormat } from './proportional'
+import { proportionalLegendGeometry } from './proportional-legend-layout'
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -45,9 +46,8 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     }
   })
   const patch: Record<string, any> = option.grid === undefined ? {} : { grid: Array.isArray(option.grid) ? grid : grid[0] }
-  // The proportional branch only needs a series layout patch. Re-emitting a
-  // freshly generated legend on every resize could clear native selection
-  // state while the series itself is intentionally merged by stable id.
+  // Proportional legends receive geometry only below. Re-emitting generated
+  // data or selection here could clear native selection/page state on resize.
   if (option.legend !== undefined && !proportional) patch.legend = compact ? compactLegend(option.legend) : option.legend
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -67,7 +67,11 @@ function responsiveProportionalLayout(option: Record<string, any>, width: number
   const seriesList = Array.isArray(option.series) ? option.series : [option.series]
   const source = seriesList.find((candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && candidate.id === `series:primary:${spec.mark}`)
   if (!source) return undefined
-  return proportionalOutsideLayout(source, width, height, spec.presentation.legendTitle !== undefined)
+  const legend = proportionalLegendGeometry(option.legend, width)
+  return {
+    ...proportionalOutsideLayout(source, width, height, spec.presentation.legendTitle !== undefined),
+    ...(Object.keys(legend).length > 0 ? { legend } : {}),
+  }
 }
 
 function proportionalOutsideLayout(
@@ -97,13 +101,18 @@ function proportionalOutsideLayout(
   // while still letting native side-aware overlap packing use real text boxes.
   const boundedEdgeDistance = Math.min(edgeDistance, width / 2)
   const textColumn = Math.max(0, width / 2 - radius[1] - boundedEdgeDistance * 2)
+  const labelLineHeight = 16
+  const labelPadding: [number, number] = [0, 3]
   const label = {
     ...(series.label && typeof series.label === 'object' && !Array.isArray(series.label) ? series.label : {}),
     width: textColumn,
     overflow: 'break',
+    lineHeight: labelLineHeight,
+    padding: labelPadding,
   }
   const distanceToLabelLine = finiteNumber(series.label?.distanceToLabelLine, 4)
   const labelLayout = (params: {
+    dataIndex?: number
     labelRect?: { x?: number; y?: number; width?: number; height?: number }
     labelLinePoints?: readonly (readonly number[])[]
   }) => {
@@ -121,10 +130,20 @@ function proportionalOutsideLayout(
       ? [centerX + vectorX / vectorLength * radius[1], centerY + vectorY / vectorLength * radius[1]]
       : [centerX, centerY]
     const right = anchor[0] >= centerX
-    const lane = centerX + (right ? radius[1] + distanceToLabelLine : -radius[1] - distanceToLabelLine)
+    const dataIndex = typeof params.dataIndex === 'number' && Number.isFinite(params.dataIndex) ? Math.max(0, Math.floor(params.dataIndex)) : 0
+    // Use only a small, bounded lane offset. This keeps guides from becoming
+    // one indistinguishable trunk without imposing data-index-based text
+    // slots or making assumptions about category count/side distribution.
+    const laneOffset = Math.min(dataIndex * 0.75, Math.max(0, distanceToLabelLine + 1))
+    const lane = centerX + (right ? radius[1] + distanceToLabelLine + laneOffset : -radius[1] - distanceToLabelLine - laneOffset)
     const labelY = rect.y! + rect.height! / 2
     const labelEdge = right ? rect.x! : rect.x! + rect.width!
-    const endpoint = [labelEdge + (right ? -distanceToLabelLine : distanceToLabelLine), labelY]
+    const labelDeltaY = labelY - centerY
+    const ringHalfWidth = Math.sqrt(Math.max(0, radius[1] * radius[1] - labelDeltaY * labelDeltaY))
+    const safeRingEdge = centerX + (right ? ringHalfWidth + 0.5 : -ringHalfWidth - 0.5)
+    const desiredEndpoint = labelEdge + (right ? -distanceToLabelLine : distanceToLabelLine)
+    const endpointX = right ? Math.max(desiredEndpoint, safeRingEdge) : Math.min(desiredEndpoint, safeRingEdge)
+    const endpoint = [endpointX, labelY]
     // Keep the guide's bend outside the overall circle. Native pie packing
     // may move a label vertically, but should not drag its leader through a
     // different sector while doing so (especially for rose charts).
@@ -147,8 +166,9 @@ function proportionalOutsideLayout(
       // gets the card-wide columns needed for measured status/value labels.
       left: 0,
       right: 0,
-      top: verticalInset,
-      bottom: verticalInset,
+      top: 0,
+      bottom: legendBand,
+      center: [width / 2, height / 2],
       radius,
       label,
       // Keep ECharts' native side-aware pie overlap pass and only reroute its

@@ -80,7 +80,9 @@ Do not solve overcrowding by shrinking every component. Split a page when reader
 
 ### Size pie and donut visuals for outside labels
 
-For pie and donut visuals with a bottom legend, outside labels that carry conditional icons keep the icon alongside the formatted value as the card resizes. The renderer uses measured side columns, so a compact card may wrap a label while keeping it clear of the ring and legend band. Give these visuals enough width for the label columns and enough height for the legend band. Keep `labelPosition: inside` when the chart should prioritize the ring over outside category text, and set the field format in the visual definition when values need to be compact.
+For pie and donut visuals with a bottom legend, outside labels that carry conditional icons place the formatted value below the cue and category. Long category names can still wrap. The renderer uses measured side columns and explicit line spacing, reserving a separate band for the legend. Give these visuals enough width for the label columns and enough height for all their categories; very small cards or many long labels can still be crowded. Use `labelPosition: inside` when the chart should prioritize the ring over outside category text, and set the field format in the visual definition when values need to be compact.
+
+In this conditional-label layout, bottom legends page through complete, equally sized items. Long legend labels use an ellipsis; hover to see the full label. Resizing preserves legend selection and the current scroll anchor.
 
 ## Stabilize and test the layout
 

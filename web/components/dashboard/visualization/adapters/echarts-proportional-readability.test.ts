@@ -33,6 +33,11 @@ function statusFixture() {
   return envelope
 }
 
+test('status cue formatter keeps category punctuation on the cue line', () => {
+  const source = echartsOption(statusFixture()) as any
+  expect(source.series[0].label.formatter({ value: ['North: East', 12], dataIndex: 0 })).toBe('● North: East\n0.012K')
+})
+
 test('status donut preserves native legend selection and series identity through resizes', () => {
   const envelope = statusFixture()
   const source = echartsOption(envelope)
@@ -45,7 +50,9 @@ test('status donut preserves native legend selection and series identity through
     for (const [width, height] of [[395, 304], [320, 266], [600, 360]]) {
       chart.resize({ width, height })
       const patch = responsiveEChartsPatch(source, width, height, envelope)
-      expect(patch.legend).toBeUndefined()
+      expect(patch.legend?.data).toBeUndefined()
+      expect(patch.legend?.selected).toBeUndefined()
+      expect(patch.legend?.scrollDataIndex).toBeUndefined()
       chart.setOption(patch)
       chart.renderToSVGString()
       expect(chart.getModel().getSeriesByIndex(0)).toBe(series)
@@ -63,7 +70,7 @@ test('status donut preserves native legend selection and series identity through
 
 // Inspect rendered text/sector geometry, not the layout callback's proposed
 // coordinates: ECharts may wrap and move labels after that callback runs.
-for (const [width, height] of [[320, 266], [395, 304]]) {
+for (const [width, height] of [[320, 266], [395, 304], [395, 328]]) {
   for (const theme of ['light', 'dark'] as const) {
     test(`status donut retains readable cues and ring at ${width}×${height} in ${theme}`, () => {
       const envelope = statusFixture()
@@ -90,6 +97,8 @@ for (const [width, height] of [[320, 266], [395, 304]]) {
           const transform = label.getComputedTransform()
           if (transform) bounds.applyTransform(transform)
           expect(label.ignore, `${category} must remain visible`).toBe(false)
+          expect(label.style.lineHeight, `${category} uses an explicit readable line height`).toBe(16)
+          expect(String(label.style.text), `${category} keeps category and value on intentional lines`).toContain('\n')
           const expectedText = source.series[0].label.formatter({ value: [...statuses[index]], dataIndex: index })
           expect(String(label.style.text).replace(/\s/g, ''), `${category} retains its icon and formatted value`).toBe(String(expectedText).replace(/\s/g, ''))
           expect(String(label.style.text).replace(/\s/g, '')).toContain(category)
@@ -98,6 +107,7 @@ for (const [width, height] of [[320, 266], [395, 304]]) {
           expect(bounds.x + bounds.width, `${category} right`).toBeLessThanOrEqual(width)
           expect(bounds.y, `${category} top`).toBeGreaterThanOrEqual(0)
           expect(bounds.y + bounds.height, `${category} clears legend`).toBeLessThanOrEqual(height - 28)
+          expect(bounds.height, `${category} uses two readable lines`).toBe(32)
           const ring = data.getItemLayout(index)
           const nearestX = Math.max(bounds.x, Math.min(ring.cx, bounds.x + bounds.width))
           const nearestY = Math.max(bounds.y, Math.min(ring.cy, bounds.y + bounds.height))
@@ -111,18 +121,27 @@ for (const [width, height] of [[320, 266], [395, 304]]) {
             const distance = Math.hypot(a[0] + fraction * dx - ring.cx, a[1] + fraction * dy - ring.cy)
             expect(distance, `${category} leader must not cross unrelated sectors`).toBeGreaterThanOrEqual(ring.r - 0.5)
           }
-          return bounds
+          return { bounds, side: points[0][0] >= width / 2 ? 'right' : 'left', lane: points[2][0] }
         })
         for (let index = 0; index < labels.length; index++) {
           for (let other = index + 1; other < labels.length; other++) {
             const a = labels[index], b = labels[other]
-            const overlap = a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
+            const overlap = a.bounds.x < b.bounds.x + b.bounds.width && a.bounds.x + a.bounds.width > b.bounds.x && a.bounds.y < b.bounds.y + b.bounds.height && a.bounds.y + a.bounds.height > b.bounds.y
             expect(overlap, `${statuses[index][0]} overlaps ${statuses[other][0]}`).toBe(false)
+          }
+        }
+        for (const side of ['left', 'right'] as const) {
+          const sideLabels = labels.filter((label) => label.side === side).sort((a, b) => a.bounds.y - b.bounds.y)
+          const lanes = new Set(sideLabels.map((label) => label.lane))
+          expect(lanes.size, `${side} guide lanes should be staggered`).toBe(sideLabels.length)
+          for (let index = 1; index < sideLabels.length; index++) {
+            const gap = sideLabels[index].bounds.y - (sideLabels[index - 1].bounds.y + sideLabels[index - 1].bounds.height)
+            expect(gap, `${side} labels retain an inter-label gap`).toBeGreaterThanOrEqual(1)
           }
         }
         const dominant = data.getItemLayout(0)
         expect(dominant.r * 2, 'ring must not become a tiny center ornament').toBeGreaterThanOrEqual(width * 0.36)
-        const dominantLabelY = labels[0].y + labels[0].height / 2
+        const dominantLabelY = labels[0].bounds.y + labels[0].bounds.height / 2
         const dominantAnchorY = data.getItemGraphicEl(0).getTextGuideLine()!.shape.points[0][1]
         expect(Math.abs(dominantLabelY - dominantAnchorY), 'dominant label should remain near its sector anchor').toBeLessThan(height * 0.2)
       } finally {
