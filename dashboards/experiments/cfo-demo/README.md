@@ -13,6 +13,20 @@ All dates are shifted twelve years so the original 2013–2014 sample appears as
 13-week cash values are deterministic fictional extensions defined in the
 Models. They are not Microsoft data and must be described as demo scenarios.
 
+## Model shape
+
+The semantic model is a finance fact constellation. Financial performance,
+P&L statement rows, EBITDA variance contributions, and weekly cash forecasts
+are separate facts because they have different grains. They share conformed
+date, segment, country, and product dimensions where those concepts apply.
+Discount band, P&L line, variance driver, forecast week, and cash scenario are
+role-specific dimensions.
+
+The small, stable reference sets use their public source values as natural
+keys. Each fact declares those keys as foreign entities and every semantic
+relationship points to a primary dimension entity. This keeps join cardinality
+explicit without inventing warehouse-generated surrogate IDs for demo data.
+
 Run the project with:
 
 ```sh

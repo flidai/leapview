@@ -3,17 +3,16 @@ kind: Model
 metadata:
   id: model:financial_performance
   name: financial_performance
-  displayName: Financial Performance
-  description: Actual Microsoft sample values with deterministic fictional plan, forecast, and operating-expense extensions.
+  displayName: Financial Performance Fact
+  description: Transaction-grain finance fact with conformed dimension keys and deterministic fictional planning measures.
 spec:
   fields:
     record_id: {datatype: String, label: Record ID}
     finance_date: {datatype: Date, label: Date}
-    finance_month: {datatype: String, label: Month}
-    segment: {datatype: String, label: Segment}
-    country: {datatype: String, label: Country}
-    product: {datatype: String, label: Product}
-    discount_band: {datatype: String, label: Discount band}
+    segment: {datatype: String, label: Segment key}
+    country: {datatype: String, label: Country key}
+    product: {datatype: String, label: Product key}
+    discount_band: {datatype: String, label: Discount band key}
     scorecard_group: {datatype: String, label: View}
     units_sold: {datatype: Decimal, label: Units sold}
     gross_sales: {datatype: Decimal, label: Gross sales}
@@ -46,11 +45,10 @@ spec:
             ORDER BY date_serial, country, segment, product, discount_band, gross_sales, discounts
           ) AS INTEGER)) AS record_id,
           CAST(DATE '1899-12-30' + CAST(date_serial AS INTEGER) + INTERVAL '12 years' AS DATE) AS finance_date,
-          strftime(CAST(DATE '1899-12-30' + CAST(date_serial AS INTEGER) + INTERVAL '12 years' AS DATE), '%Y-%m') AS finance_month,
-          segment,
-          country,
-          product,
-          discount_band,
+          trim(segment) AS segment,
+          trim(country) AS country,
+          trim(product) AS product,
+          trim(discount_band) AS discount_band,
           CAST(units_sold AS DECIMAL(38,2)) AS units_sold,
           CAST(round(gross_sales, 2) AS DECIMAL(38,2)) AS gross_sales,
           CAST(round(discounts, 2) AS DECIMAL(38,2)) AS discounts,
@@ -63,7 +61,6 @@ spec:
         SELECT
           record_id,
           finance_date,
-          finance_month,
           segment,
           country,
           product,
@@ -96,7 +93,6 @@ spec:
       SELECT
         record_id,
         finance_date,
-        finance_month,
         segment,
         country,
         product,
@@ -129,5 +125,20 @@ spec:
     financial_record:
       type: primary
       fields: [record_id]
+    finance_date:
+      type: foreign
+      fields: [finance_date]
+    segment:
+      type: foreign
+      fields: [segment]
+    country:
+      type: foreign
+      fields: [country]
+    product:
+      type: foreign
+      fields: [product]
+    discount_band:
+      type: foreign
+      fields: [discount_band]
   grain:
     entity: financial_record

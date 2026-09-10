@@ -1,0 +1,22 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:finance_products
+  name: finance_products
+  displayName: Products
+  description: Conformed product dimension shared by the finance facts.
+spec:
+  fields:
+    product: {datatype: String, label: Product}
+  definition:
+    type: sql
+    sql: |
+      SELECT DISTINCT trim(product) AS product
+      FROM source."finance.financials"
+      WHERE product IS NOT NULL AND trim(product) <> ''
+  entities:
+    product:
+      type: primary
+      fields: [product]
+  grain:
+    entity: product

@@ -1,0 +1,38 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:cash_weeks
+  name: cash_weeks
+  displayName: Forecast Weeks
+  description: Thirteen-week planning calendar used by the cash forecast fact.
+spec:
+  fields:
+    week_index: {datatype: Integer, label: Week index}
+    week_start: {datatype: Date, label: Week starting}
+    week_label: {datatype: String, label: Forecast week}
+  definition:
+    type: sql
+    sql: |
+      WITH source_anchor AS (
+        SELECT 1 AS anchor
+        FROM source."finance.financials"
+        LIMIT 1
+      ),
+      weeks AS (
+        SELECT 0 AS week_index UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3
+        UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7
+        UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10 UNION ALL SELECT 11
+        UNION ALL SELECT 12
+      )
+      SELECT
+        weeks.week_index,
+        CAST(DATE '2026-09-07' + CAST(weeks.week_index * 7 AS INTEGER) AS DATE) AS week_start,
+        printf('W%02d', weeks.week_index + 1) AS week_label
+      FROM weeks
+      INNER JOIN source_anchor ON true
+  entities:
+    cash_week:
+      type: primary
+      fields: [week_index]
+  grain:
+    entity: cash_week

@@ -4,7 +4,7 @@ metadata:
   id: semantic-model:finance
   name: finance
   displayName: CFO Finance Model
-  description: Governed actual, plan, forecast, profitability, P&L, and cash metrics for the CFO demonstration.
+  description: Governed CFO fact constellation with conformed finance dimensions and decision-ready metrics.
 spec:
   datasets:
     financial_performance:
@@ -13,25 +13,89 @@ spec:
     pnl_statement:
       model: pnl_statement
       defaultTimeDimension: finance_date
-    pnl_long:
-      model: pnl_long
-      defaultTimeDimension: finance_date
     variance_drivers:
       model: variance_drivers
       defaultTimeDimension: finance_date
     cash_forecast:
       model: cash_forecast
       defaultTimeDimension: week_start
-    cash_scenario_summary:
-      model: cash_scenario_summary
+    finance_dates:
+      model: finance_dates
+    finance_segments:
+      model: finance_segments
+    finance_countries:
+      model: finance_countries
+    finance_products:
+      model: finance_products
+    finance_discount_bands:
+      model: finance_discount_bands
+    pnl_lines:
+      model: pnl_lines
+    variance_driver_dimension:
+      model: variance_driver_dimension
+    cash_weeks:
+      model: cash_weeks
+    cash_scenarios:
+      model: cash_scenarios
+  relationships:
+    financial_performance_date:
+      from: {dataset: financial_performance, entity: finance_date}
+      to: {dataset: finance_dates, entity: finance_date}
+    pnl_statement_date:
+      from: {dataset: pnl_statement, entity: finance_date}
+      to: {dataset: finance_dates, entity: finance_date}
+    variance_drivers_date:
+      from: {dataset: variance_drivers, entity: finance_date}
+      to: {dataset: finance_dates, entity: finance_date}
+    financial_performance_segment:
+      from: {dataset: financial_performance, entity: segment}
+      to: {dataset: finance_segments, entity: segment}
+    pnl_statement_segment:
+      from: {dataset: pnl_statement, entity: segment}
+      to: {dataset: finance_segments, entity: segment}
+    variance_drivers_segment:
+      from: {dataset: variance_drivers, entity: segment}
+      to: {dataset: finance_segments, entity: segment}
+    financial_performance_country:
+      from: {dataset: financial_performance, entity: country}
+      to: {dataset: finance_countries, entity: country}
+    pnl_statement_country:
+      from: {dataset: pnl_statement, entity: country}
+      to: {dataset: finance_countries, entity: country}
+    variance_drivers_country:
+      from: {dataset: variance_drivers, entity: country}
+      to: {dataset: finance_countries, entity: country}
+    financial_performance_product:
+      from: {dataset: financial_performance, entity: product}
+      to: {dataset: finance_products, entity: product}
+    pnl_statement_product:
+      from: {dataset: pnl_statement, entity: product}
+      to: {dataset: finance_products, entity: product}
+    variance_drivers_product:
+      from: {dataset: variance_drivers, entity: product}
+      to: {dataset: finance_products, entity: product}
+    financial_performance_discount_band:
+      from: {dataset: financial_performance, entity: discount_band}
+      to: {dataset: finance_discount_bands, entity: discount_band}
+    pnl_statement_line:
+      from: {dataset: pnl_statement, entity: pnl_line}
+      to: {dataset: pnl_lines, entity: pnl_line}
+    variance_drivers_driver:
+      from: {dataset: variance_drivers, entity: variance_driver}
+      to: {dataset: variance_driver_dimension, entity: variance_driver}
+    cash_forecast_week:
+      from: {dataset: cash_forecast, entity: cash_week}
+      to: {dataset: cash_weeks, entity: cash_week}
+    cash_forecast_scenario:
+      from: {dataset: cash_forecast, entity: cash_scenario}
+      to: {dataset: cash_scenarios, entity: cash_scenario}
   dimensions:
     finance_date:
       datatype: Date
       bindings:
-        financial_performance: {field: financial_performance.finance_date}
-        pnl_statement: {field: pnl_statement.finance_date}
-        pnl_long: {field: pnl_long.finance_date}
-        variance_drivers: {field: variance_drivers.finance_date}
+        financial_performance: {field: finance_dates.finance_date, path: [financial_performance_date]}
+        pnl_statement: {field: finance_dates.finance_date, path: [pnl_statement_date]}
+        variance_drivers: {field: finance_dates.finance_date, path: [variance_drivers_date]}
       time:
         nativeGrain: day
         grains: [day, week, month, quarter, year]
@@ -39,35 +103,31 @@ spec:
     finance_month:
       datatype: String
       bindings:
-        financial_performance: {field: financial_performance.finance_month}
-        pnl_statement: {field: pnl_statement.finance_month}
-        pnl_long: {field: pnl_long.finance_month}
-        variance_drivers: {field: variance_drivers.finance_month}
+        financial_performance: {field: finance_dates.finance_month, path: [financial_performance_date]}
+        pnl_statement: {field: finance_dates.finance_month, path: [pnl_statement_date]}
+        variance_drivers: {field: finance_dates.finance_month, path: [variance_drivers_date]}
     segment:
       datatype: String
       bindings:
-        financial_performance: {field: financial_performance.segment}
-        pnl_statement: {field: pnl_statement.segment}
-        pnl_long: {field: pnl_long.segment}
-        variance_drivers: {field: variance_drivers.segment}
+        financial_performance: {field: finance_segments.segment, path: [financial_performance_segment]}
+        pnl_statement: {field: finance_segments.segment, path: [pnl_statement_segment]}
+        variance_drivers: {field: finance_segments.segment, path: [variance_drivers_segment]}
     country:
       datatype: String
       bindings:
-        financial_performance: {field: financial_performance.country}
-        pnl_statement: {field: pnl_statement.country}
-        pnl_long: {field: pnl_long.country}
-        variance_drivers: {field: variance_drivers.country}
+        financial_performance: {field: finance_countries.country, path: [financial_performance_country]}
+        pnl_statement: {field: finance_countries.country, path: [pnl_statement_country]}
+        variance_drivers: {field: finance_countries.country, path: [variance_drivers_country]}
     product:
       datatype: String
       bindings:
-        financial_performance: {field: financial_performance.product}
-        pnl_statement: {field: pnl_statement.product}
-        pnl_long: {field: pnl_long.product}
-        variance_drivers: {field: variance_drivers.product}
+        financial_performance: {field: finance_products.product, path: [financial_performance_product]}
+        pnl_statement: {field: finance_products.product, path: [pnl_statement_product]}
+        variance_drivers: {field: finance_products.product, path: [variance_drivers_product]}
     discount_band:
       datatype: String
       bindings:
-        financial_performance: {field: financial_performance.discount_band}
+        financial_performance: {field: finance_discount_bands.discount_band, path: [financial_performance_discount_band]}
     scorecard_group:
       datatype: String
       bindings:
@@ -79,8 +139,7 @@ spec:
     pnl_line:
       datatype: String
       bindings:
-        pnl_statement: {field: pnl_statement.pnl_line}
-        pnl_long: {field: pnl_long.pnl_line}
+        pnl_statement: {field: pnl_lines.pnl_line, path: [pnl_statement_line]}
     pnl_group:
       datatype: String
       bindings:
@@ -89,24 +148,19 @@ spec:
       label: Line
       datatype: Integer
       bindings:
-        pnl_statement: {field: pnl_statement.line_order}
-        pnl_long: {field: pnl_long.line_order}
-    pnl_scenario:
-      datatype: String
-      bindings:
-        pnl_long: {field: pnl_long.pnl_scenario}
+        pnl_statement: {field: pnl_lines.line_order, path: [pnl_statement_line]}
     variance_driver:
       datatype: String
       bindings:
-        variance_drivers: {field: variance_drivers.driver}
+        variance_drivers: {field: variance_driver_dimension.driver, path: [variance_drivers_driver]}
     driver_order:
       datatype: Integer
       bindings:
-        variance_drivers: {field: variance_drivers.driver_order}
+        variance_drivers: {field: variance_driver_dimension.driver_order, path: [variance_drivers_driver]}
     week_start:
       datatype: Date
       bindings:
-        cash_forecast: {field: cash_forecast.week_start}
+        cash_forecast: {field: cash_weeks.week_start, path: [cash_forecast_week]}
       time:
         nativeGrain: day
         grains: [day, week, month]
@@ -115,16 +169,15 @@ spec:
       label: Week
       datatype: String
       bindings:
-        cash_forecast: {field: cash_forecast.week_label}
+        cash_forecast: {field: cash_weeks.week_label, path: [cash_forecast_week]}
     scenario:
       datatype: String
       bindings:
-        cash_forecast: {field: cash_forecast.scenario}
-        cash_scenario_summary: {field: cash_scenario_summary.scenario}
+        cash_forecast: {field: cash_scenarios.scenario, path: [cash_forecast_scenario]}
     scenario_group:
       datatype: String
       bindings:
-        cash_forecast: {field: cash_forecast.scenario_group}
+        cash_forecast: {field: cash_scenarios.scenario_group, path: [cash_forecast_scenario]}
   metrics:
     units_sold:
       type: aggregate
@@ -324,15 +377,6 @@ spec:
       input: {field: pnl_statement.variance_amount}
       empty: zero
       label: F/(U)
-      unit: USD
-      format: currency
-    pnl_amount:
-      type: aggregate
-      dataset: pnl_long
-      aggregation: sum
-      input: {field: pnl_long.pnl_amount}
-      empty: zero
-      label: Amount
       unit: USD
       format: currency
     variance_impact:
