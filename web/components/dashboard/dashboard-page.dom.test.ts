@@ -1535,7 +1535,11 @@ test('dashboard agent drawer carries page context and explicit visual references
         && customElements.get('lv-chat-drawer')
         && customElements.get('lv-chat-composer')
     ))
-    await page.locator('lv-dashboard-page').evaluate((element: any) => element.updateComplete)
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      return Boolean(element?.page && !element.isUpdatePending)
+    })
+    const moduleHandle = await page.evaluateHandle(() => import('/static/vendor/datastar-1.0.2.js?v=dev'))
 
     const initial = await page.locator('lv-dashboard-page').evaluate((element: any) => {
       const root = element.shadowRoot
@@ -1687,17 +1691,20 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(opened.drawerWidth).toBeGreaterThanOrEqual(360)
     expect(opened.drawerWidth).toBeLessThanOrEqual(520)
 
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agentReferenceSearch: {
+    // Keep signal patches on one imported module to avoid repeated imports under merge-queue contention.
+    await moduleHandle.evaluate((module: any, search: any) => module.mergePatch({ agentReferenceSearch: search }), {
         query: 'orders', requestId: 1,
         results: [
 		  { reference: { kind: 'visual', id: 'executive-sales.orders_chart' }, name: 'Orders by status', hierarchy: ['Sales', 'Executive Sales', 'Overview'], href: '/orders', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/orders' }], context: ['current_page'] },
 		  { reference: { kind: 'visual', id: 'executive-sales.finance_orders' }, name: 'Finance orders', description: 'Finance domain metric', hierarchy: ['Finance', 'Executive Sales', 'Overview'], href: '/finance', locations: [{ dashboardId: 'executive-sales', pageId: 'overview', href: '/finance' }], context: [] },
 		  { reference: { kind: 'metric', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/metric', locations: [], context: [] },
         ],
-      } })
-    })
+      })
+    await page.waitForFunction((requestId) => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      const search = element?.signal('agentReferenceSearch', null)
+      return Boolean(element && !element.isUpdatePending && search?.query === 'orders' && search?.requestId === requestId)
+    }, 1)
     const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
@@ -1721,12 +1728,11 @@ test('dashboard agent drawer carries page context and explicit visual references
 	expect(groupedSearch.accessible).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
 	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Metric')
 
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      mergePatch({ agentContext: { referenceLimit: 1 } })
-    })
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
-      await element.updateComplete
+    await moduleHandle.evaluate((module: any) => module.mergePatch({ agentContext: { referenceLimit: 1 } }))
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-dashboard-page') as any
+      const context = element?.signal('agentContext', null)
+      return Boolean(element && !element.isUpdatePending && context?.referenceLimit === 1)
     })
 
     await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
@@ -1789,9 +1795,7 @@ test('dashboard agent drawer carries page context and explicit visual references
       }],
     })
 
-	await page.evaluate(async () => {
-	  const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-	  mergePatch({ agent: {
+	await moduleHandle.evaluate((module: any, agent: any) => module.mergePatch({ agent }), {
 		activeConversationId: 'agentconv_1',
 		transcript: [{
 		  id: 'user_1', kind: 'user', runId: 'run_1', text: 'Why did this decline?',
@@ -1804,8 +1808,12 @@ test('dashboard agent drawer carries page context and explicit visual references
 		}],
 		status: { enabled: true, running: true },
 		composer: { value: '', disabled: true, placeholder: 'Agent is working…' },
-	  } })
 	})
+	await page.waitForFunction((conversationID) => {
+	  const element = document.querySelector('lv-dashboard-page') as any
+	  const agent = element?.signal('agent', null)
+	  return Boolean(element && !element.isUpdatePending && agent?.activeConversationId === conversationID)
+	}, 'agentconv_1')
 	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
 	  await element.updateComplete
 	  const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
