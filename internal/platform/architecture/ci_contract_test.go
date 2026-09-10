@@ -277,25 +277,35 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	}
 }
 
-func TestGoApplicationLaneRunsShardsAndExternalInParallel(t *testing.T) {
+func TestGoApplicationLaneRunsShardsAndExternalSerially(t *testing.T) {
 	root := repoRoot(t)
 	taskfile, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
 	if err != nil {
 		t.Fatalf("read Taskfile.yml: %v", err)
 	}
 	application := taskfileTaskBlock(t, string(taskfile), "ci:lane:go:application")
-	const parallelBranches = "- task --parallel test:go:app:shards test:go:external"
-	if strings.Count(application, parallelBranches) != 1 {
-		t.Fatalf("Go application lane must invoke app shards and the serial external branch through one parallel command: missing %q", parallelBranches)
+	const (
+		appShards = "- task: test:go:app:shards"
+		external  = "- task: test:go:external"
+	)
+	for _, branch := range []string{appShards, external} {
+		if strings.Count(application, branch) != 1 {
+			t.Fatalf("Go application lane must retain exactly one serial branch %q", branch)
+		}
 	}
-	for _, serial := range []string{"- task: test:go:app:shards", "- task: test:go:external"} {
-		if strings.Contains(application, serial) {
-			t.Fatalf("Go application lane retains serial branch %q", serial)
+	appAt := strings.Index(application, appShards)
+	externalAt := strings.Index(application, external)
+	if appAt < 0 || externalAt < 0 || appAt >= externalAt || strings.TrimSpace(application[appAt+len(appShards):externalAt]) != "" {
+		t.Fatalf("Go application lane must run app shards before external validation with only whitespace between commands")
+	}
+	for _, parallel := range []string{"task --parallel", "task --concurrency"} {
+		if strings.Contains(application, parallel) {
+			t.Fatalf("Go application lane retains parallel wrapper %q", parallel)
 		}
 	}
 	for _, suppression := range []string{"ignore_error:", "|| true", "set +e"} {
 		if strings.Contains(application, suppression) {
-			t.Fatalf("Go application lane suppresses parallel branch failures with %q", suppression)
+			t.Fatalf("Go application lane suppresses validation failures with %q", suppression)
 		}
 	}
 }

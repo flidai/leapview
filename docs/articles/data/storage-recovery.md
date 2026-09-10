@@ -441,14 +441,84 @@ successor association.
 This adapter qualification uses MinIO and does not establish AWS or other
 S3-compatible provider behavior. Its trusted endpoint identity is deliberately
 separate from the disposable MinIO transport endpoint, so it does not qualify
-TLS, redirect, or endpoint-discovery behavior. It makes no retention or lifecycle guarantee and does
-not capture provider VersionIDs at managed-data write time; retention and a
-durable write-time observation binding remain separate prerequisites. It does
-not add recovery admission, publication, or startup/readiness behavior. It does
-not perform PostgreSQL restore or PITR, activation, or provider disaster
-recovery, and it makes no physical DR, RPO, or RTO claim.
+TLS, redirect, or endpoint-discovery behavior. It makes no retention or lifecycle
+guarantee. Write-time capture is qualified below, but durable association and
+signed Manifest v2 creation remain separate prerequisites. It does not add
+recovery admission, publication, or startup/readiness behavior. It does not
+perform PostgreSQL restore or PITR, activation, or provider disaster recovery,
+and it makes no physical DR, RPO, or RTO claim.
 
 This validates historical managed-object retrieval. It does not prove successful physical disaster recovery.
+
+## Write-time S3 VersionID capture
+
+The managed-data S3 store now has an opt-in trusted observation profile. When
+that profile is configured, a successful ordinary `PutObject` or multipart
+`CompleteMultipartUpload` must return a nonempty exact `VersionID`. The store
+retains that value directly from the write response, verifies the same exact
+version by key, size, and SHA-256 bytes, and returns a provider-version
+observation beside the immutable blob result. It never discovers or replaces
+the captured identity with a later `HeadObject` of the latest object.
+
+The observation binds the trusted profile identity, implementation, account,
+endpoint, region, bucket and namespace to the exact key/version, content digest,
+size, and UTC capture time. Construction rejects a profile whose bucket or
+namespace differs from the store. Missing, `null`, or `latest` response versions
+fail closed when capture is enabled; failed provider writes and failed exact-byte
+verification return no observation. Provider failures remain sanitized by the
+existing storage boundary.
+
+`ProviderVersionObservationSet` is a bounded in-process handoff helper, not a
+database or recovery manifest. It makes identical observation retries
+idempotent, rejects replacement of the first observation for one profile/object
+identity, rejects one profile identity resolving to conflicting trusted
+configuration, and rejects conflicting version, digest, size, or capture metadata.
+Distinct content-addressed object keys retain distinct observations. Qualification now takes managed object
+VersionIDs from the production write result rather than inferring them with a
+post-write latest-object HEAD. Ordinary and multipart response handling share
+the same exact-version and integrity checks.
+
+An exact retry may reuse an observation already returned by this writer and is
+reverified at that exact version. When capture is enabled, finding an existing
+object without such a prior write observation fails closed; the store does not
+turn a latest-object HEAD into replacement evidence. Multipart reconciliation
+likewise cannot convert an ambiguous preexisting completion into an observation.
+
+This slice does not configure capture authority in production, create or sign
+ManagedObservationManifest v2, enforce provider
+retention, or connect evidence to admission, publication, startup, restore, PITR,
+RPO, or RTO. Those remain explicit later gates.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Captured provider-version observation persistence
+
+The managed-data PostgreSQL owner now provides the durable handoff between an
+exact S3 write response and a future recovery capture. Trusted profile
+configuration is inserted once by profile identity; each profile/object key then
+accepts exactly one provider `VersionID`, SHA-256 digest, size, and canonical UTC
+capture timestamp. The runtime capability may only select and insert these rows.
+Update and delete paths are denied and owner-side triggers reject mutation;
+maintenance, read-only, and backup capabilities can inspect but cannot insert or
+rewrite observations.
+
+The transaction starts only after S3 has completed and the storage adapter has
+verified the returned exact version and bytes. It atomically inserts or compares
+the profile and observation. Identical retries return the immutable stored row;
+any profile, version, digest, size, key, or capture-time conflict fails without a
+partial profile/observation pair. A reconnect reloads all fields and reruns the
+storage contract validator, rather than trusting a cached verification flag.
+
+There is deliberately no distributed transaction with S3. A provider write may
+exist when PostgreSQL persistence fails, but that object is not a durable recovery
+observation until this transaction commits. Retry must carry the exact observation
+already returned by the write; latest-object discovery remains forbidden. Capture
+generation and signing fences belong to the later authority/Manifest v2 phase and
+are not fabricated at this write-fact boundary.
+
+Durable observation storage does not itself create signed Manifest v2 evidence.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
 
 ## Proposed managed observation manifest contract
 

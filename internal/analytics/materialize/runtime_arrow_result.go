@@ -28,6 +28,8 @@ type plannedArrowQuery struct {
 	countOnly               bool
 	totalFromData           bool
 	dependency              resultidentity.Dependency
+	semanticAccess          *resultidentity.SemanticAccessIdentity
+	consumer                *semanticquery.SemanticAccessConsumer
 	resultEquivalenceDigest string
 	reusable                bool
 }
@@ -54,13 +56,21 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		return dataquery.Result{}, snapshotErr
 	}
 	cacheStarted := cacheObservationStarted(ctx, time.Now())
-	// Protected semantic results cannot enter the shared immutable-result path
-	// until lifecycle-bound cache evidence is available (FAI-645). They still
-	// execute through the request consumer and are validated immediately before
-	// every physical capture.
-	cacheable := dashboardQueryResultCacheable(request) && !state.protected
+	// Protected semantic results may use the shared immutable-result path only
+	// after the request consumer supplies complete cache identity. The identity
+	// and admitted PlanIR are revalidated at every cache boundary below.
+	cacheable := dashboardQueryResultCacheable(request)
+	// Filter-option results are shared suggestion values. They remain outside
+	// protected reuse until that path carries the same lifecycle evidence as
+	// buffered row and aggregate results. Public suggestion caching keeps its
+	// existing behavior.
+	if state.protected && request.Operation == dataquery.OperationDashboardFilterOptions {
+		cacheable = false
+	}
 	var planned plannedArrowQuery
 	var planErr error
+	var identityErr error
+	var cacheGuard func(context.Context) error
 	admissionReason := dataquery.CacheAdmissionReasonQueryNotCacheable
 	if !cacheable {
 		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
@@ -70,9 +80,10 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		var resultIdentity semanticquery.ResultIdentity
 		var resultIdentityErr error
 		if planErr == nil {
+			planned.semanticAccess, identityErr = r.semanticCacheIdentity(ctx, request, planned.consumer)
 			resultIdentity, resultIdentityErr = planned.plan.ResultIdentity()
 			if resultIdentityErr == nil {
-				planned.dependency, planned.reusable = r.dependencyForProjection(resultIdentity.Dependencies)
+				planned.dependency, planned.reusable = r.dependencyForProtectedProjection(resultIdentity.Dependencies, planned.semanticAccess)
 				planned.resultEquivalenceDigest = resultIdentity.EquivalenceDigest
 			}
 		}
@@ -85,6 +96,12 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 			// cannot be resolved to safe materialized tables, carry no positive
 			// cache-admission evidence.
 			admissionReason = dataquery.CacheAdmissionReasonNonDeterministic
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
+		case identityErr != nil:
+			// A protected consumer without complete lifecycle/authority evidence
+			// remains executable through its admitted plan, but cannot qualify a
+			// shared result. Subsequent physical capture still revalidates access.
+			admissionReason = dataquery.CacheAdmissionReasonDependencyUnavailable
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
 		case !planned.reusable:
 			admissionReason = dataquery.CacheAdmissionReasonDependencyUnavailable
@@ -175,7 +192,8 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
 	} else if cacheable && admissionReason == dataquery.CacheAdmissionReasonEligible {
 		queryDigest := materializeResultEquivalenceDigest(planned.resultEquivalenceDigest, request)
-		result, err = r.queryCache.executeArrowWithDigest(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, queryDigest, execute)
+		cacheGuard = r.semanticCacheGuard(request, planned)
+		result, err = r.queryCache.executeArrowWithDigest(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, queryDigest, execute, cacheGuard)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute(ctx)
@@ -207,12 +225,24 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		observeQueryCacheOutcome(ctx, result, err)
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
 	}
+	if err == nil && cacheGuard != nil {
+		if guardErr := cacheGuard(ctx); guardErr != nil {
+			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
+			return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionFailed, Error: guardErr.Error()}, guardErr
+		}
+	}
 	if _, ok := dataquery.ResultLimitReasonOf(err); ok {
 		return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionFailed, Error: err.Error()}, err
 	}
 	if transform != nil {
 		if transformErr := transform(&result, err); transformErr != nil {
 			return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionRejected, Error: transformErr.Error()}, transformErr
+		}
+		if err == nil && cacheGuard != nil {
+			if guardErr := cacheGuard(ctx); guardErr != nil {
+				observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
+				return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionFailed, Error: guardErr.Error()}, guardErr
+			}
 		}
 	}
 	return result, err
@@ -266,6 +296,7 @@ func (r *Runtime) planOwnedArrowQueryContext(ctx context.Context, request dataqu
 		return plannedArrowQuery{}, plannerErr
 	}
 	var planned plannedArrowQuery
+	planned.consumer = consumer
 	var err error
 	switch request.Kind {
 	case dataquery.KindSemanticAggregate:

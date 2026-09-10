@@ -28,7 +28,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_saved_explorations.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_saved_explorations.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -52,8 +52,35 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 	}
 }
 
+func TestManagedProviderVersionObservationMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "008_managed_provider_version_observation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"managed_data.provider_observation_profile",
+		"managed_data.provider_version_observation",
+		"PRIMARY KEY (profile_id, object_key)",
+		"provider-version observations are immutable",
+		"GRANT SELECT, INSERT",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("provider observation migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("provider observation migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("provider observation Down must refuse instead of deleting evidence")
+	}
+}
+
 func TestSavedExplorationMigrationMirrorsNativeSchemaAndRoleFence(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "008_saved_explorations.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "009_saved_explorations.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

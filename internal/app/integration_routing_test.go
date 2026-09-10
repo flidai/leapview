@@ -28,13 +28,14 @@ func TestCommandPatchesAreScopedToClientAndPage(t *testing.T) {
 func TestUpdatesQueryParamsTakePrecedenceOverRuntimeSignalIDs(t *testing.T) {
 	h := newHarness(t)
 
-	patches := h.getUpdatesSignals(t, "executive-sales", "overview", map[string]any{
+	// This full-runtime stream needs the longer budget when merge-queue contention delays patch publication.
+	patches := h.getUpdatesSignalsWithQueryTimeout(t, "executive-sales", "overview", map[string]any{
 		"runtime": map[string]any{
 			"clientId":    "route-precedence",
 			"dashboardId": "executive-sales",
 			"pageId":      "missing",
 		},
-	})
+	}, nil, time.Second)
 
 	requireVisual(t, patches, "orders")
 	requireTable(t, patches, "order_rows")

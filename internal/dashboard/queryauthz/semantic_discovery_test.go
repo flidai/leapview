@@ -69,6 +69,7 @@ func semanticDiscoveryFixture(t *testing.T) (Metrics, *semanticmodel.Model, *acc
 			return canonicalSnapshot(t, nil, nil), nil
 		},
 		PrincipalFromContext: func(context.Context) (Principal, bool) { return Principal{ID: "alice"}, true },
+		AuditRecorder:        &canonicalAuditRecorder{},
 	})
 	return metrics, model, resolution
 }

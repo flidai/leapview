@@ -21,6 +21,17 @@ type Blob struct {
 	SHA256 string
 	Size   int64
 	URI    string
+	// ProviderVersion is present only when a provider write returned an exact,
+	// immutable version and the store was configured with a trusted observation
+	// profile. It is never inferred from a later HEAD or latest-object lookup.
+	ProviderVersion *ProviderVersionObservation
+}
+
+// ProviderVersionObservationRecorder is the narrow durable handoff used after
+// an exact provider write has been verified. It does not create a recovery
+// manifest or establish capture authority.
+type ProviderVersionObservationRecorder interface {
+	RecordProviderVersionObservation(context.Context, ProviderVersionObservation) (ProviderVersionObservation, error)
 }
 
 type MultipartUpload struct {

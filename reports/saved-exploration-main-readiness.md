@@ -2,6 +2,27 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 10 follow-up integration with main `85bdf484e`
+
+Main advanced after the `60dc6f238` checkpoint passed 28 hosted checks (four
+conditional skips). Those results apply only to that earlier head.
+
+This forward merge preserves main's released migration
+`008_managed_provider_version_observation.sql` and advances the unmerged saved
+exploration migration to `009_saved_explorations.sql`. The upgrade regression
+starts at released revision eight. No released migration is rewritten and no
+live database is migrated. Dashboard drawer coverage retains main's explicit
+signal-state waits and reusable Datastar module handle together with the
+feature branch's deferred-visual mounting readiness.
+
+Focused validation passed: the full dashboard DOM file (59 tests), 15 independent
+drawer-test repetitions, and the PostgreSQL migrations package with conformance
+required (including fresh install and the 8-to-9 upgrade). Independent review and
+fresh full local/hosted validation are required for this integration; earlier
+green results below are historical evidence. FAI-769 stays
+In Review. No force push, main merge, auto-merge, or queue enrollment is authorized
+by this conflict-resolution handoff.
+
 ## September 10 independent-review corrections
 
 Independent review of `d8153f1` identified six correctness defects despite that

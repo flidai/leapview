@@ -16,11 +16,11 @@ import (
 )
 
 // This is intentionally an upgrade test, not a second schema unit test. It
-// applies the released control-plane migrations through revision seven,
-// upgrades with 008, and then exercises the exact roles used by production
+// applies the released control-plane migrations through revision eight,
+// upgrades with 009, and then exercises the exact roles used by production
 // pools. The checks around the upgrade ensure the dashboard builder's released
-// lock/evidence guards and contract-publication guards remain present while
-// saved-exploration guards are added.
+// lock/evidence, contract-publication, and provider-observation guards remain
+// present while saved-exploration guards are added.
 func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
@@ -57,25 +57,27 @@ func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	}
 	ctx, cancel := contextWithTimeout(t)
 	defer cancel()
-	if _, err := provider.UpTo(ctx, 7); err != nil {
-		t.Fatalf("apply migrations through released revision seven: %v", err)
+	if _, err := provider.UpTo(ctx, 8); err != nil {
+		t.Fatalf("apply migrations through released revision eight: %v", err)
 	}
 	if current, target, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 7 || target != platformmigrations.CurrentRevision {
-		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 7/%d", current, target, platformmigrations.CurrentRevision)
+	} else if current != 8 || target != platformmigrations.CurrentRevision {
+		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 8/%d", current, target, platformmigrations.CurrentRevision)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "released revision seven")
-	assertResourceUIDRegistry(t, ctx, admin, "released revision seven")
-	assertRecoverySuccessorV3(t, ctx, admin, "released revision seven")
-	assertContractPublicationGuards(t, ctx, admin, "released revision seven")
+	assertDashboardBuilderGuards(t, ctx, admin, "released revision eight")
+	assertResourceUIDRegistry(t, ctx, admin, "released revision eight")
+	assertRecoverySuccessorV3(t, ctx, admin, "released revision eight")
+	assertContractPublicationGuards(t, ctx, admin, "released revision eight")
+	assertManagedProviderObservationGuards(t, ctx, admin, "released revision eight")
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
-		t.Fatalf("upgrade to saved exploration revision eight: %v", err)
+		t.Fatalf("upgrade to saved exploration revision nine: %v", err)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision eight")
-	assertResourceUIDRegistry(t, ctx, admin, "saved exploration revision eight")
-	assertRecoverySuccessorV3(t, ctx, admin, "saved exploration revision eight")
-	assertContractPublicationGuards(t, ctx, admin, "saved exploration revision eight")
+	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision nine")
+	assertResourceUIDRegistry(t, ctx, admin, "saved exploration revision nine")
+	assertRecoverySuccessorV3(t, ctx, admin, "saved exploration revision nine")
+	assertContractPublicationGuards(t, ctx, admin, "saved exploration revision nine")
+	assertManagedProviderObservationGuards(t, ctx, admin, "saved exploration revision nine")
 	assertSavedExplorationGuards(t, ctx, admin)
 
 	// VerifyGoose is the startup read-only gate. It must succeed through the
@@ -248,6 +250,41 @@ func assertSavedExplorationGuards(t *testing.T, ctx context.Context, db *pgxpool
 	}
 	if !operationSnapshot || !lifecycle || !currentRevision || !revisionInsert {
 		t.Fatalf("saved exploration guards = operation/lifecycle/current-revision/revision-insert %t/%t/%t/%t", operationSnapshot, lifecycle, currentRevision, revisionInsert)
+	}
+}
+
+func assertManagedProviderObservationGuards(t *testing.T, ctx context.Context, db *pgxpool.Pool, stage string) {
+	t.Helper()
+	var profile, observation, mutationFunction, profileTrigger, observationTrigger bool
+	if err := db.QueryRow(ctx, `
+		SELECT to_regclass('managed_data.provider_observation_profile') IS NOT NULL,
+		       to_regclass('managed_data.provider_version_observation') IS NOT NULL,
+		       to_regprocedure('managed_data.reject_provider_observation_mutation()') IS NOT NULL,
+		       EXISTS (
+		           SELECT 1
+		             FROM pg_trigger AS trigger
+		             JOIN pg_class AS table_ref ON table_ref.oid = trigger.tgrelid
+		             JOIN pg_namespace AS namespace_ref ON namespace_ref.oid = table_ref.relnamespace
+		            WHERE namespace_ref.nspname = 'managed_data'
+		              AND table_ref.relname = 'provider_observation_profile'
+		              AND trigger.tgname = 'provider_observation_profile_immutable'
+		              AND NOT trigger.tgisinternal
+		       ),
+		       EXISTS (
+		           SELECT 1
+		             FROM pg_trigger AS trigger
+		             JOIN pg_class AS table_ref ON table_ref.oid = trigger.tgrelid
+		             JOIN pg_namespace AS namespace_ref ON namespace_ref.oid = table_ref.relnamespace
+		            WHERE namespace_ref.nspname = 'managed_data'
+		              AND table_ref.relname = 'provider_version_observation'
+		              AND trigger.tgname = 'provider_version_observation_immutable'
+		              AND NOT trigger.tgisinternal
+		       )`).
+		Scan(&profile, &observation, &mutationFunction, &profileTrigger, &observationTrigger); err != nil {
+		t.Fatalf("%s provider observation guard query: %v", stage, err)
+	}
+	if !profile || !observation || !mutationFunction || !profileTrigger || !observationTrigger {
+		t.Fatalf("%s provider observation guards = profile/observation/function/profile-trigger/observation-trigger %t/%t/%t/%t/%t", stage, profile, observation, mutationFunction, profileTrigger, observationTrigger)
 	}
 }
 
