@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { blockingAxeViolations, formatAxeViolations, type AxeViolation } from './axe_accessibility'
+import { isDashboardUpdateURL } from './dashboard_visualization_readiness'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 test('UI framework QA gives the managed dev task its full readiness budget', async () => {
@@ -127,8 +128,22 @@ test('browser QA uses canonical project resource IDs', async () => {
 
   expect(source).toContain('/dashboards/dashboard:visual-showcase')
   expect(source).toContain("visualID === 'revenue'")
+  expect(source).toContain("await waitForUpdatesRequest('ECharts first navigation', updates)")
+  expect(source).toContain("await waitForSuccessfulUpdatesResponse('ECharts first navigation', updateResponseStatuses)")
   expect(source).not.toContain("'/dashboards/visual-showcase")
   expect(source).not.toContain("visualID === 'revenue_by_month'")
+})
+
+test('ECharts first-navigation QA accepts only its canonical dashboard update stream', () => {
+  const dashboard = 'dashboard:visual-showcase', page = 'overview'
+  const canonical = 'http://127.0.0.1:8196/updates?route=dashboard&dashboard=dashboard%3Avisual-showcase&page=overview&datastar=%7B%7D'
+
+  expect(isDashboardUpdateURL(canonical, dashboard, page)).toBe(true)
+  expect(isDashboardUpdateURL(canonical.replace('route=dashboard', 'route=catalog'), dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL(canonical.replace('page=overview', 'page=tables'), dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL(`${canonical}&dashboard=${encodeURIComponent(dashboard)}`, dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL('/updates?route=dashboard', dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL('not a URL', dashboard, page)).toBe(false)
 })
 
 test('visual regression QA covers stable representative states, themes, and viewports', async () => {
