@@ -5,6 +5,7 @@ import { parse } from 'yaml'
 type Task = {
   cmds?: unknown[]
   deps?: unknown[]
+  env?: Record<string, unknown>
 }
 
 const taskfile = parse(readFileSync('Taskfile.yml', 'utf8')) as {
@@ -25,13 +26,23 @@ const typeSpecGenerationTasks = [
 ]
 
 test('Task-managed TypeSpec generation uses the prepared checkout-local emitter', () => {
-  expect(taskfile.env.APIGEN_TYPESPEC_PACKAGE_DIR).toBe('{{.ROOT_DIR}}/pkg/apigen/typespec')
+  expect(taskfile.env.APIGEN_TYPESPEC_PACKAGE_DIR).toBeUndefined()
 
   for (const taskName of typeSpecGenerationTasks) {
     const task = taskfile.tasks[taskName]
     expect(task, `${taskName} must remain declared`).toBeDefined()
+    expect(task.env?.APIGEN_TYPESPEC_PACKAGE_DIR, `${taskName} must use the checkout-local emitter`)
+      .toBe('{{.ROOT_DIR}}/pkg/apigen/typespec')
     expect(task.deps, `${taskName} must wait for the emitter build`).toContain('apigen:build')
     expect(task.cmds?.some((command) => typeof command === 'string' && command.includes('go -C pkg/apigen run ./cmd/apigen')))
       .toBe(true)
+  }
+})
+
+test('lean APIGen validation keeps its bundled-cache fallback', () => {
+  for (const taskName of ['apigen:test', 'ci:lane:go:apigen']) {
+    expect(taskfile.tasks[taskName], `${taskName} must remain declared`).toBeDefined()
+    expect(taskfile.tasks[taskName].env?.APIGEN_TYPESPEC_PACKAGE_DIR)
+      .toBeUndefined()
   }
 })

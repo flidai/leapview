@@ -2,9 +2,6 @@ version: '3'
 
 env:
   GOFLAGS: -tags=duckdb_arrow
-  # Generation tasks share one built, checkout-local emitter. Keeping this
-  # path out of the user cache makes parallel TypeSpec targets read-only.
-  APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
 
 tasks:
   dev:
@@ -935,6 +932,8 @@ tasks:
 
   api:generate:
     desc: Generate headless API contract artifacts and APIGen Go surfaces
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - apigen:build
       - dashboard-contracts:generate
@@ -996,6 +995,8 @@ tasks:
 
   agent-contracts:generate:
     desc: Generate compact agent-tool DTOs and JSON Schemas
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - apigen:build
     method: checksum
@@ -1020,6 +1021,8 @@ tasks:
 
   data-resource-contracts:generate:
     desc: Generate strict Connection, Source, Model, and SemanticModel DTOs and connector registry
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - apigen:build
     method: checksum
@@ -1048,6 +1051,8 @@ tasks:
 
   desktop-discovery:generate:
     desc: Generate the public desktop discovery and failure contracts
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - apigen:build
     method: checksum
@@ -1099,11 +1104,13 @@ tasks:
       - go run ./cmd/leapview schema export --format json-schema --out schemas/json
       - go run ./internal/app/tools/schemadocgen
 
-  # TypeSpec generation uses the checkout-local emitter configured above.
-  # Keep the build dependency explicit because Task runs independent deps in
-  # parallel and every generator must wait for the emitter and toolchain.
+  # TypeSpec generation uses a checkout-local emitter so concurrent targets do
+  # not mutate the shared user cache. Keep the build dependency explicit
+  # because Task runs independent deps in parallel.
   ui-signals:generate:
     desc: Generate UI signal Go and TypeScript contracts from TypeSpec
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - api:generate
       - exploration-contracts:generate
@@ -1133,6 +1140,8 @@ tasks:
 
   visualization-ir:generate:
     desc: Generate renderer-independent visualization IR contracts from TypeSpec
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - node:deps
       - apigen:build
@@ -1159,6 +1168,8 @@ tasks:
 
   dashboard-contracts:generate:
     desc: Generate the canonical Dashboard authoring document contract
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - node:deps
       - apigen:build
@@ -1182,6 +1193,8 @@ tasks:
 
   exploration-contracts:generate:
     desc: Generate the canonical renderer-neutral ExplorationSpec contract
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - node:deps
       - apigen:build
@@ -1204,6 +1217,8 @@ tasks:
 
   pipeline-contracts:generate:
     desc: Generate the canonical asset-selected Pipeline authoring contract
+    env:
+      APIGEN_TYPESPEC_PACKAGE_DIR: '{{.ROOT_DIR}}/pkg/apigen/typespec'
     deps:
       - apigen:build
     method: checksum

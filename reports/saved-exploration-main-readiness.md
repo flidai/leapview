@@ -85,6 +85,18 @@ hosted CI and Security gates must still be checked on the pushed head.
 Final architecture, security workflow-contract, and dependency-evidence unit
 tests also passed (`/tmp/fai769-final-contracts.log`). No gate was bypassed.
 
+Hosted validation of `92f201adf` passed the Security gate, including dependency
+policy, but exposed a lean-APIGen gap: a global emitter override reached the
+standalone example before the checkout emitter was built. The override is now
+scoped to the nine generation tasks only; standalone APIGen tests retain their
+bundled-toolchain fallback. Contract tests reject both global leakage and an
+override on either lean-test entry point. Fresh-cache Go example/compiler tests
+passed. The full lean lane then passed exit 0 with fresh cache
+`/tmp/fai769-apigen-cold.BevPI9` (`/tmp/fai769-lean-apigen-cold.log`), followed by
+`generated:check` (`/tmp/fai769-scoped-generator-validation.log`) and both
+generation contract tests (41 assertions). The failed hosted APIGen run remains
+historical evidence, not an accepted gate.
+
 ## September 10 current-main reconciliation
 
 Main advanced to `372039da7` after the September 9 exact-head verification,
