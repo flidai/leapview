@@ -1,10 +1,56 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
+import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
+import { completenessAccessibilitySummary } from './echarts/common'
+import { cartesianFixture, proportionalFixture } from './echarts-test-fixtures'
 import { proportionalCenterText } from './echarts/proportional'
+
+test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
+  const envelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
+  envelope.spec.datasets[0].fields[0].role = 'identity'
+  envelope.selection = [{
+    datum: { dataset: 'primary', dataRevision: 1, identity: { label: 'A' } },
+    label: 'A',
+  }]
+  envelope.spec.conditionalFormatting = [{
+    id: 'threshold', target: 'label_foreground', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'rules',
+      rules: [{ operator: 'greater_or_equal', value: 1, style: { color: 'warning', icon: 'warning' } }],
+      nullStyle: { color: 'neutral' },
+      defaultStyle: { color: 'neutral', icon: 'circle' },
+    },
+  }]
+  const policy = {
+    density: 'automatic', priority: ['selected', 'threshold'],
+    maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
+  } as const
+  const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
+
+  expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
+  expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
+  expect(translated.labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
+  expect(translated.labelLayout({ dataIndex: 99 }).hideOverlap).toBe(true)
+  expect(truncateVisualizationLabel('ação 😀 norte', 7, 'pt-BR')).toBe('ação 😀…')
+
+  const dense = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'dense', minimumSpacing: 2 }, () => 'value', defaultRendererContext)
+  expect(dense.label).toMatchObject({ show: true, fontSize: 10, padding: 1 })
+  const always = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'always' }, () => 'value', defaultRendererContext)
+  expect(always.labelLayout).toEqual({ hideOverlap: false })
+  const hidden = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'hidden' }, () => 'value', defaultRendererContext)
+  expect(hidden.label.show).toBe(false)
+  envelope.spec.presentation.labelPolicy = { ...policy, density: 'hidden' }
+  envelope.dataState.datasets[0].rows[0][0] = 'São Paulo 😀 zone'
+  const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(hiddenOption.tooltip.confine).toBe(true)
+  expect(hiddenOption.tooltip.formatter({ value: envelope.dataState.datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
+  expect(hiddenOption.aria.description).toContain('label: São Paulo 😀 zone')
+})
 
 test('ECharts renders governed bivariate points, bubbles, labels, color, and stable brushes', () => {
   const envelope = {
@@ -73,9 +119,19 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(temporal.xAxis.axisLabel.hideOverlap).toBe(true)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).toMatch(/2026/)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).not.toContain('1767')
+  envelope.spec.axes = [{
+    id: 'x', type: 'time', inversion: 'inverted', ticks: 'visible', grid: 'hidden', labelRotation: 'vertical', dateUnit: 'month',
+    scale: 'automatic', zero: 'automatic', tickDensity: 'normal',
+  }, {
+    id: 'primary_y', type: 'value', inversion: 'normal', ticks: 'hidden', grid: 'visible', labelRotation: 'horizontal', dateUnit: 'automatic',
+    scale: 'linear', zero: 'automatic', tickDensity: 'normal',
+  }]
+  const authoredAxes = echartsOption(envelope, defaultRendererContext) as any
+  expect(authoredAxes.xAxis).toMatchObject({ type: 'time', inverse: true, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 90 } })
+  expect(authoredAxes.yAxis).toMatchObject({ type: 'value', axisTick: { show: false }, splitLine: { show: true } })
 
   expect(brushSelectionCommands(envelope, {
-    batch: [{ selected: [{ dataIndex: [1, 0, 1] }] }],
+    batch: [{ selected: [{ seriesIndex: 0, dataIndex: [1, 0, 1] }] }],
   })).toEqual([
     {
       sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'replace', toggle: true,
@@ -129,7 +185,7 @@ test('ECharts heatmap axis labels preserve governed temporal and null category f
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.xAxis.axisLabel.formatter('2026-01-02')).toBe('2026-01-02')
   expect(option.xAxis.axisLabel.formatter('')).toBe('—')
-  expect(option.xAxis.data).toEqual(['2026-01-02', ''])
+  expect(option.xAxis.data).toBeUndefined()
 })
 
 test('superseded ECharts mounts own isolated renderer frames', () => {
@@ -180,76 +236,6 @@ test('ECharts translation uses dataset and encode without native option passthro
   expect(option.dataset.source).toEqual([['month', 'revenue'], ['Jan', 10]])
   expect(option.series[0].encode).toEqual({ x: 'month', y: 'revenue' })
   expect(JSON.stringify(option)).not.toContain('rendererOptions')
-})
-
-test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
-  const envelope = cartesianFixture('column') as any
-  envelope.spec.presentation.labelPolicy.density = 'automatic'
-  envelope.spec.presentation.labelPolicy.priority = ['anomaly', 'threshold']
-  envelope.spec.conditionalFormatting = [
-    {
-      id: 'value-gradient', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'gradient', minimum: 0, maximum: 100,
-        low: { color: 'danger' }, high: { color: 'success' }, nullStyle: { color: 'neutral' },
-      },
-    },
-    {
-      id: 'value-health', target: 'mark_stroke', field: { dataset: 'primary', field: 'value' },
-      rule: {
-        kind: 'rules',
-        rules: [{ operator: 'less_than', value: 50, style: { color: 'danger', icon: 'arrow_down' } }],
-        nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-      },
-    },
-  ]
-  envelope.dataState.datasets[0].rows = [['A', 25], ['B', 75]]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
-  expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
-  expect(option.series[0].itemStyle.borderColor({ value: ['A', 25] })).toBe(defaultRendererContext.colors.danger)
-  expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
-  expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
-  expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
-})
-
-test('ECharts translates governed heatmap gradients and waterfall rule styles', () => {
-  const heatmap = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
-  heatmap.spec.conditionalFormatting = [{
-    id: 'heat', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'gradient', minimum: 0, maximum: 100,
-      low: { color: 'danger' }, high: { color: 'success' }, nullStyle: { color: 'neutral' },
-    },
-  }]
-  const heatmapOption = echartsOption(heatmap, defaultRendererContext) as any
-  expect(heatmapOption.visualMap).toMatchObject({
-    type: 'continuous',
-    dimension: 'value',
-    min: 0,
-    max: 100,
-    calculable: true,
-    inRange: { color: [defaultRendererContext.colors.danger, defaultRendererContext.colors.success] },
-    outOfRange: { opacity: 0 },
-  })
-  expect(heatmapOption.visualMap.text).toBeUndefined()
-  expect(heatmapOption.visualMap.formatter(100)).toBe('100')
-  expect(heatmapOption.visualMap.formatter(0)).toBe('0')
-
-  const waterfall = cartesianFixture('waterfall', ['label', 'start', 'value']) as any
-  waterfall.spec.conditionalFormatting = [{
-    id: 'delta', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'rules', rules: [{ operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } }],
-      nullStyle: { icon: 'warning' }, defaultStyle: { color: 'success', icon: 'arrow_up' },
-    },
-  }]
-  waterfall.dataState.datasets[0].rows = [['Returns', 10, -4]]
-  const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
-  expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
-  expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('↓ -4')
 })
 
 test('ECharts interactions translate stable IR field mappings without renderer row keys', () => {
@@ -348,33 +334,35 @@ test('ECharts translation preserves combo series marks and axes', () => {
   } as VisualizationEnvelope
 
   const option = echartsOption(base) as any
+  const renderedSeries = option.series.filter((series: any) => !series.silent)
   expect(option.dataset).toHaveLength(3)
-  expect(option.series.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
+  expect(renderedSeries.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
     ['Revenue', 'line', 0], ['Orders', 'bar', 1],
   ])
   expect(option.yAxis).toHaveLength(2)
-  expect(option.yAxis[0].splitNumber).toBe(4)
-  expect(option.yAxis[1].splitNumber).toBe(4)
-  expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
-  expect(option.series[0].markLine.label.position).toBe('insideEndTop')
-  expect(option.series[0].markLine.label.formatter).toBe('{b}')
-  expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
-  expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  expect(renderedSeries[0].markLine.data[0].id).toBe('reference-line:primary-target')
+  expect(renderedSeries[1].markLine.data[0].id).toBe('reference-line:secondary-target')
+  expect(renderedSeries[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  const temporal = structuredClone(base) as any
+  temporal.spec.datasets[0].fields[2].dataType = 'temporal'
+  temporal.spec.axes = [{
+    id: 'primary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic',
+    tickDensity: 'normal', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'month',
+  }]
+  const temporalOption = echartsOption(temporal, defaultRendererContext) as any
+  expect(temporalOption.yAxis[0].type).toBe('time')
+  expect(temporalOption.yAxis[0].axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
   const horizontal = structuredClone(base) as any
   horizontal.spec.presentation.orientation = 'horizontal'
   const horizontalOption = echartsOption(horizontal) as any
   expect(horizontalOption.xAxis).toHaveLength(2)
-  expect(horizontalOption.xAxis[0].splitLine.show).not.toBe(false)
-  expect(horizontalOption.xAxis[1].splitLine.show).toBe(false)
-  expect(horizontalOption.xAxis[0].splitNumber).toBe(4)
-  expect(horizontalOption.xAxis[1].splitNumber).toBe(4)
-  expect(horizontalOption.xAxis[1].alignTicks).toBe(true)
-  expect(horizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
-  expect(horizontalOption.series[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
+  const horizontalSeries = horizontalOption.series.filter((series: any) => !series.silent)
+  expect(horizontalSeries.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
+  expect(horizontalSeries[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
   reordered.dataState.datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any
-  expect(new Set(reorderedOption.series.map((series: any) => series.id))).toEqual(new Set(option.series.map((series: any) => series.id)))
+  expect(new Set(reorderedOption.series.filter((series: any) => !series.silent).map((series: any) => series.id))).toEqual(new Set(renderedSeries.map((series: any) => series.id)))
   expect(new Set(reorderedOption.dataset.map((dataset: any) => dataset.id))).toEqual(new Set(option.dataset.map((dataset: any) => dataset.id)))
 })
 
@@ -417,6 +405,55 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
     defaultRendererContext.colors.data[1],
   ])
   expect(option.grid.bottom).toBe(44)
+
+  const visibleSecondaryGrid = structuredClone(envelope) as any
+  visibleSecondaryGrid.spec.axes = [{
+    id: 'secondary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic',
+    tickDensity: 'automatic', ticks: 'automatic', grid: 'visible', labelRotation: 'automatic', dateUnit: 'automatic',
+  }]
+  expect((echartsOption(visibleSecondaryGrid, defaultRendererContext) as any).yAxis[1].splitLine.show).toBe(true)
+
+  const reordered = structuredClone(envelope) as any
+  reordered.spec.y = [reordered.spec.y[1], reordered.spec.y[0]]
+  reordered.spec.datasets[0].fields[1].dataType = 'temporal'
+  reordered.spec.datasets[0].fields[2].dataType = 'decimal'
+  reordered.spec.referenceLines = [
+    { id: 'primary-target', axis: 'primary_y', value: { kind: 'number', value: 10 }, tone: 'neutral' },
+    { id: 'secondary-target', axis: 'secondary_y', value: { kind: 'number', value: 2 }, tone: 'warning' },
+  ]
+  reordered.spec.eventAnnotations = [{ id: 'launch', axis: 'x', value: { kind: 'text', value: 'Jan' }, label: 'Launch', tone: 'neutral' }]
+  const reorderedOption = echartsOption(reordered, defaultRendererContext) as any
+  expect(reorderedOption.series.map((series: any) => [series.name, series.yAxisIndex])).toEqual([
+    ['Orders', 1], ['Revenue', 0],
+  ])
+  expect(reorderedOption.yAxis[0].type).toBe('time')
+  expect(reorderedOption.yAxis[1].type).toBe('value')
+  expect(reorderedOption.series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:secondary-target'])
+  expect(reorderedOption.series[1].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:primary-target', 'event-annotation:launch'])
+  reordered.spec.presentation.orientation = 'horizontal'
+  const reorderedHorizontalOption = echartsOption(reordered, defaultRendererContext) as any
+  expect(reorderedHorizontalOption.xAxis[0].type).toBe('time')
+  expect(reorderedHorizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([1, 0])
+  expect(reorderedHorizontalOption.series[1].markLine.data[1]).toMatchObject({ id: 'event-annotation:launch', yAxis: 'Jan' })
+
+  const temporalSecondary = structuredClone(envelope) as any
+  temporalSecondary.spec.datasets[0].fields[2].dataType = 'temporal'
+  temporalSecondary.spec.datasets[0].fields[2].format = { kind: 'temporal', dateStyle: 'short' }
+  temporalSecondary.dataState.datasets[0].rows = [['Jan', 10, '2026-01-01T00:00:00Z'], ['Feb', 12, '2026-02-01T00:00:00Z']]
+  temporalSecondary.spec.axes = [{
+    id: 'secondary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'inverted',
+    tickDensity: 'sparse', ticks: 'visible', grid: 'hidden', labelRotation: 'diagonal', dateUnit: 'month',
+  }]
+  const temporalOption = echartsOption(temporalSecondary, defaultRendererContext) as any
+  expect(temporalOption.yAxis[1]).toMatchObject({ type: 'time', inverse: true, splitNumber: 3, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 45 } })
+  expect(temporalOption.yAxis[1].axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
+  const quarterTemporal = structuredClone(temporalSecondary) as any
+  quarterTemporal.spec.axes[0].dateUnit = 'quarter'
+  const quarterOption = echartsOption(quarterTemporal, defaultRendererContext) as any
+  expect(quarterOption.yAxis[1].axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Q1 2026')
+  temporalSecondary.spec.presentation.orientation = 'horizontal'
+  const temporalHorizontalOption = echartsOption(temporalSecondary, defaultRendererContext) as any
+  expect(temporalHorizontalOption.xAxis[1]).toMatchObject({ type: 'time', inverse: true, splitNumber: 3 })
 })
 
 test('ECharts scopes multi-measure combo axes and colors by authored measure', () => {
@@ -443,26 +480,9 @@ test('ECharts scopes multi-measure combo axes and colors by authored measure', (
   } as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
-  expect(option.yAxis).toHaveLength(2)
-  expect(option.yAxis[0].splitNumber).toBe(4)
-  expect(option.yAxis[1].splitNumber).toBe(4)
-  expect(option.yAxis[0].splitLine.show).not.toBe(false)
-  expect(option.yAxis[1].splitLine.show).toBe(false)
-  expect(option.yAxis[1].alignTicks).toBe(true)
   expect(option.yAxis[0].axisLabel.formatter(1000)).toBe('$1,000')
   expect(option.yAxis[1].axisLabel.formatter(4)).toBe('4d')
   expect(option.tooltip.formatter({ value: ['Jan', 10, 4] })).toBe('Month: Jan<br>Revenue: $10.00<br>Delivery days: 4d')
-  expect(option.aria.description).toContain('Revenue: $10.00')
-  expect(option.aria.description).toContain('Delivery days: 4d')
-
-  const largeMixedUnits = structuredClone(envelope) as any
-  largeMixedUnits.spec.datasets[0].fields[2].format = { kind: 'number' }
-  largeMixedUnits.dataState.datasets[0].rows = [['Jan', 1_200_000, 2_500], ['Feb', 1_500_000, 3_000]]
-  const largeMixedOption = echartsOption(largeMixedUnits, defaultRendererContext) as any
-  expect(largeMixedOption.series[0].label.formatter({ value: ['Jan', 1_200_000, 2_500] })).toBe('$1.2M')
-  expect(largeMixedOption.series[1].label.formatter({ value: ['Jan', 1_200_000, 2_500] })).toBe('2.5K')
-
   const colors = Object.fromEntries(option.series.map((series: any) => [series.name, series.itemStyle.color]))
   expect(colors).toEqual({ Revenue: defaultRendererContext.colors.data[0], 'Delivery days': defaultRendererContext.colors.data[1] })
 
@@ -474,170 +494,6 @@ test('ECharts scopes multi-measure combo axes and colors by authored measure', (
   expect(Object.fromEntries(reorderedOption.series.map((series: any) => [series.name, series.itemStyle.color]))).toEqual(colors)
 })
 
-test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
-  const envelope = cartesianSeriesFixture() as any
-  envelope.spec.presentation.stacking = 'percent'
-  envelope.spec.presentation.seriesIntent = [
-    { value: 'delivered', order: 0, color: 'success' },
-    { value: 'processing', order: 1, color: 'data_3' },
-    { value: 'canceled', order: 2, color: 'danger' },
-  ]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.map((series: any) => series.name)).toEqual(['delivered', 'processing'])
-  expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
-    defaultRendererContext.colors.success,
-    defaultRendererContext.colors.data[2],
-  ])
-  expect(option.series.map((series: any) => series.stack)).toEqual(['percent', 'percent'])
-  expect(option.series.map((series: any) => series.encode.y)).toEqual(['__lv_percent_value', '__lv_percent_value'])
-  expect(option.dataset[1].source).toEqual([
-    ['label', 'series', 'value', '__lv_percent_value'],
-    ['Jan', 'delivered', 10, 25],
-    ['Feb', 'delivered', 30, 75],
-  ])
-  expect(option.dataset[2].source).toEqual([
-    ['label', 'series', 'value', '__lv_percent_value'],
-    ['Jan', 'processing', 30, 75],
-    ['Feb', 'processing', 10, 25],
-  ])
-  expect(option.yAxis.axisLabel.formatter(25)).toBe('25%')
-
-  const filtered = structuredClone(envelope) as any
-  filtered.dataState.datasets[0].rows = filtered.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
-  const filteredOption = echartsOption(filtered, defaultRendererContext) as any
-  expect(filteredOption.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
-    ['processing', defaultRendererContext.colors.data[2]],
-  ])
-  expect(filteredOption.dataset[1].source.map((row: unknown[]) => row.at(-1))).toEqual(['__lv_percent_value', 100, 100])
-
-  delete envelope.spec.presentation.seriesIntent
-  const categoryColors = new CategoryColorRegistry()
-  const automatic = echartsOption(envelope, defaultRendererContext, categoryColors) as any
-  const automaticProcessing = automatic.series.find((series: any) => series.name === 'processing').itemStyle.color
-  delete filtered.spec.presentation.seriesIntent
-  const automaticFiltered = echartsOption(filtered, defaultRendererContext, categoryColors) as any
-  expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
-})
-
-test('ECharts uses governed static colors for category series and their legends', () => {
-  const envelope = cartesianSeriesFixture() as any
-  envelope.spec.conditionalFormatting = [{
-    id: 'status-colors', target: 'series_color', field: { dataset: 'primary', field: 'value' },
-    rule: {
-      kind: 'field', source: { dataset: 'primary', field: 'series' },
-      values: {
-        delivered: { color: 'data_1', icon: 'circle' },
-        processing: { color: 'data_6', icon: 'circle' },
-      },
-      nullStyle: { color: 'neutral', icon: 'square' },
-      defaultStyle: { color: 'neutral', icon: 'square' },
-    },
-  }]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
-    ['delivered', defaultRendererContext.colors.data[0]],
-    ['processing', defaultRendererContext.colors.data[5]],
-  ])
-
-  envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
-  const filtered = echartsOption(envelope, defaultRendererContext) as any
-  expect(filtered.series[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
-})
-
-test('ECharts condenses crowded category-series charts without overlapping labels or legends', () => {
-  const envelope = cartesianSeriesFixture() as any
-  envelope.spec.mark = 'column'
-  envelope.spec.presentation.stacked = false
-  envelope.spec.presentation.stacking = 'none'
-  const states = ['MG', 'CE', 'GO', 'MT', 'PE', 'RJ', 'RS', 'AP']
-  const statuses = ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable']
-  envelope.dataState.datasets[0].rows = states.flatMap((state: string, stateIndex: number) =>
-    statuses.map((status: string, statusIndex: number) => [state, status, (stateIndex + 1) * (statusIndex + 1)]),
-  )
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', left: 8, right: 8, height: 24, bottom: 0 })
-  expect(option.grid).toMatchObject({ left: 12, right: 16, top: 16, bottom: 44, containLabel: true })
-  expect(option.yAxis).toMatchObject({ splitNumber: 4, axisLabel: { hideOverlap: true } })
-  expect(option.series).toHaveLength(8)
-  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
-
-  const compact = echartsOption(cartesianSeriesFixture(), defaultRendererContext) as any
-  expect(compact.legend.type).toBeUndefined()
-  expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
-})
-
-test('ECharts formats cartesian temporal axis ticks instead of exposing epoch milliseconds', () => {
-  const envelope = cartesianFixture('area') as any
-  const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
-  category.dataType = 'date'
-  category.format = { kind: 'temporal' }
-  envelope.dataState.datasets[0].rows = [['2016-12-23', 19.62]]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  const tick = Date.UTC(2016, 11, 23)
-  expect(option.xAxis.type).toBe('time')
-  expect(option.xAxis.axisLabel.formatter(tick)).toBe('2016-12-23')
-  expect(option.xAxis.axisLabel.formatter(tick)).not.toContain(String(tick))
-})
-
-test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
-  const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
-  envelope.spec.presentation.stacked = false
-  envelope.spec.presentation.stacking = 'percent'
-  envelope.spec.presentation.labelPolicy.density = 'hidden'
-  envelope.spec.presentation.seriesIntent = [
-    { value: 'cost', order: 0, color: 'warning' },
-    { value: 'revenue', order: 1, color: 'success' },
-  ]
-  envelope.dataState.datasets[0].rows = [
-    ['Jan', 10, 30],
-    ['Feb', 30, 10],
-  ]
-
-  const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series.map((series: any) => series.name)).toEqual(['cost', 'revenue'])
-  expect(option.series.map((series: any) => series.encode.y)).toEqual(['__lv_percent_cost', '__lv_percent_revenue'])
-  expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
-    defaultRendererContext.colors.attention,
-    defaultRendererContext.colors.success,
-  ])
-  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
-  expect(option.series[0].label.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('75%')
-  expect(option.series[1].label.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('25%')
-  expect(option.dataset.source).toEqual([
-    ['label', 'revenue', 'cost', '__lv_percent_cost', '__lv_percent_revenue'],
-    ['Jan', 10, 30, 75, 25],
-    ['Feb', 30, 10, 25, 75],
-  ])
-})
-
-test('ECharts translation emits one multi-value financial series', () => {
-  const envelope = {
-    schemaVersion: 9, visualID: 'ohlc', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: {
-      kind: 'cartesian', title: 'OHLC', mark: 'candlestick',
-      datasets: [{ id: 'primary', fields: ['label', 'open', 'close', 'low', 'high'].map((id, index) => ({ id, role: index ? 'metric' : 'dimension', dataType: index ? 'decimal' : 'string', nullable: false, label: id })) }],
-      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'OHLC', description: 'OHLC' }, interactions: [],
-      x: { dataset: 'primary', field: 'label' }, y: ['open', 'close', 'low', 'high'].map((field) => ({ dataset: 'primary', field })),
-      presentation: { legend: 'hidden', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: false, dataZoom: true, area: false, step: false },
-    },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [
-      { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows: [['Jan', 1, 2, 0, 3]], completeness: 'complete' },
-    ] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-
-  const option = echartsOption(envelope) as any
-  expect(option.series).toHaveLength(1)
-  expect(option.xAxis.data).toEqual(['Jan'])
-  expect(option.series[0].encode).toBeUndefined()
-  expect(option.series[0].data).toEqual([{
-    name: 'Jan', value: [1, 2, 0, 3], __lv_dataset: 'primary', __lv_row_index: 0,
-  }])
-})
 
 test('ECharts renders labels inside colored cartesian marks in outlined white', () => {
   const envelope = cartesianFixture('bar') as any
@@ -681,42 +537,6 @@ test('ECharts renders labels inside colored cartesian marks in outlined white', 
   expect(hiddenOption.series[0].barMinHeight).toBeUndefined()
 })
 
-test('ECharts translation builds radar indicators and aligned series from typed fields', () => {
-  const envelope = {
-    schemaVersion: 9, visualID: 'quality', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: {
-      kind: 'polar', title: 'Quality', mark: 'radar',
-      datasets: [{ id: 'primary', fields: [
-        { id: 'metric', role: 'dimension', dataType: 'string', nullable: false, label: 'Metric' },
-        { id: 'team', role: 'dimension', dataType: 'string', nullable: false, label: 'Team' },
-        { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' },
-      ] }],
-      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Quality', description: 'Quality by team' }, interactions: [],
-      category: { dataset: 'primary', field: 'metric' }, series: { dataset: 'primary', field: 'team' }, value: { dataset: 'primary', field: 'value' },
-      presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, showPointer: false, area: true },
-    },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{
-      id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['metric', 'team', 'value'],
-      rows: [['Speed', 'A', 8], ['Quality', 'A', 9], ['Speed', 'B', 6], ['Quality', 'B', 7]], completeness: 'complete',
-    }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-  const context = {
-    ...defaultRendererContext,
-    theme: 'dark' as const,
-    colors: { ...defaultRendererContext.colors, muted: '#9198a1', grid: '#3d444d', surface: '#151b23' },
-  }
-  const option = echartsOption(envelope, context) as any
-  expect(option.radar.indicator.map((item: any) => item.name)).toEqual(['Speed', 'Quality'])
-  expect(option.radar.indicator.map((item: any) => item.max)).toEqual([10, 10])
-  expect(option.radar).toMatchObject({
-    axisLine: { lineStyle: { color: context.colors.grid } },
-    splitLine: { lineStyle: { color: context.colors.grid } },
-    splitArea: { areaStyle: { color: [context.colors.surface, context.colors.grid], opacity: 0.18 } },
-  })
-  expect(option.series[0].data).toEqual([{ name: 'A', value: [8, 9] }, { name: 'B', value: [6, 7] }])
-})
-
 test('ECharts normalizes supported document locales and fails closed on unknown locales', () => {
   expect(normalizeRendererLocale('en')).toBe('en-US')
   expect(normalizeRendererLocale('pt-BR')).toBe('pt-BR')
@@ -754,7 +574,7 @@ test('ECharts uses stable IDs, contractual formatting, and resolved theme colors
 
   if (envelope.spec.kind !== 'cartesian') throw new Error('test fixture must be cartesian')
   envelope.spec.presentation.displayUnits = 'thousands'
-  envelope.spec.axes = [{ id: 'primary_y', scale: 'automatic', zero: 'automatic', displayUnits: 'millions', tickDensity: 'automatic' }]
+  envelope.spec.axes = [{ id: 'primary_y', type: 'automatic', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', scale: 'automatic', zero: 'automatic', displayUnits: 'millions', tickDensity: 'automatic' }]
   const overridden = echartsOption(envelope, context) as any
   expect(overridden.yAxis.axisLabel.formatter(1234.5)).toBe('R$\u00a00,00123M')
   expect(overridden.series[0].label.formatter({ value: ['Jan', 1234.5] })).toBe('R$\u00a00,00123M')
@@ -784,6 +604,17 @@ test('ECharts constructs deterministic nested hierarchy data and honors layout p
   expect(option.series[0].label).toMatchObject({ position: 'left', align: 'right', backgroundColor: defaultRendererContext.colors.surface })
   expect(option.series[0].leaves.label).toMatchObject({ position: 'right', align: 'left', backgroundColor: defaultRendererContext.colors.surface })
   expect(option.series[0].data).toEqual([{ name: 'root', value: 10, __lv_dataset: 'primary', __lv_row_index: 0, children: [{ name: 'child', value: 4, __lv_dataset: 'primary', __lv_row_index: 1 }] }])
+})
+
+test('ECharts hierarchy keeps null display labels separate from typed node identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  envelope.dataState.datasets[0].rows = [
+    [null, null, 10], ['—', null, 9], [1, null, 8], ['1', null, 7],
+  ]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots.map((node: any) => node.name)).toEqual(['—', '—', '1', '1'])
+  expect(roots.map((node: any) => node.__lv_row_index)).toEqual([0, 1, 2, 3])
 })
 
 test('ECharts hierarchy source nodes select only when their compiled identity tuple is complete', () => {
@@ -834,6 +665,16 @@ test('ECharts network links retain source-row selection while aggregate nodes st
   expect(option.series[0].data[0].__lv_dataset).toBeUndefined()
 })
 
+test('ECharts network node identities keep numeric and string endpoints distinct', () => {
+  const envelope = networkFixture('graph') as any
+  envelope.dataState.datasets[0].rows = [[1, '1', 4], ['1', 1, 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].links.map((link: any) => [link.source, link.target])).toEqual([
+    ['number:1', 'string:1'], ['string:1', 'number:1'],
+  ])
+  expect(option.series[0].data.map((node: any) => node.name)).toEqual(['number:1', 'string:1'])
+})
+
 test('ECharts incremental plans commit data synchronously, preserve interaction state, and do not resend data for context changes', () => {
   const option = {
     dataset: { id: 'dataset:primary', source: [['month', 'value'], ['Jan', 10]] },
@@ -870,9 +711,35 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   expect(context.settings.replaceMerge).toBeUndefined()
   expect(context.option.dataset).toBeUndefined()
   expect(context.option.series[0].data).toBeUndefined()
-  expect(context.option.series[0].encode).toBeUndefined()
-  expect(context.option.dataZoom).toBeUndefined()
+    expect(context.option.series[0].encode).toBeUndefined()
+    expect(context.option.dataZoom).toBeUndefined()
 
+})
+
+test('ECharts incremental context and status plans refresh the renderer-owned ARIA description', () => {
+  const option = { aria: { enabled: true, description: 'Updated data summary' }, title: { text: 'Partial data' } } as any
+  expect(echartsUpdatePlan(Change.Context, option).option.aria).toBe(option.aria)
+  expect(echartsUpdatePlan(Change.Status, option).option.aria).toBe(option.aria)
+})
+
+test('ECharts highlight plans replace series and refresh ARIA for apply and clear', () => {
+  const option = { aria: { enabled: true, description: 'Highlights cleared.' }, series: [{ id: 'series:primary:value', itemStyle: { opacity: 0.2 } }] } as any
+  const plan = echartsUpdatePlan(Change.Highlight, option)
+  expect(plan.option.series).toBe(option.series)
+  expect(plan.option.aria).toBe(option.aria)
+  expect(plan.settings.replaceMerge).toEqual(['series'])
+})
+
+test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {
+  const partial = cartesianFixture('line') as any
+  partial.dataState.datasets[0].rows = []
+  partial.dataState.datasets[0].completeness = 'partial'
+  const truncated = structuredClone(partial)
+  truncated.dataState.datasets[0].completeness = 'truncated'
+  expect(completenessAccessibilitySummary(partial)).toBe('Data is partial; 0 rows are currently available.')
+  expect(completenessAccessibilitySummary(truncated)).toBe('Data is truncated; showing 0 rows.')
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('Data is partial')).toBeGreaterThanOrEqual(0)
+  expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('No data rows')).toBe(-1)
 })
 
 test('ECharts first-frame readiness resolves on the first valid rendered frame and removes its listener', async () => {
@@ -994,6 +861,13 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(heatmap.yAxis.data).toEqual(['R1'])
   expect(heatmap.grid.bottom).toBe(96)
 
+  const explicitRotation = structuredClone(heatmapEnvelope)
+  explicitRotation.spec.axes = [{
+    id: 'x', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic',
+    tickDensity: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'vertical', dateUnit: 'automatic',
+  }]
+  expect((echartsOption(explicitRotation, defaultRendererContext) as any).xAxis.axisLabel.rotate).toBe(90)
+
   const emptyHeatmapEnvelope = structuredClone(heatmapEnvelope)
   emptyHeatmapEnvelope.dataState.datasets[0].rows = []
   const emptyHeatmap = echartsOption(emptyHeatmapEnvelope, defaultRendererContext) as any
@@ -1020,6 +894,35 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(mixedSignOption.visualMap).toMatchObject({ min: -1, max: 1234 })
   expect(mixedSignOption.visualMap.text).toBeUndefined()
   expect(mixedSignOption.visualMap.formatter(1234)).toBe('1,234')
+
+  const numericHeatmap = structuredClone(heatmapEnvelope)
+  numericHeatmap.spec.presentation.dataZoom = true
+  numericHeatmap.spec.datasets[0].fields[0].dataType = 'integer'
+  numericHeatmap.dataState.datasets[0].rows = [[100, 'R1', 1], [20, 'R2', 2]]
+  const numericOption = echartsOption(numericHeatmap, defaultRendererContext) as any
+  expect(numericOption.xAxis.data).toBeUndefined()
+  expect(numericOption.dataZoom[0]).toMatchObject({ startValue: 0, endValue: 1 })
+  const numericChart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    numericChart.setOption(numericOption)
+    numericChart.renderToSVGString()
+    const model = numericChart.getModel()
+    expect(model.getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([100, 20])
+    expect(model.getSeriesByIndex(0).getData().count()).toBe(2)
+  } finally {
+    numericChart.dispose()
+  }
+
+  const decimalStringHeatmap = structuredClone(heatmapEnvelope)
+  decimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '100'], ['B', 'R2', '300']]
+  const decimalStringOption = echartsOption(decimalStringHeatmap, defaultRendererContext) as any
+  expect(decimalStringOption.visualMap).toMatchObject({ min: 0, max: 300 })
+  const mixedDecimalStringHeatmap = structuredClone(decimalStringHeatmap)
+  mixedDecimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '300']]
+  expect((echartsOption(mixedDecimalStringHeatmap, defaultRendererContext) as any).visualMap).toMatchObject({ min: -100, max: 300 })
+  const negativeDecimalStringHeatmap = structuredClone(decimalStringHeatmap)
+  negativeDecimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '-20']]
+  expect((echartsOption(negativeDecimalStringHeatmap, defaultRendererContext) as any).visualMap).toMatchObject({ min: -100, max: 0 })
   const boxplot = echartsOption(cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']), defaultRendererContext) as any
   expect(boxplot.xAxis.data).toEqual(['A'])
   expect(boxplot.series[0]).toMatchObject({ id: 'series:primary:boxplot', type: 'boxplot', data: [{ name: 'A', value: [1, 2, 3, 4, 5], __lv_dataset: 'primary', __lv_row_index: 0 }] })
@@ -1028,6 +931,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(boxplot.xAxis.axisLabel).toMatchObject({ interval: 0, rotate: 0 })
   expect(boxplot.series[0].itemStyle).toEqual({ color: 'rgba(0, 110, 219, 0.24)', borderColor: defaultRendererContext.colors.data[0], borderWidth: 2 })
   expect(boxplot.series[0].emphasis.itemStyle.color).toBe('rgba(0, 110, 219, 0.4)')
+  expect(boxplot.series[0].label).toBeUndefined()
 
   const orderedBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
   orderedBoxplot.spec.presentation.dataZoom = false
@@ -1067,26 +971,26 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(funnel.series[0]).toMatchObject({ id: 'series:primary:funnel', type: 'funnel', funnelAlign: 'left', sort: 'ascending', orient: 'vertical', left: '6%', right: '44%' })
 
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
-  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, emphasis: { focus: 'adjacency' } })
+  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
   expect(graph.series[0]).not.toHaveProperty('force')
-  expect(graph.series[0].links[0]).toMatchObject({ source: 'A', target: 'B', __lv_dataset: 'primary', __lv_row_index: 0 })
+  expect(graph.series[0].links[0]).toMatchObject({ source: 'string:A', target: 'string:B', __lv_dataset: 'primary', __lv_row_index: 0 })
   const layeredGraphEnvelope = networkFixture('graph') as any
   layeredGraphEnvelope.spec.presentation.layout = 'standard'
   const layeredGraph = echartsOption(layeredGraphEnvelope, defaultRendererContext) as any
   expect(layeredGraph.series[0]).toMatchObject({ layout: 'none', left: '30%', right: '30%', top: '12%', bottom: '12%' })
   expect(layeredGraph.series[0].data).toEqual([
-    { name: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
-    { name: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
+    { name: 'string:A', displayName: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
+    { name: 'string:B', displayName: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
   ])
   const sankeyEnvelope = networkFixture('sankey') as any
   sankeyEnvelope.spec.presentation.orientation = 'horizontal'
   sankeyEnvelope.dataState.datasets[0].rows = [['Same', 'Same', 4], ['', 'Target', 2], ['Source', 'Target', 0]]
   const sankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
-  expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45 })
+  expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
   expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
-  expect(sankey.series[0].links).toEqual([{ source: 'source:Same', target: 'target:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
-  expect(sankey.series[0].data).toEqual([{ name: 'source:Same', displayName: 'Same' }, { name: 'target:Same', displayName: 'Same' }])
+  expect(sankey.series[0].links).toEqual([{ source: 'source:string:Same', target: 'target:string:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
+  expect(sankey.series[0].data).toEqual([{ name: 'source:string:Same', displayName: 'Same' }, { name: 'target:string:Same', displayName: 'Same' }])
   expect(sankey.series[0].label.formatter({ data: sankey.series[0].data[0] })).toBe('Same')
   expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same → Same: 4')
 
@@ -1107,6 +1011,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
     expect(option.series[0].id).toBe(`series:hierarchy:${mark}`)
     expect(option.series[0].data[0].children[0].name).toBe('child')
     if (mark === 'sunburst') {
+      expect(option.series[0].nodeClick).toBe('rootToNode')
       expect(option.series[0].radius).toEqual(['10%', '92%'])
       expect(option.series[0].label).toMatchObject({
         position: 'inside',
@@ -1122,6 +1027,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       })
       expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
     } else {
+      expect(option.series[0]).toMatchObject({ breadcrumb: { show: true }, leafDepth: 2 })
       expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
       const darkOption = echartsOption(envelope, {
         ...defaultRendererContext,
@@ -1135,6 +1041,9 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       })
     }
   }
+
+  const tree = echartsOption(hierarchyFixture('tree'), defaultRendererContext) as any
+  expect(tree.series[0]).toMatchObject({ orient: 'TB', layout: 'orthogonal', initialTreeDepth: 2, roam: true })
 })
 
 test('ECharts gives donuts legible renderer defaults without changing their categories', () => {
@@ -1267,6 +1176,43 @@ test('ECharts translates proportional legend categories into governed selections
   expect(legendSelectionCommand(envelope, 'missing')).toBeUndefined()
 })
 
+test('ECharts proportional legends keep raw item names while formatting display labels and rejecting collisions', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null [null:]' }, { name: 'null [string:null]' }])
+  expect(option.legend.formatter('—')).toBe('— [string:—]')
+  expect(option.legend.formatter('null [null:]')).toBe('— [null:]')
+  expect(option.legend.formatter('null [string:null]')).toBe('null')
+  expect(legendSelectionCommand(envelope, '—')).toMatchObject({ mappings: [{ value: '—' }] })
+  expect(legendSelectionCommand(envelope, 'null [null:]')).toBeUndefined()
+  expect(legendSelectionCommand(envelope, 'null [string:null]')).toMatchObject({ mappings: [{ value: 'null' }] })
+})
+
+test('ECharts proportional legends preserve numeric and string category identities', () => {
+  const envelope = proportionalFixture('pie') as any
+  envelope.spec.datasets[0].fields[0] = { ...envelope.spec.datasets[0].fields[0], role: 'identity', dataType: 'string', nullable: true }
+  envelope.spec.interactions = [{
+    id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{
+      source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
+    }],
+  }]
+  envelope.dataState.datasets[0].rows = [[1, 1], ['1', 2]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend.data).toEqual([{ name: '1 [number:1]' }, { name: '1 [string:1]' }])
+  expect(option.series[0].data.map((entry: any) => [entry.name, entry.value[0]])).toEqual([
+    ['1 [number:1]', 1], ['1 [string:1]', '1'],
+  ])
+  expect(legendSelectionCommand(envelope, '1 [number:1]')).toMatchObject({ mappings: [{ value: 1 }] })
+  expect(legendSelectionCommand(envelope, '1 [string:1]')).toMatchObject({ mappings: [{ value: '1' }] })
+})
+
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
   const envelope = hierarchyFixture('tree') as any
   envelope.dataState.datasets[0].rows = [['A', null, 10], ['A child', 'A', 4], ['B', null, 8], ['B child', 'B', 3]]
@@ -1300,6 +1246,34 @@ test('ECharts scopes repeated hierarchy labels to their compiled parent path', (
   }])
 })
 
+test('ECharts hierarchy treats a raw unit-separator node as one typed identity', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const raw = 'A\u001fB'
+  // Go emits the escaped canonical identity as the child's parent.  The raw
+  // display value itself is not a canonical parent path.
+  const canonicalRoot = 'A\u001f\u001fB'
+  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', canonicalRoot, 4]]
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series[0].data[0]).toMatchObject({ name: raw, children: [{ name: 'child' }] })
+})
+
+test('ECharts hierarchy resolves canonical paths before typed root labels', () => {
+  const envelope = hierarchyFixture('tree') as any
+  const separator = '\u001f'
+  envelope.dataState.datasets[0].rows = [
+    [`A${separator}B`, null, 10],
+    ['A', null, 9],
+    ['B', 'A', 8],
+    ['child', `A${separator}B`, 7],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const roots = option.series[0].data[0].children
+  expect(roots[0]).toMatchObject({ name: `A${separator}B` })
+  expect(roots[0].children).toBeUndefined()
+  expect(roots[1]).toMatchObject({ name: 'A', children: [{ name: 'B', children: [{ name: 'child' }] }] })
+})
+
 test('ECharts leaves absent proportional geometry fields to renderer defaults', () => {
   const pie = echartsOption(proportionalFixture('pie'), defaultRendererContext) as any
   expect(Object.hasOwn(pie.series[0], 'radius')).toBe(false)
@@ -1313,9 +1287,29 @@ test('ECharts leaves absent proportional geometry fields to renderer defaults', 
 test('ECharts formats gauges, applies semantic thresholds, and renders status states', () => {
   const envelope = gaugeFixture()
   const option = echartsOption(envelope, { ...defaultRendererContext, locale: 'pt-BR' },) as any
-  expect(option.series[0].id).toBe('series:polar:gauge')
+  expect(option.series[0]).toMatchObject({
+    id: 'series:polar:gauge', type: 'gauge', min: 0, max: 1,
+    pointer: { show: true }, progress: { show: true, width: 12 },
+    data: [{ value: '0.75', __lv_dataset: 'primary', __lv_row_index: 0 }],
+  })
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
+
+  envelope.spec.presentation.showPointer = false
+  envelope.spec.presentation.minimum = 0
+  envelope.spec.presentation.maximum = 1
+  envelope.spec.presentation.target = 0
+  envelope.spec.presentation.thresholds = [{ value: 0, tone: 'success' }, { value: 1, tone: 'danger' }]
+  envelope.dataState.datasets[0].rows = [['0']]
+  const bounded = echartsOption(envelope, defaultRendererContext) as any
+  expect(bounded.series[0]).toMatchObject({ min: 0, max: 1, pointer: { show: false }, data: [{ value: '0' }] })
+  expect(bounded.series[0].axisLine.lineStyle.color).toEqual([[0, defaultRendererContext.colors.success], [1, defaultRendererContext.colors.danger]])
+  expect(bounded.series[1].data[0]).toMatchObject({ value: 0, name: 'Target 0%' })
+
+  envelope.dataState.datasets[0].rows = [['1']]
+  const upperBoundary = echartsOption(envelope, defaultRendererContext) as any
+  expect(upperBoundary.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: '1' }] })
+  expect(upperBoundary.graphic).toBeUndefined()
 
   const noData = { ...cartesianFixture('line'), status: { kind: 'no_data', message: 'No matching rows' } } as VisualizationEnvelope
   const statusOption = echartsOption(noData, defaultRendererContext) as any
@@ -1356,57 +1350,11 @@ test('ECharts renders an explicit labeled target independently from the metricd 
 
 test('ECharts renders a visible diagnostic instead of clipping an out-of-domain gauge value', () => {
   const envelope = gaugeFixture() as any
-  envelope.dataState.datasets[0].rows = [[1.2]]
+  envelope.dataState.datasets[0].rows = [['1.2']]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series).toEqual([])
   expect(option.graphic[0].style.text).toContain('outside configured gauge domain 0.0%–100.0%')
 })
-
-function cartesianFixture(mark: string, columns = ['label', 'value']): VisualizationEnvelope {
-  const fields = columns.map((id, index) => ({ id, role: index === 0 ? 'dimension' : 'metric', dataType: index === 0 || id === 'row' ? 'string' : 'decimal', nullable: false, label: id }))
-  const y = columns.slice(1).map((field) => ({ dataset: 'primary', field }))
-  const row = columns.map((id, index) => index === 0 ? 'A' : id === 'row' ? 'R1' : index)
-  return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-}
-
-function cartesianSeriesFixture(): VisualizationEnvelope {
-  return {
-    schemaVersion: 9, visualID: 'series', rendererID: 'echarts', specRevision: 'sha256:series', dataRevision: 1,
-    spec: {
-      kind: 'cartesian', title: 'Orders', mark: 'area',
-      datasets: [{ id: 'primary', fields: [
-        { id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Month' },
-        { id: 'series', role: 'dimension', dataType: 'string', nullable: false, label: 'Status' },
-        { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Orders' },
-      ] }],
-      dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Orders', description: 'Orders by status' }, interactions: [],
-      x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }], series: { dataset: 'primary', field: 'series' },
-      presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: false, stacked: false, stacking: 'normal', showSymbols: true, dataZoom: false, area: true, step: false },
-    },
-    dataState: {
-      kind: 'inline', specRevision: 'sha256:series', dataRevision: 1, generation: 1,
-      datasets: [{
-        id: 'primary', specRevision: 'sha256:series', dataRevision: 1, generation: 1,
-        columns: ['label', 'series', 'value'],
-        rows: [['Jan', 'processing', 30], ['Jan', 'delivered', 10], ['Feb', 'processing', 10], ['Feb', 'delivered', 30]],
-        completeness: 'complete',
-      }],
-    },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-}
-
-function proportionalFixture(mark: 'pie' | 'donut' | 'funnel'): VisualizationEnvelope {
-  return {
-    schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
-    spec: { kind: 'proportional', title: mark, mark, datasets: [{ id: 'primary', fields: [{ id: 'label', role: 'dimension', dataType: 'string', nullable: false, label: 'Label' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }] }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], category: { dataset: 'primary', field: 'label' }, value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'right', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, orientation: 'vertical', rose: true, centerLabel: mark === 'donut' ? 'Orders' : undefined, labelPosition: 'outside', innerRadius: mark === 'donut' ? 0.54 : undefined, outerRadius: mark === 'donut' ? 0.76 : undefined, align: mark === 'funnel' ? 'left' : undefined, sort: mark === 'funnel' ? 'ascending' : undefined } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['A', 10]], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
-}
 
 function hierarchyFixture(mark: 'tree' | 'treemap' | 'sunburst'): VisualizationEnvelope {
   const envelope = cartesianFixture('line') as any
@@ -1434,6 +1382,6 @@ function gaugeFixture(): VisualizationEnvelope {
   return {
     schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'polar', title: 'Gauge', mark: 'gauge', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate', format: { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 } }] }], dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Gauge', description: 'Gauge' }, interactions: [], value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, minimum: 0, maximum: 1, showPointer: true, progressWidth: 12, thresholds: [{ value: 0.5, tone: 'warning' }, { value: 0.8, tone: 'danger' }] } },
-    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [[0.75]], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
+    dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [['0.75']], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }

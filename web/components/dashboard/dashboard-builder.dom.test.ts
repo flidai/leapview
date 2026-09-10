@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
+import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
+import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test'
 
 let server: Server
 let baseURL = ''
@@ -2298,24 +2300,16 @@ test('dashboard builder archives an owned dashboard from More without an extra c
 
 test('dashboard builder keeps governed previews interactive beneath a dedicated authoring header', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  const previewEnvelope = governedBarPreviewEnvelope('sha256:builder-preview')
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
       await element.updateComplete
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const revision = 'sha256:builder-preview'
-      const dataState = { kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, datasets: [] }
-      mergePatch({
-        builderVisuals: {
-          'sales-chart': {
-            schemaVersion: 10, visualID: 'sales-chart', rendererID: 'echarts', specRevision: revision, dataRevision: 1,
-            spec: { kind: 'cartesian', title: 'Sales by status', accessibility: { title: 'Sales by status', description: 'Sales grouped by status.' }, fields: [], x: { dataset: 'primary', field: 'category' }, y: [{ dataset: 'primary', field: 'value' }] },
-            dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
-            selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
-          },
-        },
-      })
+      mergePatch({ builderVisuals: { 'sales-chart': envelope } })
       await element.updateComplete
       const root = element.shadowRoot
       const host = root.querySelector('.visual-preview lv-visualization-host') as any
@@ -2366,7 +2360,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         modalClosed: !modal?.shadowRoot?.querySelector('[role="dialog"]'),
         hostRestored: root.querySelector('.visual-preview lv-visualization-host') === host,
       }
-    })
+    }, previewEnvelope)
     expect(state.hostCount).toBe(1)
     expect(state.visualTag).toBe('div')
     expect(state.visualRole).toBe('group')
@@ -2387,6 +2381,16 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.closeButton).toBe('Close visual modal')
     expect(state.modalClosed).toBe(true)
     expect(state.hostRestored).toBe(true)
+    expect(pageErrors).toEqual([])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder keeps visualization action targets usable at minimum and normal canvas zoom', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await verifyBuilderZoomActionTargets(page, baseURL)
   } finally {
     await page.close()
   }
@@ -2394,27 +2398,21 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
 
 test('dashboard builder keeps headerless runtime visuals free of duplicate authoring titles', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const pageErrors: string[] = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  const previewEnvelope = headerlessKPIPreviewEnvelope('sha256:builder-kpi-preview')
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
-    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any, envelope: any) => {
       await element.updateComplete
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const revision = 'sha256:builder-kpi-preview'
-      const dataState = { kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, datasets: [] }
       const source = element.builder.pages[0].visuals[0]
       mergePatch({
         builder: {
           pages: [{ ...element.builder.pages[0], visuals: [{ ...source, title: 'Total orders', type: 'kpi' }] }, element.builder.pages[1]],
         },
-        builderVisuals: {
-          'sales-chart': {
-            schemaVersion: 10, visualID: 'sales-chart', rendererID: 'html', specRevision: revision, dataRevision: 1,
-            spec: { kind: 'kpi', title: 'Total orders', accessibility: { title: 'Total orders', description: 'Total order count.' }, fields: [], value: { dataset: 'primary', field: 'value' }, presentation: { delta: 'absolute', favorableDirection: 'up', missingComparison: 'hide', mode: 'value', ranges: [] } },
-            dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
-            selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
-          },
-        },
+        builderVisuals: { 'sales-chart': envelope },
       })
       await element.updateComplete
       const root = element.shadowRoot
@@ -2428,12 +2426,13 @@ test('dashboard builder keeps headerless runtime visuals free of duplicate autho
         gripTitle: grip?.getAttribute('title'),
         gripVisible: grip ? getComputedStyle(grip).opacity : '',
       }
-    })
+    }, previewEnvelope)
     expect(state.hostAuthoring).toBe(false)
     expect(state.runtimeToolbar).toBe(false)
     expect(state.duplicateHeaderCount).toBe(0)
     expect(state.gripTitle).toBe('Drag to move Total orders')
     expect(state.gripVisible).toBe('1')
+    expect(pageErrors).toEqual([])
   } finally {
     await page.close()
   }

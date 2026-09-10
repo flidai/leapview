@@ -1314,6 +1314,43 @@ test('selected sticky table cells preserve the visible row highlight', async () 
   }
 })
 
+test('report tables omit semantic headers without shifting body rows when showHeader is false', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.canvas > .row'))
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const tableHost = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host'))
+        .find((candidate: any) => candidate.envelope?.visualID === 'orders') as any
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      table.table = { ...table.table, style: { ...table.table.style, showHeader: false } }
+      await table.updateComplete
+      const root = table.shadowRoot
+      const shell = root.querySelector('.shell') as HTMLElement
+      const firstRow = root.querySelector('.canvas > .row') as HTMLElement
+      return {
+        headerNodes: root.querySelectorAll('.head, .group-head, [role="columnheader"]').length,
+        rowCount: root.querySelectorAll('.canvas > .row').length,
+        cellActionLabels: root.querySelectorAll('.cell-action[aria-label]').length,
+        headOffset: shell.style.getPropertyValue('--lv-head-top'),
+        firstRowTop: firstRow?.style.top,
+      }
+    })
+    expect(result.headerNodes).toBe(0)
+    expect(result.rowCount).toBeGreaterThan(0)
+    expect(result.cellActionLabels).toBeGreaterThan(0)
+    expect(result.headOffset).toBe('0px')
+    expect(result.firstRowTop).toBe('0px')
+  } finally {
+    await page.close()
+  }
+})
+
 test('table resize handles expose keyboard increments and accessible labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1613,8 +1650,8 @@ test('dashboard agent drawer carries page context and explicit visual references
       askBackground: 'rgba(0, 0, 0, 0)',
       askBoxShadow: 'none',
       askActionRow: 'visual-actions',
-      kpiAskActionRow: 'headerless-actions',
-      tableAskActionRow: 'headerless-actions',
+      kpiAskActionRow: 'visual-actions',
+      tableAskActionRow: 'visual-actions',
       askPressed: 'false',
       askUsesAgentIcon: true,
       chartAction: 'Expand chart',
@@ -3732,7 +3769,8 @@ test('dashboard agent restores its open state and active conversation after relo
       request: { conversationId: 'agentconv_saved' },
     })
 
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
+      const element = document.querySelector('lv-dashboard-page') as any
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: {
         activeConversationId: 'agentconv_saved',
@@ -3741,7 +3779,9 @@ test('dashboard agent restores its open state and active conversation after relo
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
-      drawer.shadowRoot.querySelector('[aria-label="Close agent"]').click()
+    })
+    await page.locator('lv-chat-drawer').locator('[aria-label="Close agent"]').click()
+    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
     })
 

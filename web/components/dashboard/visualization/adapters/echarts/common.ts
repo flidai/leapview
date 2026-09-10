@@ -1,9 +1,11 @@
-import type { VisualizationCartesianAxis, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef } from '../../../../../generated/visualization'
+import type { VisualizationAxisConfiguration, VisualizationAxisLabelRotation, VisualizationCartesianAxis, VisualizationDateDisplayUnit, VisualizationDisplayUnits, VisualizationEnvelope, VisualizationField, VisualizationFieldRef, VisualizationPresentation } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayValue, formatValue, resolveDisplayUnitForFormat, type ResolvedDisplayUnit } from '../../format'
 import { resolveVisualizationMetadata } from '../../metadata'
+import { formatTooltipEntries } from '../../tooltip-format'
 
 export type EChartsTranslation = Record<string, any>
+export type LegendKnownValue = Readonly<{ value: string; name: string }>
 
 export function inlineDataset(envelope: VisualizationEnvelope, datasetID = 'primary') {
   if (envelope.dataState.kind !== 'inline') return undefined
@@ -97,7 +99,7 @@ export function baseOption(envelope: VisualizationEnvelope, context: RendererCon
   const dataSummary = labelAccessibilitySummary(envelope, context)
   return {
     animation: false,
-    aria: { enabled: true, description: [description, dataSummary].filter(Boolean).join(' ') },
+    aria: { enabled: true, description: [description, dataSummary, completenessAccessibilitySummary(envelope)].filter(Boolean).join(' ') },
     backgroundColor: 'transparent',
     color: [...context.colors.data],
     textStyle: { color: context.colors.foreground, fontFamily: context.fontFamily },
@@ -129,7 +131,11 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
   if (policy.density === 'always' || !policy.tooltipFallback) return ''
   const dataset = inlineDataset(envelope)
   const schema = spec.datasets.find((candidate) => candidate.id === dataset?.id)
-  if (!dataset || !schema || dataset.rows.length === 0) return ''
+  if (!dataset || !schema) return ''
+  if (dataset.rows.length === 0) {
+    const incomplete = dataset.completeness === 'partial' || dataset.completeness === 'truncated'
+    return incomplete ? '' : 'No data rows are available.'
+  }
   const fields = schema.fields.filter((definition) => dataset.columns.includes(definition.id))
   const rowLimit = 6
   const rows = dataset.rows.slice(0, rowLimit).map((row) =>
@@ -143,6 +149,17 @@ function labelAccessibilitySummary(envelope: VisualizationEnvelope, context: Ren
   return `Data values: ${rows.join('; ')}.${remainder > 0 ? ` ${remainder} more rows.` : ''}`
 }
 
+export function completenessAccessibilitySummary(envelope: VisualizationEnvelope): string {
+  if (envelope.dataState.kind !== 'inline') return ''
+  const datasets = envelope.dataState.datasets
+  const partial = datasets.find((dataset) => dataset.completeness === 'partial')
+  if (partial) return `Data is partial; ${partial.rows.length.toLocaleString()} rows are currently available.`
+  const truncated = datasets.find((dataset) => dataset.completeness === 'truncated')
+  if (truncated) return `Data is truncated; showing ${truncated.rows.length.toLocaleString()} rows.`
+  if (datasets.length === 0 || datasets.every((dataset) => dataset.rows.length === 0 || dataset.completeness === 'empty')) return 'No data rows are available.'
+  return ''
+}
+
 function tooltipTrigger(envelope: VisualizationEnvelope): 'axis' | 'item' {
   if (envelope.spec.kind !== 'cartesian') return 'item'
   return envelope.spec.mark === 'heatmap' ? 'item' : 'axis'
@@ -151,6 +168,13 @@ function tooltipTrigger(envelope: VisualizationEnvelope): 'axis' | 'item' {
 function statusGraphic(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation[] | undefined {
   if (envelope.status.kind === 'partial') {
     return [{ type: 'text', right: 8, top: 8, silent: true, style: { text: envelope.status.message ?? 'Partial data', fill: context.colors.attention, fontFamily: context.fontFamily, textAlign: 'right' } }]
+  }
+  const inline = envelope.dataState.kind === 'inline'
+  const datasets = inline ? (envelope.dataState as Extract<VisualizationEnvelope['dataState'], { kind: 'inline' }>).datasets : []
+  const truncated = datasets.some((dataset) => dataset.completeness === 'truncated')
+  const partial = datasets.some((dataset) => dataset.completeness === 'partial')
+  if (partial || truncated) {
+    return [{ type: 'text', right: 8, top: 8, silent: true, style: { text: partial ? 'Partial data' : 'Truncated data', fill: context.colors.attention, fontFamily: context.fontFamily, textAlign: 'right' } }]
   }
   if (envelope.status.kind !== 'idle' && envelope.status.kind !== 'loading' && envelope.status.kind !== 'no_data') return undefined
   const text = envelope.status.message ?? (envelope.status.kind === 'no_data' ? 'No data' : 'Loading…')
@@ -165,44 +189,106 @@ export function axis(
   axisID?: VisualizationCartesianAxis,
   scopeRefs?: VisualizationFieldRef[],
 ): EChartsTranslation {
+  const policy = axisPolicy(envelope, axisID)
+  const resolvedType = policy?.type && policy.type !== 'automatic' ? policy.type : type
   const displayUnit = displayUnitForField(envelope, ref, axisID, scopeRefs)
-  return {
-    type,
+  const result: EChartsTranslation = {
+    type: resolvedType,
     axisLine: { lineStyle: { color: context.colors.grid } },
     axisTick: { lineStyle: { color: context.colors.grid } },
     splitLine: { lineStyle: { color: context.colors.grid } },
-    axisLabel: {
-      color: context.colors.muted,
-      formatter: (value: unknown) => type === 'value'
-        ? formatDisplayField(envelope, ref, value, context, displayUnit)
-        : type === 'time'
-          ? formatTimeAxisField(envelope, ref, value, context)
-          : formatField(envelope, ref, value, context),
-    },
+    axisLabel: { color: context.colors.muted, formatter: (value: unknown) => resolvedType === 'value'
+      ? formatDisplayField(envelope, ref, value, context, displayUnit)
+      : resolvedType === 'time' ? formatAxisDate(envelope, ref, value, context, policy?.dateUnit) : formatField(envelope, ref, value, context) },
     nameTextStyle: { color: context.colors.muted },
+  }
+  applyAxisVisibility(result, policy)
+  applyAxisRotation(result, policy?.labelRotation)
+  if (policy?.inversion === 'inverted') result.inverse = true
+  return result
+}
+
+function axisPolicy(envelope: VisualizationEnvelope, axisID?: VisualizationCartesianAxis): VisualizationAxisConfiguration | undefined {
+  if (!axisID || (envelope.spec.kind !== 'cartesian' && envelope.spec.kind !== 'point')) return undefined
+  return envelope.spec.axes?.find((candidate) => candidate.id === axisID)
+}
+
+function applyAxisVisibility(axisOption: EChartsTranslation, policy: VisualizationAxisConfiguration | undefined): void {
+  if (policy?.ticks === 'hidden') axisOption.axisTick = { ...axisOption.axisTick, show: false }
+  else if (policy?.ticks === 'visible') axisOption.axisTick = { ...axisOption.axisTick, show: true }
+  if (policy?.grid === 'hidden') axisOption.splitLine = { ...axisOption.splitLine, show: false }
+  else if (policy?.grid === 'visible') axisOption.splitLine = { ...axisOption.splitLine, show: true }
+}
+
+function applyAxisRotation(axisOption: EChartsTranslation, rotation: VisualizationAxisLabelRotation | undefined): void {
+  switch (rotation) {
+    case 'horizontal': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 0 }; break
+    case 'diagonal': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 45 }; break
+    case 'vertical': axisOption.axisLabel = { ...axisOption.axisLabel, rotate: 90 }; break
   }
 }
 
-function formatTimeAxisField(envelope: VisualizationEnvelope, ref: VisualizationFieldRef, value: unknown, context: RendererContext): string {
-  if (typeof value === 'string') return formatField(envelope, ref, value, context)
-  const date = new Date(value as number)
-  if (!Number.isFinite(date.getTime())) return formatField(envelope, ref, value, context)
+function formatAxisDate(
+  envelope: VisualizationEnvelope,
+  ref: VisualizationFieldRef,
+  value: unknown,
+  context: RendererContext,
+  unit: VisualizationDateDisplayUnit | undefined,
+): string {
+  if (value === null || value === undefined) return '—'
   const definition = field(envelope, ref)
-  if (definition?.format?.kind === 'temporal') {
+  if ((!unit || unit === 'automatic') && definition?.format && typeof value === 'string') return formatField(envelope, ref, value, context)
+  const date = new Date(typeof value === 'number' ? value : String(value))
+  if (!Number.isFinite(date.getTime())) return formatField(envelope, ref, value, context)
+  if ((!unit || unit === 'automatic') && definition?.format?.kind === 'temporal') {
     const canonical = definition.dataType === 'date' ? date.toISOString().slice(0, 10) : date.toISOString()
     return formatField(envelope, ref, canonical, context)
   }
-  return new Intl.DateTimeFormat(context.locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(date)
+  const year = date.getUTCFullYear()
+  if (unit === 'quarter') return `Q${Math.floor(date.getUTCMonth() / 3) + 1} ${year}`
+  if (unit === 'week') {
+    const week = isoWeek(date)
+    return `W${week.number} ${week.year}`
+  }
+  const options: Intl.DateTimeFormatOptions = unit === 'year'
+    ? { year: 'numeric' }
+    : unit === 'month'
+      ? { year: 'numeric', month: 'short' }
+      : unit === 'day'
+        ? { year: 'numeric', month: 'short', day: 'numeric' }
+        : unit === 'hour'
+          ? { month: 'short', day: 'numeric', hour: 'numeric', timeZone: 'UTC' }
+          : unit === 'minute'
+            ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }
+            : unit === 'second'
+              ? { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'UTC' }
+              : { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' }
+  return new Intl.DateTimeFormat(context.locale, { ...options, timeZone: 'UTC' }).format(date)
 }
 
-export function legend(position: string, context: RendererContext, scroll = false): EChartsTranslation | undefined {
+function isoWeek(date: Date): { number: string; year: number } {
+  const thursday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - (thursday.getUTCDay() || 7))
+  const first = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1))
+  const week = Math.ceil(((thursday.getTime() - first.getTime()) / 86400000 + 1) / 7)
+  return { number: String(week).padStart(2, '0'), year: thursday.getUTCFullYear() }
+}
+
+export function legend(
+  position: string,
+  context: RendererContext,
+  scroll = false,
+  presentation?: Pick<VisualizationPresentation, 'legendTitle' | 'legendItems'>,
+  knownValues?: readonly LegendKnownValue[],
+): EChartsTranslation | undefined {
   if (position === 'hidden') return undefined
-  return {
+  const configuredItems = presentation?.legendItems
+  const uniqueKnownValues = knownValues?.filter((item, index, values) => values.findIndex((candidate) => candidate.value === item.value) === index)
+  const known = uniqueKnownValues ? new Map(uniqueKnownValues.map((item) => [item.value, item.name])) : undefined
+  const selectedItems = configuredItems
+    ? configuredItems.filter((item) => known === undefined || known.has(item.value))
+    : undefined
+  const result: EChartsTranslation = {
     show: true,
     ...(scroll ? {
       type: 'scroll',
@@ -215,6 +301,50 @@ export function legend(position: string, context: RendererContext, scroll = fals
     [position]: 0,
     textStyle: { color: context.colors.muted, fontFamily: context.fontFamily },
   }
+  if (selectedItems) {
+    const configuredValues = new Set(selectedItems.map((item) => item.value))
+    const orderedValues = [
+      ...selectedItems.map((item) => ({ value: item.value, name: known?.get(item.value) ?? item.value })),
+      ...(uniqueKnownValues ?? []).filter((item) => !configuredValues.has(item.value)),
+    ]
+    result.data = orderedValues.map((item) => ({ name: item.name }))
+    const labels = new Map(selectedItems.map((item) => {
+      const canonicalName = known?.get(item.value) ?? item.value
+      return [canonicalName, item.label ?? canonicalName]
+    }))
+    result.formatter = (value: string) => labels.get(value) ?? value
+  }
+  return result
+}
+
+export function legendDecoration(
+  position: string,
+  context: RendererContext,
+  scroll = false,
+  presentation?: Pick<VisualizationPresentation, 'legendTitle' | 'legendItems'>,
+  knownValues?: readonly LegendKnownValue[],
+): EChartsTranslation {
+  const result: EChartsTranslation = { legend: legend(position, context, scroll, presentation, knownValues) }
+  const title = presentation?.legendTitle
+  if (title === undefined || position === 'hidden') return result
+  const titleGraphic: EChartsTranslation = {
+    type: 'text', silent: true,
+    style: { text: title, fill: context.colors.foreground, fontFamily: context.fontFamily, fontSize: 12, fontWeight: 600 },
+  }
+  if (position === 'bottom') {
+    titleGraphic.left = 8
+    titleGraphic.bottom = 28
+  } else if (position === 'left' || position === 'right') {
+    titleGraphic.top = 4
+    titleGraphic[position] = 8
+    if (result.legend) result.legend.top = scroll ? 28 : 24
+  } else {
+    titleGraphic.left = 8
+    titleGraphic.top = 4
+    if (result.legend) result.legend.top = scroll ? 28 : 24
+  }
+  result.graphic = [titleGraphic]
+  return result
 }
 
 export function labelFormatter(
@@ -245,32 +375,41 @@ export function escapeHTML(value: string): string {
   return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
 }
 
-function tooltipFormatter(envelope: VisualizationEnvelope, context: RendererContext) {
+type TooltipFormatterOptions = Readonly<{ fallbackRefs?: readonly VisualizationFieldRef[] }>
+
+export function tooltipFormatterForRow(
+  envelope: VisualizationEnvelope,
+  context: RendererContext,
+  options: TooltipFormatterOptions = {},
+) {
   return (raw: unknown): string => {
     const params = Array.isArray(raw) ? raw : [raw]
-    const entries: string[] = []
     for (const item of params) {
-      const value = (item as { value?: unknown })?.value
-      if (!Array.isArray(value)) continue
-      const dataset = inlineDataset(envelope)
-      if (!dataset) continue
-      const schema = envelope.spec.datasets.find((candidate) => candidate.id === dataset.id)
-      const authored = envelope.spec.kind === 'cartesian' || envelope.spec.kind === 'point' ? envelope.spec.tooltip : undefined
-      const definitions = authored
-        ? authored.flatMap((ref) => {
-            if (ref.dataset !== dataset.id) return []
-            const definition = schema?.fields.find((candidate) => candidate.id === ref.field)
-            return definition ? [definition] : []
-          })
-        : schema?.fields ?? []
-      for (const definition of definitions) {
-        const index = dataset.columns.indexOf(definition.id)
-        if (index < 0) continue
-        const formatted = definition.format ? formatValue(context.locale, definition.format, value[index]) : value[index] === null || value[index] === undefined ? '—' : String(value[index])
-        entries.push(`${escapeHTML(definition.label)}: ${escapeHTML(formatted)}`)
-      }
-      if (entries.length) break
+      const event = item as { value?: unknown; data?: { __lv_dataset?: unknown; __lv_row_index?: unknown } }
+      const locatorDataset = typeof event.data?.__lv_dataset === 'string' ? event.data.__lv_dataset : undefined
+      const locatorIndex = event.data?.__lv_row_index
+      const locatedDataset = locatorDataset ? inlineDataset(envelope, locatorDataset) : undefined
+      const locatedRow = locatedDataset && Number.isInteger(locatorIndex) ? locatedDataset.rows[locatorIndex as number] : undefined
+      const dataset = locatedDataset ?? inlineDataset(envelope)
+      const row = locatedRow ?? (Array.isArray(event.value) ? event.value : undefined)
+      if (!dataset || !row) continue
+      const refs = tooltipRefs(envelope, dataset.id, options.fallbackRefs)
+      const entries = formatTooltipEntries(envelope, row, dataset.id, context, refs, envelope.spec.tooltipItems)
+      if (entries.length) return entries.map((entry) => `${escapeHTML(entry.label)}: ${escapeHTML(entry.value)}`).join('<br>')
+      if (envelope.spec.tooltipItems !== undefined && envelope.spec.tooltipItems.length === 0) return ''
     }
-    return entries.join('<br>')
+    return ''
   }
+}
+
+function tooltipRefs(envelope: VisualizationEnvelope, datasetID: string, fallbackRefs?: readonly VisualizationFieldRef[]): VisualizationFieldRef[] {
+  if (envelope.spec.tooltipItems !== undefined) return envelope.spec.tooltipItems.map((item) => item.field)
+  if ((envelope.spec.kind === 'cartesian' || envelope.spec.kind === 'point' || envelope.spec.kind === 'proportional') && envelope.spec.tooltip !== undefined) return envelope.spec.tooltip
+  if (fallbackRefs !== undefined) return [...fallbackRefs]
+  const schema = envelope.spec.datasets.find((candidate) => candidate.id === datasetID)
+  return (schema?.fields ?? []).map((definition) => ({ dataset: datasetID, field: definition.id }))
+}
+
+function tooltipFormatter(envelope: VisualizationEnvelope, context: RendererContext) {
+  return tooltipFormatterForRow(envelope, context)
 }

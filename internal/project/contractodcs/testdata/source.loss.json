@@ -1,0 +1,46 @@
+{
+  "profile": "leapview.dev/odcs-loss/v1",
+  "lossless": false,
+  "entries": [
+    {
+      "kind": "degraded",
+      "sourceField": "contract.freshness",
+      "odcsTargetField": "slaProperties[]",
+      "reason": "ODCS represents both LeapView warning and error thresholds as generic freshness SLA entries without normative severity.",
+      "compatibilityImpact": "Threshold values remain visible, but freshness round-trip conformance is unavailable."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "contract.schema.fields.amount.datatype",
+      "odcsTargetField": "schema[].properties[].logicalType",
+      "reason": "ODCS number does not distinguish LeapView exact Decimal from approximate Float.",
+      "compatibilityImpact": "Document conformance is preserved, but numeric round-trip conformance is unavailable."
+    },
+    {
+      "kind": "dropped",
+      "sourceField": "contract.schema.fields.amount.deprecation",
+      "reason": "ODCS 3.1 has no closed field-deprecation shape and the initial profile does not invent one.",
+      "compatibilityImpact": "Deprecation guidance is present only in the LeapView publication."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "contract.schema.fields.total.datatype",
+      "odcsTargetField": "schema[].properties[].logicalType",
+      "reason": "ODCS number does not distinguish LeapView exact Decimal from approximate Float.",
+      "compatibilityImpact": "Document conformance is preserved, but numeric round-trip conformance is unavailable."
+    },
+    {
+      "kind": "dropped",
+      "sourceField": "contract.schema.mode",
+      "reason": "ODCS 3.1 has no equivalent for LeapView declared-versus-inferred schema mode.",
+      "compatibilityImpact": "Schema-mode round-trip conformance is unavailable."
+    },
+    {
+      "kind": "degraded",
+      "sourceField": "publication.publishedAt",
+      "odcsTargetField": "status",
+      "reason": "ODCS combines publication and activation lifecycle concepts; published evidence is exported as active without claiming serving activation.",
+      "compatibilityImpact": "Document conformance is preserved, but lifecycle round-trip conformance is unavailable."
+    }
+  ]
+}

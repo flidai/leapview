@@ -1,0 +1,67 @@
+{
+  "version": "1.2.3",
+  "kind": "DataContract",
+  "apiVersion": "v3.1.0",
+  "id": "instance:acme/source:customers",
+  "name": "customers",
+  "status": "active",
+  "schema": [
+    {
+      "name": "customers",
+      "logicalType": "object",
+      "properties": [
+        {
+          "name": "amount",
+          "logicalType": "number",
+          "required": false
+        },
+        {
+          "name": "customer_id",
+          "logicalType": "string",
+          "required": true,
+          "classification": "restricted",
+          "criticalDataElement": true,
+          "authoritativeDefinitions": [
+            {
+              "url": "https://example.com/glossary/customer",
+              "type": "businessDefinition"
+            }
+          ]
+        },
+        {
+          "name": "total",
+          "logicalType": "number",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "slaProperties": [
+    {
+      "id": "freshness-warning",
+      "property": "freshness",
+      "value": 2,
+      "unit": "hour",
+      "element": "customers.customer_id"
+    },
+    {
+      "id": "freshness-error",
+      "property": "freshness",
+      "value": 4,
+      "unit": "hour",
+      "element": "customers.customer_id"
+    }
+  ],
+  "customProperties": [
+    {
+      "property": "leapviewContract",
+      "value": {
+        "namespace": "leapview.dev/odcs-extension/v1",
+        "resourceKind": "Source",
+        "projectionProfile": "leapview.contract/v1",
+        "projectionDigest": "sha256:6f466e3f5bfa25d00b742ba07f8278e34dcc98506b1d76d62b8c5bdd77bdf2b4"
+      },
+      "description": "Immutable LeapView publication provenance; not executable contract semantics."
+    }
+  ]
+}

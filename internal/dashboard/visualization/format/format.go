@@ -33,13 +33,15 @@ func Value(locale string, format ir.VisualizationFormat, value any) (string, err
 	}
 	switch spec := format.Value.(type) {
 	case *ir.NumberVisualizationFormat:
-		return number(data, value, digits(spec.MinimumFractionDigits, 0), digits(spec.MaximumFractionDigits, 3), "")
+		minimum, maximum := fractionDigits(spec.MinimumFractionDigits, spec.MaximumFractionDigits, 0, 3)
+		return number(data, value, minimum, maximum, "")
 	case *ir.CurrencyVisualizationFormat:
 		symbol, ok := currencies[locale][spec.Currency]
 		if !ok {
 			return "", fmt.Errorf("unsupported visualization currency %q", spec.Currency)
 		}
-		formatted, err := number(data, value, digits(spec.MinimumFractionDigits, 2), digits(spec.MaximumFractionDigits, 2), "")
+		minimum, maximum := fractionDigits(spec.MinimumFractionDigits, spec.MaximumFractionDigits, 2, 2)
+		formatted, err := number(data, value, minimum, maximum, "")
 		if err != nil {
 			return "", err
 		}
@@ -49,7 +51,8 @@ func Value(locale string, format ir.VisualizationFormat, value any) (string, err
 		if err != nil {
 			return "", err
 		}
-		return number(data, value*100, digits(spec.MinimumFractionDigits, 0), digits(spec.MaximumFractionDigits, 1), "%")
+		minimum, maximum := fractionDigits(spec.MinimumFractionDigits, spec.MaximumFractionDigits, 0, 1)
+		return number(data, value*100, minimum, maximum, "%")
 	case *ir.CompactVisualizationFormat:
 		value, err := numeric(value)
 		if err != nil {
@@ -170,6 +173,27 @@ func digits(value *int32, fallback int) int {
 		return fallback
 	}
 	return int(*value)
+}
+
+func fractionDigits(minimum, maximum *int32, defaultMinimum, defaultMaximum int) (int, int) {
+	if minimum == nil && maximum == nil {
+		return defaultMinimum, defaultMaximum
+	}
+	if minimum == nil {
+		resolvedMaximum := int(*maximum)
+		if resolvedMaximum < defaultMinimum {
+			return resolvedMaximum, resolvedMaximum
+		}
+		return defaultMinimum, resolvedMaximum
+	}
+	resolvedMinimum := int(*minimum)
+	if maximum == nil {
+		if resolvedMinimum > defaultMaximum {
+			return resolvedMinimum, resolvedMinimum
+		}
+		return resolvedMinimum, defaultMaximum
+	}
+	return resolvedMinimum, int(*maximum)
 }
 
 func duration(locale localeData, value float64, unit string) (string, error) {

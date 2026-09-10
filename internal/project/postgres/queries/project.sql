@@ -1,6 +1,36 @@
 -- Project identity persistence. Authored metadata is immutable after insert;
 -- conflict handling and exact replay comparison remain in the repository.
 
+-- Contract publication persistence. The repository performs canonical
+-- validation, replay/conflict comparison and caller-owned transaction fencing;
+-- these are intentionally small sqlc PostgreSQL leaves.
+
+-- name: LockContractPublication :exec
+SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(sqlc.arg(lock_key)::text, 0));
+
+-- name: InsertContractPublication :exec
+INSERT INTO project.contract_publication(
+    instance_id, authored_id, resource_kind, version, version_baseline,
+    projection_profile, canonical_bytes, canonical_digest,
+    validation_evidence_json)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (instance_id, authored_id, resource_kind, version_baseline) DO NOTHING;
+
+-- name: GetContractPublication :one
+SELECT instance_id, authored_id, resource_kind, version, version_baseline,
+       projection_profile, canonical_bytes, canonical_digest,
+       validation_evidence_json, published_at
+FROM project.contract_publication
+WHERE instance_id = $1 AND authored_id = $2 AND resource_kind = $3
+  AND version_baseline = $4;
+
+-- name: ListContractPublications :many
+SELECT instance_id, authored_id, resource_kind, version, version_baseline,
+       projection_profile, canonical_bytes, canonical_digest,
+       validation_evidence_json, published_at
+FROM project.contract_publication
+WHERE instance_id = $1 AND authored_id = $2 AND resource_kind = $3;
+
 -- name: InsertProjectIdentity :exec
 INSERT INTO project.project_identity(project_id, title, description)
 VALUES ($1, $2, $3)

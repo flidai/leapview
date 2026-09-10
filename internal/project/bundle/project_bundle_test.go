@@ -158,7 +158,9 @@ func TestPackSourceBundleIncludesDashboardFragments(t *testing.T) {
 		t.Fatal(err)
 	}
 	projectManifest := base.Manifest()
-	projectManifest.SemanticModels = map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales"}}
+	projectManifest.SemanticModels = map[string]*semanticmodel.Model{
+		"semantic:sales": {Name: "sales", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders_model"}}},
+	}
 	projectManifest.DashboardDefinitions = map[string]dashboarddefinition.Definition{
 		"dashboard:sales": {ID: "dashboard:sales", SemanticModel: "semantic:sales"},
 	}

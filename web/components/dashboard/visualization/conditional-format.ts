@@ -86,15 +86,15 @@ export function resolveConditionalFormat(
     const fallback = rule.nullStyle
     return invalid(format, fallback, 'target field is unavailable')
   }
-  const rawValue = row[index]
-  if (rawValue === null || rawValue === undefined) return { style: resolvedStyle(rule.nullStyle), outcome: 'null' }
-  const value = numericValue(rawValue)
-  if (value === undefined) {
+  const value = row[index]
+  if (value === null || value === undefined) return { style: resolvedStyle(rule.nullStyle), outcome: 'null' }
+  const numericValue = conditionalNumericValue(value)
+  if (numericValue === undefined) {
     return invalid(format, rule.nullStyle, 'expected a finite numeric value')
   }
 
   if (rule.kind === 'gradient') {
-    const ratio = Math.max(0, Math.min(1, (value - rule.minimum) / (rule.maximum - rule.minimum)))
+    const ratio = Math.max(0, Math.min(1, (numericValue - rule.minimum) / (rule.maximum - rule.minimum)))
     const low = rule.low.color!
     const high = rule.high.color!
     return {
@@ -106,17 +106,21 @@ export function resolveConditionalFormat(
     }
   }
 
-  const match = rule.rules.find((candidate) => comparisonMatches(value, candidate.operator, candidate.value))
+  const match = rule.rules.find((candidate) => comparisonMatches(numericValue, candidate.operator, candidate.value))
   return match
     ? { style: resolvedStyle(match.style), outcome: 'matched' }
     : { style: resolvedStyle(rule.defaultStyle), outcome: 'default' }
 }
 
-function numericValue(value: unknown): number | undefined {
+function conditionalNumericValue(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
-  if (typeof value !== 'string' || !parseDecimal(value)) return undefined
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : undefined
+  if (typeof value !== 'string') return undefined
+  const parsed = parseDecimal(value)
+  if (!parsed) return undefined
+  const converted = Number(value)
+  const zero = parsed.integer === '0' && /^0*$/.test(parsed.fraction)
+  if (!Number.isFinite(converted) || (converted === 0 && !zero)) return undefined
+  return converted
 }
 
 function comparisonMatches(value: number, operator: VisualizationComparisonOperator, threshold: number): boolean {

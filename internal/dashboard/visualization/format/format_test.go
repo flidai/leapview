@@ -57,4 +57,84 @@ func TestDateOnlyTemporalValueCannotSatisfyTimeOnlyFormat(t *testing.T) {
 	}
 }
 
+func TestPartialFractionDigitsPreserveFormatDefaults(t *testing.T) {
+	t.Parallel()
+	minimum, maximum := int32(1), int32(6)
+	tests := []struct {
+		name     string
+		format   ir.VisualizationFormat
+		value    any
+		expected string
+	}{
+		{
+			name:   "number maximum preserves default minimum",
+			format: ir.VisualizationFormat{Value: &ir.NumberVisualizationFormat{Kind: "number", MaximumFractionDigits: ptr(maximum)}},
+			value:  1.2345678, expected: "1.234568",
+		},
+		{
+			name:   "number minimum preserves default maximum",
+			format: ir.VisualizationFormat{Value: &ir.NumberVisualizationFormat{Kind: "number", MinimumFractionDigits: ptr(minimum)}},
+			value:  1.23456, expected: "1.235",
+		},
+		{
+			name:   "currency zero maximum adapts minimum",
+			format: ir.VisualizationFormat{Value: &ir.CurrencyVisualizationFormat{Kind: "currency", Currency: "USD", MaximumFractionDigits: ptr(int32(0))}},
+			value:  252.24, expected: "$252",
+		},
+		{
+			name:   "currency minimum above default adapts maximum",
+			format: ir.VisualizationFormat{Value: &ir.CurrencyVisualizationFormat{Kind: "currency", Currency: "USD", MinimumFractionDigits: ptr(int32(3))}},
+			value:  2, expected: "$2.000",
+		},
+		{
+			name:   "percent zero maximum preserves default minimum",
+			format: ir.VisualizationFormat{Value: &ir.PercentVisualizationFormat{Kind: "percent", MaximumFractionDigits: ptr(int32(0))}},
+			value:  0.125, expected: "13%",
+		},
+		{
+			name:   "percent minimum above default adapts maximum",
+			format: ir.VisualizationFormat{Value: &ir.PercentVisualizationFormat{Kind: "percent", MinimumFractionDigits: ptr(int32(2))}},
+			value:  0.125, expected: "12.50%",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := Value("en-US", test.format, test.value)
+			if err != nil {
+				t.Fatalf("Value: %v", err)
+			}
+			if got != test.expected {
+				t.Fatalf("Value = %q, want %q", got, test.expected)
+			}
+		})
+	}
+}
+
+func TestPartialFractionDigitsDoNotChangeCompactDefaults(t *testing.T) {
+	t.Parallel()
+	format := ir.VisualizationFormat{Value: &ir.CompactVisualizationFormat{Kind: "compact", MaximumFractionDigits: ptr(int32(2))}}
+	got, err := Value("en-US", format, 1234)
+	if err != nil {
+		t.Fatalf("Value: %v", err)
+	}
+	if got != "1.23K" {
+		t.Fatalf("Value = %q, want %q", got, "1.23K")
+	}
+}
+
+func TestExplicitInvalidFractionDigitsRemainRejected(t *testing.T) {
+	t.Parallel()
+	minimum, maximum := int32(2), int32(1)
+	formats := []ir.VisualizationFormat{
+		{Value: &ir.NumberVisualizationFormat{Kind: "number", MinimumFractionDigits: &minimum, MaximumFractionDigits: &maximum}},
+		{Value: &ir.CurrencyVisualizationFormat{Kind: "currency", Currency: "USD", MinimumFractionDigits: &minimum, MaximumFractionDigits: &maximum}},
+		{Value: &ir.PercentVisualizationFormat{Kind: "percent", MinimumFractionDigits: &minimum, MaximumFractionDigits: &maximum}},
+	}
+	for _, format := range formats {
+		if _, err := Value("en-US", format, 1); err == nil {
+			t.Fatal("expected invalid explicit fraction digit pair to fail")
+		}
+	}
+}
+
 func ptr[T any](value T) *T { return &value }

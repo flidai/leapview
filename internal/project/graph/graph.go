@@ -642,7 +642,7 @@ func findCycle(ids map[ResourceID]struct{}, adjacency map[ResourceID][]ResourceI
 		switch state[node] {
 		case 1:
 			start := positions[node]
-			cycle := make([]string, 0, len(stack)-start+1)
+			cycle := make([]string, 0)
 			for _, id := range stack[start:] {
 				cycle = append(cycle, id.String())
 			}

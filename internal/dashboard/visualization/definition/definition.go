@@ -183,7 +183,22 @@ type SpatialTileBinding struct {
 	FeatureCap     int64        `json:"featureCap" yaml:"feature_cap"`
 	MaximumBytes   int64        `json:"maximumBytes" yaml:"maximum_bytes"`
 	MetatileSize   int32        `json:"metatileSize" yaml:"metatile_size"`
-	CellRadius     int32        `json:"cellRadius" yaml:"cell_radius"`
+	// Cluster is the authored, renderer-neutral point clustering policy. It is
+	// deliberately separate from CellRadius: CellRadius is a transport grid
+	// choice used to keep vector-tile precision stable for every tiled layer.
+	Cluster    *SpatialClusterBinding `json:"cluster,omitempty" yaml:"cluster,omitempty"`
+	CellRadius int32                  `json:"cellRadius" yaml:"cell_radius"`
+}
+
+// SpatialClusterBinding carries the point-layer cluster policy through the
+// compiled definition. A tiled source has one policy because all of its point
+// layers consume the same precision families and tile SQL.
+type SpatialClusterBinding struct {
+	Enabled       bool  `json:"enabled" yaml:"enabled"`
+	Radius        int32 `json:"radius" yaml:"radius"`
+	MaximumZoom   int32 `json:"maximumZoom" yaml:"maximum_zoom"`
+	MinimumPoints int32 `json:"minimumPoints" yaml:"minimum_points"`
+	ShowCount     bool  `json:"showCount" yaml:"show_count"`
 }
 
 type Sort struct {
@@ -223,6 +238,14 @@ func (query QueryBinding) Validate() error {
 		}
 		if tiles.CellRadius < 32 || tiles.CellRadius > 64 {
 			return fmt.Errorf("spatial tile cell radius must be between 32 and 64 CSS pixels")
+		}
+		if tiles.Cluster != nil {
+			if tiles.Cluster.Radius < 1 || tiles.Cluster.Radius > 512 {
+				return fmt.Errorf("spatial tile cluster radius must be between 1 and 512 CSS pixels")
+			}
+			if tiles.Cluster.MaximumZoom < 0 || tiles.Cluster.MaximumZoom > tiles.MaximumZoom || (tiles.Cluster.Enabled && tiles.Cluster.MaximumZoom >= tiles.MaximumZoom) || tiles.Cluster.MinimumPoints < 2 {
+				return fmt.Errorf("spatial tile cluster policy is invalid")
+			}
 		}
 		if !containsFieldBinding(view.fields, tiles.Latitude) || !containsFieldBinding(view.fields, tiles.Longitude) {
 			return fmt.Errorf("spatial tile coordinates must reference compiled query fields")

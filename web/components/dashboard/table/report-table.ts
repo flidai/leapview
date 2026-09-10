@@ -1596,7 +1596,8 @@ export class ReportTable extends LitElement {
     const columnModels = allTableColumns(tanstack)
     const tanstackRows = new Map((tanstack.getRowModel?.().rows ?? []).map((row: any) => [row.id, row]))
     const totalHeight = this.availableRows * this.rowHeight
-    const hasGroupHeaderRow = headers.some((header: any) => header.column.columnDef.meta?.column?.group)
+    const showHeader = this.table.style.showHeader !== false
+    const hasGroupHeaderRow = showHeader && headers.some((header: any) => header.column.columnDef.meta?.column?.group)
     const rowRange = this.rowRangeText()
     const selectedCount = this.selectedRowCount()
     const hasSelection = selectedCount > 0
@@ -1668,8 +1669,8 @@ export class ReportTable extends LitElement {
           <div class="table-scrollport" role="table" aria-label=${this.table?.title ?? 'Orders'} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
             <div class="table-plane">
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
-              ${this.renderGroupHeaderRows(headers)}
-              ${this.renderHeaderRow(headers)}
+              ${showHeader ? this.renderGroupHeaderRows(headers) : nothing}
+              ${showHeader ? this.renderHeaderRow(headers) : nothing}
               ${this.availableRows === 0 && !loading ? html`<div class="empty">Waiting for table data</div>` : html`
                 <div class="canvas" role="rowgroup" style=${`height:${totalHeight}px`}>
                   <div class="grid-lines" aria-hidden="true">

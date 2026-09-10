@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/dashboard/document"
 )
 
@@ -79,6 +80,156 @@ func TestCanonicalVisualTypeSwitchConfiguresScatterFromResolvedBindings(t *testi
 	query := scatter.Query.Value.(*document.AggregateDashboardQuery)
 	if len(query.Dimensions) != 1 || len(query.Metrics) != 2 {
 		t.Fatalf("scatter query lost resolved bindings: %#v", query)
+	}
+}
+
+func TestCanonicalVisualDefaultsAndCartesianSwitchPreserveCompilerContract(t *testing.T) {
+	bar := defaultCanonicalVisual(string(document.DashboardVisualTypeBar), "Bar")
+	barPresentation, ok := bar.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok {
+		t.Fatalf("bar presentation = %T, want Cartesian", bar.Presentation.Value)
+	}
+	if barPresentation.Orientation != nil {
+		t.Fatalf("bar default orientation = %v, want omitted because bar direction is intrinsic", *barPresentation.Orientation)
+	}
+	if _, err := compiler.LowerCanonicalDashboardPresentation(bar.Presentation, bar.Type); err != nil {
+		t.Fatalf("lower default bar presentation: %v", err)
+	}
+
+	_, revision := canonicalReducerFixture(t)
+	columnDefault := defaultCanonicalVisual(string(document.DashboardVisualTypeColumn), "Column")
+	columnDefaultPresentation, ok := columnDefault.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok {
+		t.Fatalf("column presentation = %T, want Cartesian", columnDefault.Presentation.Value)
+	}
+	if columnDefaultPresentation.Orientation != nil {
+		t.Fatalf("column default orientation = %v, want omitted because renderer defaults to vertical", *columnDefaultPresentation.Orientation)
+	}
+	if _, err := compiler.LowerCanonicalDashboardPresentation(columnDefault.Presentation, columnDefault.Type); err != nil {
+		t.Fatalf("lower default column presentation: %v", err)
+	}
+	column := defaultCanonicalVisual(string(document.DashboardVisualTypeColumn), "Column")
+	revision.Document.Spec.Visuals["base"] = column
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeBar}); err != nil {
+		t.Fatal(err)
+	}
+	columnToBar := revision.Document.Spec.Visuals["base"]
+	columnToBarPresentation := columnToBar.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if columnToBarPresentation.Orientation != nil {
+		t.Fatalf("default column to bar orientation = %v, want omitted", *columnToBarPresentation.Orientation)
+	}
+	if _, err := compiler.LowerCanonicalDashboardPresentation(columnToBar.Presentation, columnToBar.Type); err != nil {
+		t.Fatalf("lower default column to bar presentation: %v", err)
+	}
+
+	source := defaultCanonicalVisual(string(document.DashboardVisualTypeLine), "Base")
+	line, ok := source.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok {
+		t.Fatalf("line presentation = %T, want Cartesian", source.Presentation.Value)
+	}
+	legendTitle := "Revenue"
+	legendItems := []document.DashboardLegendItem{{Value: "revenue"}}
+	tooltip := []document.DashboardTooltip{}
+	seriesIntent := []document.DashboardSeriesIntent{{Value: "revenue"}}
+	axes := []document.DashboardAxisConfiguration{}
+	referenceLines := []document.DashboardReferenceLine{}
+	referenceBands := []document.DashboardReferenceBand{}
+	eventAnnotations := []document.DashboardEventAnnotation{}
+	line.LegendTitle = &legendTitle
+	line.LegendItems = &legendItems
+	line.Tooltip = &tooltip
+	line.SeriesIntent = &seriesIntent
+	line.Axes = &axes
+	line.ReferenceLines = &referenceLines
+	line.ReferenceBands = &referenceBands
+	line.EventAnnotations = &eventAnnotations
+	revision.Document.Spec.Visuals["base"] = source
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeArea}); err != nil {
+		t.Fatal(err)
+	}
+	switched := revision.Document.Spec.Visuals["base"]
+	area, ok := switched.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok {
+		t.Fatalf("area presentation = %T, want Cartesian", switched.Presentation.Value)
+	}
+	if area.LegendTitle != line.LegendTitle || area.LegendItems != line.LegendItems || area.Tooltip != line.Tooltip || area.SeriesIntent != line.SeriesIntent || area.Axes != line.Axes || area.ReferenceLines != line.ReferenceLines || area.ReferenceBands != line.ReferenceBands || area.EventAnnotations != line.EventAnnotations {
+		t.Fatalf("same-family switch dropped presentation fields: source=%#v switched=%#v", line, area)
+	}
+	if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err != nil {
+		t.Fatalf("lower switched area presentation: %v", err)
+	}
+}
+
+func TestCanonicalVisualTypeSwitchDoesNotCarryAxisVisibilityToUnsupportedFamily(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	visual := defaultCanonicalVisual(string(document.DashboardVisualTypeLine), "Base")
+	visible := false
+	base, err := visual.Presentation.Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.AxisVisible = &visible
+	revision.Document.Spec.Visuals["base"] = visual
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeScatter}); err != nil {
+		t.Fatal(err)
+	}
+	scatter := revision.Document.Spec.Visuals["base"]
+	scatterBase, err := scatter.Presentation.Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scatterBase.AxisVisible == nil || *scatterBase.AxisVisible {
+		t.Fatalf("supported scatter target axisVisible = %v, want false", scatterBase.AxisVisible)
+	}
+
+	visual = defaultCanonicalVisual(string(document.DashboardVisualTypeLine), "Base")
+	base, err = visual.Presentation.Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.AxisVisible = &visible
+	revision.Document.Spec.Visuals["base"] = visual
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypePie}); err != nil {
+		t.Fatal(err)
+	}
+	switched := revision.Document.Spec.Visuals["base"]
+	switchedBase, err := switched.Presentation.Base()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switchedBase.AxisVisible != nil {
+		t.Fatalf("unsupported target retained axisVisible=%v", *switchedBase.AxisVisible)
+	}
+}
+
+func TestCanonicalVisualTypeSwitchKeepsInapplicableOrientationActionable(t *testing.T) {
+	for _, orientation := range []document.DashboardOrientation{document.DashboardOrientationHorizontal, document.DashboardOrientationVertical} {
+		t.Run(string(orientation), func(t *testing.T) {
+			_, revision := canonicalReducerFixture(t)
+			visual := defaultCanonicalVisual(string(document.DashboardVisualTypeLine), "Base")
+			visual.Presentation.Value.(*document.CartesianDashboardPresentation).Orientation = &orientation
+			revision.Document.Spec.Visuals["base"] = visual
+			if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeBar}); err != nil {
+				t.Fatal(err)
+			}
+			switched := revision.Document.Spec.Visuals["base"]
+			presentation := switched.Presentation.Value.(*document.CartesianDashboardPresentation)
+			if presentation.Orientation == nil || *presentation.Orientation != orientation {
+				t.Fatalf("bar switch orientation = %#v, want authored orientation %q retained for validation", presentation.Orientation, orientation)
+			}
+			if _, err := compiler.LowerCanonicalDashboardPresentation(switched.Presentation, switched.Type); err == nil || !strings.Contains(err.Error(), "presentation.orientation is not supported for bar visuals") {
+				t.Fatalf("bar switch compiler error = %v, want inapplicable orientation diagnostic", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalDataLabelsRejectsGeographicPresentation(t *testing.T) {
+	presentation := document.DashboardPresentation{Value: &document.GeographicDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "geographic"}, Type: "geographic"}}
+	for _, visible := range []bool{false, true} {
+		if err := setCanonicalDataLabelsVisibility(&presentation, visible); err == nil || !strings.Contains(err.Error(), "does not support data labels") {
+			t.Fatalf("geographic data-label toggle visible=%t error = %v", visible, err)
+		}
 	}
 }
 
@@ -551,7 +702,7 @@ func TestCanonicalReducerSelectedVisualEditingCommands(t *testing.T) {
 	if err := apply(&SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeColumn}); err != nil {
 		t.Fatal(err)
 	}
-	if cartesian, ok := current.Document.Spec.Visuals["base"].Presentation.Value.(*document.CartesianDashboardPresentation); !ok || cartesian.Orientation == nil || *cartesian.Orientation != document.DashboardOrientationVertical {
+	if cartesian, ok := current.Document.Spec.Visuals["base"].Presentation.Value.(*document.CartesianDashboardPresentation); !ok || cartesian.Orientation != nil {
 		t.Fatalf("column orientation = %#v", current.Document.Spec.Visuals["base"].Presentation)
 	}
 	if err := apply(&SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeLine}); err != nil {

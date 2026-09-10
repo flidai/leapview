@@ -62460,6 +62460,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         stacking:
@@ -62496,18 +62506,42 @@ components:
             - axis: primary
               field: example
               mark: line
+        seriesIntent:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardSeriesIntent'
+          description: Stable per-series color and order policy. Category values may
+            be data-dependent for non-combo Cartesian series.
+          example:
+            - color: accent
+              order: 1
+              value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain color; omitted values use the active theme
+            success color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss color; omitted values use the active theme
+            danger color.
         axes:
           type: array
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62538,15 +62572,26 @@ components:
               id: example
               label: example
               tone: neutral
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         dataZoom: true
@@ -62557,6 +62602,7 @@ components:
             id: example
             label: example
             tone: neutral
+        gainColor: accent
         labelPosition: automatic
         labels:
           density: hidden
@@ -62566,6 +62612,11 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
+        lossColor: accent
         orientation: horizontal
         referenceBands:
           - axis: x
@@ -62581,11 +62632,16 @@ components:
           - axis: primary
             field: example
             mark: line
+        seriesIntent:
+          - color: accent
+            order: 1
+            value: example
         showSymbols: true
         smooth: true
         stacking: none
         step: true
         symbolSize: 1
+        tooltip: []
         type: example
     CartesianVisualizationPresentation:
       type: object
@@ -62647,6 +62703,14 @@ components:
             - color: accent
               order: 1
               value: example
+        gainColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick gain intent; omitted values use the theme success
+            color.
+        lossColor:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+          description: Candlestick loss intent; omitted values use the theme danger
+            color.
       example:
         area: true
         comboSeries:
@@ -62654,8 +62718,10 @@ components:
             mark: line
             seriesValue: example
         dataZoom: true
+        gainColor: accent
         histogramBins: 1
         labelPosition: automatic
+        lossColor: accent
         orientation: horizontal
         seriesIntent:
           - color: accent
@@ -62701,13 +62767,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -62749,13 +62821,19 @@ components:
           $ref: '#/components/schemas/CartesianVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         eventAnnotations:
@@ -62773,8 +62851,10 @@ components:
               mark: line
               seriesValue: example
           dataZoom: true
+          gainColor: accent
           histogramBins: 1
           labelPosition: automatic
+          lossColor: accent
           orientation: horizontal
           seriesIntent:
             - color: accent
@@ -62872,6 +62952,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Currency display format; the default fraction range is 2..2. One-sided
+        bounds follow the numeric format rule.
       example:
         currency: example
         kind: example
@@ -67787,10 +67869,14 @@ components:
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -67806,15 +67892,29 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       description: A renderer-neutral axis policy for Cartesian and point visuals.
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
     DashboardCalculation:
@@ -67946,6 +68046,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         color:
           $ref: '#/components/schemas/DashboardMapColorScale'
         stroke:
@@ -67967,6 +68072,7 @@ components:
         geometryAsset: example
         join: example
         kind: example
+        label: example
         opacity: 1
         stroke:
           color: example
@@ -69211,19 +69317,11 @@ components:
           maxLength: 128
           pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
           example: example
-        label:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         minimumZoom:
@@ -69236,12 +69334,10 @@ components:
           example: 1
       example:
         id: example
-        label: example
         maximumZoom: 1
         minimumZoom: 1
         position: below_labels
-        tooltip:
-          - example
+        tooltip: []
     DashboardGradientConditionalRule:
       type: object
       allOf:
@@ -69645,6 +69741,21 @@ components:
         gap: 1
         padding: 1
         rowHeight: 1
+    DashboardLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: One canonical legend value. Array order is the display order.
+      example:
+        label: example
+        value: example
     DashboardLegendPosition:
       type: string
       enum:
@@ -69888,6 +69999,13 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
+          description: |-
+            Approximate CSS-pixel clustering target for tiled maps. The server uses a
+            globally aligned grid with max(1, floor(256 / radius)) cells per tile;
+            radii 129–512 therefore share one cell per tile. This does not promise
+            pixel-identical cluster membership between inline and tiled data.
           example: 1
         maximumZoom:
           type: integer
@@ -69977,12 +70095,7 @@ components:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     DashboardMapSizeScale:
       type: object
@@ -70555,7 +70668,6 @@ components:
         kind: example
         latitude: example
         line:
-          curvature: 1
           width: 1
         longitude: example
         opacity: 1
@@ -70661,6 +70773,11 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
+        label:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
         size:
           $ref: '#/components/schemas/DashboardMapSizeScale'
         color:
@@ -70690,6 +70807,7 @@ components:
           palette: example
           reverse: true
         kind: example
+        label: example
         latitude: example
         longitude: example
         opacity: 1
@@ -70742,7 +70860,10 @@ components:
               target: mark_fill
         axisVisible:
           type: boolean
-          description: Whether cartesian/value axes are rendered for this visual.
+          description: |-
+            Whether axes are rendered for Cartesian marks and point (scatter)
+            visuals. Omit this field to use the renderer default; an authored value
+            on another presentation family is invalid rather than silently ignored.
           example: true
       description: Renderer-neutral presentation policies; renderer options are intentionally
         absent.
@@ -71205,6 +71326,25 @@ components:
         - single
         - multiple
       example: single
+    DashboardSeriesIntent:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        order:
+          type: integer
+          format: int32
+          example: 1
+        color:
+          $ref: '#/components/schemas/VisualizationColorIntent'
+      description: A stable renderer-neutral policy for one named chart series.
+      example:
+        color: accent
+        order: 1
+        value: example
     DashboardSlicerComponentResponse:
       type: object
       allOf:
@@ -71712,6 +71852,32 @@ components:
         - quarter
         - year
       example: second
+    DashboardTooltip:
+      oneOf:
+        - type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+        - $ref: '#/components/schemas/DashboardTooltipItem'
+    DashboardTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: One ordered tooltip field projection. Compact string entries remain
+        supported.
+      example:
+        field: example
+        label: example
     DashboardVisual:
       type: object
       required:
@@ -74233,8 +74399,6 @@ components:
           enum:
             - geographic
           example: example
-        labels:
-          $ref: '#/components/schemas/DashboardLabelPolicy'
         theme:
           $ref: '#/components/schemas/VisualizationMapTheme'
         basemap:
@@ -74269,13 +74433,6 @@ components:
           reset: true
           zoom: true
         labelDensity: hidden
-        labels:
-          density: hidden
-          maxCharacters: 1
-          minimumSpacing: 1
-          priority:
-            - selected
-          tooltipFallback: true
         layers: []
         roam: true
         theme: auto
@@ -74918,6 +75075,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         orientation:
@@ -74958,6 +75125,10 @@ components:
           tooltipFallback: true
         layout: standard
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         nodeGap: 1
         orientation: horizontal
         roam: true
@@ -75223,13 +75394,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
         comparison:
           $ref: '#/components/schemas/DashboardKPIValueBinding'
         goal:
@@ -75265,9 +75429,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
         trend:
           category: example
@@ -75307,13 +75468,6 @@ components:
           example: example
         tone:
           $ref: '#/components/schemas/VisualizationTone'
-        thresholds:
-          type: array
-          items:
-            $ref: '#/components/schemas/VisualizationThreshold'
-          example:
-            - tone: neutral
-              value: 1
       example:
         delta: absolute
         displayUnits: auto
@@ -75326,9 +75480,6 @@ components:
             maximum: 1
             minimum: 1
             tone: neutral
-        thresholds:
-          - tone: neutral
-            value: 1
         tone: neutral
     KPIVisualizationSpec:
       type: object
@@ -75380,9 +75531,6 @@ components:
               maximum: 1
               minimum: 1
               tone: neutral
-          thresholds:
-            - tone: neutral
-              value: 1
           tone: neutral
         trend:
           category:
@@ -76510,6 +76658,11 @@ components:
           type: integer
           format: int32
           example: 1
+      description: |-
+        Numeric display format. With no fraction bounds, values use 0..3 digits.
+        A one-sided bound preserves that default on the unconstrained side unless
+        it would make the range invalid: a maximum below the default minimum lowers
+        the minimum, and a minimum above the default maximum raises the maximum.
       example:
         kind: example
         maximumFractionDigits: 1
@@ -76576,6 +76729,8 @@ components:
           type: integer
           format: int32
           example: 1
+      description: Percent display format; the default fraction range is 0..1. One-sided
+        bounds follow the numeric format rule.
       example:
         kind: example
         maximumFractionDigits: 1
@@ -76716,15 +76871,11 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       description: A governed result-frame binding used by a point/scatter visual.
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointDashboardOverplot:
       type: object
       required:
@@ -76765,6 +76916,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         identity:
@@ -76795,11 +76956,6 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
           example: example
-        series:
-          type: string
-          minLength: 1
-          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example: example
         label:
           type: string
           minLength: 1
@@ -76808,11 +76964,8 @@ components:
         tooltip:
           type: array
           items:
-            type: string
-            minLength: 1
-            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-          example:
-            - example
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
         colorScale:
           $ref: '#/components/schemas/PointDashboardColorScale'
         sizeScale:
@@ -76830,13 +76983,19 @@ components:
           items:
             $ref: '#/components/schemas/DashboardAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -76871,13 +77030,19 @@ components:
         channels.
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         brush:
@@ -76887,7 +77052,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example
@@ -76905,6 +77069,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         overplot:
           largeMode: automatic
           largeThreshold: 1
@@ -76920,15 +77088,13 @@ components:
             id: example
             label: example
             tone: neutral
-        series: example
         size: example
         sizeScale:
           maximum: 1
           maximumPixels: 1
           minimum: 1
           minimumPixels: 1
-        tooltip:
-          - example
+        tooltip: []
         type: example
         x: example
         'y': example
@@ -76975,14 +77141,10 @@ components:
           type: number
           format: double
           example: 1
-        scheme:
-          type: string
-          example: example
       example:
         kind: categorical
         maximum: 1
         minimum: 1
-        scheme: example
     PointVisualizationPresentation:
       type: object
       allOf:
@@ -77077,8 +77239,6 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         color:
           $ref: '#/components/schemas/VisualizationFieldRef'
-        series:
-          $ref: '#/components/schemas/VisualizationFieldRef'
         label:
           $ref: '#/components/schemas/VisualizationFieldRef'
         tooltip:
@@ -77097,13 +77257,19 @@ components:
           items:
             $ref: '#/components/schemas/VisualizationAxisConfiguration'
           example:
-            - displayUnits: auto
+            - dateUnit: automatic
+              displayUnits: auto
+              grid: automatic
               id: x
+              inversion: automatic
+              labelRotation: automatic
               maximum: 1
               minimum: 1
               scale: automatic
               tickDensity: automatic
+              ticks: automatic
               title: example
+              type: automatic
               unit: example
               zero: automatic
         referenceLines:
@@ -77138,13 +77304,19 @@ components:
           $ref: '#/components/schemas/PointVisualizationPresentation'
       example:
         axes:
-          - displayUnits: auto
+          - dateUnit: automatic
+            displayUnits: auto
+            grid: automatic
             id: x
+            inversion: automatic
+            labelRotation: automatic
             maximum: 1
             minimum: 1
             scale: automatic
             tickDensity: automatic
+            ticks: automatic
             title: example
+            type: automatic
             unit: example
             zero: automatic
         color:
@@ -77154,7 +77326,6 @@ components:
           kind: categorical
           maximum: 1
           minimum: 1
-          scheme: example
         eventAnnotations:
           - axis: x
             description: example
@@ -77185,9 +77356,6 @@ components:
             id: example
             label: example
             tone: neutral
-        series:
-          dataset: example
-          field: example
         size:
           dataset: example
           field: example
@@ -77219,6 +77387,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -77263,6 +77441,10 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         maximum: 1
         minimum: 1
         progressWidth: 1
@@ -78257,6 +78439,16 @@ components:
           example: example
         legend:
           $ref: '#/components/schemas/DashboardLegendPosition'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardLegendItem'
+          example:
+            - label: example
+              value: example
         labels:
           $ref: '#/components/schemas/DashboardLabelPolicy'
         displayUnits:
@@ -78283,6 +78475,11 @@ components:
           $ref: '#/components/schemas/DashboardProportionalAlignment'
         sort:
           $ref: '#/components/schemas/VisualizationSortDirection'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardTooltip'
+          example: []
       example:
         align: left
         centerLabel: example
@@ -78297,10 +78494,15 @@ components:
             - selected
           tooltipFallback: true
         legend: none
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
         orientation: horizontal
         outerRadius: 1
         rose: true
         sort: ascending
+        tooltip: []
         type: example
     ProportionalVisualizationPresentation:
       type: object
@@ -78366,6 +78568,13 @@ components:
           $ref: '#/components/schemas/VisualizationFieldRef'
         series:
           $ref: '#/components/schemas/VisualizationFieldRef'
+        tooltip:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationFieldRef'
+          example:
+            - dataset: example
+              field: example
         presentation:
           $ref: '#/components/schemas/ProportionalVisualizationPresentation'
       example:
@@ -78386,6 +78595,9 @@ components:
         series:
           dataset: example
           field: example
+        tooltip:
+          - dataset: example
+            field: example
         value:
           dataset: example
           field: example
@@ -83924,19 +84136,29 @@ components:
       type: object
       required:
         - id
+        - type
         - scale
         - zero
+        - inversion
         - tickDensity
+        - ticks
+        - grid
+        - labelRotation
+        - dateUnit
       properties:
         id:
           $ref: '#/components/schemas/VisualizationCartesianAxis'
         title:
           type: string
           example: example
+        type:
+          $ref: '#/components/schemas/VisualizationAxisType'
         scale:
           $ref: '#/components/schemas/VisualizationAxisScale'
         zero:
           $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        inversion:
+          $ref: '#/components/schemas/VisualizationAxisInversion'
         minimum:
           type: number
           format: double
@@ -83952,16 +84174,54 @@ components:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
         tickDensity:
           $ref: '#/components/schemas/VisualizationAxisTickDensity'
+        ticks:
+          $ref: '#/components/schemas/VisualizationAxisTickVisibility'
+        grid:
+          $ref: '#/components/schemas/VisualizationAxisGridVisibility'
+        labelRotation:
+          $ref: '#/components/schemas/VisualizationAxisLabelRotation'
+        dateUnit:
+          $ref: '#/components/schemas/VisualizationDateDisplayUnit'
       example:
+        dateUnit: automatic
         displayUnits: auto
+        grid: automatic
         id: x
+        inversion: automatic
+        labelRotation: automatic
         maximum: 1
         minimum: 1
         scale: automatic
         tickDensity: automatic
+        ticks: automatic
         title: example
+        type: automatic
         unit: example
         zero: automatic
+    VisualizationAxisGridVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisInversion:
+      type: string
+      enum:
+        - automatic
+        - normal
+        - inverted
+      description: Renderer-neutral axis direction. Automatic keeps the conventional
+        direction.
+      example: automatic
+    VisualizationAxisLabelRotation:
+      type: string
+      enum:
+        - automatic
+        - horizontal
+        - diagonal
+        - vertical
+      example: automatic
     VisualizationAxisScale:
       type: string
       enum:
@@ -83976,6 +84236,23 @@ components:
         - sparse
         - normal
         - dense
+      example: automatic
+    VisualizationAxisTickVisibility:
+      type: string
+      enum:
+        - automatic
+        - visible
+        - hidden
+      example: automatic
+    VisualizationAxisType:
+      type: string
+      enum:
+        - automatic
+        - category
+        - value
+        - time
+      description: Renderer-neutral axis coordinate type. Automatic preserves the
+        established chart-family default while temporal axes remain time axes.
       example: automatic
     VisualizationAxisZeroPolicy:
       type: string
@@ -84383,7 +84660,6 @@ components:
       type: string
       enum:
         - mark_fill
-        - mark_stroke
         - series_color
         - label_foreground
         - visual_background
@@ -84549,6 +84825,20 @@ components:
               timezone: example
               weekStart: monday
         id: example
+    VisualizationDateDisplayUnit:
+      type: string
+      enum:
+        - automatic
+        - year
+        - quarter
+        - month
+        - week
+        - day
+        - hour
+        - minute
+        - second
+      description: Semantic date granularity for labels on a temporal axis.
+      example: automatic
     VisualizationDatumRef:
       type: object
       required:
@@ -85008,6 +85298,15 @@ components:
           example:
             - dataset: example
               field: example
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
         position:
           $ref: '#/components/schemas/VisualizationMapLayerPosition'
         visibility:
@@ -85022,6 +85321,11 @@ components:
         tooltip:
           - dataset: example
             field: example
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
         visibility:
           maximumZoom: 1
           minimumZoom: 1
@@ -85619,6 +85923,21 @@ components:
         - anomaly
         - threshold
       example: selected
+    VisualizationLegendItem:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: string
+          example: example
+        label:
+          type: string
+          example: example
+      description: Canonical legend value with an optional display label.
+      example:
+        label: example
+        value: example
     VisualizationLegendPosition:
       type: string
       enum:
@@ -85691,6 +86010,8 @@ components:
         radius:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 512
           example: 1
         maximumZoom:
           type: integer
@@ -85809,18 +86130,12 @@ components:
       type: object
       required:
         - width
-        - curvature
       properties:
         width:
           type: number
           format: double
           example: 1
-        curvature:
-          type: number
-          format: double
-          example: 1
       example:
-        curvature: 1
         width: 1
     VisualizationMapSizeScale:
       type: object
@@ -86086,7 +86401,6 @@ components:
           dataset: example
           field: example
         line:
-          curvature: 1
           width: 1
         longitude:
           dataset: example
@@ -86225,10 +86539,23 @@ components:
           $ref: '#/components/schemas/VisualizationLabelPolicy'
         axisVisible:
           type: boolean
-          description: False hides cartesian axes while retaining governed field encodings.
+          description: |-
+            Whether axes are rendered for Cartesian and point (scatter) visuals.
+            Omission retains the renderer default; authored values on other visual
+            families are rejected by IR validation.
           example: true
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
+        legendTitle:
+          type: string
+          example: example
+        legendItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationLegendItem'
+          example:
+            - label: example
+              value: example
       example:
         axisVisible: true
         displayUnits: auto
@@ -86240,6 +86567,10 @@ components:
             - selected
           tooltipFallback: true
         legend: hidden
+        legendItems:
+          - label: example
+            value: example
+        legendTitle: example
     VisualizationProportionalMark:
       type: string
       enum:
@@ -86892,6 +87223,15 @@ components:
                 field: example
               template: running_total
               window: 1
+        tooltipItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTooltipItem'
+          example:
+            - field:
+                dataset: example
+                field: example
+              label: example
       example:
         accessibility:
           announceChanges: true
@@ -87021,6 +87361,11 @@ components:
         subtitle: example
         title: example
         titleVisible: true
+        tooltipItems:
+          - field:
+              dataset: example
+              field: example
+            label: example
     VisualizationSpecKind:
       type: string
       enum:
@@ -87153,6 +87498,24 @@ components:
         - warning
         - danger
       example: neutral
+    VisualizationTooltipItem:
+      type: object
+      required:
+        - field
+      properties:
+        field:
+          $ref: '#/components/schemas/VisualizationFieldRef'
+        label:
+          type: string
+          example: example
+        format:
+          $ref: '#/components/schemas/VisualizationFormat'
+      description: Ordered tooltip projection; labels and formats are display-only.
+      example:
+        field:
+          dataset: example
+          field: example
+        label: example
     VisualizationWeekStart:
       type: string
       enum:
