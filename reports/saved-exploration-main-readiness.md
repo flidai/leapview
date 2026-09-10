@@ -39,8 +39,10 @@ a pass. Preview corrections preserve supported field formats and scalar KPI
 ranges/comparison/goal bindings. Unsupported trend/threshold requests produce
 warnings and a usable table fallback; table and chart formats remain independent.
 Malformed visualization pointers and conflicting formats receive regression
-coverage. Focused visualization tests passed; final review and restarted full CI
-are pending, followed by exact-head hosted checks.
+coverage. Final review and focused visualization tests passed (0.091s).
+Main's subsequent exact-version managed-object retrieval change (`ab9f8e124`)
+was integrated by a clean normal merge, without changing migration numbering.
+Restarted full CI and exact-head hosted checks remain pending.
 
 The PR must remain unmerged, with auto-merge disabled and no merge
 queue enrollment, until explicit user approval. No force push is permitted.
