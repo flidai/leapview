@@ -4,7 +4,7 @@ metadata:
   id: model:variance_drivers
   name: variance_drivers
   displayName: EBITDA Variance Fact
-  description: Variance fact with one signed EBITDA contribution per financial record and driver.
+  description: Variance fact with one signed contribution per financial record and driver that reconciles exactly to EBITDA variance.
 spec:
   fields:
     variance_row_id: {datatype: String, label: Variance row ID}
@@ -17,18 +17,32 @@ spec:
   definition:
     type: sql
     sql: |
-      WITH drivers AS (
-        SELECT record_id, finance_date, segment, country, product, 10 AS driver_order, net_sales - budget_sales AS impact FROM model.financial_performance
+      WITH base AS (
+        SELECT
+          record_id,
+          finance_date,
+          segment,
+          country,
+          product,
+          net_sales - budget_sales AS revenue_impact,
+          budget_sales_marketing_expense - sales_marketing_expense AS sales_marketing_impact,
+          budget_operations_expense - operations_expense AS operations_impact,
+          budget_research_development_expense - research_development_expense AS research_development_impact,
+          budget_general_admin_expense - general_admin_expense AS general_admin_impact,
+          ebitda - budget_ebitda AS ebitda_variance
+        FROM model.financial_performance
+      ), drivers AS (
+        SELECT record_id, finance_date, segment, country, product, 10 AS driver_order, revenue_impact AS impact FROM base
         UNION ALL
-        SELECT record_id, finance_date, segment, country, product, 20, budget_cogs - cogs FROM model.financial_performance
+        SELECT record_id, finance_date, segment, country, product, 20, ebitda_variance - revenue_impact - sales_marketing_impact - operations_impact - research_development_impact - general_admin_impact FROM base
         UNION ALL
-        SELECT record_id, finance_date, segment, country, product, 30, budget_sales_marketing_expense - sales_marketing_expense FROM model.financial_performance
+        SELECT record_id, finance_date, segment, country, product, 30, sales_marketing_impact FROM base
         UNION ALL
-        SELECT record_id, finance_date, segment, country, product, 40, budget_operations_expense - operations_expense FROM model.financial_performance
+        SELECT record_id, finance_date, segment, country, product, 40, operations_impact FROM base
         UNION ALL
-        SELECT record_id, finance_date, segment, country, product, 50, budget_research_development_expense - research_development_expense FROM model.financial_performance
+        SELECT record_id, finance_date, segment, country, product, 50, research_development_impact FROM base
         UNION ALL
-        SELECT record_id, finance_date, segment, country, product, 60, budget_general_admin_expense - general_admin_expense FROM model.financial_performance
+        SELECT record_id, finance_date, segment, country, product, 60, general_admin_impact FROM base
       )
       SELECT
         record_id || '-' || CAST(driver_order AS VARCHAR) AS variance_row_id,

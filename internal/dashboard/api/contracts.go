@@ -155,9 +155,10 @@ type DashboardFilterStaticOption struct {
 }
 
 type DashboardFilterOptionSource struct {
-	Kind   string                        `json:"kind"`
-	Limit  int32                         `json:"limit"`
-	Values []DashboardFilterStaticOption `json:"values"`
+	Kind    string                        `json:"kind"`
+	Dataset string                        `json:"dataset,omitempty"`
+	Limit   int32                         `json:"limit"`
+	Values  []DashboardFilterStaticOption `json:"values"`
 }
 
 type DashboardCompiledFilterDefinition struct {

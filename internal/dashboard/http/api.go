@@ -124,7 +124,7 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
 		return
 	}
-	if err := authorizeDashboardFilterField(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), filter.Dataset, filter.Field); err != nil {
+	if err := authorizeDashboardFilterField(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), dashboardFilterOptionDataset(filter), filter.Field); err != nil {
 		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
@@ -145,15 +145,19 @@ func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request
 	if binding.Pane.Label != "" {
 		bindingResponse["paneLabel"] = binding.Pane.Label
 	}
+	definitionResponse := map[string]any{
+		"id": binding.Filter, "label": filter.Label, "description": filter.Description,
+		"field": filter.Field, "valueKind": filter.ValueKind,
+		"predicates": filter.Predicates, "options": filter.Options,
+		"formatPattern": filter.Formatting.Pattern, "formatUnit": filter.Formatting.Unit,
+		"timezone": filter.Time.Timezone, "calendar": filter.Time.Calendar, "weekStart": filter.Time.WeekStart,
+	}
+	if filter.Dataset != "" {
+		definitionResponse["dataset"] = filter.Dataset
+	}
 	response := map[string]any{
-		"definition": map[string]any{
-			"id": binding.Filter, "label": filter.Label, "description": filter.Description,
-			"field": filter.Field, "dataset": filter.Dataset, "valueKind": filter.ValueKind,
-			"predicates": filter.Predicates, "options": filter.Options,
-			"formatPattern": filter.Formatting.Pattern, "formatUnit": filter.Formatting.Unit,
-			"timezone": filter.Time.Timezone, "calendar": filter.Time.Calendar, "weekStart": filter.Time.WeekStart,
-		},
-		"binding": bindingResponse,
+		"definition": definitionResponse,
+		"binding":    bindingResponse,
 	}
 	if component.ID != "" {
 		response["componentId"] = component.ID
@@ -424,7 +428,7 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 		writeJSONError(w, fmt.Errorf("filter definition %q not found", binding.Filter), nethttp.StatusNotFound)
 		return
 	}
-	if err := authorizeDashboardFilterField(r.Context(), metrics, chi.URLParam(r, "dashboard"), definition.Dataset, definition.Field); err != nil {
+	if err := authorizeDashboardFilterField(r.Context(), metrics, chi.URLParam(r, "dashboard"), dashboardFilterOptionDataset(definition), definition.Field); err != nil {
 		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
 		return
 	}
@@ -464,7 +468,7 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 			}
 		}
 		result, err := queryMetrics.QueryCompiledFilterOptions(r.Context(), dashboardID, dashboardfilter.OptionQuery{
-			Field: definition.Field, Dataset: definition.Dataset, ValueKind: definition.ValueKind,
+			Field: definition.Field, Dataset: definition.OptionDataset(), ValueKind: definition.ValueKind,
 			Dependencies: dependencies, Limit: 200,
 		})
 		if err != nil {
@@ -481,6 +485,13 @@ func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, api.DashboardFilterOptionListResponse{Items: items, Page: api.PageInfo{NextCursor: nextCursor}})
+}
+
+func dashboardFilterOptionDataset(definition dashboardfilter.Definition) string {
+	if definition.Options.Kind == dashboardfilter.OptionSourceDistinct {
+		return definition.OptionDataset()
+	}
+	return definition.Dataset
 }
 
 func (h Handler) biMetrics(w nethttp.ResponseWriter, r *nethttp.Request) (Metrics, bool) {

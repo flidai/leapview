@@ -66,7 +66,7 @@ func TestOptionEngineUsesIncomingDependenciesAndExcludesSelf(t *testing.T) {
 	page, err := engine.Page(context.Background(), OptionContext{
 		ServingStateID: "ss-1", PolicyIdentity: "policy-1", State: state,
 		Binding:          Binding{Key: "fb_state", Filter: "state", OptionDependencies: []BindingRef{{Scope: ScopePage, ID: "year"}}},
-		Definition:       Definition{ValueKind: ValueString, Options: OptionSource{Kind: OptionSourceDistinct}},
+		Definition:       Definition{Field: "customer_state", ValueKind: ValueString, Options: OptionSource{Kind: OptionSourceDistinct, Dataset: "customers"}},
 		BindingKeysByRef: map[BindingRef]string{{Scope: ScopePage, ID: "year"}: "fb_year"},
 	}, OptionRequest{BindingKey: "fb_state", FilterRevision: 4, ServingStateID: "ss-1", Limit: 20, RequestGeneration: 2})
 	if err != nil {
@@ -77,6 +77,9 @@ func TestOptionEngineUsesIncomingDependenciesAndExcludesSelf(t *testing.T) {
 	}
 	if _, exists := captured.Dependencies["fb_state"]; exists {
 		t.Fatal("option query included the target binding itself")
+	}
+	if captured.Dataset != "customers" || captured.Field != "customer_state" {
+		t.Fatalf("option query source = %q.%q, want customers.customer_state", captured.Dataset, captured.Field)
 	}
 	if len(page.Items) != 1 || !page.Items[0].Selected || !page.Items[0].Available {
 		t.Fatalf("option page = %#v", page)
@@ -102,6 +105,25 @@ func TestOptionEngineRetainsSelectedUnavailableValues(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Available || !page.Items[0].Selected {
 		t.Fatalf("unavailable selection = %#v", page.Items)
+	}
+}
+
+func TestOptionEngineReadsLegacyDefinitionDataset(t *testing.T) {
+	var captured OptionQuery
+	engine := NewOptionEngine([]byte("01234567890123456789012345678901"), func(_ context.Context, query OptionQuery) (OptionResult, error) {
+		captured = query
+		return OptionResult{Complete: true}, nil
+	})
+	_, err := engine.Page(context.Background(), OptionContext{
+		ServingStateID: "ss", PolicyIdentity: "policy", State: State{Revision: 1},
+		Binding:    Binding{Key: "fb"},
+		Definition: Definition{Field: "country", Dataset: "financial_performance", ValueKind: ValueString, Options: OptionSource{Kind: OptionSourceDistinct}},
+	}, OptionRequest{BindingKey: "fb", FilterRevision: 1, ServingStateID: "ss", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.Dataset != "financial_performance" {
+		t.Fatalf("legacy option query dataset = %q, want financial_performance", captured.Dataset)
 	}
 }
 

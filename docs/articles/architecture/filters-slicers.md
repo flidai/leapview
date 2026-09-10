@@ -101,7 +101,7 @@ Deployment compilation produces immutable filter definitions, bindings, target s
 A definition owns reusable semantic policy:
 
 - Stable definition ID and reader-facing label/description.
-- Semantic field and optional dataset identity.
+- Semantic field and optional predicate dataset identity. An omitted predicate dataset keeps a conformed semantic dimension applicable across participating datasets.
 - Compiler-resolved value type.
 - Allowed predicate variants and operators.
 - Static or governed dynamic option source.
@@ -137,6 +137,8 @@ FilterExpression
 ```
 
 The compiler restricts variants and operators by semantic type. For example, `contains` is valid for strings but not dates, and a relative period requires a date or timestamp.
+
+A distinct option source carries its own dataset identity. That dataset selects the governed relation used to enumerate dropdown values; it never narrows the applied predicate to that dataset. Keeping option lookup and predicate scope separate lets one conformed filter apply to visuals backed by different fact datasets.
 
 `FilterValue` is a discriminated scalar rather than an arbitrary JSON value. Strings and booleans remain native; integers and decimals use canonical precision-safe representations; dates and timestamps use canonical ISO representations with compiled calendar and timezone semantics. `NullCheck` represents null filtering instead of overloading an empty string.
 

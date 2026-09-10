@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 )
 
@@ -17,6 +18,29 @@ func TestDashboardContractConversionsPreserveJSON(t *testing.T) {
 	assertSameJSON(t, selections, DashboardInteractionSelectionsFromDashboard(selections))
 	spatial := []dashboard.SpatialInteractionSelection{}
 	assertSameJSON(t, spatial, DashboardSpatialSelectionsFromDashboard(spatial))
+}
+
+func TestDashboardFilterContractPreservesOptionDatasetSeparately(t *testing.T) {
+	t.Parallel()
+
+	contract := DashboardFilterContractFromDefinition(dashboarddefinition.Definition{
+		FilterDefinitions: map[string]dashboardfilter.Definition{
+			"country": {
+				Field: "country",
+				Options: dashboardfilter.OptionSource{
+					Kind:    dashboardfilter.OptionSourceDistinct,
+					Dataset: "financial_performance",
+				},
+			},
+		},
+	})
+	definition := contract.Definitions["country"]
+	if definition.Dataset != nil {
+		t.Fatalf("predicate dataset = %q, want omitted", *definition.Dataset)
+	}
+	if definition.Options.Dataset == nil || *definition.Options.Dataset != "financial_performance" {
+		t.Fatalf("option dataset = %#v, want financial_performance", definition.Options.Dataset)
+	}
 }
 
 func TestDashboardFilterStateUsesEmptyJSONCollections(t *testing.T) {

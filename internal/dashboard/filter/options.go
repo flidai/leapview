@@ -196,7 +196,7 @@ func (engine *OptionEngine) Page(ctx context.Context, optionContext OptionContex
 		after = cursor.After
 	}
 	query := OptionQuery{
-		Field: optionContext.Definition.Field, Dataset: optionContext.Definition.Dataset,
+		Field: optionContext.Definition.Field, Dataset: optionContext.Definition.OptionDataset(),
 		ValueKind: optionContext.Definition.ValueKind, Dependencies: dependencies,
 		Search: search, After: after, Limit: limit, IncludeNull: optionContext.Definition.Options.IncludeNull,
 	}
