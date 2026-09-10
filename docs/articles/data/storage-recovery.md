@@ -388,6 +388,68 @@ recovery, and measured RPO/RTO remain later UBDR work.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.
 
+## Exact-version S3 evidence adapter qualification
+
+This section defines the qualification scope for the exact-version S3 evidence
+adapter. The adapter is responsible for validating the configured provider
+namespace, reading an already selected historical object, and returning only
+bytes that match the declared transport size and raw SHA-256 identity. The
+RecoverySet repository separately revalidates canonical and domain identity.
+The adapter is a read-only evidence
+transport boundary, not an uploader, capture owner, or recovery lifecycle
+controller.
+
+### Trusted construction and exact verification
+
+Construction is the trusted profile/client boundary. A caller provisions the
+S3 client and an explicit profile containing the endpoint, region, bucket,
+namespace, and bounded read policy. The adapter validates that profile once and
+always uses that client; an observation's endpoint, bucket, key, or credentials
+cannot select a different client or route. Invalid or missing profile/client
+inputs fail construction. The portable evidence reference contains no client,
+credentials, or signed URL.
+
+For every source or evidence object, the adapter must issue `HeadObject` and
+`GetObject` with the supplied nonempty, non-`null` `VersionID`. It requires the
+provider to echo that exact version, requires `ContentLength` to equal the
+declared size, bounds the streamed response, and hashes the fetched bytes with
+SHA-256. A version, size, or hash mismatch fails closed; latest-object lookup,
+ETag, metadata, and a successful HEAD are not content proof. Version IDs are
+observations supplied by the capture boundary, not values inferred by this
+adapter.
+
+### Intended qualification cases
+
+The qualification uses a disposable versioned MinIO bucket and the frozen
+RecoverySet v3 evidence bundle. It uploads all six canonical payloads, captures
+their provider VersionIDs, overwrites each current object, and creates a delete
+marker before the repository reads anything. `CreateSet3` succeeds only by
+using the selected historical versions. After the PostgreSQL connection is
+closed and reopened, `ReadSet3` retrieves and verifies the same exact off-host
+bytes again; identical create/read retries preserve the canonical set bytes.
+
+The rejection matrix covers missing, `latest`, wrong, deleted, and corrupt
+versions; denied credentials; and bucket, profile, and endpoint substitution.
+Direct adapter calls reject profile substitutions before provider I/O.
+Provider failures are
+reduced to bounded categories and cannot expose provider messages, credentials,
+signed URLs, or response bodies. Every failed repository submission leaves no
+successor association.
+
+### Explicit limitations
+
+This adapter qualification uses MinIO and does not establish AWS or other
+S3-compatible provider behavior. Its trusted endpoint identity is deliberately
+separate from the disposable MinIO transport endpoint, so it does not qualify
+TLS, redirect, or endpoint-discovery behavior. It makes no retention or lifecycle guarantee and does
+not capture provider VersionIDs at managed-data write time; retention and a
+durable write-time observation binding remain separate prerequisites. It does
+not add recovery admission, publication, or startup/readiness behavior. It does
+not perform PostgreSQL restore or PITR, activation, or provider disaster
+recovery, and it makes no physical DR, RPO, or RTO claim.
+
+This validates historical managed-object retrieval. It does not prove successful physical disaster recovery.
+
 ## Proposed managed observation manifest contract
 
 The following proposal and implementation-planning sections are retained as
