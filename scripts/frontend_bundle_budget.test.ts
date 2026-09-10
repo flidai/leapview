@@ -588,6 +588,15 @@ test('reviewed proposal requires approval, RFC3339 review date, exact entries, a
     ...proposal,
     requestedBudgets: { ...proposal.requestedBudgets, aggregate: { ...proposal.requestedBudgets.aggregate, maxIncreasePercent: pair(6, 5) } },
   })).toThrow('must remain unchanged from the current policy')
+
+  const mixedCandidate = evidence({ rawBytes: 130, gzipBytes: 90 })
+  const mixed = applyReviewedFrontendBundleBudgetProposal(policy(), mixedCandidate, increaseProposal(mixedCandidate))
+  expect(mixed.budgets.entries.app.max).toEqual({ rawBytes: 130, gzipBytes: 90 })
+  expect(mixed.budgets.aggregate.max).toEqual({ rawBytes: 130, gzipBytes: 90 })
+
+  const tighteningOnly = evidence({ rawBytes: 90, gzipBytes: 90 })
+  expect(() => applyReviewedFrontendBundleBudgetProposal(policy(), tighteningOnly, increaseProposal(tighteningOnly)))
+    .toThrow('use the ordinary tightening path')
 })
 
 test('tightening and reviewed increases persist active evidence, identity, audit, and reload', () => {

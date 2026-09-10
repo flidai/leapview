@@ -101,12 +101,13 @@ export function applyReviewedFrontendBundleBudgetProposal(
   }, `${proposalPath}.requestedBudgets`)
   exactEntrySet(Object.keys(requestedPolicy.budgets.entries).sort(), policyEntryNames, `${proposalPath}.requestedBudgets.entries`)
 
+  let includesIncrease = false
   const assertCandidateBudget = (name: string, requested: BundleBudget, current: BundleBudget, candidateBytes: BytePair): void => {
     if (stableJson(requested.baseline) !== stableJson(candidateBytes)) fail(`${proposalPath}.requestedBudgets.${name}.baseline`, 'must equal the current candidate evidence')
     if (stableJson(requested.max) !== stableJson(candidateBytes)) fail(`${proposalPath}.requestedBudgets.${name}.max`, 'must equal the current candidate evidence')
     if (stableJson(requested.maxIncreasePercent) !== stableJson(current.maxIncreasePercent)) fail(`${proposalPath}.requestedBudgets.${name}.maxIncreasePercent`, 'must remain unchanged from the current policy')
     for (const metric of ['rawBytes', 'gzipBytes'] as const) {
-      if (requested.max[metric] < current.max[metric]) fail(`${proposalPath}.requestedBudgets.${name}.max.${metric}`, 'reviewed proposals may not lower an existing budget')
+      if (requested.max[metric] > current.max[metric]) includesIncrease = true
     }
   }
   for (const name of policyEntryNames) {
@@ -119,6 +120,7 @@ export function applyReviewedFrontendBundleBudgetProposal(
     rawBytes: evidence.aggregate.rawBytes,
     gzipBytes: evidence.aggregate.gzipBytes,
   })
+  if (!includesIncrease) fail(`${proposalPath}.requestedBudgets`, 'does not increase any current ceiling; use the ordinary tightening path')
   return {
     ...policy,
     metadata: {
