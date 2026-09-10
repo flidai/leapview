@@ -3546,12 +3546,14 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 		"ci:lane:go:packages:",
 		"- task: test:go:packages",
 		"ci:lane:go:application:",
-		"- task: test:go:app:shards",
-		"- task: test:go:external",
 	} {
 		if !strings.Contains(taskfile, want) {
 			t.Fatalf("Taskfile missing split Go lane fragment %q", want)
 		}
+	}
+	applicationLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:application")
+	if !strings.Contains(applicationLane, "- task --parallel test:go:app:shards test:go:external") {
+		t.Fatal("Go application lane must run ordinary shards and external-service validation in parallel")
 	}
 
 	setup := read(".github", "actions", "setup-ci", "action.yml")
