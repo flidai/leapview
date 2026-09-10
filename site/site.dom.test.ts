@@ -2551,7 +2551,7 @@ test('heatmap scale is a calculable range that hides only out-of-range visible c
       let chart: any
       const moduleURLs = performance.getEntriesByType('resource')
         .map(({ name }) => name)
-        .filter((name) => /\/chunks\/index-[^/]+\.js$/.test(name))
+        .filter((name) => /\/chunks\/echarts-runtime-[^/]+\.js$/.test(name))
       for (const url of moduleURLs) {
         const module = await import(url)
         if (typeof module.getInstanceByDom !== 'function') continue
@@ -2631,7 +2631,7 @@ test('radar chrome follows the resolved chart theme', async () => {
         let chart: any
         const moduleURLs = performance.getEntriesByType('resource')
           .map(({ name }) => name)
-          .filter((name) => /\/chunks\/index-[^/]+\.js$/.test(name))
+          .filter((name) => /\/chunks\/echarts-runtime-[^/]+\.js$/.test(name))
         for (const url of moduleURLs) {
           const module = await import(url)
           if (typeof module.getInstanceByDom !== 'function') continue

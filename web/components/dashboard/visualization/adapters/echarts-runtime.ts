@@ -1,4 +1,4 @@
-import { init, use } from 'echarts/core'
+import { getInstanceByDom, init, use } from 'echarts/core'
 import type {
   VisualizationCartesianMark,
   VisualizationHierarchyMark,
@@ -98,4 +98,4 @@ use([
   CanvasRenderer,
 ])
 
-export { init }
+export { getInstanceByDom, init }
