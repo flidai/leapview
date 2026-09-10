@@ -24,7 +24,7 @@ func (ctx dashboardCompileContext) compileVisuals(authored map[string]document.D
 	sort.Strings(visualIDs)
 	for _, visualID := range visualIDs {
 		visual := authored[visualID]
-		query, err := LowerDashboardQuery(visual.Query, ctx.model, ctx.modelID)
+		query, err := LowerDashboardQueryBinding(visual.Query, ctx.model, ctx.modelID)
 		if err != nil {
 			return nil, fmt.Errorf("visual %q query: %w", visualID, err)
 		}
@@ -62,7 +62,7 @@ func (ctx dashboardCompileContext) compileVisuals(authored map[string]document.D
 			sort.Strings(datasetIDs)
 			for _, datasetID := range datasetIDs {
 				datasetQuery := (*visual.Datasets)[datasetID]
-				secondaryQuery, lowerErr := LowerDashboardQuery(datasetQuery, ctx.model, ctx.modelID)
+				secondaryQuery, lowerErr := LowerDashboardQueryBinding(datasetQuery, ctx.model, ctx.modelID)
 				if lowerErr != nil {
 					return nil, fmt.Errorf("visual %q dataset %q query: %w", visualID, datasetID, lowerErr)
 				}

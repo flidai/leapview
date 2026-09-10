@@ -210,6 +210,17 @@ type CompiledModel struct {
 // project sources or connection credentials, so activation cannot admit a
 // malformed relationship, dimension, filter, or metric definition.
 func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
+	return compileModel(model, false)
+}
+
+// CompileAuthoringModel builds the immutable semantic facts needed to validate
+// authored requests before schema discovery. It retains unresolved physical
+// datatypes as-is; callers must use NewCompiledPlanner for executable plans.
+func CompileAuthoringModel(model *semanticmodel.Model) (*CompiledModel, error) {
+	return compileModel(model, true)
+}
+
+func compileModel(model *semanticmodel.Model, allowUnresolvedTypes bool) (*CompiledModel, error) {
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
 	}
@@ -222,7 +233,12 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode semantic model snapshot: %w", err)
 	}
-	if err := validated.ValidateSemanticGraph(); err != nil {
+	if allowUnresolvedTypes {
+		err = validated.ValidateAuthoringSemanticGraph()
+	} else {
+		err = validated.ValidateSemanticGraph()
+	}
+	if err != nil {
 		return nil, fmt.Errorf("validate semantic graph: %w", err)
 	}
 	model = validated
@@ -249,7 +265,7 @@ func CompileModel(model *semanticmodel.Model) (*CompiledModel, error) {
 	for _, name := range names {
 		metric := model.Metrics[name]
 		metric.Name = name
-		node, err := compileMetricNode(model, name, metric)
+		node, err := compileMetricNodeWithOptions(model, name, metric, allowUnresolvedTypes)
 		if err != nil {
 			return nil, err
 		}
@@ -1013,6 +1029,10 @@ func sortedKeys(values map[string]struct{}) []string {
 }
 
 func compileMetricNode(model *semanticmodel.Model, name string, metric semanticmodel.Metric) (CompiledMetric, error) {
+	return compileMetricNodeWithOptions(model, name, metric, false)
+}
+
+func compileMetricNodeWithOptions(model *semanticmodel.Model, name string, metric semanticmodel.Metric, allowUnresolvedTypes bool) (CompiledMetric, error) {
 	metricType := metric.Type
 	node := CompiledMetric{
 		Name: name, Type: metricType,
@@ -1075,7 +1095,7 @@ func compileMetricNode(model *semanticmodel.Model, name string, metric semanticm
 		aggregate.InputPhysical = input
 		aggregate.InputPath = semanticmodel.CloneRelationships(inputPath)
 		node.Lineage.Entries = appendLineageEntry(node.Lineage.Entries, CompiledLineageEntry{Role: "input", Reference: "input:" + name, Field: metric.Input.Field, Physical: input, Path: inputPath})
-		if err := compileMetricWhere(model, name, metric.Dataset, metric.Where, aggregate, &node); err != nil {
+		if err := compileMetricWhereWithOptions(model, name, metric.Dataset, metric.Where, aggregate, &node, allowUnresolvedTypes); err != nil {
 			return CompiledMetric{}, err
 		}
 	case "derived":
@@ -1116,12 +1136,16 @@ func validateMetricTimeDimension(model *semanticmodel.Model, metric, dataset, na
 }
 
 func compileMetricWhere(model *semanticmodel.Model, metric, dataset string, names []string, aggregate *CompiledAggregateMetric, node *CompiledMetric) error {
+	return compileMetricWhereWithOptions(model, metric, dataset, names, aggregate, node, false)
+}
+
+func compileMetricWhereWithOptions(model *semanticmodel.Model, metric, dataset string, names []string, aggregate *CompiledAggregateMetric, node *CompiledMetric, allowUnresolvedTypes bool) error {
 	if names != nil && len(names) == 0 {
 		return fmt.Errorf("metric %q aggregate where requires a non-empty list", metric)
 	}
 	filters := make([]Filter, 0, len(names))
 	for _, name := range names {
-		compiled, err := compileNamedSemanticFilters(model, []string{name})
+		compiled, err := compileNamedSemanticFiltersWithOptions(model, []string{name}, allowUnresolvedTypes)
 		if err != nil {
 			return fmt.Errorf("metric %q: %w", metric, err)
 		}
@@ -1247,33 +1271,4 @@ func cloneFilters(values []Filter) []Filter {
 		}
 	}
 	return out
-}
-
-type PlannerOption func(*Planner) error
-
-func WithTableRelation(relation TableRelation) PlannerOption {
-	return func(planner *Planner) error {
-		if relation == nil {
-			return fmt.Errorf("table relation resolver is required")
-		}
-		planner.tableRelation = relation
-		return nil
-	}
-}
-
-func NewCompiledPlanner(model *semanticmodel.Model, options ...PlannerOption) (*Planner, error) {
-	compiled, err := CompileModel(model)
-	if err != nil {
-		return nil, err
-	}
-	planner := &Planner{compiled: compiled}
-	for _, option := range options {
-		if option == nil {
-			return nil, fmt.Errorf("planner option is required")
-		}
-		if err := option(planner); err != nil {
-			return nil, err
-		}
-	}
-	return planner, nil
 }

@@ -11,10 +11,14 @@ import (
 // planner's typed predicate representation. Named filters remain canonical in
 // the model; this is deliberately a planner-boundary adapter.
 func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.SemanticFilterSpec) (Filter, error) {
+	return compileSemanticFilterWithOptions(model, spec, false)
+}
+
+func compileSemanticFilterWithOptions(model *semanticmodel.Model, spec semanticmodel.SemanticFilterSpec, allowUnresolvedTypes bool) (Filter, error) {
 	if len(spec.All) > 0 {
 		children := make([]Filter, 0, len(spec.All))
 		for _, child := range spec.All {
-			compiled, err := compileSemanticFilter(model, child)
+			compiled, err := compileSemanticFilterWithOptions(model, child, allowUnresolvedTypes)
 			if err != nil {
 				return Filter{}, err
 			}
@@ -25,7 +29,7 @@ func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.Semant
 	if len(spec.Any) > 0 {
 		groups := make([]FilterGroup, 0, len(spec.Any))
 		for _, child := range spec.Any {
-			compiled, err := compileSemanticFilter(model, child)
+			compiled, err := compileSemanticFilterWithOptions(model, child, allowUnresolvedTypes)
 			if err != nil {
 				return Filter{}, err
 			}
@@ -34,7 +38,7 @@ func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.Semant
 		return Filter{Groups: groups}, nil
 	}
 	if spec.Not != nil {
-		compiled, err := compileSemanticFilter(model, *spec.Not)
+		compiled, err := compileSemanticFilterWithOptions(model, *spec.Not, allowUnresolvedTypes)
 		if err != nil {
 			return Filter{}, err
 		}
@@ -64,6 +68,10 @@ func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.Semant
 		}
 		filter.Values = make([]any, 0, len(values))
 		for _, value := range values {
+			if allowUnresolvedTypes && dimension.Datatype == "" {
+				filter.Values = append(filter.Values, value)
+				continue
+			}
 			coerced, err := coerceSemanticLiteral(value, dimension)
 			if err != nil {
 				return Filter{}, fmt.Errorf("semantic filter %q: %w", spec.Field, err)
@@ -73,6 +81,10 @@ func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.Semant
 	default:
 		if spec.Value == nil {
 			return Filter{}, fmt.Errorf("semantic filter %q requires a value", spec.Operator)
+		}
+		if allowUnresolvedTypes && dimension.Datatype == "" {
+			filter.Values = []any{spec.Value}
+			return filter, nil
 		}
 		coerced, err := coerceSemanticLiteral(spec.Value, dimension)
 		if err != nil {
@@ -84,13 +96,17 @@ func compileSemanticFilter(model *semanticmodel.Model, spec semanticmodel.Semant
 }
 
 func compileNamedSemanticFilters(model *semanticmodel.Model, names []string) ([]Filter, error) {
+	return compileNamedSemanticFiltersWithOptions(model, names, false)
+}
+
+func compileNamedSemanticFiltersWithOptions(model *semanticmodel.Model, names []string, allowUnresolvedTypes bool) ([]Filter, error) {
 	filters := make([]Filter, 0, len(names))
 	for _, name := range names {
 		spec, ok := model.Filters[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown semantic filter %q", name)
 		}
-		filter, err := compileSemanticFilter(model, spec)
+		filter, err := compileSemanticFilterWithOptions(model, spec, allowUnresolvedTypes)
 		if err != nil {
 			return nil, fmt.Errorf("semantic filter %q: %w", name, err)
 		}

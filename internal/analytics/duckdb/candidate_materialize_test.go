@@ -24,6 +24,7 @@ func TestNonCommitterCandidateRuntimeRefreshUsesPreparedSourcesNamespacePlanner(
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				Execution:           semanticmodel.ExecutionDefinition{SQL: "SELECT 1 AS id"},
+				AuthoredFields:      map[string]semanticmodel.ModelFieldDeclaration{},
 				SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true},
 			},
 		},

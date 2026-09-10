@@ -64,26 +64,25 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 	}
 }
 
-func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
+func TestPlanModelTableDirectSourceRetainsDiscoveredOutputWithPartialFields(t *testing.T) {
 	ctx := context.Background()
 	db := openPlanningRuntimeDB(t)
 	defer db.Close()
 	model := planningModel(map[string][]string{
-		"orders": {"raw_order_id", "gross_revenue", "status"},
+		"orders": {"order_id", "revenue", "status"},
 	}, semanticmodel.Table{
 		Execution: semanticmodel.ExecutionDefinition{Source: "orders"},
 		ModelName: "orders",
-		Entities:  map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		AuthoredFields: map[string]semanticmodel.ModelFieldDeclaration{
+			"revenue": {Label: "Revenue"},
+		},
 		Columns: map[string]semanticmodel.ModelColumn{
-			"order_id": {SourceField: "raw_order_id", Datatype: semanticmodel.DataTypeString},
-			"revenue":  {SourceField: "gross_revenue", Datatype: semanticmodel.DataTypeFloat},
-			"status":   {Datatype: semanticmodel.DataTypeString},
+			"order_id": {},
+			"revenue":  {},
 		},
-		Dimensions: map[string]semanticmodel.MetricDimension{
-			"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString},
-			"revenue":  {Label: "Revenue", Datatype: semanticmodel.DataTypeFloat},
-			"status":   {Label: "Status", Datatype: semanticmodel.DataTypeString},
-		},
+		Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+		GrainEntity: "order",
+		Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {}, "revenue": {Label: "Revenue"}},
 	})
 	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
 
@@ -94,9 +93,60 @@ func TestPlanModelTableCompilesDirectSourceFromColumns(t *testing.T) {
 	if plan.Mode != analyticsmaterialize.PlanModeDirectSourceRead {
 		t.Fatalf("mode = %q, want direct", plan.Mode)
 	}
-	want := "CREATE OR REPLACE TABLE model.orders AS SELECT raw_order_id AS order_id, gross_revenue AS revenue, status FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')"
+	want := "CREATE OR REPLACE TABLE model.orders AS SELECT order_id, revenue, status FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')"
 	if plan.SQL != want {
 		t.Fatalf("plan SQL = %q, want %q", plan.SQL, want)
+	}
+}
+
+func TestPlanModelTableSQLAcceptsOutputBeyondPartialAuthoredFields(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(nil, semanticmodel.Table{
+		Execution:           semanticmodel.ExecutionDefinition{SQL: `SELECT 'o-1' AS order_id, 'open' AS status`},
+		AuthoredFields:      map[string]semanticmodel.ModelFieldDeclaration{"order_id": {Datatype: semanticmodel.DataTypeString}},
+		Columns:             map[string]semanticmodel.ModelColumn{"order_id": {Datatype: semanticmodel.DataTypeString}},
+		Dimensions:          map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
+		Entities:            map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+		GrainEntity:         "order",
+		SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true},
+	})
+
+	if _, err := PlanModelTable(ctx, db, model, "orders", model.Tables["orders"]); err != nil {
+		t.Fatalf("partial authored fields rejected additional SQL output: %v", err)
+	}
+}
+
+func TestPlanModelTableSQLRejectsMissingAuthoredField(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(nil, semanticmodel.Table{
+		Execution:           semanticmodel.ExecutionDefinition{SQL: `SELECT 'o-1' AS order_id, 'open' AS status`},
+		SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true},
+		AuthoredFields:      map[string]semanticmodel.ModelFieldDeclaration{"revenue": {}},
+	})
+
+	_, err := PlanModelTable(ctx, db, model, "orders", model.Tables["orders"])
+	if err == nil || !strings.Contains(err.Error(), `authored field "revenue" is not in definition output`) {
+		t.Fatalf("missing authored field error = %v", err)
+	}
+}
+
+func TestPlanModelTableRejectsIncompatibleAuthoredDatatype(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(nil, semanticmodel.Table{
+		Execution:           semanticmodel.ExecutionDefinition{SQL: `SELECT 'o-1' AS order_id`},
+		SQLAnalysisEvidence: &semanticmodel.SQLAnalysisEvidence{Validated: true},
+		AuthoredFields:      map[string]semanticmodel.ModelFieldDeclaration{"order_id": {Datatype: semanticmodel.DataTypeInteger}},
+	})
+
+	_, err := PlanModelTable(ctx, db, model, "orders", model.Tables["orders"])
+	if err == nil || !strings.Contains(err.Error(), `field "order_id" datatype "Integer" is incompatible with discovered physical type "VARCHAR"`) {
+		t.Fatalf("incompatible authored datatype error = %v", err)
 	}
 }
 
