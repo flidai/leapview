@@ -376,6 +376,52 @@ CREATE TABLE IF NOT EXISTS managed_data.reconciliation_evidence (
     CHECK (jsonb_typeof(evidence) = 'object' AND evidence <> '{}'::jsonb AND octet_length(evidence::text) <= 65536)
 );
 
+-- Provider profiles and exact write observations are an append-only handoff
+-- from managed-data storage to a future recovery capture. They are not a
+-- Manifest v2, a signed receipt, or recovery admission state.
+CREATE TABLE IF NOT EXISTS managed_data.provider_observation_profile (
+    profile_id text PRIMARY KEY,
+    implementation text NOT NULL CHECK (implementation = 's3'),
+    account_identity text NOT NULL,
+    endpoint text NOT NULL,
+    region text NOT NULL,
+    bucket text NOT NULL,
+    namespace text NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (profile_id = btrim(profile_id) AND octet_length(profile_id) BETWEEN 1 AND 4096),
+    CHECK (account_identity = btrim(account_identity) AND octet_length(account_identity) BETWEEN 1 AND 4096),
+    CHECK (endpoint = btrim(endpoint) AND octet_length(endpoint) BETWEEN 1 AND 4096),
+    CHECK (region = btrim(region) AND octet_length(region) BETWEEN 1 AND 4096),
+    CHECK (bucket = btrim(bucket) AND octet_length(bucket) BETWEEN 1 AND 4096),
+    CHECK (namespace = btrim(namespace) AND octet_length(namespace) <= 4096)
+);
+
+CREATE TABLE IF NOT EXISTS managed_data.provider_version_observation (
+    profile_id text NOT NULL REFERENCES managed_data.provider_observation_profile(profile_id) ON DELETE RESTRICT,
+    object_key text NOT NULL,
+    version_id text NOT NULL,
+    sha256 text NOT NULL,
+    size_bytes bigint NOT NULL CHECK (size_bytes >= 0),
+    captured_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (profile_id, object_key),
+    CHECK (object_key = btrim(object_key) AND octet_length(object_key) BETWEEN 1 AND 4096),
+    CHECK (version_id = btrim(version_id) AND octet_length(version_id) BETWEEN 1 AND 4096 AND lower(version_id) NOT IN ('latest', 'null')),
+    CHECK (sha256 ~ '^[0-9a-f]{64}$')
+);
+
+CREATE OR REPLACE FUNCTION managed_data.reject_provider_observation_mutation() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, managed_data
+AS $$
+BEGIN
+  RAISE EXCEPTION 'provider-version observations are immutable';
+END $$;
+DROP TRIGGER IF EXISTS provider_observation_profile_immutable ON managed_data.provider_observation_profile;
+CREATE TRIGGER provider_observation_profile_immutable BEFORE UPDATE OR DELETE ON managed_data.provider_observation_profile FOR EACH ROW EXECUTE FUNCTION managed_data.reject_provider_observation_mutation();
+DROP TRIGGER IF EXISTS provider_version_observation_immutable ON managed_data.provider_version_observation;
+CREATE TRIGGER provider_version_observation_immutable BEFORE UPDATE OR DELETE ON managed_data.provider_version_observation FOR EACH ROW EXECUTE FUNCTION managed_data.reject_provider_observation_mutation();
+
 CREATE OR REPLACE FUNCTION managed_data.guard_retention_root_insert() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, managed_data
@@ -871,14 +917,16 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.revision TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.lease, managed_data.retention_root TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.reconciliation_evidence TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON managed_data.provider_observation_profile, managed_data.provider_version_observation TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON managed_data.reachability_epoch TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA managed_data TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.publish_binding_set(text,text,text,text,bigint,jsonb) TO leapview_control_runtime';
       ELSIF r = 'leapview_control_maintenance' THEN
+        EXECUTE 'GRANT SELECT ON managed_data.provider_observation_profile, managed_data.provider_version_observation TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.mark_upload_cleanup(text) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION managed_data.prune_upload_sessions(timestamptz, integer) TO leapview_control_maintenance';
       ELSIF r = 'leapview_control_readonly' THEN
-        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence, managed_data.reachability_epoch TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON managed_data.collection, managed_data.revision, managed_data.revision_file, managed_data.upload_session, managed_data.binding_set, managed_data.binding, managed_data.retention_root, managed_data.reconciliation_evidence, managed_data.reachability_epoch, managed_data.provider_observation_profile, managed_data.provider_version_observation TO leapview_control_readonly';
       ELSE
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA managed_data TO leapview_control_backup';
       END IF;

@@ -19,6 +19,10 @@ type Planner struct {
 	// SemanticAccessConsumer. It observes the graph after the existing access
 	// placement/seal and never becomes part of PlanIR or the serialized Plan.
 	semanticAccessAdmissionHook func(*planir.Graph, semanticAccessAdmission) error
+	// semanticAccessErrorHook is installed only for protected request-bound
+	// consumers. It observes planner failures before an admission exists; the
+	// callback is not part of planning or PlanIR semantics.
+	semanticAccessErrorHook func(*planir.Graph, error) error
 }
 
 // datasetTable resolves a semantic alias through the compiled serving

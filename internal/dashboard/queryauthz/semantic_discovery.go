@@ -46,6 +46,9 @@ func (m Metrics) BindSemanticConsumer(ctx context.Context, modelID string) (cont
 		}
 		return ctx, nil
 	}
+	if m.auditRecorder == nil {
+		return ctx, ErrSemanticConsumerAuthorityUnavailable
+	}
 	consumer, err := m.semanticConsumer(ctx, modelID)
 	if err != nil {
 		return ctx, err
@@ -108,6 +111,10 @@ func (m Metrics) semanticConsumer(ctx context.Context, modelID string) (*semanti
 		return nil, err
 	}
 	identity := snapshot.Identity()
+	auditObserver, err := m.semanticAuditObserver(ctx, snapshot, modelID, principal.ID)
+	if err != nil {
+		return nil, ErrSemanticConsumerAuthorityUnavailable
+	}
 	provider := func() (semanticquery.SemanticAccessAttributeSnapshot, semanticquery.SemanticAccessAuthority, error) {
 		var attributes semanticquery.SemanticAccessAttributeSnapshot
 		var authority semanticquery.SemanticAccessAuthority
@@ -128,11 +135,29 @@ func (m Metrics) semanticConsumer(ctx context.Context, modelID string) (*semanti
 		}
 		return semanticquery.SemanticAccessResolutionSnapshot(m.instanceID, principal.ID, resolved)
 	}
-	return semanticquery.NewSemanticAccessConsumer(planner, semanticquery.SemanticAccessConsumerConfig{
+	consumer, err := semanticquery.NewSemanticAccessConsumer(planner, semanticquery.SemanticAccessConsumerConfig{
 		ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
 		InstanceID: m.instanceID, ModelID: modelID, Generation: identity.GenerationID,
-		PrincipalID: principal.ID, Authority: provider,
+		PrincipalID: principal.ID, Authority: provider, Observer: auditObserver,
 	})
+	if err == nil {
+		return consumer, nil
+	}
+	// The constructor may fail before a decision exists (for example when
+	// authority resolution is stale or unavailable). Persist an explicit
+	// invalid-decision denial without fabricating policy/decision digests.
+	auditErr := auditObserver(semanticquery.SemanticAccessAuditObservation{
+		Operation:         semanticquery.SemanticAccessAuditConsumerBind,
+		Allowed:           false,
+		Reason:            "decision_unavailable",
+		PrincipalID:       principal.ID,
+		ActorID:           principal.ID,
+		DecisionAvailable: false,
+	})
+	if auditErr != nil {
+		return nil, errors.Join(err, auditErr)
+	}
+	return nil, err
 }
 
 // SemanticPlanner is the context-aware explain and query-shape port. Planner
