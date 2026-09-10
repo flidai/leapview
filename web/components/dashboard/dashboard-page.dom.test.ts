@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
+import { chromium, type Browser, type Page } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
 import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
@@ -11,6 +11,17 @@ let baseURL = ''
 let browser: Browser
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-page-test')
+
+type DashboardSignalExpectation = { name: string, expected: Record<string, unknown> }
+
+async function waitForDashboardSignal(page: Page, expectation: DashboardSignalExpectation): Promise<void> {
+  await page.waitForFunction(({ name, expected }) => {
+    const element = document.querySelector('lv-dashboard-page') as any
+    const signal = element?.signal(name, null)
+    return Boolean(element && !element.isUpdatePending && signal
+      && Object.entries(expected).every(([key, value]) => signal[key] === value))
+  }, expectation)
+}
 
 test('dashboard fixtures satisfy the fail-closed visualization contract', () => {
   for (const [id, envelope] of Object.entries(testVisualizationEnvelopes())) {
@@ -1700,11 +1711,7 @@ test('dashboard agent drawer carries page context and explicit visual references
 		  { reference: { kind: 'metric', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/metric', locations: [], context: [] },
         ],
       })
-    await page.waitForFunction((requestId) => {
-      const element = document.querySelector('lv-dashboard-page') as any
-      const search = element?.signal('agentReferenceSearch', null)
-      return Boolean(element && !element.isUpdatePending && search?.query === 'orders' && search?.requestId === requestId)
-    }, 1)
+    await waitForDashboardSignal(page, { name: 'agentReferenceSearch', expected: { query: 'orders', requestId: 1 } })
     const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
@@ -1729,11 +1736,7 @@ test('dashboard agent drawer carries page context and explicit visual references
 	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Metric')
 
     await moduleHandle.evaluate((module: any) => module.mergePatch({ agentContext: { referenceLimit: 1 } }))
-    await page.waitForFunction(() => {
-      const element = document.querySelector('lv-dashboard-page') as any
-      const context = element?.signal('agentContext', null)
-      return Boolean(element && !element.isUpdatePending && context?.referenceLimit === 1)
-    })
+    await waitForDashboardSignal(page, { name: 'agentContext', expected: { referenceLimit: 1 } })
 
     await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const frame = Array.from(element.shadowRoot.querySelectorAll('lv-dashboard-visual-frame'))
@@ -1809,11 +1812,7 @@ test('dashboard agent drawer carries page context and explicit visual references
 		status: { enabled: true, running: true },
 		composer: { value: '', disabled: true, placeholder: 'Agent is working…' },
 	})
-	await page.waitForFunction((conversationID) => {
-	  const element = document.querySelector('lv-dashboard-page') as any
-	  const agent = element?.signal('agent', null)
-	  return Boolean(element && !element.isUpdatePending && agent?.activeConversationId === conversationID)
-	}, 'agentconv_1')
+	await waitForDashboardSignal(page, { name: 'agent', expected: { activeConversationId: 'agentconv_1' } })
 	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
 	  await element.updateComplete
 	  const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any

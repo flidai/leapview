@@ -27,6 +27,16 @@ head; earlier green results below are historical evidence. FAI-769 stays
 In Review. No force push, main merge, auto-merge, or queue enrollment is authorized
 by this conflict-resolution handoff.
 
+The first hosted run on `1e851b88c` exposed a one-line TypeScript-test quality
+budget overrun (8961 excess lines versus an unchanged 8960 allowance). This
+was a real gate failure, despite the passing local `task ci`: the local aggregate
+Go lane does not invoke the hosted package lane's quality-budget check. The
+follow-up deduplicates three signal-readiness polls without removing conditions,
+waits, or assertions. Independent review found no defects; the unchanged budget
+passes at 8960, as do exception/trend checks and critical-package coverage.
+The affected drawer test passed 15 independent runs after the cleanup.
+Local/hosted quality-lane parity remains a tooling follow-up.
+
 ## September 10 independent-review corrections
 
 Independent review of `d8153f1` identified six correctness defects despite that
