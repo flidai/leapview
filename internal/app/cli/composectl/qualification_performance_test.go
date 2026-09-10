@@ -169,6 +169,59 @@ func TestFinalizeQualificationPerformanceReportRejectsMalformedIdentity(t *testi
 	}
 }
 
+func TestFinalizeQualificationPerformanceReportRejectsPolicyDigestMismatch(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	path := writeCompleteQualificationPerformanceReport(t, policy, "sha256:"+strings.Repeat("a", 64))
+	metadata := completePerformanceMetadata()
+	metadata.PolicyDigest = "sha256:" + strings.Repeat("e", 64)
+	if err := finalizeQualificationPerformanceReport(path, policy, 100, 100, completePerformanceEnvironment(policy), "image", "amd64", "", metadata); err == nil || !strings.Contains(err.Error(), "policyDigest does not match") {
+		t.Fatalf("policy digest mismatch error = %v", err)
+	}
+}
+
+func TestQualificationPerformancePolicyDigestBindsLoadedSourceBytes(t *testing.T) {
+	t.Setenv("QUALIFICATION_PERFORMANCE_MODE", qualificationPerformanceModeBootstrap)
+	policy := validQualificationPerformancePolicy()
+	contents, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPath := filepath.Join(t.TempDir(), "first-policy.json")
+	secondPath := filepath.Join(t.TempDir(), "second-policy.json")
+	if err := os.WriteFile(firstPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	secondContents := append([]byte(" \n"), contents...)
+	secondContents = append(secondContents, '\n')
+	if err := os.WriteFile(secondPath, secondContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := readQualificationPerformancePolicy(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := readQualificationPerformancePolicy(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstLogical, _ := json.Marshal(first)
+	secondLogical, _ := json.Marshal(second)
+	if string(firstLogical) != string(secondLogical) {
+		t.Fatal("semantically equivalent policy sources decoded to different logical policies")
+	}
+	if firstDigest, secondDigest := qualificationPerformancePolicyDigest(first), qualificationPerformancePolicyDigest(second); firstDigest == secondDigest {
+		t.Fatalf("policy source digests are equal: %s", firstDigest)
+	}
+
+	reportPath := writeCompleteQualificationPerformanceReport(t, first, "sha256:"+strings.Repeat("a", 64))
+	metadata := completePerformanceMetadata()
+	metadata.PolicyDigest = qualificationPerformancePolicyDigest(second)
+	if err := finalizeQualificationPerformanceReport(reportPath, first, 100, 100, completePerformanceEnvironment(first), "image", "amd64", "", metadata); err == nil || !strings.Contains(err.Error(), "policyDigest does not match") {
+		t.Fatalf("wrong raw policy digest error = %v", err)
+	}
+}
+
 func TestValidateQualificationPerformancePolicyRequiresExpectedFixture(t *testing.T) {
 	policy := validQualificationPerformancePolicy()
 	policy.Fixture = "evaluation/data/other.csv"

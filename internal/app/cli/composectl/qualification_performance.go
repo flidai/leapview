@@ -28,6 +28,7 @@ type qualificationPerformancePolicy struct {
 	Workload       string `json:"workload"`
 	Fixture        string `json:"fixture"`
 	SampleProtocol string `json:"sampleProtocol"`
+	policySource   []byte `json:"-"`
 	Assumptions    struct {
 		Runtime string `json:"runtime"`
 		Dataset struct {
@@ -278,6 +279,30 @@ func qualificationDigestFile(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func readQualificationPerformancePolicy(path string) (qualificationPerformancePolicy, error) {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return qualificationPerformancePolicy{}, err
+	}
+	var policy qualificationPerformancePolicy
+	if err := json.Unmarshal(contents, &policy); err != nil {
+		return qualificationPerformancePolicy{}, fmt.Errorf("decode %s: %w", path, err)
+	}
+	policy.policySource = append([]byte(nil), contents...)
+	return policy, nil
+}
+
+func qualificationPerformancePolicyDigest(policy qualificationPerformancePolicy) string {
+	if len(policy.policySource) > 0 {
+		return qualificationDigest(policy.policySource)
+	}
+	canonicalPolicy, err := json.Marshal(policy)
+	if err != nil {
+		return ""
+	}
+	return qualificationDigest(canonicalPolicy)
+}
+
 func qualificationDigestValid(value string) bool {
 	value = strings.TrimPrefix(strings.TrimSpace(value), "sha256:")
 	if len(value) != sha256.Size*2 {
@@ -362,6 +387,12 @@ func validateQualificationPerformanceEvidence(report qualificationPerformanceRep
 	}
 	if report.SampleProtocol != qualificationPerformanceSampleProtocolForPolicy(policy) {
 		failures = append(failures, "evidence sampleProtocol does not match policy")
+	}
+	expectedPolicyDigest := qualificationPerformancePolicyDigest(policy)
+	if expectedPolicyDigest == "" {
+		failures = append(failures, "evidence policyDigest cannot be computed")
+	} else if report.PolicyDigest != expectedPolicyDigest {
+		failures = append(failures, "evidence policyDigest does not match actual policy")
 	}
 	if report.Fixture != policy.Fixture {
 		failures = append(failures, "evidence fixture does not match policy fixture")
@@ -601,8 +632,7 @@ func finalizeQualificationPerformanceReport(path string, policy qualificationPer
 		performanceMetadata.FixtureDigest = report.FixtureDigest
 	}
 	if strings.TrimSpace(performanceMetadata.PolicyDigest) == "" {
-		canonicalPolicy, _ := json.Marshal(policy)
-		performanceMetadata.PolicyDigest = qualificationDigest(canonicalPolicy)
+		performanceMetadata.PolicyDigest = qualificationPerformancePolicyDigest(policy)
 	}
 	if strings.TrimSpace(performanceMetadata.SampleProtocol) == "" {
 		performanceMetadata.SampleProtocol = report.SampleProtocol

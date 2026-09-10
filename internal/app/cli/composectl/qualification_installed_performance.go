@@ -26,11 +26,9 @@ func (c *Controller) runQualificationPerformance(
 	if err != nil {
 		return err
 	}
-	var policy qualificationPerformancePolicy
-	if err := readQualificationJSON(
-		c.path(filepath.Join("qualification", "performance-policy.json")),
-		&policy,
-	); err != nil {
+	policyPath := c.path(filepath.Join("qualification", "performance-policy.json"))
+	policy, err := readQualificationPerformancePolicy(policyPath)
+	if err != nil {
 		return err
 	}
 	if policy.Assumptions.Samples.ColdDashboardLoads <= 0 {
@@ -243,9 +241,9 @@ func (c *Controller) runQualificationPerformance(
 		return fmt.Errorf("performance harness digest is incomplete")
 	}
 	harnessDigest := qualificationDigest([]byte(strings.Join(harnessDigests, "\n")))
-	policyDigest, err := qualificationDigestFile(c.path(filepath.Join("qualification", "performance-policy.json")))
-	if err != nil {
-		return fmt.Errorf("hash performance policy: %w", err)
+	policyDigest := qualificationPerformancePolicyDigest(policy)
+	if policyDigest == "" {
+		return fmt.Errorf("hash performance policy: digest is unavailable")
 	}
 	var runtimeIdentity struct {
 		Version     string `json:"version"`
