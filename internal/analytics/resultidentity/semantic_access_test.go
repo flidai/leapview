@@ -103,6 +103,7 @@ func TestSemanticAccessIdentityRejectsInvalidEvidenceAndModelMismatch(t *testing
 		{name: "invalid registry digest", change: func(value *SemanticAccessIdentity) { value.RegistryDigest = "md5:nope" }},
 		{name: "invalid effective digest", change: func(value *SemanticAccessIdentity) { value.EffectiveAttributeDigest = "" }},
 		{name: "invalid optional evidence", change: func(value *SemanticAccessIdentity) { value.TrustedClaimEvidenceDigest = "sha256:bad" }},
+		{name: "non-semantic publication", change: func(value *SemanticAccessIdentity) { value.PublicationPolicy.Candidate.ResourceKind = "source" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

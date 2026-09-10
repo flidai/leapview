@@ -114,7 +114,8 @@ func (identity SemanticAccessIdentity) Validate() error {
 	if err := identity.PublicationPolicy.Validate(); err != nil {
 		return fmt.Errorf("%w: semantic access publication/policy identity: %v", ErrInvalidDependency, err)
 	}
-	if identity.PublicationPolicy.Candidate.InstanceID != identity.InstanceID ||
+	if identity.PublicationPolicy.Candidate.ResourceKind != string(projectgraph.KindSemanticModel) ||
+		identity.PublicationPolicy.Candidate.InstanceID != identity.InstanceID ||
 		identity.PublicationPolicy.Candidate.AuthoredID != identity.ModelID ||
 		identity.PublicationPolicy.Policy.RequiresSecurityApproval != (identity.PublicationPolicy.Policy.SecurityImpact == "widening") {
 		return fmt.Errorf("%w: semantic access publication/policy identity does not match consumer", ErrInvalidDependency)

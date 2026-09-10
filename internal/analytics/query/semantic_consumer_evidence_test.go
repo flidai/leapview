@@ -103,6 +103,21 @@ func TestSemanticAccessConsumerCacheIdentityRequiresPublicationPolicy(t *testing
 	}
 }
 
+func TestSemanticAccessConsumerRejectsNonSemanticPublicationPolicy(t *testing.T) {
+	snapshot, authority := semanticAccessSnapshot(t, semanticAccessEffective(t, semanticAccessDefinitions()))
+	publication := semanticConsumerTestPublicationPolicy()
+	publication.Candidate.ResourceKind = "source"
+	if _, err := NewSemanticAccessConsumer(mustNewCompiledPlanner(t, semanticAccessTestModel(t)), SemanticAccessConsumerConfig{
+		InstanceID: "instance-1", ProjectID: "project:test", Environment: "prod", ModelID: "semantic-model:test", Generation: "generation-1", PrincipalID: snapshot.PrincipalID,
+		PublicationPolicy: publication,
+		Authority: func() (SemanticAccessAttributeSnapshot, SemanticAccessAuthority, error) {
+			return snapshot, authority, nil
+		},
+	}); err == nil || !strings.Contains(err.Error(), "publication policy does not match consumer") {
+		t.Fatalf("NewSemanticAccessConsumer() wrong publication kind error = %v", err)
+	}
+}
+
 func TestSemanticAccessConsumerPublicEvidenceIsNil(t *testing.T) {
 	consumer, err := NewSemanticAccessConsumer(mustNewCompiledPlanner(t, testModel()), SemanticAccessConsumerConfig{})
 	if err != nil {

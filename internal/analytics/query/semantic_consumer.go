@@ -12,6 +12,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/query/planir"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // SemanticAccessConsumerConfig binds a query consumer to one complete serving
@@ -204,7 +205,8 @@ func NewSemanticAccessConsumer(planner *Planner, config SemanticAccessConsumerCo
 		if err := config.PublicationPolicy.Validate(); err != nil {
 			return nil, fmt.Errorf("semantic access publication policy: %w", err)
 		}
-		if config.PublicationPolicy.Candidate.InstanceID != config.InstanceID ||
+		if config.PublicationPolicy.Candidate.ResourceKind != string(projectgraph.KindSemanticModel) ||
+			config.PublicationPolicy.Candidate.InstanceID != config.InstanceID ||
 			config.PublicationPolicy.Candidate.AuthoredID != config.ModelID {
 			return nil, fmt.Errorf("semantic access publication policy does not match consumer")
 		}
