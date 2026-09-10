@@ -153,6 +153,9 @@ spec:
         limit: 10
       presentation:
         type: cartesian
+        labelPosition: outside
+        axes:
+        - {id: primary_y, scale: automatic, zero: automatic, maximum: 1000000, tickDensity: normal}
         conditionalFormatting:
         - id: revenue-variance-tone
           target: mark_fill
@@ -228,6 +231,7 @@ spec:
         limit: 10
       presentation:
         type: cartesian
+        labelPosition: outside
         labels: {density: automatic, priority: [anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
         conditionalFormatting:
         - id: ebitda-impact-tone
