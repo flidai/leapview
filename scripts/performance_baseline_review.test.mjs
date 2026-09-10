@@ -19,7 +19,7 @@ test('build inputs, benchmark dependencies and every enforcement entry point req
     'scripts/generate_visualization_validator.ts', 'deploy/compose/qualification/browser.mjs',
     'deploy/compose/qualification/authoring-worker.mjs',
     'deploy/compose/qualification/package.json', 'deploy/compose/qualification/package-lock.json',
-    'Dockerfile.authoring-client',
+    'deploy/compose/qualification/Dockerfile.authoring-client',
     '.github/actions/oci-admission/action.yml', '.github/workflows/merge-validation.yml',
     '.github/workflows/nightly.yml',
     'internal/platform/ci/planner.go', 'internal/platform/ci/pr_plan.go',

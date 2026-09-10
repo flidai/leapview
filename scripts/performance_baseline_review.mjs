@@ -12,7 +12,7 @@ export function requiresPerformanceReview(paths) {
     /^internal\/app\/cli\/composectl\/qualification/.test(path) ||
     /^internal\/(platform\/ci\/|app\/tools\/(ciplan|cireport|ciadapter)\/)/.test(path) ||
     /^scripts\/(frontend_bundle|performance_baseline|qualify_performance)/.test(path) ||
-    ['Taskfile.yml', 'Dockerfile', 'Dockerfile.authoring-client', 'package.json', 'bun.lock', 'tsconfig.json',
+    ['Taskfile.yml', 'Dockerfile', 'package.json', 'bun.lock', 'tsconfig.json',
       'scripts/build_assets.ts', 'scripts/build_maplibre_worker.ts', 'scripts/frontend_ci_contract.test.ts',
       'scripts/generate_lucide_icon_catalog.ts', 'scripts/generate_visualization_validator.ts',
       '.github/workflows/ci.yml', '.github/workflows/artifacts.yml', '.github/workflows/release.yml',
