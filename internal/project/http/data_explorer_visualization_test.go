@@ -221,6 +221,200 @@ func TestProjectDataExplorerViewsAuthoredSeriesAndTablePresentation(t *testing.T
 	}
 }
 
+func TestProjectDataExplorerViewsPreservesAuthoredFieldFormatsAcrossViews(t *testing.T) {
+	currency := &exploration.ExplorationVisualizationFormat{Value: &exploration.ExplorationCurrencyVisualizationFormat{Kind: "currency", Currency: "USD"}}
+	percent := &exploration.ExplorationVisualizationFormat{Value: &exploration.ExplorationPercentVisualizationFormat{Kind: "percent"}}
+	fields := []projectsignals.DataExploreFieldSignal{
+		explorerProjectionField("status", "dimension", "Status", "string"),
+		explorerProjectionField("revenue", "metric", "Revenue", "decimal"),
+		explorerProjectionField("cost", "metric", "Cost", "decimal"),
+	}
+	base := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+
+	t.Run("cartesian and table retain independent formats", func(t *testing.T) {
+		spec := base
+		metricAlias := "sales"
+		spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "status"}}
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &metricAlias}}
+		spec.Table = &exploration.ExplorationTableDisplayConfig{Columns: &[]exploration.ExplorationTableColumn{{Field: metricAlias, Format: currency}}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar, Y: &[]exploration.ExplorationVisualizationFieldRef{{Field: metricAlias, Format: percent}}}}
+		result := explorerProjectionResult([]projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("status", "Status", "string"), explorerProjectionColumn(metricAlias, "Revenue", "decimal")}, []map[string]any{{"status": "paid", metricAlias: "2.00"}}, 1)
+		projection := ProjectDataExplorerViews(spec, result, fields)
+		chart, ok := projection.Views[dataExplorerBarViewID]
+		if !ok {
+			t.Fatalf("views=%#v, want authored bar", projection.Views)
+		}
+		chartBase, err := chart.Spec.Base()
+		if err != nil || chartBase.Datasets[0].Fields[1].Format == nil {
+			t.Fatalf("chart schema=%#v, want percent format", chartBase)
+		}
+		if _, ok := chartBase.Datasets[0].Fields[1].Format.Value.(*visualizationir.PercentVisualizationFormat); !ok {
+			t.Fatalf("chart format=%T, want percent", chartBase.Datasets[0].Fields[1].Format.Value)
+		}
+		table := projection.Views[dataExplorerTableViewID]
+		tableBase, err := table.Spec.Base()
+		if err != nil || tableBase.Datasets[0].Fields[0].Format == nil {
+			t.Fatalf("table schema=%#v, want currency format", tableBase)
+		}
+		if _, ok := tableBase.Datasets[0].Fields[0].Format.Value.(*visualizationir.CurrencyVisualizationFormat); !ok {
+			t.Fatalf("table format=%T, want currency", tableBase.Datasets[0].Fields[0].Format.Value)
+		}
+	})
+
+	t.Run("KPI maps scalar references and ranges", func(t *testing.T) {
+		minimum, maximum := 0.0, 100.0
+		ranges := []exploration.ExplorationVisualizationKPIQualitativeRange{{Minimum: &minimum, Maximum: &maximum, Label: "On track", Tone: exploration.ExplorationVisualizationToneSuccess}}
+		spec := base
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}, {Field: "cost"}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{
+			Kind: "kpi", Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue", Format: currency},
+			Comparison: &exploration.ExplorationVisualizationFieldRef{Field: "cost", Format: percent}, Goal: &exploration.ExplorationVisualizationFieldRef{Field: "cost", Format: percent},
+			Presentation: &exploration.ExplorationKPIPresentation{Ranges: &ranges},
+		}}
+		result := explorerProjectionResult([]projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("revenue", "Revenue", "decimal"), explorerProjectionColumn("cost", "Cost", "decimal")}, []map[string]any{{"revenue": "42.00", "cost": "40.00"}}, 2)
+		projection := ProjectDataExplorerViews(spec, result, fields)
+		envelope, ok := projection.Views[dataExplorerKPIViewID]
+		if !ok {
+			t.Fatalf("views=%#v, want KPI", projection.Views)
+		}
+		value, ok := envelope.Spec.Value.(*visualizationir.KPIVisualizationSpec)
+		if !ok || value.Comparison == nil || value.Goal == nil || len(value.Presentation.Ranges) != 1 {
+			t.Fatalf("KPI spec=%#v, want comparison/goal/range", envelope.Spec.Value)
+		}
+		if value.Comparison.Field.Field != "cost" || value.Goal.Field.Field != "cost" || value.Presentation.Ranges[0].Label != "On track" || value.Presentation.Ranges[0].Minimum == nil || *value.Presentation.Ranges[0].Minimum != 0 {
+			t.Fatalf("KPI mapping=%#v, want scalar bindings and range", value)
+		}
+		baseSchema, err := envelope.Spec.Base()
+		if err != nil || baseSchema.Datasets[0].Fields[0].Format == nil {
+			t.Fatalf("KPI schema=%#v, want currency value format", baseSchema)
+		}
+		if _, ok := baseSchema.Datasets[0].Fields[0].Format.Value.(*visualizationir.CurrencyVisualizationFormat); !ok {
+			t.Fatalf("KPI value format=%T, want currency", baseSchema.Datasets[0].Fields[0].Format.Value)
+		}
+	})
+
+	t.Run("proportional retains value format", func(t *testing.T) {
+		spec := base
+		spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "status"}}
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.ProportionalExplorationVisualization{Kind: "proportional", Mark: exploration.ExplorationVisualizationProportionalMarkDonut, Category: exploration.ExplorationVisualizationFieldRef{Field: "status"}, Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue", Format: percent}}}
+		result := explorerProjectionResult([]projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("status", "Status", "string"), explorerProjectionColumn("revenue", "Revenue", "decimal")}, []map[string]any{{"status": "paid", "revenue": "2.00"}}, 3)
+		projection := ProjectDataExplorerViews(spec, result, fields)
+		envelope, ok := projection.Views[dataExplorerDonutViewID]
+		if !ok {
+			t.Fatalf("views=%#v, want donut", projection.Views)
+		}
+		baseSchema, err := envelope.Spec.Base()
+		if err != nil || baseSchema.Datasets[0].Fields[1].Format == nil {
+			t.Fatalf("proportional schema=%#v, want percent value format", baseSchema)
+		}
+		if _, ok := baseSchema.Datasets[0].Fields[1].Format.Value.(*visualizationir.PercentVisualizationFormat); !ok {
+			t.Fatalf("proportional format=%T, want percent", baseSchema.Datasets[0].Fields[1].Format.Value)
+		}
+	})
+}
+
+func TestProjectDataExplorerViewsFallsBackForUnrepresentableKPIAndFormats(t *testing.T) {
+	fields := []projectsignals.DataExploreFieldSignal{explorerProjectionField("status", "dimension", "Status", "string"), explorerProjectionField("revenue", "metric", "Revenue", "decimal")}
+	columns := []projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("status", "Status", "string"), explorerProjectionColumn("revenue", "Revenue", "decimal")}
+	rows := []map[string]any{{"status": "paid", "revenue": "2.00"}}
+	base := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "status"}}, Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100}
+	invalidFormat := &exploration.ExplorationVisualizationFormat{}
+
+	t.Run("invalid authored format", func(t *testing.T) {
+		spec := base
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar, Y: &[]exploration.ExplorationVisualizationFieldRef{{Field: "revenue", Format: invalidFormat}}}}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(columns, rows, 4), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "not representable") {
+			t.Fatalf("projection=%#v, want format warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("projection=%#v, want table view", projection.Views)
+		}
+	})
+
+	t.Run("conflicting authored formats", func(t *testing.T) {
+		currency := &exploration.ExplorationVisualizationFormat{Value: &exploration.ExplorationCurrencyVisualizationFormat{Kind: "currency", Currency: "USD"}}
+		percent := &exploration.ExplorationVisualizationFormat{Value: &exploration.ExplorationPercentVisualizationFormat{Kind: "percent"}}
+		spec := base
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.CartesianExplorationVisualization{Kind: "cartesian", Mark: exploration.ExplorationVisualizationCartesianMarkBar, Y: &[]exploration.ExplorationVisualizationFieldRef{{Field: "revenue", Format: currency}, {Field: "revenue", Format: percent}}}}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(columns, rows, 5), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "conflict") {
+			t.Fatalf("projection=%#v, want conflicting-format warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("projection=%#v, want table view", projection.Views)
+		}
+	})
+
+	t.Run("missing scalar comparison", func(t *testing.T) {
+		spec := base
+		spec.Dimensions = nil
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{Kind: "kpi", Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue"}, Comparison: &exploration.ExplorationVisualizationFieldRef{Field: "missing"}}}
+		scalarColumns := []projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("revenue", "Revenue", "decimal")}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(scalarColumns, []map[string]any{{"revenue": "2.00"}}, 8), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "comparison") {
+			t.Fatalf("projection=%#v, want missing-comparison warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("projection=%#v, want table view", projection.Views)
+		}
+	})
+
+	t.Run("nonnumeric scalar goal", func(t *testing.T) {
+		spec := base
+		spec.Dimensions = nil
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}, {Field: "note"}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{Kind: "kpi", Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue"}, Goal: &exploration.ExplorationVisualizationFieldRef{Field: "note"}}}
+		scalarFields := append(append([]projectsignals.DataExploreFieldSignal{}, fields...), explorerProjectionField("note", "metric", "Note", "string"))
+		scalarColumns := []projectsignals.DataPreviewColumnSignal{explorerProjectionColumn("revenue", "Revenue", "decimal"), explorerProjectionColumn("note", "Note", "string")}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(scalarColumns, []map[string]any{{"revenue": "2.00", "note": "n/a"}}, 9), scalarFields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "non-numeric") {
+			t.Fatalf("projection=%#v, want nonnumeric-goal warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("projection=%#v, want table view", projection.Views)
+		}
+	})
+
+	t.Run("trend and thresholds", func(t *testing.T) {
+		spec := base
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{Kind: "kpi", Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue"}, Trend: &exploration.ExplorationKPITrend{Category: exploration.ExplorationVisualizationFieldRef{Field: "status"}, Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue"}}}}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(columns, rows, 6), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "trend") {
+			t.Fatalf("trend projection=%#v, want explicit trend warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("trend projection=%#v, want table view", projection.Views)
+		}
+		thresholds := []exploration.ExplorationVisualizationThreshold{{Value: 1, Tone: exploration.ExplorationVisualizationToneWarning}}
+		spec.Visualization.Value.(*exploration.KPIExplorationVisualization).Trend = nil
+		spec.Visualization.Value.(*exploration.KPIExplorationVisualization).Presentation = &exploration.ExplorationKPIPresentation{Thresholds: &thresholds}
+		projection = ProjectDataExplorerViews(spec, explorerProjectionResult(columns, rows, 7), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "threshold") {
+			t.Fatalf("threshold projection=%#v, want explicit threshold warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("threshold projection=%#v, want table view", projection.Views)
+		}
+	})
+
+	t.Run("typed nil visualization variant", func(t *testing.T) {
+		spec := base
+		spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "status"}}
+		spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}}
+		spec.Visualization = &exploration.ExplorationVisualizationConfig{Value: (*exploration.CartesianExplorationVisualization)(nil)}
+		projection := ProjectDataExplorerViews(spec, explorerProjectionResult(columns, rows, 10), fields)
+		if projection.RecommendedView != dataExplorerTableViewID || !strings.Contains(strings.Join(projection.Warnings, " "), "nil variant") {
+			t.Fatalf("projection=%#v, want malformed-variant warning/table fallback", projection)
+		}
+		if _, ok := projection.Views[dataExplorerTableViewID]; !ok {
+			t.Fatalf("projection=%#v, want table view", projection.Views)
+		}
+	})
+}
+
 func TestProjectDataExplorerViewsProjectsCanonicalSortIntoWindowState(t *testing.T) {
 	channelAlias := "sales_channel"
 	spec := exploration.ExplorationSpec{

@@ -29,9 +29,20 @@ were regenerated canonically.
 
 Generation, migration tests (25.481s), catalog browser tests (29 passed), adapter
 regressions, app/contract typechecking, security-runner contracts, architecture
-checks (26.758s), and the unchanged quality budget passed. Broader integration
-tests and independent review are underway; full CI and exact-head hosted checks
-are pending. The PR must remain unmerged, with auto-merge disabled and no merge
+checks (26.758s), and the unchanged quality budget passed. Broader required-PG
+exploration/authoring integration tests also passed.
+
+Independent review then identified preview paths that silently discarded authored
+field formats and KPI ranges/comparison/goal/trend settings. The initial CI run on
+`e423e3699` was deliberately stopped during database verification, not counted as
+a pass. Preview corrections preserve supported field formats and scalar KPI
+ranges/comparison/goal bindings. Unsupported trend/threshold requests produce
+warnings and a usable table fallback; table and chart formats remain independent.
+Malformed visualization pointers and conflicting formats receive regression
+coverage. Focused visualization tests passed; final review and restarted full CI
+are pending, followed by exact-head hosted checks.
+
+The PR must remain unmerged, with auto-merge disabled and no merge
 queue enrollment, until explicit user approval. No force push is permitted.
 
 ## September 9 RecoverySet v3 base refresh

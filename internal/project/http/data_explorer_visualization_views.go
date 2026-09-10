@@ -215,6 +215,12 @@ func explorerNumber(value any) (float64, bool) {
 }
 
 func explorerKPIEnvelope(spec exploration.ExplorationSpec, authored *exploration.KPIExplorationVisualization, columns []explorerVisualizationColumn, base visualizationir.VisualizationSpecBase, frame visualizationruntime.Frame, modelID, datasetID string, result projectsignals.DataExploreResultSignal) (string, *visualizationir.VisualizationEnvelope, string) {
+	if authored != nil && authored.Trend != nil {
+		return dataExplorerTableViewID, nil, "authored KPI trend requires a non-scalar result that cannot be represented by the scalar KPI query; showing table"
+	}
+	if authored != nil && authored.Presentation != nil && authored.Presentation.Thresholds != nil {
+		return dataExplorerTableViewID, nil, "authored KPI thresholds are not supported by visualization IR14; showing table"
+	}
 	if authored != nil && (len(spec.Dimensions) > 0 || spec.Time != nil) {
 		return dataExplorerTableViewID, nil, "authored KPI requires a scalar result with no dimensions or time grouping; showing table"
 	}
@@ -241,6 +247,18 @@ func explorerKPIEnvelope(spec exploration.ExplorationSpec, authored *exploration
 	value := visualizationir.VisualizationFieldRef{Dataset: "primary", Field: metric.Output}
 	value.Field = metric.Output
 	base.Kind = "kpi"
+	var comparison, goal *visualizationir.VisualizationKPIValueBinding
+	if authored != nil {
+		var err error
+		comparison, _, err = explorerKPIValueBinding("comparison", authored.Comparison, columns)
+		if err != nil {
+			return dataExplorerTableViewID, nil, fmt.Sprintf("authored KPI comparison is unavailable or non-numeric: %v; showing table", err)
+		}
+		goal, _, err = explorerKPIValueBinding("goal", authored.Goal, columns)
+		if err != nil {
+			return dataExplorerTableViewID, nil, fmt.Sprintf("authored KPI goal is unavailable or non-numeric: %v; showing table", err)
+		}
+	}
 	presentation := visualizationir.KPIVisualizationPresentation{Mode: visualizationir.VisualizationKPIModeCompact, Delta: visualizationir.VisualizationKPIDeltaModeAbsolute, FavorableDirection: visualizationir.VisualizationKPIDirectionNeutral, MissingComparison: visualizationir.VisualizationKPIMissingComparisonShowUnavailable, Ranges: []visualizationir.VisualizationKPIQualitativeRange{}}
 	if authored != nil && authored.Presentation != nil {
 		if authored.Presentation.Mode != nil {
@@ -258,15 +276,64 @@ func explorerKPIEnvelope(spec exploration.ExplorationSpec, authored *exploration
 		presentation.DisplayUnits = (*visualizationir.VisualizationDisplayUnits)(authored.Presentation.DisplayUnits)
 		presentation.Note = authored.Presentation.Note
 		presentation.Tone = (*visualizationir.VisualizationTone)(authored.Presentation.Tone)
+		if authored.Presentation.Ranges != nil {
+			presentation.Ranges = make([]visualizationir.VisualizationKPIQualitativeRange, 0, len(*authored.Presentation.Ranges))
+			for _, authoredRange := range *authored.Presentation.Ranges {
+				mapped := visualizationir.VisualizationKPIQualitativeRange{Label: authoredRange.Label, Tone: visualizationir.VisualizationTone(authoredRange.Tone)}
+				if authoredRange.Minimum != nil {
+					minimum := *authoredRange.Minimum
+					mapped.Minimum = &minimum
+				}
+				if authoredRange.Maximum != nil {
+					maximum := *authoredRange.Maximum
+					mapped.Maximum = &maximum
+				}
+				presentation.Ranges = append(presentation.Ranges, mapped)
+			}
+		}
 	}
 	if presentation.DisplayUnits == nil {
 		if common, err := spec.Visualization.Base(); err == nil && common != nil && common.DisplayUnits != nil {
 			presentation.DisplayUnits = (*visualizationir.VisualizationDisplayUnits)(common.DisplayUnits)
 		}
 	}
-	visualSpec := visualizationir.VisualizationSpec{Value: &visualizationir.KPIVisualizationSpec{VisualizationSpecBase: base, Kind: "kpi", Value: value, Presentation: presentation}}
-	query := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultScalar, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: datasetID, Metrics: []visualizationdefinition.FieldBinding{{FieldID: metric.Semantic, Alias: metric.Output}}, Limit: base.DataBudget.MaxRows}}
+	visualSpec := visualizationir.VisualizationSpec{Value: &visualizationir.KPIVisualizationSpec{VisualizationSpecBase: base, Kind: "kpi", Value: value, Comparison: comparison, Goal: goal, Presentation: presentation}}
+	queryMetrics := []explorerVisualizationColumn{metric}
+	for _, binding := range []*visualizationir.VisualizationKPIValueBinding{comparison, goal} {
+		if binding == nil {
+			continue
+		}
+		column, ok := explorerColumnFor(columns, binding.Field.Field)
+		if !ok {
+			continue
+		}
+		alreadyBound := false
+		for _, existing := range queryMetrics {
+			if existing.Output == column.Output {
+				alreadyBound = true
+				break
+			}
+		}
+		if !alreadyBound {
+			queryMetrics = append(queryMetrics, column)
+		}
+	}
+	query := visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultScalar, ModelID: modelID, DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: datasetID, Metrics: explorerAggregateFields(queryMetrics), Limit: base.DataBudget.MaxRows}}
 	return explorerBuildInlineEnvelope(dataExplorerKPIViewID, visualSpec, query, frame, modelID, result)
+}
+
+func explorerKPIValueBinding(name string, authored *exploration.ExplorationVisualizationFieldRef, columns []explorerVisualizationColumn) (*visualizationir.VisualizationKPIValueBinding, explorerVisualizationColumn, error) {
+	if authored == nil {
+		return nil, explorerVisualizationColumn{}, nil
+	}
+	column, ok := explorerColumnFor(columns, authored.Field)
+	if !ok {
+		return nil, explorerVisualizationColumn{}, fmt.Errorf("%s field %q is not present in the governed result", name, authored.Field)
+	}
+	if column.Role != visualizationir.VisualizationFieldRoleMetric || !numericExplorerColumn(column) {
+		return nil, explorerVisualizationColumn{}, fmt.Errorf("%s field %q is not numeric", name, authored.Field)
+	}
+	return &visualizationir.VisualizationKPIValueBinding{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: column.Output}, Reducer: visualizationir.VisualizationReferenceReducerFirst, Label: column.Label}, column, nil
 }
 
 func explorerCartesianEnvelope(spec exploration.ExplorationSpec, authored *exploration.CartesianExplorationVisualization, columns []explorerVisualizationColumn, base visualizationir.VisualizationSpecBase, frame visualizationruntime.Frame, modelID, datasetID string, result projectsignals.DataExploreResultSignal) (string, *visualizationir.VisualizationEnvelope, string) {

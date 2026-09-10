@@ -46,6 +46,9 @@ type explorerVisualizationColumn struct {
 	Temporal bool
 	Grain    string
 	Format   *visualizationir.VisualizationFormat
+	// FormatFallback prevents a chart from claiming a field format that could
+	// not be represented faithfully in the shared IR.
+	FormatFallback bool
 }
 
 // ProjectDataExplorerViews lowers one canonical exploration result into
@@ -60,6 +63,10 @@ func ProjectDataExplorerViews(spec exploration.ExplorationSpec, result projectsi
 	}
 	columns, warnings := explorerVisualizationColumns(spec, result, fields)
 	projection.Warnings = append(projection.Warnings, warnings...)
+	malformedVisualization := explorerMalformedVisualizationWarning(spec)
+	if malformedVisualization != "" {
+		projection.Warnings = append(projection.Warnings, malformedVisualization)
+	}
 	if len(columns) == 0 {
 		projection.Warnings = append(projection.Warnings, "visualization projection has no result columns; table view is unavailable")
 		return projection
@@ -88,6 +95,14 @@ func ProjectDataExplorerViews(spec exploration.ExplorationSpec, result projectsi
 		projection.Views[dataExplorerTableViewID] = envelope
 	} else {
 		projection.Warnings = append(projection.Warnings, "table visualization projection failed: "+err.Error())
+		return projection
+	}
+	for _, column := range columns {
+		if column.FormatFallback {
+			return projection
+		}
+	}
+	if malformedVisualization != "" {
 		return projection
 	}
 

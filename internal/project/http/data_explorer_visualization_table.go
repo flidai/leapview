@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	exploration "github.com/flidai/leapview/internal/analytics/exploration"
@@ -128,8 +129,20 @@ func explorerMaterializedChunkSize(rowCount int) int {
 }
 
 func explorerVisualizationFormat(format *exploration.ExplorationVisualizationFormat) *visualizationir.VisualizationFormat {
+	value, _ := explorerVisualizationFormatChecked(format)
+	return value
+}
+
+func explorerVisualizationFormatChecked(format *exploration.ExplorationVisualizationFormat) (*visualizationir.VisualizationFormat, error) {
 	if format == nil || format.Value == nil {
-		return nil
+		if format == nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("format variant is required")
+	}
+	variantValue := reflect.ValueOf(format.Value)
+	if variantValue.Kind() == reflect.Ptr && variantValue.IsNil() {
+		return nil, fmt.Errorf("format variant is nil")
 	}
 	var value visualizationir.VisualizationFormatVariant
 	switch variant := format.Value.(type) {
@@ -146,9 +159,9 @@ func explorerVisualizationFormat(format *exploration.ExplorationVisualizationFor
 	case *exploration.ExplorationTemporalVisualizationFormat:
 		value = &visualizationir.TemporalVisualizationFormat{Kind: "temporal", DateStyle: variant.DateStyle, TimeStyle: variant.TimeStyle}
 	default:
-		return nil
+		return nil, fmt.Errorf("unsupported format variant %T", variant)
 	}
-	return &visualizationir.VisualizationFormat{Value: value}
+	return &visualizationir.VisualizationFormat{Value: value}, nil
 }
 
 func explorerDataRevision(result projectsignals.DataExploreResultSignal) int64 {
