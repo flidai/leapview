@@ -6,6 +6,9 @@ Decision date: 2026-08-17
 
 Implementation: in progress (controlled rollout)
 
+Amended by: [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md),
+human-facing command orchestration and local runtime startup only
+
 Deciders: LeapView maintainers
 
 Supersedes: none
