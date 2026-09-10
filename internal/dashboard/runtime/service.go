@@ -99,6 +99,11 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	if m == nil || m.reports == nil {
 		return nil, fmt.Errorf("dashboard runtime is unavailable")
 	}
+	cloned, err := cloneDashboard(definition)
+	if err != nil {
+		return nil, fmt.Errorf("clone compiled dashboard definition: %w", err)
+	}
+	definition = cloned
 	definition.ID = strings.TrimSpace(definition.ID)
 	definition.SemanticModel = strings.TrimSpace(definition.SemanticModel)
 	if definition.ID == "" || definition.SemanticModel == "" {
@@ -118,6 +123,10 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	}
 	if runtime.model == nil {
 		return nil, fmt.Errorf("semantic model %q does not match compiled dashboard", definition.SemanticModel)
+	}
+	definition, err = resolveDashboardSchemas(definition, runtime.model)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dashboard schema: %w", err)
 	}
 	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(m.reports.models)+1)
 	for modelID, model := range m.reports.models {

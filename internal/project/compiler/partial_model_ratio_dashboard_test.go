@@ -75,3 +75,60 @@ spec:
 		t.Fatalf("dashboard ratio query binding = %#v", visual.Query)
 	}
 }
+
+func TestLoadSourceRootAllowsPartialDirectModelFieldUsedByDashboardRecords(t *testing.T) {
+	files := map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:warehouse.orders, name: warehouse.orders}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: warehouse.orders}
+  fields: {order_id: {datatype: String}}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders}}
+  metrics: {}
+`,
+		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata: {id: dashboard:sales, name: sales_dashboard}
+spec:
+  semanticModel: sales
+  filters: []
+  visuals:
+    orders_table:
+      type: table
+      query: {type: records, dataset: orders, fields: [order_id, dashboard_only]}
+      presentation: {type: table, rowHeight: 32, showHeader: true, striped: false}
+  pages: [{id: overview, title: Overview, components: [{id: orders-table, type: visual, visual: orders_table, placement: {column: 1, row: 1, columnSpan: 12, rowSpan: 6}}]}]
+`,
+	}
+
+	project, err := LoadSourceRoot(writeSourceFixture(t, files))
+	if err != nil {
+		t.Fatalf("LoadSourceRoot(partial direct Model with records dashboard): %v", err)
+	}
+	dashboard, ok := project.Manifest.DashboardDefinitions["dashboard:sales"]
+	if !ok {
+		t.Fatal("dashboard consuming records field is missing from compiled manifest")
+	}
+	visual, ok := dashboard.Visualizations["orders_table"]
+	if !ok || visual.Query.Detail == nil || len(visual.Query.Detail.Fields) != 2 || visual.Query.Detail.Fields[1].FieldID != "orders.dashboard_only" {
+		t.Fatalf("dashboard records query binding = %#v", visual.Query)
+	}
+}

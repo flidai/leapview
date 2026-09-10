@@ -61,6 +61,9 @@ func resolveVisualizationSchema(definition visualizationdefinition.Definition, m
 			field.DataType = visualizationDataType(datatype)
 		}
 	}
+	if err := visualizationir.ResolveCalculationDataTypes(base); err != nil {
+		return visualizationdefinition.Definition{}, err
+	}
 	revision, err := visualizationir.ComputeSpecRevision(definition.Spec)
 	if err != nil {
 		return visualizationdefinition.Definition{}, err
