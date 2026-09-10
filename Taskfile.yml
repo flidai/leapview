@@ -1450,8 +1450,7 @@ tasks:
   ci:lane:go:application:
     desc: Run sharded application and external-service Go tests
     cmds:
-      - task: test:go:app:shards
-      - task: test:go:external
+      - task --parallel test:go:app:shards test:go:external
 
   ci:lane:frontend:
     desc: Run every bounded frontend shard sequentially on a shared local machine

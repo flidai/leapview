@@ -188,6 +188,7 @@ func snapshotTables(values map[string]Table) map[string]Table {
 		copyTable.AIContext = nil
 		copyTable.SourceDependencies = append([]string(nil), table.SourceDependencies...)
 		copyTable.ModelDependencies = append([]string(nil), table.ModelDependencies...)
+		copyTable.AuthoredFields = snapshotModelFieldDeclarations(table.AuthoredFields)
 		copyTable.Dimensions = snapshotMetricDimensions(table.Dimensions)
 		copyTable.Columns = snapshotModelColumns(table.Columns)
 		copyTable.Entities = snapshotEntities(table.Entities)
@@ -195,6 +196,18 @@ func snapshotTables(values map[string]Table) map[string]Table {
 		copyTable.SQLAnalysisEvidence = snapshotSQLAnalysisEvidence(table.SQLAnalysisEvidence)
 		copyTable.Checks = snapshotModelChecks(table.Checks)
 		clone[name] = copyTable
+	}
+	return clone
+}
+
+func snapshotModelFieldDeclarations(values map[string]ModelFieldDeclaration) map[string]ModelFieldDeclaration {
+	if values == nil {
+		return nil
+	}
+	clone := make(map[string]ModelFieldDeclaration, len(values))
+	for name, value := range values {
+		value.AIContext = nil
+		clone[name] = value
 	}
 	return clone
 }

@@ -2,6 +2,126 @@ package ir
 
 import "fmt"
 
+// CanonicalCalculationDataType returns the result type for a visual
+// calculation from the resolved type of its source field. Keep this rule in
+// the visualization IR package so compiler and runtime schema resolution use
+// identical semantics.
+func CanonicalCalculationDataType(template VisualizationCalculationTemplate, source VisualizationDataType) VisualizationDataType {
+	switch template {
+	case VisualizationCalculationTemplateRank:
+		return VisualizationDataTypeInteger
+	case VisualizationCalculationTemplateRunningTotal,
+		VisualizationCalculationTemplateDifference:
+		if source == VisualizationDataTypeInteger {
+			return VisualizationDataTypeDecimal
+		}
+		return source
+	case VisualizationCalculationTemplateMovingAverage,
+		VisualizationCalculationTemplatePercentageDifference,
+		VisualizationCalculationTemplatePercentOfParent,
+		VisualizationCalculationTemplatePercentOfGrandTotal,
+		VisualizationCalculationTemplateCumulativeContribution:
+		return VisualizationDataTypeDecimal
+	default:
+		return source
+	}
+}
+
+// ResolveCalculationDataTypes recomputes visual calculation output types after
+// source fields have been rebound to their authoritative runtime types. It
+// visits calculation references in dependency order so a calculation sourced
+// from another calculation inherits that calculation's resolved type.
+func ResolveCalculationDataTypes(base *VisualizationSpecBase) error {
+	if base == nil || base.Calculations == nil || len(*base.Calculations) == 0 {
+		return nil
+	}
+
+	type calculationKey struct {
+		dataset string
+		field   string
+	}
+
+	schemas := make(map[string]*VisualizationDatasetSchema, len(base.Datasets))
+	for index := range base.Datasets {
+		schemas[base.Datasets[index].ID] = &base.Datasets[index]
+	}
+	calculationIndexes := make(map[calculationKey]int, len(*base.Calculations))
+	for index, calculation := range *base.Calculations {
+		key := calculationKey{dataset: calculation.Dataset, field: calculation.ID}
+		if _, exists := calculationIndexes[key]; exists {
+			return fmt.Errorf("duplicate visual calculation %q in dataset %q", calculation.ID, calculation.Dataset)
+		}
+		calculationIndexes[key] = index
+	}
+
+	state := make([]uint8, len(*base.Calculations))
+	var visit func(int) error
+	visit = func(index int) error {
+		switch state[index] {
+		case 1:
+			return fmt.Errorf("visual calculation dependency cycle includes %q", (*base.Calculations)[index].ID)
+		case 2:
+			return nil
+		}
+		state[index] = 1
+		calculation := (*base.Calculations)[index]
+		for _, ref := range visualCalculationRefs(calculation) {
+			dependency, ok := calculationIndexes[calculationKey{dataset: ref.Dataset, field: ref.Field}]
+			if !ok {
+				continue
+			}
+			if err := visit(dependency); err != nil {
+				return err
+			}
+		}
+
+		schema, ok := schemas[calculation.Dataset]
+		if !ok {
+			return fmt.Errorf("visual calculation %q targets unknown dataset %q", calculation.ID, calculation.Dataset)
+		}
+		source, sourceOK := visualizationSchemaField(*schema, calculation.Source.Field)
+		if !sourceOK {
+			return fmt.Errorf("visual calculation %q references unknown source %q", calculation.ID, calculation.Source.Field)
+		}
+		output, outputOK := visualizationSchemaField(*schema, calculation.ID)
+		if !outputOK {
+			return fmt.Errorf("visual calculation %q has no output field in dataset %q", calculation.ID, calculation.Dataset)
+		}
+		output.DataType = CanonicalCalculationDataType(calculation.Template, source.DataType)
+		if err := setVisualizationSchemaField(schema, output); err != nil {
+			return err
+		}
+		state[index] = 2
+		return nil
+	}
+
+	for index := range *base.Calculations {
+		if err := visit(index); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func visualizationSchemaField(schema VisualizationDatasetSchema, id string) (VisualizationField, bool) {
+	for _, field := range schema.Fields {
+		if field.ID == id {
+			return field, true
+		}
+	}
+	return VisualizationField{}, false
+}
+
+func setVisualizationSchemaField(schema *VisualizationDatasetSchema, field VisualizationField) error {
+	for index := range schema.Fields {
+		if schema.Fields[index].ID == field.ID {
+			schema.Fields[index] = field
+			return nil
+		}
+	}
+	return fmt.Errorf("visualization dataset %q has no field %q", schema.ID, field.ID)
+}
+
 func validateVisualCalculations(calculations *[]VisualizationCalculation, schemas map[string]VisualizationDatasetSchema) error {
 	if calculations == nil {
 		return nil

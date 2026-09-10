@@ -507,7 +507,7 @@ func appendCanonicalCalculationOutputs(spec *visualizationir.VisualizationSpec) 
 		calculationID := calculation.ID
 		field := visualizationir.VisualizationField{
 			ID: calculation.ID, Role: visualizationir.VisualizationFieldRoleMetric,
-			DataType: canonicalCalculationDataType(calculation.Template, source.DataType), Nullable: true,
+			DataType: visualizationir.CanonicalCalculationDataType(calculation.Template, source.DataType), Nullable: true,
 			Label: calculation.Label, Format: calculation.Format,
 			Provenance: &visualizationir.VisualizationFieldProvenance{
 				Kind:       visualizationir.VisualizationFieldProvenanceKindVisualCalculation,
@@ -535,27 +535,6 @@ func appendCanonicalCalculationOutputs(spec *visualizationir.VisualizationSpec) 
 	}
 	base.DataBudget.RequiredCompleteness = visualizationir.VisualizationCompletenessPartial
 	return nil
-}
-
-func canonicalCalculationDataType(template visualizationir.VisualizationCalculationTemplate, source visualizationir.VisualizationDataType) visualizationir.VisualizationDataType {
-	switch template {
-	case visualizationir.VisualizationCalculationTemplateRank:
-		return visualizationir.VisualizationDataTypeInteger
-	case visualizationir.VisualizationCalculationTemplateRunningTotal,
-		visualizationir.VisualizationCalculationTemplateDifference:
-		if source == visualizationir.VisualizationDataTypeInteger {
-			return visualizationir.VisualizationDataTypeDecimal
-		}
-		return source
-	case visualizationir.VisualizationCalculationTemplateMovingAverage,
-		visualizationir.VisualizationCalculationTemplatePercentageDifference,
-		visualizationir.VisualizationCalculationTemplatePercentOfParent,
-		visualizationir.VisualizationCalculationTemplatePercentOfGrandTotal,
-		visualizationir.VisualizationCalculationTemplateCumulativeContribution:
-		return visualizationir.VisualizationDataTypeDecimal
-	default:
-		return source
-	}
 }
 
 func valueOrBool(value *bool) bool {

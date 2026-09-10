@@ -6,6 +6,9 @@ Decision date: 2026-08-28
 
 Implementation: in progress (clean-slate target architecture; draft PR #386)
 
+Amended by: [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md),
+local analytics development topology and filesystem storage profile only
+
 Deciders: LeapView maintainers
 
 Supersedes:
