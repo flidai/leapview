@@ -1,0 +1,896 @@
+{
+  "version": 1,
+  "kind": "frontend-bundle-budget-increase-proposal",
+  "reason": "Review-only exact ceilings for frontend already merged on main via interactive dashboard builder #377, measured on the current-main controls integration after feature-preserving Lucide metadata/node split; three byte-identical pinned Bun builds, no extra headroom, no FAI-551 code, policy unchanged.",
+  "evidence": {
+    "version": 1,
+    "generatedBy": "scripts/build_assets.ts",
+    "identity": {
+      "commit": "1849a112633945472e15c5d51f4b58c560bbd41f",
+      "commitSource": "git",
+      "sourceInputDigest": "37d67acbcbae5ee3bd646ad90d2be4c90899fe33c688b334e4950cac5d13a40b",
+      "bunVersion": "1.3.14",
+      "nodeVersion": "v24.3.0",
+      "platform": "linux",
+      "architecture": "x64",
+      "packageManager": "bun@1.3.14",
+      "lockfilePath": "bun.lock",
+      "lockfileSha256": "cc857c74a196402e1e4f65175f0daefeaab513c945c351ee07d3cacf1c344507"
+    },
+    "entries": {
+      "admin-page": {
+        "files": [
+          "admin-page.js",
+          "chunks/shared-app-shell-1btds9z9.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-3mzr98t2.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-6v2b598a.js",
+          "chunks/shared-app-shell-7p3byfar.js",
+          "chunks/shared-app-shell-8sfarz78.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-agctmnr0.js",
+          "chunks/shared-app-shell-b2gqcvmv.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-cvvbcyhp.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s150a4je.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js"
+        ],
+        "rawBytes": 5490102,
+        "gzipBytes": 1201956
+      },
+      "app-shell": {
+        "files": [
+          "app-shell.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-73vnbfhv.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-s150a4je.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-zpym32bn.js"
+        ],
+        "rawBytes": 120295,
+        "gzipBytes": 32712
+      },
+      "asset-lineage-graph": {
+        "files": [
+          "asset-lineage-graph.js",
+          "chunks/shared-app-shell-5qddv60a.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-rs28naje.js"
+        ],
+        "rawBytes": 740481,
+        "gzipBytes": 169317
+      },
+      "catalog-page": {
+        "files": [
+          "catalog-page.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-3mzr98t2.js",
+          "chunks/shared-app-shell-6v2b598a.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-s150a4je.js",
+          "chunks/shared-app-shell-sxsvczcz.js"
+        ],
+        "rawBytes": 499260,
+        "gzipBytes": 115883
+      },
+      "chat-page": {
+        "files": [
+          "chat-page.js",
+          "chunks/shared-app-shell-11hy571t.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-3jvsets8.js",
+          "chunks/shared-app-shell-67934nnb.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-8sfarz78.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cg2h8vjy.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-cvvbcyhp.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-gvwf5xwr.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-j3hjh0b8.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-m23jcwmq.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-qt5dza5j.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s6vvh998.js",
+          "chunks/shared-app-shell-sy7350bv.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-y25j573d.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-app-shell-yawvacw4.js",
+          "chunks/shared-app-shell-yer0fmmd.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-echarts-2k12wvkp.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-html-qm6s192v.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-index-h4wbp3qj.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-maplibre-v0dz780n.js",
+          "chunks/shared-report-table-a4kwe89f.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-tanstack-pmky499b.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js"
+        ],
+        "rawBytes": 5581437,
+        "gzipBytes": 1285350
+      },
+      "command": {
+        "files": [
+          "chunks/shared-app-shell-mq81eweq.js",
+          "command.js"
+        ],
+        "rawBytes": 3345,
+        "gzipBytes": 1605
+      },
+      "dashboard-builder": {
+        "files": [
+          "chunks/shared-app-shell-11hy571t.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-1ybyd7g8.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-3jvsets8.js",
+          "chunks/shared-app-shell-67934nnb.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-6v2b598a.js",
+          "chunks/shared-app-shell-7p3byfar.js",
+          "chunks/shared-app-shell-8sfarz78.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-agctmnr0.js",
+          "chunks/shared-app-shell-cg2h8vjy.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-cvvbcyhp.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-gvwf5xwr.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-j3hjh0b8.js",
+          "chunks/shared-app-shell-jqfybqef.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-m23jcwmq.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-qt5dza5j.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s6vvh998.js",
+          "chunks/shared-app-shell-sxsvczcz.js",
+          "chunks/shared-app-shell-sy7350bv.js",
+          "chunks/shared-app-shell-syabxyxq.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-y25j573d.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-app-shell-yawvacw4.js",
+          "chunks/shared-app-shell-yer0fmmd.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-echarts-2k12wvkp.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-html-qm6s192v.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-index-h4wbp3qj.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-maplibre-v0dz780n.js",
+          "chunks/shared-report-table-a4kwe89f.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-tanstack-pmky499b.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js",
+          "dashboard-builder.js"
+        ],
+        "rawBytes": 6393756,
+        "gzipBytes": 1463063
+      },
+      "dashboard-page": {
+        "files": [
+          "chunks/shared-app-shell-11hy571t.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-3jvsets8.js",
+          "chunks/shared-app-shell-67934nnb.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-73vnbfhv.js",
+          "chunks/shared-app-shell-7p3byfar.js",
+          "chunks/shared-app-shell-8sfarz78.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cg2h8vjy.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-cvvbcyhp.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-gvwf5xwr.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-j3hjh0b8.js",
+          "chunks/shared-app-shell-jqfybqef.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-m23jcwmq.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-qt5dza5j.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rhwnaek5.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s6vvh998.js",
+          "chunks/shared-app-shell-sxsvczcz.js",
+          "chunks/shared-app-shell-sy7350bv.js",
+          "chunks/shared-app-shell-syabxyxq.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-y25j573d.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-app-shell-yawvacw4.js",
+          "chunks/shared-app-shell-yer0fmmd.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-echarts-2k12wvkp.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-html-qm6s192v.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-index-h4wbp3qj.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-maplibre-v0dz780n.js",
+          "chunks/shared-report-table-a4kwe89f.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-tanstack-pmky499b.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js",
+          "dashboard-page.js"
+        ],
+        "rawBytes": 6150986,
+        "gzipBytes": 1408369
+      },
+      "data-explorer": {
+        "files": [
+          "chunks/shared-app-shell-11hy571t.js",
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-67934nnb.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cg2h8vjy.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-cvvbcyhp.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-gvwf5xwr.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-hs7c2peg.js",
+          "chunks/shared-app-shell-j3hjh0b8.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-m23jcwmq.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-qt5dza5j.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s6vvh998.js",
+          "chunks/shared-app-shell-sy7350bv.js",
+          "chunks/shared-app-shell-syabxyxq.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-y25j573d.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-app-shell-yawvacw4.js",
+          "chunks/shared-app-shell-yer0fmmd.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-echarts-2k12wvkp.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-html-qm6s192v.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-index-h4wbp3qj.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-maplibre-v0dz780n.js",
+          "chunks/shared-report-table-a4kwe89f.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-tanstack-pmky499b.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js",
+          "data-explorer.js"
+        ],
+        "rawBytes": 5623698,
+        "gzipBytes": 1293699
+      },
+      "datastar-inspector": {
+        "files": [
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "datastar-inspector.js"
+        ],
+        "rawBytes": 66001,
+        "gzipBytes": 20897
+      },
+      "datastar-runtime": {
+        "files": [
+          "vendor/datastar-1.0.2.js"
+        ],
+        "rawBytes": 34083,
+        "gzipBytes": 13388
+      },
+      "login-background-loader": {
+        "files": [
+          "login-background-loader.js"
+        ],
+        "rawBytes": 1404,
+        "gzipBytes": 567
+      },
+      "login-page": {
+        "files": [
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-zpym32bn.js",
+          "login-page.js"
+        ],
+        "rawBytes": 56437,
+        "gzipBytes": 18330
+      },
+      "maplibre-gl-worker": {
+        "files": [
+          "chunks/maplibre-gl-worker-6.7.0.mjs"
+        ],
+        "rawBytes": 486248,
+        "gzipBytes": 141393
+      },
+      "monaco-editor-worker": {
+        "files": [
+          "chunks/shared-app-shell-1btds9z9.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "monaco-editor-worker.js"
+        ],
+        "rawBytes": 521790,
+        "gzipBytes": 129401
+      },
+      "project-page": {
+        "files": [
+          "chunks/shared-app-shell-1qbtnkc7.js",
+          "chunks/shared-app-shell-1ybyd7g8.js",
+          "chunks/shared-app-shell-2q3ty1az.js",
+          "chunks/shared-app-shell-3mzr98t2.js",
+          "chunks/shared-app-shell-6qwntzsf.js",
+          "chunks/shared-app-shell-6v2b598a.js",
+          "chunks/shared-app-shell-8sfarz78.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-agctmnr0.js",
+          "chunks/shared-app-shell-b2gqcvmv.js",
+          "chunks/shared-app-shell-cs8bwdt5.js",
+          "chunks/shared-app-shell-e6yyk40k.js",
+          "chunks/shared-app-shell-ekafgfke.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-h928bp67.js",
+          "chunks/shared-app-shell-m0a3bb0f.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-qm1cbzh1.js",
+          "chunks/shared-app-shell-r18wt9ms.js",
+          "chunks/shared-app-shell-rfw7z54q.js",
+          "chunks/shared-app-shell-rhwnaek5.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "chunks/shared-app-shell-rtvq4sm9.js",
+          "chunks/shared-app-shell-s150a4je.js",
+          "chunks/shared-app-shell-sxsvczcz.js",
+          "chunks/shared-app-shell-v2fzv2ab.js",
+          "chunks/shared-app-shell-w20v0es8.js",
+          "chunks/shared-app-shell-y5618zdy.js",
+          "chunks/shared-core-gyvqqg2b.js",
+          "chunks/shared-engine-javascript-w5rjx245.js",
+          "chunks/shared-github-dark-hhfckpgm.js",
+          "chunks/shared-github-light-5hsmqmz9.js",
+          "chunks/shared-index-chc0h67x.js",
+          "chunks/shared-json-r0g8b6vj.js",
+          "chunks/shared-shellscript-sh8b0hp0.js",
+          "chunks/shared-sql-tqz6td3d.js",
+          "chunks/shared-toon-language-5yq2e081.js",
+          "chunks/shared-yaml-qv0wqr79.js",
+          "project-page.js"
+        ],
+        "rawBytes": 1605346,
+        "gzipBytes": 385027
+      },
+      "semantic-model-graph": {
+        "files": [
+          "chunks/shared-app-shell-5qddv60a.js",
+          "chunks/shared-app-shell-9nt95e6n.js",
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-hs7c2peg.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "chunks/shared-app-shell-rs28naje.js",
+          "semantic-model-graph.js"
+        ],
+        "rawBytes": 768446,
+        "gzipBytes": 176537
+      },
+      "theme": {
+        "files": [
+          "theme.js"
+        ],
+        "rawBytes": 4019,
+        "gzipBytes": 1284
+      },
+      "topology-background": {
+        "files": [
+          "chunks/shared-app-shell-gf1xsdtp.js",
+          "chunks/shared-app-shell-mq81eweq.js",
+          "topology-background.js"
+        ],
+        "rawBytes": 614975,
+        "gzipBytes": 163493
+      },
+      "url-sync": {
+        "files": [
+          "url-sync.js"
+        ],
+        "rawBytes": 2211,
+        "gzipBytes": 859
+      }
+    },
+    "aggregate": {
+      "files": [
+        "admin-page.js",
+        "app-shell.js",
+        "asset-lineage-graph.js",
+        "catalog-page.js",
+        "chat-page.js",
+        "chunks/maplibre-gl-worker-6.7.0.mjs",
+        "chunks/shared-app-shell-11hy571t.js",
+        "chunks/shared-app-shell-1btds9z9.js",
+        "chunks/shared-app-shell-1qbtnkc7.js",
+        "chunks/shared-app-shell-1ybyd7g8.js",
+        "chunks/shared-app-shell-2q3ty1az.js",
+        "chunks/shared-app-shell-3jvsets8.js",
+        "chunks/shared-app-shell-3mzr98t2.js",
+        "chunks/shared-app-shell-5qddv60a.js",
+        "chunks/shared-app-shell-67934nnb.js",
+        "chunks/shared-app-shell-6qwntzsf.js",
+        "chunks/shared-app-shell-6v2b598a.js",
+        "chunks/shared-app-shell-73vnbfhv.js",
+        "chunks/shared-app-shell-7p3byfar.js",
+        "chunks/shared-app-shell-8sfarz78.js",
+        "chunks/shared-app-shell-9nt95e6n.js",
+        "chunks/shared-app-shell-agctmnr0.js",
+        "chunks/shared-app-shell-b2gqcvmv.js",
+        "chunks/shared-app-shell-cg2h8vjy.js",
+        "chunks/shared-app-shell-cs8bwdt5.js",
+        "chunks/shared-app-shell-cvvbcyhp.js",
+        "chunks/shared-app-shell-e6yyk40k.js",
+        "chunks/shared-app-shell-ekafgfke.js",
+        "chunks/shared-app-shell-gf1xsdtp.js",
+        "chunks/shared-app-shell-gvwf5xwr.js",
+        "chunks/shared-app-shell-h928bp67.js",
+        "chunks/shared-app-shell-hs7c2peg.js",
+        "chunks/shared-app-shell-j3hjh0b8.js",
+        "chunks/shared-app-shell-jqfybqef.js",
+        "chunks/shared-app-shell-m0a3bb0f.js",
+        "chunks/shared-app-shell-m23jcwmq.js",
+        "chunks/shared-app-shell-mq81eweq.js",
+        "chunks/shared-app-shell-qm1cbzh1.js",
+        "chunks/shared-app-shell-qt5dza5j.js",
+        "chunks/shared-app-shell-r18wt9ms.js",
+        "chunks/shared-app-shell-rfw7z54q.js",
+        "chunks/shared-app-shell-rhwnaek5.js",
+        "chunks/shared-app-shell-rs28naje.js",
+        "chunks/shared-app-shell-rtvq4sm9.js",
+        "chunks/shared-app-shell-s150a4je.js",
+        "chunks/shared-app-shell-s6vvh998.js",
+        "chunks/shared-app-shell-sxsvczcz.js",
+        "chunks/shared-app-shell-sy7350bv.js",
+        "chunks/shared-app-shell-syabxyxq.js",
+        "chunks/shared-app-shell-v2fzv2ab.js",
+        "chunks/shared-app-shell-w20v0es8.js",
+        "chunks/shared-app-shell-y25j573d.js",
+        "chunks/shared-app-shell-y5618zdy.js",
+        "chunks/shared-app-shell-yawvacw4.js",
+        "chunks/shared-app-shell-yer0fmmd.js",
+        "chunks/shared-app-shell-zpym32bn.js",
+        "chunks/shared-core-gyvqqg2b.js",
+        "chunks/shared-echarts-2k12wvkp.js",
+        "chunks/shared-engine-javascript-w5rjx245.js",
+        "chunks/shared-github-dark-hhfckpgm.js",
+        "chunks/shared-github-light-5hsmqmz9.js",
+        "chunks/shared-html-qm6s192v.js",
+        "chunks/shared-index-chc0h67x.js",
+        "chunks/shared-index-h4wbp3qj.js",
+        "chunks/shared-json-r0g8b6vj.js",
+        "chunks/shared-maplibre-v0dz780n.js",
+        "chunks/shared-report-table-a4kwe89f.js",
+        "chunks/shared-shellscript-sh8b0hp0.js",
+        "chunks/shared-sql-tqz6td3d.js",
+        "chunks/shared-tanstack-pmky499b.js",
+        "chunks/shared-toon-language-5yq2e081.js",
+        "chunks/shared-yaml-qv0wqr79.js",
+        "command.js",
+        "dashboard-builder.js",
+        "dashboard-page.js",
+        "data-explorer.js",
+        "datastar-inspector.js",
+        "login-background-loader.js",
+        "login-page.js",
+        "monaco-editor-worker.js",
+        "project-page.js",
+        "semantic-model-graph.js",
+        "theme.js",
+        "topology-background.js",
+        "url-sync.js",
+        "vendor/datastar-1.0.2.js"
+      ],
+      "rawBytes": 13306037,
+      "gzipBytes": 3004527
+    }
+  },
+  "requestedBudgets": {
+    "entries": {
+      "admin-page": {
+        "baseline": {
+          "rawBytes": 5490102,
+          "gzipBytes": 1201956
+        },
+        "max": {
+          "rawBytes": 5490102,
+          "gzipBytes": 1201956
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "app-shell": {
+        "baseline": {
+          "rawBytes": 120295,
+          "gzipBytes": 32712
+        },
+        "max": {
+          "rawBytes": 120295,
+          "gzipBytes": 32712
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "asset-lineage-graph": {
+        "baseline": {
+          "rawBytes": 740481,
+          "gzipBytes": 169317
+        },
+        "max": {
+          "rawBytes": 740481,
+          "gzipBytes": 169317
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "catalog-page": {
+        "baseline": {
+          "rawBytes": 499260,
+          "gzipBytes": 115883
+        },
+        "max": {
+          "rawBytes": 499260,
+          "gzipBytes": 115883
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "chat-page": {
+        "baseline": {
+          "rawBytes": 5581437,
+          "gzipBytes": 1285350
+        },
+        "max": {
+          "rawBytes": 5581437,
+          "gzipBytes": 1285350
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "command": {
+        "baseline": {
+          "rawBytes": 3345,
+          "gzipBytes": 1605
+        },
+        "max": {
+          "rawBytes": 3345,
+          "gzipBytes": 1605
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "dashboard-builder": {
+        "baseline": {
+          "rawBytes": 6393756,
+          "gzipBytes": 1463063
+        },
+        "max": {
+          "rawBytes": 6393756,
+          "gzipBytes": 1463063
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "dashboard-page": {
+        "baseline": {
+          "rawBytes": 6150986,
+          "gzipBytes": 1408369
+        },
+        "max": {
+          "rawBytes": 6150986,
+          "gzipBytes": 1408369
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "data-explorer": {
+        "baseline": {
+          "rawBytes": 5623698,
+          "gzipBytes": 1293699
+        },
+        "max": {
+          "rawBytes": 5623698,
+          "gzipBytes": 1293699
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "datastar-inspector": {
+        "baseline": {
+          "rawBytes": 66001,
+          "gzipBytes": 20897
+        },
+        "max": {
+          "rawBytes": 66001,
+          "gzipBytes": 20897
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "datastar-runtime": {
+        "baseline": {
+          "rawBytes": 34083,
+          "gzipBytes": 13388
+        },
+        "max": {
+          "rawBytes": 34083,
+          "gzipBytes": 13388
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "login-background-loader": {
+        "baseline": {
+          "rawBytes": 1404,
+          "gzipBytes": 567
+        },
+        "max": {
+          "rawBytes": 1404,
+          "gzipBytes": 567
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "login-page": {
+        "baseline": {
+          "rawBytes": 56437,
+          "gzipBytes": 18330
+        },
+        "max": {
+          "rawBytes": 56437,
+          "gzipBytes": 18330
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "maplibre-gl-worker": {
+        "baseline": {
+          "rawBytes": 486248,
+          "gzipBytes": 141393
+        },
+        "max": {
+          "rawBytes": 486248,
+          "gzipBytes": 141393
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "monaco-editor-worker": {
+        "baseline": {
+          "rawBytes": 521790,
+          "gzipBytes": 129401
+        },
+        "max": {
+          "rawBytes": 521790,
+          "gzipBytes": 129401
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "project-page": {
+        "baseline": {
+          "rawBytes": 1605346,
+          "gzipBytes": 385027
+        },
+        "max": {
+          "rawBytes": 1605346,
+          "gzipBytes": 385027
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "semantic-model-graph": {
+        "baseline": {
+          "rawBytes": 768446,
+          "gzipBytes": 176537
+        },
+        "max": {
+          "rawBytes": 768446,
+          "gzipBytes": 176537
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "theme": {
+        "baseline": {
+          "rawBytes": 4019,
+          "gzipBytes": 1284
+        },
+        "max": {
+          "rawBytes": 4019,
+          "gzipBytes": 1284
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "topology-background": {
+        "baseline": {
+          "rawBytes": 614975,
+          "gzipBytes": 163493
+        },
+        "max": {
+          "rawBytes": 614975,
+          "gzipBytes": 163493
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      },
+      "url-sync": {
+        "baseline": {
+          "rawBytes": 2211,
+          "gzipBytes": 859
+        },
+        "max": {
+          "rawBytes": 2211,
+          "gzipBytes": 859
+        },
+        "maxIncreasePercent": {
+          "rawBytes": 0,
+          "gzipBytes": 0
+        }
+      }
+    },
+    "aggregate": {
+      "baseline": {
+        "rawBytes": 13306037,
+        "gzipBytes": 3004527
+      },
+      "max": {
+        "rawBytes": 13306037,
+        "gzipBytes": 3004527
+      },
+      "maxIncreasePercent": {
+        "rawBytes": 0,
+        "gzipBytes": 0
+      }
+    }
+  },
+  "review": {
+    "approved": false,
+    "reviewer": null,
+    "reviewedAt": null
+  }
+}

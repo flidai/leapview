@@ -1,0 +1,17 @@
+{
+  "method": "Three sequential production builds, each cleaning emitted outputs; shared pinned dependencies, not independent installations",
+  "captures": [
+    {
+      "repetition": 1,
+      "sha256": "589ae26caab58795205a2a61ae7b5c7c277c5fc0894e0bfb4334b9edadfe69ff"
+    },
+    {
+      "repetition": 2,
+      "sha256": "589ae26caab58795205a2a61ae7b5c7c277c5fc0894e0bfb4334b9edadfe69ff"
+    },
+    {
+      "repetition": 3,
+      "sha256": "589ae26caab58795205a2a61ae7b5c7c277c5fc0894e0bfb4334b9edadfe69ff"
+    }
+  ]
+}
