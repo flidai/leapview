@@ -499,9 +499,9 @@ already evaluate the profile.
 - **LIF-08:** Control-plane attribute changes and authored policy deployments
   remain distinguishable audit events with a common correlation boundary.
 
-FAI-637 currently persists and validates the two durable identity pairs above,
-but it does not publish invalidation events or provide a semantic result-cache
-consumer. The immediate invalidation identity for the future consumer boundary
+FAI-637 persists and validates the two durable identity pairs above. FAI-645
+now consumes them, together with FAI-622 publication/policy evidence, at the
+existing protected result-cache boundary. The immediate invalidation identity
 is therefore:
 
 ```text
@@ -520,8 +520,10 @@ definition mutation invalidates by registry identity; an assignment or mapping
 mutation invalidates by control identity and, where known, affected
 definition/subject. A stored/computed digest mismatch is an immediate,
 conservative invalidation signal and never a reason to continue with stale
-authorization state. Cache/event propagation and consumer use of this identity
-remain unqualified, so LIF is not complete.
+authorization state. Fresh cache lookup, store, coalesced delivery, and result
+release revalidate this identity. Unsupported protected cache families remain
+bypassed or denied; physical event-driven eviction and exhaustive qualification
+are not claimed, so LIF is not complete.
 
 ## Deliberate exclusions
 
@@ -584,7 +586,7 @@ remain unqualified, so LIF is not complete.
 | PLN-01–PLN-09 | FAI-641 [planner boundary](../../docs/articles/architecture/semantic-access-planner.md), [barrier fixtures](../../internal/analytics/query/planir/security_test.go), and [executable join/aggregation and mutation regressions](../../internal/analytics/query/planir/security_review_test.go) establish explicit pre-relational barriers and fail-closed seals. Existing relationship traversal supports LEFT JOIN; arbitrary join-kind, rollup/cache substitution, and consumer-wide qualification are not claimed by this slice. | Partial |
 | ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration tests | Pending |
 | CMP-01–CMP-06 | `internal/project/contractversion` policy-diff and version fixtures plus publication-bound widening-approval evidence in `internal/project/contractpublication` | Partial: classification and immutable approval evidence implemented by FAI-622; deployment acceptance remains downstream |
-| LIF-01–LIF-08 | Registry/control revision+digest identities, bounded reader validation, digest-preserving snapshot admission, deterministic policy/decision/evidence identities, and transactional control audit are implemented; cache partitioning, immediate event invalidation, semantic planning, generation references, and complete audit projection are not | Partial |
+| LIF-01–LIF-08 | FAI-645 [cache/lifecycle boundary](semantic-access-cache-lifecycle.md), protected resultidentity/cache guard tests, consumer audit tests, FAI-622 publication-policy adapter tests, and PostgreSQL lifecycle/concurrency/audit tests cover identity partitioning, stale-reuse rejection, logical invalidation, deterministic redacted audit, and audit-failure denial. Unsupported cache families, active publication selection, event-driven physical eviction, and exhaustive consumer qualification remain downstream. | Partial |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 
 ## Maintained verification

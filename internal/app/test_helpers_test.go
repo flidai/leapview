@@ -406,10 +406,11 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		data.CursorSigning = cursorsigning.NewEphemeralInitializer()
 	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
+		semanticCatalogAuditRecorder, _ := options.AccessRepo.(access.CanonicalAuditRecorder)
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
-			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, options.AccessModule.ResolveSemanticAttributes)),
+			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility(instanceID, options.AccessModule.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
 		)
 		if err != nil {
 			return nil, err

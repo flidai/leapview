@@ -34,6 +34,7 @@ type PlanInput struct {
 	PlannerDigest  string
 	SettingsDigest string
 	ResultFormat   ResultFormat
+	SemanticAccess *SemanticAccessIdentity
 }
 
 // Evidence is an immutable, opaque activation snapshot. Dependency selects a
@@ -160,6 +161,7 @@ func (e Evidence) Dependency(input PlanInput) (Dependency, error) {
 			PlannerDigest: input.PlannerDigest, RuntimeDigest: e.runtimeDigest,
 			CapabilityDigest: e.capabilityDigest, SettingsDigest: input.SettingsDigest,
 		},
-		ResultFormat: input.ResultFormat,
+		ResultFormat:   input.ResultFormat,
+		SemanticAccess: input.SemanticAccess,
 	})
 }
