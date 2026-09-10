@@ -327,8 +327,9 @@ mcp_smoke() {
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     metric="$(mcp_call "$port" "$search_body")" || return 1
     query_arguments="$(jq -ce --arg metric "$metric_name" '
-      .result.structuredContent.items[0] as $item |
-      {model: $item.ref.id, metrics: [{field: $metric}], limit: 1}
+      .result.structuredContent.items[0].ref.id as $model |
+      select(($model | type) == "string" and ($model | length) > 0) |
+      {model: $model, metrics: [{field: $metric}], limit: 1}
     ' <<<"$metric" 2>/dev/null || true)"
     if [[ -n "$query_arguments" ]]; then
       break
