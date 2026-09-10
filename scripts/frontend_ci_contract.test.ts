@@ -50,7 +50,7 @@ test('main production images cannot silently skip qualification', () => {
   const config = parse(readFileSync('.github/workflows/artifacts.yml', 'utf8'))
   const qualification = config.jobs['qualify-production-image']
   expect(qualification.needs).toBe('build-production-image')
-  expect(qualification.if).toBe("${{ always() && needs.build-production-image.result == 'success' }}")
+  expect(qualification.if).toBe("${{ !cancelled() && needs.build-production-image.result == 'success' }}")
 })
 
 for (const workflow of ['ci', 'merge-validation', 'nightly']) {
