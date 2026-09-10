@@ -5,6 +5,7 @@ package s3_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -45,7 +46,11 @@ func TestFAI520ManagedProviderBindingObservationReplay(t *testing.T) {
 	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", "1")
 	ctx, client, _, bucket, endpoint := historicalProvider(t)
 	repo := closureRepository(t)
-	store, err := manageds3.New(client, awss3.NewPresignClient(client), manageds3.Config{Bucket: bucket, Prefix: "project-a"})
+	profile := storage.ProviderProfileIdentity{
+		ProfileID: "managed-source-minio-qualification", Implementation: "s3", AccountIdentity: "qualification",
+		Endpoint: endpoint, Region: "us-east-1", Bucket: bucket, Namespace: "project-a",
+	}
+	store, err := manageds3.New(client, awss3.NewPresignClient(client), manageds3.Config{Bucket: bucket, Prefix: "project-a", ObservationProfile: &profile, ObservationRecorder: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,6 +72,7 @@ func TestFAI520ManagedProviderBindingObservationReplay(t *testing.T) {
 	stored := make([]manageddata.StoredFile, 0, len(objects))
 	selections := make(map[string]historicalSelection, len(objects))
 	observed := make([]providerObjectObservation, 0, len(objects))
+	var writeObservations storage.ProviderVersionObservationSet
 	for _, object := range objects {
 		blob, putErr := store.Put(ctx, blobFor(object.body), bytes.NewReader(object.body))
 		if putErr != nil {
@@ -75,21 +81,30 @@ func TestFAI520ManagedProviderBindingObservationReplay(t *testing.T) {
 		file := manageddata.File{Path: object.path, SHA256: blob.SHA256, Size: blob.Size}
 		manifest.Files = append(manifest.Files, file)
 		stored = append(stored, manageddata.StoredFile{File: file, StorageKey: blob.URI, MediaType: object.mime})
+		if blob.ProviderVersion == nil {
+			t.Fatalf("managed write did not return provider-version observation for %s", object.path)
+		}
+		if err := writeObservations.Add(*blob.ProviderVersion); err != nil {
+			t.Fatalf("record write observation for %s: %v", object.path, err)
+		}
 		key := strings.TrimPrefix(blob.URI, "s3://"+bucket+"/")
-		head, headErr := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
-		if headErr != nil {
-			t.Fatal(headErr)
-		}
-		if head.ContentLength == nil || *head.ContentLength != blob.Size {
-			t.Fatalf("provider size for %s = %v, want %d", object.path, head.ContentLength, blob.Size)
-		}
-		version := aws.ToString(head.VersionId)
-		if version == "" || version == "null" {
-			t.Fatalf("provider did not return immutable version for %s", object.path)
+		version := blob.ProviderVersion.VersionID
+		if blob.ProviderVersion.Profile != profile || blob.ProviderVersion.ObjectKey != key || blob.ProviderVersion.SHA256 != blob.SHA256 || blob.ProviderVersion.Size != blob.Size {
+			t.Fatalf("managed write observation for %s = %#v", object.path, blob.ProviderVersion)
 		}
 		selection := historicalSelection{Endpoint: endpoint, Region: "us-east-1", Bucket: bucket, Key: key, Version: version}
 		selections[object.path] = selection
 		observed = append(observed, providerObjectObservation{Path: object.path, Endpoint: endpoint, Region: "us-east-1", Bucket: bucket, Key: key, Version: version, SHA256: blob.SHA256, Size: blob.Size})
+	}
+	if captured := writeObservations.Snapshot(); len(captured) != len(objects) {
+		t.Fatalf("captured write observations = %d, want %d", len(captured), len(objects))
+	} else {
+		for _, observation := range captured {
+			persisted, err := repo.ProviderVersionObservation(ctx, observation.Profile.ProfileID, observation.ObjectKey)
+			if err != nil || persisted != observation {
+				t.Fatalf("durable write observation = %#v, %v; want %#v", persisted, err, observation)
+			}
+		}
 	}
 	upload, err := repo.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{ID: "upload_provider_binding", CollectionID: collection.ID, Manifest: manifest, StorageBackend: "s3", StagingPrefix: "staging/provider-binding", ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
@@ -202,5 +217,11 @@ func TestFAI520ManagedProviderBindingObservationReplay(t *testing.T) {
 	if len(conflictReplay.Objects) != len(artifact.Objects)+1 || conflictReplay.Objects[0].Path != conflictReplay.Objects[len(conflictReplay.Objects)-1].Path || conflictReplay.Objects[len(conflictReplay.Objects)-1].Version != wrongVersion {
 		t.Fatalf("conflicting duplicate observation was not preserved for characterization: %#v", conflictReplay.Objects)
 	}
-	t.Log("unqualified gap: observation artifact preserves conflicting duplicates without a product validator or durable managed-inventory/frontier binding")
+	captured := writeObservations.Snapshot()
+	conflictingWrite := captured[0]
+	conflictingWrite.SHA256 = strings.Repeat("0", 64)
+	if err := writeObservations.Add(conflictingWrite); !errors.Is(err, storage.ErrObservationConflict) {
+		t.Fatalf("conflicting write observation error = %v", err)
+	}
+	t.Log("remaining gap: durable write observations are not yet selected by an authoritative capture or signed into Manifest v2")
 }

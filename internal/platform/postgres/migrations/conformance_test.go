@@ -207,6 +207,20 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !successorReadonlySelect || !successorBackupSelect || successorRuntimeSelect || successorReadonlyMutation || successorBackupMutation || successorRuntimeMutation {
 		t.Fatalf("successor grants readonly/backup/runtime select=%t/%t/%t mutation=%t/%t/%t", successorReadonlySelect, successorBackupSelect, successorRuntimeSelect, successorReadonlyMutation, successorBackupMutation, successorRuntimeMutation)
 	}
+	for _, table := range []string{"provider_observation_profile", "provider_version_observation"} {
+		for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+				var allowed bool
+				if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, $2, $3)`, role, "managed_data."+table, privilege).Scan(&allowed); err != nil {
+					t.Fatal(err)
+				}
+				want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_runtime"
+				if allowed != want {
+					t.Errorf("provider observation privilege %s/%s/%s = %t, want %t", role, table, privilege, allowed, want)
+				}
+			}
+		}
+	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
 	if err := db.QueryRow(ctx,
