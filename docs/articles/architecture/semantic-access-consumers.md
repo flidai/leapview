@@ -58,9 +58,15 @@ separately resource-authorized authoring capabilities, never semantic bypasses.
 
 ## Deliberately unsupported paths
 
-Protected result/immutable-byte reuse and bundles without a proven request
-boundary fail closed. FAI-642 does not implement lifecycle-aware caching,
-invalidation, or audit expansion; those remain FAI-645 responsibilities.
+Protected immutable-byte reuse and bundles without a proven request boundary
+fail closed. FAI-645 extends buffered dashboard-result reuse with complete
+policy/control identity and fresh admission validation at lookup, storage,
+and delivery boundaries. Reuse also requires exact, historically validated
+FAI-622 publication/policy evidence; missing evidence bypasses shared reuse
+rather than weakening authorization. Public result identity remains unchanged. Protected
+consumer composition requires canonical security audit persistence; a cached
+result cannot replace current authorization or its required audit evidence.
+Other unqualified reuse paths remain denied or bypassed.
 
 Neutral activation verification still needs its own trusted-context design;
 it must not fabricate a principal or skip planner admission. Exhaustive

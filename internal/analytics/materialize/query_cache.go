@@ -53,8 +53,8 @@ type queryCacheAddress struct {
 
 // executeArrow is retained for cache-unit tests and low-level callers that
 // intentionally provide an authored-query identity. Runtime execution uses
-// executeArrowWithPlan so the key is always derived from normalized PlanIR.
-func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+// executeArrowWithDigest so the key is always derived from normalized PlanIR.
+func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error), guards ...func(context.Context) error) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
@@ -63,10 +63,10 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
-	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute, guards...)
 }
 
-func (c *queryResultCache) executeArrowWithPlan(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, plan semanticquery.Plan, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+func (c *queryResultCache) executeArrowWithPlan(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, plan semanticquery.Plan, execute func(context.Context) (arrowQueryExecution, error), guards ...func(context.Context) error) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
@@ -76,7 +76,7 @@ func (c *queryResultCache) executeArrowWithPlan(ctx context.Context, request dat
 		return dataquery.Result{}, err
 	}
 	queryDigest := materializeResultEquivalenceDigest(baseDigest, request)
-	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute, guards...)
 }
 
 const authorizationProjectionDomain = "flid.resultidentity.authorization-projection.v1"
@@ -121,12 +121,42 @@ func materializeResultEquivalenceDigest(baseDigest string, request dataquery.Que
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
-func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, queryDigest string, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, queryDigest string, execute func(context.Context) (arrowQueryExecution, error), guards ...func(context.Context) error) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
+	if len(guards) > 1 {
+		err := fmt.Errorf("at most one protected cache guard is supported")
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
 	address, err := c.cacheAddressWithDigest(request, partition, dependency, queryDigest)
 	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	var guard func(context.Context) error
+	if len(guards) > 0 {
+		guard = guards[0]
+	}
+	if dependency.HasSemanticAccess() && guard == nil {
+		err := fmt.Errorf("protected result dependency requires a cache guard")
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	validate := func(checkCtx context.Context) error {
+		if guard == nil {
+			return nil
+		}
+		if err := guard(checkCtx); err != nil {
+			// A protected authority change must not leave a stale entry available
+			// to a later request, nor may a racing flight repopulate it.
+			c.scope.Delete(address.key)
+			return err
+		}
+		return nil
+	}
+	if err := validate(ctx); err != nil {
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
@@ -136,6 +166,9 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 		observeTypedCacheLookup(ctx, lookup, time.Since(lookupStarted))
 		if err != nil {
 			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		} else if guardErr := validate(ctx); guardErr != nil {
+			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+			return dataquery.Result{}, guardErr
 		} else {
 			observeTypedCacheFinalWithSource(ctx, dataquery.CacheObservationHit, lookup.HitSource, time.Since(observationStarted))
 		}
@@ -145,6 +178,9 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 	observeTypedCacheLookup(ctx, lookup, firstLookupDuration)
 	var ownerSummary dataquery.Result
 	flight, status, err := c.execution.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", address.generation, address.key), func(flightCtx context.Context) (resultcache.ArrowFlightValue, error) {
+		if err := validate(flightCtx); err != nil {
+			return resultcache.ArrowFlightValue{}, err
+		}
 		if entry, _, ok, observed, lookupErr := c.scope.LookupArrowObserved(address.key, address.family); lookupErr != nil {
 			return resultcache.ArrowFlightValue{}, lookupErr
 		} else if ok {
@@ -153,6 +189,10 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 			entry.Release()
 			if acquireErr != nil {
 				return resultcache.ArrowFlightValue{}, acquireErr
+			}
+			if err := validate(flightCtx); err != nil {
+				base.Release()
+				return resultcache.ArrowFlightValue{}, err
 			}
 			return resultcache.ArrowFlightValue{Data: base, Metadata: metadata, Cached: true, HitSource: observed.HitSource}, nil
 		}
@@ -170,6 +210,9 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 		if execution.data == nil {
 			return resultcache.ArrowFlightValue{}, fmt.Errorf("Arrow query execution returned no data")
 		}
+		if err := validate(flightCtx); err != nil {
+			return resultcache.ArrowFlightValue{}, err
+		}
 		base, acquireErr := execution.data.Acquire()
 		if acquireErr != nil {
 			return resultcache.ArrowFlightValue{}, acquireErr
@@ -183,6 +226,10 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 		storeOutcome := c.scope.StoreArrowObserved(address.key, address.family, resultcache.Token(address.generation), execution.data, cacheMetadata)
 		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(storeOutcome), Duration: time.Since(storeStarted)})
 		c.syncStats()
+		if err := validate(flightCtx); err != nil {
+			base.Release()
+			return resultcache.ArrowFlightValue{}, err
+		}
 		return resultcache.ArrowFlightValue{Data: base, Metadata: cacheMetadata}, nil
 	})
 	if err != nil {
@@ -190,6 +237,10 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 		return dataquery.Result{}, err
 	}
 	defer flight.Release()
+	if err := validate(ctx); err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
 	outcome := dataquery.CacheMiss
 	if flight.Cached() {
 		outcome = dataquery.CacheHit
@@ -335,6 +386,9 @@ func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Qu
 }
 
 func (c *queryResultCache) lookupArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL, canonicalDigest string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
+	if dependency.HasSemanticAccess() {
+		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, fmt.Errorf("protected result dependency requires an execution cache guard")
+	}
 	address, err := c.cacheAddressWithDigest(request, partition, dependency, canonicalDigest)
 	if err != nil {
 		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
@@ -407,6 +461,19 @@ func queryCacheIdentityReason(request dataquery.Query, partition resultidentity.
 	}
 	if partition.ProjectID() != request.ProjectID && request.ProjectID != "" {
 		return dataquery.CacheAdmissionReasonPartitionInvalid
+	}
+	if semanticAccess := dependency.SemanticAccess(); semanticAccess != nil {
+		if semanticAccess.ProjectID != partition.ProjectID().String() ||
+			semanticAccess.Environment != partition.Environment() ||
+			semanticAccess.InstanceID != partition.TargetID() {
+			return dataquery.CacheAdmissionReasonPartitionInvalid
+		}
+		if request.ModelID != "" && semanticAccess.ModelID != request.ModelID {
+			return dataquery.CacheAdmissionReasonDependencyInvalid
+		}
+		if request.PrincipalID != "" && semanticAccess.PrincipalID != request.PrincipalID {
+			return dataquery.CacheAdmissionReasonDependencyInvalid
+		}
 	}
 	switch partition.Kind() {
 	case resultidentity.PartitionProduction:

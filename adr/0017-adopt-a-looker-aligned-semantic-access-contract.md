@@ -447,8 +447,9 @@ results, filter evidence (including value digests and predicate kinds), and
 sorted object outcomes. Direct-assignment and verified-claim evidence digests
 are bound when present. Raw effective values and provider claims are excluded
 from both identity projections. These identities are an in-process handoff
-and audit/cache input; FAI-639 does not yet publish invalidation events or
-partition consumer/result caches.
+and audit/cache input. FAI-639 does not itself own invalidation or caches;
+FAI-645 consumes the identities at the existing result-cache and durable-audit
+boundaries.
 
 FAI-641 owns consumption of this decision and typed PlanIR
 output in the governed planner. In particular, it must attach a security
@@ -463,15 +464,23 @@ query enforcement exist.
 
 ### Immediate invalidation identity
 
+The FAI-645 [cache, lifecycle, and audit boundary](specifications/semantic-access-cache-lifecycle.md)
+extends these identities into protected buffered-result reuse and required
+consumer audit. It preserves the existing registry/control lifecycle and
+planner admission authorities; unsupported reuse paths remain closed. This
+implementation boundary is not FAI-648 qualification or VAL-11 completion.
+
 FAI-637 establishes durable invalidation inputs, and FAI-639 now computes the
 effective-attribute, policy, and decision identities used to consume them.
-Neither slice publishes invalidation events or implements consumer caches.
+Neither foundational slice publishes invalidation events or implements a
+consumer cache; FAI-645 uses their committed identities to reject stale reuse.
 The authorization-sensitive identity contract is the tuple
 `(instance, semantic generation, principal, registry profile/revision/digest,
 control profile/revision/digest, effective attribute-set digest, normalized
 semantic-policy identity)`. FAI-639 materializes this contract in the
-evaluator's deterministic decision identity, while the cache/event consumers
-remain future work. The effective attribute-set digest is an ordered
+evaluator's deterministic decision identity, while FAI-645 binds it with exact
+FAI-622 publication/policy evidence in protected result dependencies. The
+effective attribute-set digest is an ordered
 projection of definition ID/version/type/shape, canonical value digest, and
 source; raw values and raw provider claims are excluded. Runtime trusted input
 also binds its credential/token fingerprint and validity interval.
@@ -480,8 +489,9 @@ A committed definition change invalidates by registry identity. A committed
 assignment or mapping change invalidates by control identity and, where known,
 affected definition and subject. A digest mismatch is an immediate,
 conservative invalidation signal, never permission to continue with stale
-state. Cache/event propagation and consumer use of this identity remain
-pending, so this ADR does not claim completed LIF qualification.
+state. Fresh lookup/store/delivery guards consume this identity now;
+unsupported suggestion, rollup, bundle, and opaque-byte reuse remains closed,
+and exhaustive LIF qualification remains FAI-648 work.
 
 Policy diffs report compatibility and security impact separately. The profile
 matrix makes tightening changes such as adding a required grant or access
