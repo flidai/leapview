@@ -147,7 +147,10 @@ jobs:
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
-    if: needs.build-production-image.result == 'success'
+    # authorize-candidate is intentionally skipped for main pushes. Use
+    # always() so that skipped transitive need cannot suppress qualification
+    # after the production image itself built successfully.
+    if: ${{ always() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
     # Measure the reviewed reference and candidate sequentially on this runner.
     # Each complete image qualification admits 115 minutes of bounded phases.
