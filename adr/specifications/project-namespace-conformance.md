@@ -343,6 +343,27 @@ recovery does not create a new candidate or rebind its source.
 These tests qualify the delivery-plan binding slice only; they do not mark the
 broader requirement ranges above complete or implement the ResourceUID registry.
 
+### Closed graph and foreign-reference evidence (FAI-675)
+
+Portable compilation and source-bundle admission use one closed, Project-local
+resource graph. Semantic dataset references resolve only by canonical resource
+ID or the graph's unique local name. Paths, provenance, target state, and
+ambient Project state cannot extend that resolver. Bundle admission also
+requires every semantic dataset's Model and its exact dependency edge, so a
+structurally valid graph cannot conceal an incomplete semantic closure.
+
+| Requirements | Maintained evidence |
+| --- | --- |
+| SEM-01, SEM-05 | `TestSourceBundleRejectsIncompleteSemanticModelClosure` and `TestSourceBundleRejectsMissingAndForeignSemanticModelReferences` in [source-bundle tests](../../internal/project/artifact/artifact_test.go) reject absent dependencies, omitted semantic edges, and references outside the admitted graph. |
+| SEM-03 | `TestResourceResolverDoesNotResolveThroughProvenance` in [compiler graph tests](../../internal/project/compiler/project_flat_test.go) proves dbt or other provenance cannot create a semantic resolver alias. |
+| XPR-01 | `TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically` in [compiler graph tests](../../internal/project/compiler/project_flat_test.go) rejects a foreign-qualified reference deterministically without consulting or disclosing a foreign catalog. |
+| XPR-02 | `TestTypedDataResourceLoweringRejectsProjectOutputLocation` in [source contract tests](../../internal/project/compiler/data_resources_test.go) preserves fail-closed rejection of the unsupported native `projectOutput` variant. |
+
+This evidence qualifies only the closed-graph and unsupported-native-import
+boundary. It does not introduce cross-Project authorization, a foreign catalog,
+ResourceUID behavior, deployment binding, or the dbt adoption fixture owned by
+FAI-678.
+
 Implementation must update the project-delivery and data-contract versioning
 conformance specifications where their current language conflicts with this
 accepted profile. The final combined implementation change must pass:

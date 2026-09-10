@@ -113,6 +113,27 @@ spec:
 	}
 }
 
+func TestTypedDataResourceLoweringRejectsProjectOutputLocation(t *testing.T) {
+	_, err := decodeSourceResource("source.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: warehouse
+  location:
+    type: projectOutput
+    project: foreign_project
+    resource: orders
+`), metadata{})
+	if err == nil {
+		t.Fatal("typed source accepted unsupported cross-Project output location")
+	}
+	for _, forbidden := range []string{"foreign_project", "orders"} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("cross-Project location diagnostic disclosed selector %q: %v", forbidden, err)
+		}
+	}
+}
+
 func TestTypedRelationLocationHonorsConnectorAndIdentifierBoundaries(t *testing.T) {
 	source, err := decodeSourceResource("source.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: Source

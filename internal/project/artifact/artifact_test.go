@@ -80,8 +80,9 @@ func fullBundleFixture(t *testing.T) (projectgraph.ProjectGraph, manifest.Resour
 		},
 		SemanticModels: map[string]*semanticmodel.Model{
 			"semantic:sales": {
-				Name:    "sales",
-				Sources: map[string]semanticmodel.Source{"orders": {}},
+				Name:     "sales",
+				Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders_model"}},
+				Sources:  map[string]semanticmodel.Source{"orders": {}},
 				Tables: map[string]semanticmodel.Table{
 					"orders": {
 						Execution:  semanticmodel.ExecutionDefinition{Source: "orders"},
@@ -702,6 +703,47 @@ func TestSourceBundleRejectsControlPlaneGraphAndTargetState(t *testing.T) {
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Path: "/target/only"}
 	if _, err := NewSourceBundle(graphValue, projectManifest); err == nil || !strings.Contains(err.Error(), "target-owned state") {
 		t.Fatalf("target-owned connection state error = %v", err)
+	}
+}
+
+func TestSourceBundleRejectsIncompleteSemanticModelClosure(t *testing.T) {
+	graphValue, projectManifest := fullBundleFixture(t)
+	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders_model"},
+	}
+
+	resources := graphValue.Resources()
+	edges := make([]projectgraph.Edge, 0, len(graphValue.Edges())-1)
+	for _, edge := range graphValue.Edges() {
+		if edge.From == "semantic:sales" && edge.To == "model:orders" {
+			continue
+		}
+		edges = append(edges, edge)
+	}
+	incomplete, err := projectgraph.NewProjectGraph(resources, edges)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = NewSourceBundle(incomplete, projectManifest)
+	if err == nil || !strings.Contains(err.Error(), `semantic model "semantic:sales" dataset "orders"`) || !strings.Contains(err.Error(), "missing its graph edge") {
+		t.Fatalf("NewSourceBundle() error = %v, want incomplete semantic closure rejection", err)
+	}
+}
+
+func TestSourceBundleRejectsMissingAndForeignSemanticModelReferences(t *testing.T) {
+	for _, reference := range []string{"missing_model", "foreign_project.orders_model"} {
+		t.Run(reference, func(t *testing.T) {
+			graphValue, projectManifest := fullBundleFixture(t)
+			projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+				"orders": {Model: reference},
+			}
+
+			_, err := NewSourceBundle(graphValue, projectManifest)
+			if err == nil || !strings.Contains(err.Error(), `semantic model "semantic:sales" dataset "orders"`) || !strings.Contains(err.Error(), "is missing from graph") {
+				t.Fatalf("NewSourceBundle() error = %v, want closed-graph reference rejection", err)
+			}
+		})
 	}
 }
 
