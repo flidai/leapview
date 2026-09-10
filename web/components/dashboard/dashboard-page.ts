@@ -31,12 +31,10 @@ import '../chat/chat-drawer'
 import './filters/filter-dock'
 import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
-import type { FilterMutationDetail } from './filters/filter-control'
-import type { FilterOptionsNeededDetail } from './filters/filter-control'
+import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
 import './report-canvas'
 import './report-footer'
 import './visual-modal'
-import type { VisualActionDetail } from './visual-modal'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 import {
@@ -739,7 +737,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private get status(): DashboardStatus {
     return this.signal<DashboardStatus>('status', emptyStatus)
   }
-
+  async ensureVisualizationsMounted(): Promise<void> {
+    await this.updateComplete; await Promise.all(Array.from(this.renderRoot.querySelectorAll('lv-visualization-host')).map((host) => host.ensureMounted()))
+  }
   private handleReportZoomState = (event: CustomEvent<{ layout?: unknown }>): void => {
     const layout = event.detail?.layout
     if ((layout === 'desktop' || layout === 'mobile') && layout !== this.reportLayout) {
@@ -1154,7 +1154,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       case 'visual': {
         const visual = this.visualFor(component)
         if (!visual) return this.missingPayload('visual')
-        return html`<lv-visualization-host .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
+        return html`<lv-visualization-host defer-mount .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`
@@ -1175,7 +1175,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     `
   }
 
-  private openVisualFocus = (source: HTMLElement, detail: VisualActionDetail): void => {
+  private openVisualFocus = (source: HTMLElement, detail: import('./visual-modal').VisualActionDetail): void => {
     this.renderRoot.querySelector('lv-visual-modal')?.openVisualFocus(source, detail)
   }
 

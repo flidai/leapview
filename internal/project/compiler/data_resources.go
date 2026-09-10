@@ -464,10 +464,11 @@ func decodeModelResourceWithDefinition(path string, content []byte, metadata met
 		return semanticmodel.Table{}, nil, projectmanifest.AuthoredModelDefinition{}, err
 	}
 	table := semanticmodel.Table{
-		Entities:    map[string]semanticmodel.EntityDefinition{},
-		Dimensions:  map[string]semanticmodel.MetricDimension{},
-		Columns:     map[string]semanticmodel.ModelColumn{},
-		Description: metadata.Description,
+		Entities:       map[string]semanticmodel.EntityDefinition{},
+		AuthoredFields: map[string]semanticmodel.ModelFieldDeclaration{},
+		Dimensions:     map[string]semanticmodel.MetricDimension{},
+		Columns:        map[string]semanticmodel.ModelColumn{},
+		Description:    metadata.Description,
 	}
 	for name, entity := range authored.Spec.Entities {
 		table.Entities[name] = semanticmodel.EntityDefinition{
@@ -484,6 +485,12 @@ func decodeModelResourceWithDefinition(path string, content []byte, metadata met
 	}
 	for name, field := range fields {
 		datatype := optionalString(field.Datatype)
+		table.AuthoredFields[name] = semanticmodel.ModelFieldDeclaration{
+			Datatype:    semanticmodel.LogicalDataType(datatype),
+			Label:       optionalString(field.Label),
+			Description: optionalString(field.Description),
+			AIContext:   lowerAIContext(field.AiContext),
+		}
 		table.Dimensions[name] = semanticmodel.MetricDimension{
 			Label:       optionalString(field.Label),
 			Description: optionalString(field.Description),

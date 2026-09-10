@@ -59,7 +59,10 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 	if err := m.ResolveDiscoveredModelFields(); err != nil {
 		return err
 	}
-	if err := m.validateSemanticDefinitions(); err != nil {
+	// Authored Models may defer entity, check, relationship, and semantic field
+	// existence until their definition output is discovered. Re-run the whole
+	// semantic graph against the resolved columns before activation.
+	if err := m.validateSemanticGraph(); err != nil {
 		return err
 	}
 	if err := m.ValidateDiscoveredSourceSchemas(); err != nil {
@@ -103,7 +106,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			if !ok {
 				return fmt.Errorf("semantic dataset %q field %q is not in discovered schema", tableName, field)
 			}
-			if err := validateDiscoveredDatatype(tableName, field, dimension.Datatype, column.PhysicalType); err != nil {
+			if err := ValidateDiscoveredDatatype(tableName, field, dimension.Datatype, column.PhysicalType); err != nil {
 				return err
 			}
 		}
@@ -118,7 +121,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			if !ok {
 				return fmt.Errorf("semantic dataset %q column %q is not in discovered schema", tableName, field)
 			}
-			if err := validateDiscoveredDatatype(tableName, field, columnSpec.Datatype, column.PhysicalType); err != nil {
+			if err := ValidateDiscoveredDatatype(tableName, field, columnSpec.Datatype, column.PhysicalType); err != nil {
 				return err
 			}
 		}
@@ -160,32 +163,59 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 			if strings.TrimSpace(column.Name) == "" {
 				return fmt.Errorf("semantic dataset %q discovered an unnamed column", tableName)
 			}
+			if _, duplicate := observed[column.Name]; duplicate {
+				return fmt.Errorf("semantic dataset %q discovered duplicate field %q", tableName, column.Name)
+			}
 			observed[column.Name] = column
 		}
 		if len(observed) == 0 {
 			continue
 		}
-		if table.Dimensions == nil {
-			table.Dimensions = map[string]MetricDimension{}
-		}
-		if table.Columns == nil {
-			table.Columns = map[string]ModelColumn{}
-		}
-		for field := range table.Dimensions {
-			if _, ok := observed[field]; !ok {
-				return fmt.Errorf("semantic dataset %q documented field %q is not in discovered schema", tableName, field)
+
+		// New compiled Models retain the authoring overlay explicitly. Legacy
+		// runtime tables have nil AuthoredFields and keep their resolved fields as
+		// an exact contract for artifact compatibility.
+		if table.AuthoredFields != nil {
+			for field := range table.AuthoredFields {
+				if _, ok := observed[field]; !ok {
+					return fmt.Errorf("semantic dataset %q authored field %q is not in discovered output", tableName, field)
+				}
 			}
-		}
-		for field := range table.Columns {
-			if _, ok := observed[field]; !ok {
-				return fmt.Errorf("semantic dataset %q column %q is not in discovered schema", tableName, field)
+			table.Dimensions = make(map[string]MetricDimension, len(observed))
+			table.Columns = make(map[string]ModelColumn, len(observed))
+		} else {
+			if table.Dimensions == nil {
+				table.Dimensions = map[string]MetricDimension{}
+			}
+			if table.Columns == nil {
+				table.Columns = map[string]ModelColumn{}
+			}
+			for field := range table.Dimensions {
+				if _, ok := observed[field]; !ok {
+					return fmt.Errorf("semantic dataset %q documented field %q is not in discovered schema", tableName, field)
+				}
+			}
+			for field := range table.Columns {
+				if _, ok := observed[field]; !ok {
+					return fmt.Errorf("semantic dataset %q column %q is not in discovered schema", tableName, field)
+				}
 			}
 		}
 		for _, column := range table.Schema.Columns {
 			derived := LogicalDataTypeFromPhysicalType(column.PhysicalType)
 			dimension := table.Dimensions[column.Name]
+			modelColumn := table.Columns[column.Name]
+			if declaration, ok := table.AuthoredFields[column.Name]; ok {
+				dimension.Label = declaration.Label
+				dimension.Description = declaration.Description
+				dimension.Datatype = declaration.Datatype
+				dimension.AIContext = declaration.AIContext
+				modelColumn.Description = declaration.Description
+				modelColumn.Datatype = declaration.Datatype
+				modelColumn.AIContext = declaration.AIContext
+			}
 			if dimension.Datatype != "" {
-				if err := validateDiscoveredDatatype(tableName, column.Name, dimension.Datatype, column.PhysicalType); err != nil {
+				if err := ValidateDiscoveredDatatype(tableName, column.Name, dimension.Datatype, column.PhysicalType); err != nil {
 					return err
 				}
 			} else {
@@ -200,9 +230,8 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 			}
 			table.Dimensions[column.Name] = dimension
 
-			modelColumn := table.Columns[column.Name]
 			if modelColumn.Datatype != "" {
-				if err := validateDiscoveredDatatype(tableName, column.Name, modelColumn.Datatype, column.PhysicalType); err != nil {
+				if err := ValidateDiscoveredDatatype(tableName, column.Name, modelColumn.Datatype, column.PhysicalType); err != nil {
 					return err
 				}
 			} else {
@@ -221,7 +250,7 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 	return nil
 }
 
-func validateDiscoveredDatatype(tableName, field string, authored LogicalDataType, physicalType string) error {
+func ValidateDiscoveredDatatype(tableName, field string, authored LogicalDataType, physicalType string) error {
 	if authored == "" {
 		return nil
 	}

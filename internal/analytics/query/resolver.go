@@ -194,6 +194,149 @@ func (p *Planner) AnalyzeAggregate(request Request) (AggregateAnalysis, error) {
 	}, nil
 }
 
+// ValidateAggregateRequest resolves an aggregate request against the
+// activation-owned semantic facts. It deliberately stops before PlanIR
+// rendering, so an authored model may still carry unresolved physical types.
+func (p *Planner) ValidateAggregateRequest(request Request) (AggregateAnalysis, error) {
+	resolved, err := p.resolveAggregate(request)
+	if err != nil {
+		return AggregateAnalysis{}, err
+	}
+	if err := p.validateAggregateFilters(request.Filters, resolved); err != nil {
+		return AggregateAnalysis{}, err
+	}
+	for _, dataset := range resolved.Datasets {
+		if _, err := p.datasetFilterFields(request.Filters, resolved, dataset); err != nil {
+			return AggregateAnalysis{}, err
+		}
+		for name, metric := range resolved.Aggregates {
+			if metric.Dataset != dataset {
+				continue
+			}
+			node, ok := p.compiled.metric(name)
+			if !ok || node.Aggregate == nil {
+				return AggregateAnalysis{}, fmt.Errorf("metric %q is missing compiled aggregate lineage", name)
+			}
+			for _, named := range node.Aggregate.NamedFilters {
+				if _, err := p.datasetFilterFields([]Filter{named.Filter}, resolved, dataset); err != nil {
+					return AggregateAnalysis{}, fmt.Errorf("metric %q filter %q: %w", name, named.Name, err)
+				}
+			}
+		}
+	}
+	graph, err := p.buildAggregatePlanIR(request, resolved)
+	if err != nil {
+		return AggregateAnalysis{}, err
+	}
+	if err := graph.Validate(); err != nil {
+		return AggregateAnalysis{}, fmt.Errorf("validate aggregate plan IR: %w", err)
+	}
+	if _, err := p.securePlanGraph(graph, aggregateMemberRefs(p, request, resolved)...); err != nil {
+		return AggregateAnalysis{}, err
+	}
+	return AggregateAnalysis{
+		Datasets:      append([]string{}, resolved.Datasets...),
+		AtomicMetrics: sortedAggregateMetricNames(resolved.Aggregates),
+		MultiDataset:  resolved.MultiDataset,
+	}, nil
+}
+
+// ValidateRowRequest resolves a row request, including metric populations and
+// every requested filter route, without lowering a physical plan.
+func (p *Planner) ValidateRowRequest(request RowRequest) error {
+	view, metricFilters, err := p.prepareRowPopulation(request)
+	if err != nil {
+		return err
+	}
+	if len(request.Dimensions) == 0 && len(request.Metrics) == 0 {
+		return fmt.Errorf("row query requires at least one selected field")
+	}
+	if view == nil {
+		return fmt.Errorf("query view is unavailable")
+	}
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), metricFilters...)
+	graph, err := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, request.Metrics, filterSpecs, view.Paths, request.Sort, request.Limit, request.Offset)
+	if err != nil {
+		return fmt.Errorf("build row plan IR: %w", err)
+	}
+	if err := graph.Validate(); err != nil {
+		return fmt.Errorf("validate row plan IR: %w", err)
+	}
+	if _, err := p.securePlanGraph(graph, requestRowMemberRefs(p, request)...); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateRawValueRequest resolves a statistical request and its metric
+// population without requiring a physical numeric datatype.
+func (p *Planner) ValidateRawValueRequest(request RawValueRequest) (SemanticRequestScope, error) {
+	view, err := p.rawValueView(request)
+	if err != nil {
+		return SemanticRequestScope{}, err
+	}
+	for _, dimension := range request.Dimensions {
+		if _, _, _, err := view.ResolveDimensionRefPath(dimension.Field); err != nil {
+			return SemanticRequestScope{}, err
+		}
+	}
+	metricField, metric, err := view.ResolveMetricRef(request.Metric.Field)
+	if err != nil {
+		return SemanticRequestScope{}, err
+	}
+	if metric.Dataset != view.Dataset {
+		return SemanticRequestScope{}, fmt.Errorf("metric %q is not owned by dataset %q", metricField, view.Dataset)
+	}
+	physicalInput, err := p.resolveDimension(metric.InputField)
+	if err != nil {
+		return SemanticRequestScope{}, err
+	}
+	if datatype := strings.ToLower(string(physicalInput.Datatype)); datatype != "" && datatype != "decimal" && datatype != "integer" && datatype != "float" {
+		return SemanticRequestScope{}, fmt.Errorf("analytical value %q has unsupported logical type %q", request.Metric.Field, datatype)
+	}
+	for _, field := range aggregateMetricPhysicalFields(metric) {
+		physical, err := p.resolveDimension(field)
+		if err != nil {
+			return SemanticRequestScope{}, err
+		}
+		if _, err := p.relationshipPath(view.Dataset, physical.Table); err != nil {
+			return SemanticRequestScope{}, err
+		}
+	}
+	metricFilters := make([]Filter, 0, len(metric.NamedFilters))
+	for _, named := range metric.NamedFilters {
+		metricFilters = append(metricFilters, scopeMetricWhereFilter(named.Filter, view.Dataset))
+	}
+	if err := p.exposeViewFilters(view, metricFilters); err != nil {
+		return SemanticRequestScope{}, err
+	}
+	if _, err := filterFieldBindings(view, request.Filters); err != nil {
+		return SemanticRequestScope{}, err
+	}
+	if _, err := filterFieldBindings(view, metricFilters); err != nil {
+		return SemanticRequestScope{}, err
+	}
+	filterSpecs := append(requestFlatPlanFilters(request.Filters), namedFlatPlanFilters(metric.NamedFilters, view.Dataset)...)
+	if !request.IncludeNull {
+		filterSpecs = append(filterSpecs, flatPlanFilter{Filter: Filter{Field: metric.InputField, Operator: "is_not_null"}, Source: planir.FilterSourceRequest})
+	}
+	valueAlias := request.Metric.Alias
+	if valueAlias == "" {
+		valueAlias = "value"
+	}
+	graph, err := p.buildFlatPlanIRWithFilters(view.Dataset, request.Dimensions, []Field{{Field: metricField, Alias: valueAlias}}, filterSpecs, view.Paths, request.Sort, request.Limit, 0)
+	if err != nil {
+		return SemanticRequestScope{}, fmt.Errorf("build raw-value plan IR: %w", err)
+	}
+	if err := graph.Validate(); err != nil {
+		return SemanticRequestScope{}, fmt.Errorf("validate raw-value plan IR: %w", err)
+	}
+	if _, err := p.securePlanGraph(graph, requestRawValueMemberRefs(p, request)...); err != nil {
+		return SemanticRequestScope{}, err
+	}
+	return SemanticRequestScope{Datasets: []string{view.Dataset}}, nil
+}
+
 func (p *Planner) queryView(request Request) (*queryView, error) {
 	return p.semanticView(request.Dataset, request.Dimensions, request.Metrics, request.Filters, request.Time.Field)
 }

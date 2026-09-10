@@ -632,8 +632,8 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 			}
 			var datasets []string
 			if visualValidation != canonicalFilterVisualValidationNone {
-				if lowered, err := LowerDashboardQuery(visual.Query, model, model.Name); err == nil {
-					datasets = append(datasets, lowered.Plan.Datasets...)
+				if lowered, err := LowerDashboardQueryBinding(visual.Query, model, model.Name); err == nil {
+					datasets = append(datasets, loweredDashboardQueryDatasets(lowered)...)
 					if len(datasets) == 0 {
 						datasets, err = canonicalQueryDatasets(visual.Query, model)
 						if err != nil {

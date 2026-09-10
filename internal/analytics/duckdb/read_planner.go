@@ -158,7 +158,19 @@ func planDirectSourceTableInNamespace(ctx context.Context, runtimeDB queryContex
 			model.Sources[table.Execution.Source] = source
 		}
 	}
-	relation, err := sourceReadRelation(model, table.Execution.Source, source, nil, modelTableReadColumns(table), false, staged)
+	if table.AuthoredFields != nil {
+		if err := validateDirectModelOutput(tableName, table.AuthoredFields, source.Schema.Columns); err != nil {
+			return analyticsmaterialize.ModelTablePlan{}, err
+		}
+	}
+	readColumns := modelTableReadColumns(table)
+	if table.AuthoredFields != nil {
+		readColumns = make([]sourceReadColumn, 0, len(source.Schema.Columns))
+		for _, column := range source.Schema.Columns {
+			readColumns = append(readColumns, sourceReadColumn{SourceField: column.Name, OutputField: column.Name})
+		}
+	}
+	relation, err := sourceReadRelation(model, table.Execution.Source, source, nil, readColumns, false, staged)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
@@ -367,9 +379,6 @@ func planningLiteral(columnType string) string {
 }
 
 func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, table semanticmodel.Table, sqlText string) error {
-	if len(table.Columns) == 0 {
-		return nil
-	}
 	rows, err := db.QueryContext(ctx, "DESCRIBE "+sqlText)
 	if err != nil {
 		return fmt.Errorf("describing materialized Model %q output: %w", tableName, err)
@@ -388,9 +397,13 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	declared := make(map[string]semanticmodel.ModelColumn, len(table.Columns))
-	for name, column := range table.Columns {
-		declared[name] = column
+	legacyExact := table.AuthoredFields == nil && len(table.Columns) > 0
+	declared := table.AuthoredFields
+	if table.AuthoredFields == nil {
+		declared = make(map[string]semanticmodel.ModelFieldDeclaration, len(table.Columns))
+		for name, column := range table.Columns {
+			declared[name] = semanticmodel.ModelFieldDeclaration{Datatype: column.Datatype}
+		}
 	}
 	seen := make(map[string]struct{}, len(columns))
 	for _, column := range columns {
@@ -399,18 +412,44 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 		}
 		seen[column.Name] = struct{}{}
 		declaration, ok := declared[column.Name]
-		if !ok {
+		if !ok && legacyExact {
 			return fmt.Errorf("materialized Model %q output exposes undeclared field %q", tableName, column.Name)
 		}
-		if declaration.Datatype != "" {
-			actual := semanticmodel.LogicalDataTypeFromPhysicalType(column.Type)
-			if actual != declaration.Datatype {
-				return fmt.Errorf("materialized Model %q field %q output type %q is incompatible with declared datatype %q", tableName, column.Name, column.Type, declaration.Datatype)
+		if ok && declaration.Datatype != "" {
+			if err := semanticmodel.ValidateDiscoveredDatatype(tableName, column.Name, declaration.Datatype, column.Type); err != nil {
+				return fmt.Errorf("materialized Model %q: %w", tableName, err)
 			}
 		}
 	}
-	if len(columns) != len(declared) {
+	if legacyExact && len(columns) != len(declared) {
 		return fmt.Errorf("materialized Model %q output fields do not exactly match declared fields", tableName)
+	}
+	for field := range declared {
+		if _, ok := seen[field]; !ok {
+			return fmt.Errorf("materialized Model %q authored field %q is not in definition output", tableName, field)
+		}
+	}
+	return nil
+}
+
+func validateDirectModelOutput(tableName string, declared map[string]semanticmodel.ModelFieldDeclaration, columns []semanticmodel.ColumnSchema) error {
+	seen := make(map[string]semanticmodel.ColumnSchema, len(columns))
+	for _, column := range columns {
+		if _, duplicate := seen[column.Name]; duplicate {
+			return fmt.Errorf("materialized Model %q output contains duplicate field %q", tableName, column.Name)
+		}
+		seen[column.Name] = column
+	}
+	for field, declaration := range declared {
+		column, ok := seen[field]
+		if !ok {
+			return fmt.Errorf("materialized Model %q authored field %q is not in definition output", tableName, field)
+		}
+		if declaration.Datatype != "" {
+			if err := semanticmodel.ValidateDiscoveredDatatype(tableName, field, declaration.Datatype, column.PhysicalType); err != nil {
+				return fmt.Errorf("materialized Model %q: %w", tableName, err)
+			}
+		}
 	}
 	return nil
 }

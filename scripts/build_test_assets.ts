@@ -33,6 +33,16 @@ const fixtures = new Map<string, FixtureBuild>([
       'chunks/[name]-[hash].[ext]',
     ),
   ],
+  [
+    'visualization-host',
+    split(
+      'visualization-host',
+      'web/components/dashboard/visualization/host.ts',
+      '.tmp/visualization-host-test',
+      'visualization-host-under-test.js',
+      'chunks/[name]-[hash].[ext]',
+    ),
+  ],
   ['dashboard-builder', single('dashboard-builder', 'web/components/dashboard/dashboard-builder.ts', '.tmp/dashboard-builder-test/dashboard-builder-under-test.js')],
   ['date-picker', single('date-picker', 'web/components/dashboard/filters/filter-control.ts', '.tmp/date-picker-test/date-picker-under-test.js')],
   [

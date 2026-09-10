@@ -218,7 +218,8 @@ non-normative summary included only to explain the dbt handoff:
 - compatible and strict Source schema mismatches block candidate activation;
 - declared freshness is evaluated during deployment or refresh, with
   `warningAfter` admitting a warning and `errorAfter` blocking activation;
-- Model fields form an exact output contract checked before activation;
+- authored Model fields annotate and assert a subset of the discovered output,
+  with explicit datatypes checked before activation;
 - entity and grain declarations imply the required identity checks; and
 - Model checks warn or block according to their declared severity.
 

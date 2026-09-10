@@ -370,10 +370,13 @@ smuggle a path, URI, connection string, or secret reference through a function
 argument. Any SQL feature not explicitly in the closed Model-query profile is
 rejected before candidate preparation.
 
-A Model's declared `fields` are its exact output contract. Direct and SQL
-definitions must produce every declared field exactly once, must not expose
-undeclared fields, and must produce compatible logical types. Column order is
-not semantic. This validation occurs before a candidate can be activated, so
+A Model's optional `fields` are metadata and contract assertions over its
+definition output. Direct and SQL definitions must produce every authored field
+exactly once and with a compatible logical type; additional output fields are
+discovered and retained. Omitting `fields` discovers the complete output.
+`fields` never selects, aliases, or casts data: a SQL definition owns those
+operations, while a direct definition preserves its Source output. Column order
+is not semantic. This validation occurs before a candidate can be activated, so
 downstream semantic models never observe a best-effort shape.
 
 Model may declare checks from a closed initial vocabulary such as non-null,
@@ -479,9 +482,10 @@ will remain in production.
   inferred, compatible, and strict modes differ exactly in whether a declaration
   is required and whether additional observed fields are accepted.
 - Model tests prove that direct and SQL definitions are exclusive, SQL lineage
-  is complete and deterministic, the resulting columns exactly match declared
-  fields and compatible logical types, undeclared namespaces are rejected, and
-  no authored dependency list exists to diverge from compiled lineage.
+  is complete and deterministic, authored fields exist with compatible logical
+  types, additional output fields are discovered, undeclared namespaces are
+  rejected, and no authored dependency list exists to diverge from compiled
+  lineage.
   Adversarial DuckDB JSON-AST tests cover every allowed node family and reject
   multiple statements, unknown semantic nodes, direct readers and connectors,
   paths and URIs, external SQL execution, attachments, secrets, extensions,

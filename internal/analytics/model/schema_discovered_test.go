@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLogicalDataTypeFromPhysicalType(t *testing.T) {
 	tests := map[string]LogicalDataType{
@@ -37,7 +40,7 @@ func TestValidateDiscoveredSchemasRejectsIncompatibleAuthoredDatatype(t *testing
 func TestResolveDiscoveredModelFieldsDerivesUndeclaredAndUntypedFields(t *testing.T) {
 	nullable := true
 	model := &Model{Tables: map[string]Table{"customers": {
-		Dimensions: map[string]MetricDimension{"customer_id": {Label: "Customer ID"}},
+		AuthoredFields: map[string]ModelFieldDeclaration{"customer_id": {Label: "Customer ID"}},
 		Schema: TableSchema{Columns: []ColumnSchema{
 			{Name: "customer_id", PhysicalType: "VARCHAR", Nullable: &nullable},
 			{Name: "lifetime_value", PhysicalType: "DECIMAL(18,2)", Nullable: &nullable},
@@ -59,6 +62,52 @@ func TestResolveDiscoveredModelFieldsDerivesUndeclaredAndUntypedFields(t *testin
 	}
 }
 
+func TestResolveDiscoveredModelFieldsRebuildsInferredFieldsFromAuthoredOverlay(t *testing.T) {
+	model := &Model{Tables: map[string]Table{"orders": {
+		AuthoredFields: map[string]ModelFieldDeclaration{
+			"order_id": {Datatype: DataTypeString, Label: "Order ID"},
+		},
+		Schema: TableSchema{Columns: []ColumnSchema{
+			{Name: "order_id", PhysicalType: "VARCHAR"},
+			{Name: "legacy_status", PhysicalType: "VARCHAR"},
+		}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatal(err)
+	}
+	table := model.Tables["orders"]
+	table.Schema = TableSchema{Columns: []ColumnSchema{
+		{Name: "order_id", PhysicalType: "VARCHAR"},
+		{Name: "current_status", PhysicalType: "VARCHAR"},
+	}}
+	model.Tables["orders"] = table
+	if err := model.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatalf("rediscovery treated an inferred field as authored: %v", err)
+	}
+	table = model.Tables["orders"]
+	if _, ok := table.Columns["legacy_status"]; ok {
+		t.Fatal("rediscovery retained removed inferred field")
+	}
+	if _, ok := table.Columns["current_status"]; !ok {
+		t.Fatal("rediscovery omitted new inferred field")
+	}
+	if got := table.Dimensions["order_id"]; got.Label != "Order ID" || got.Datatype != DataTypeString {
+		t.Fatalf("authored overlay after rediscovery = %#v", got)
+	}
+}
+
+func TestResolveDiscoveredModelFieldsRejectsMissingAuthoredField(t *testing.T) {
+	model := &Model{Tables: map[string]Table{"orders": {
+		AuthoredFields: map[string]ModelFieldDeclaration{"revenue": {}},
+		Schema:         TableSchema{Columns: []ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err == nil || !strings.Contains(err.Error(), `authored field "revenue" is not in discovered output`) {
+		t.Fatalf("missing authored field error = %v", err)
+	}
+}
+
 func TestResolveDiscoveredModelFieldsRejectsMissingDocumentedField(t *testing.T) {
 	model := &Model{Tables: map[string]Table{"customers": {
 		Dimensions: map[string]MetricDimension{"missing": {Label: "Missing"}},
@@ -68,4 +117,55 @@ func TestResolveDiscoveredModelFieldsRejectsMissingDocumentedField(t *testing.T)
 	if err := model.ResolveDiscoveredModelFields(); err == nil {
 		t.Fatal("ResolveDiscoveredModelFields accepted documented field missing from DuckLake schema")
 	}
+}
+
+func TestValidateDiscoveredSchemasRevalidatesDeferredFieldReferences(t *testing.T) {
+	t.Run("check datatype", func(t *testing.T) {
+		model := &Model{
+			Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
+			Tables: map[string]Table{"orders": {
+				ModelName:      "orders",
+				AuthoredFields: map[string]ModelFieldDeclaration{"order_id": {Datatype: DataTypeString}},
+				Dimensions: map[string]MetricDimension{
+					"order_id": {Datatype: DataTypeString},
+					"status":   {},
+				},
+				Columns:     map[string]ModelColumn{"order_id": {}, "status": {}},
+				Entities:    map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity: "order",
+				Checks:      []ModelCheck{{Type: "accepted_values", Field: "status", Values: []string{"open", "closed"}}},
+				Schema: TableSchema{Columns: []ColumnSchema{
+					{Name: "order_id", PhysicalType: "VARCHAR"},
+					{Name: "status", PhysicalType: "BIGINT"},
+				}},
+			}},
+		}
+		err := model.ValidateDiscoveredSchemas()
+		if err == nil || !strings.Contains(err.Error(), "accepted_values requires a String field") {
+			t.Fatalf("resolved check datatype error = %v", err)
+		}
+	})
+
+	t.Run("semantic binding existence", func(t *testing.T) {
+		model := &Model{
+			Datasets: map[string]SemanticDatasetSpec{"orders": {Model: "orders"}},
+			Tables: map[string]Table{"orders": {
+				ModelName:      "orders",
+				AuthoredFields: map[string]ModelFieldDeclaration{"order_id": {Datatype: DataTypeString}},
+				Dimensions:     map[string]MetricDimension{"order_id": {Datatype: DataTypeString}, "order_date": {}},
+				Columns:        map[string]ModelColumn{"order_id": {}, "order_date": {}},
+				Entities:       map[string]EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
+				GrainEntity:    "order",
+				Schema:         TableSchema{Columns: []ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}},
+			}},
+			Dimensions: map[string]SemanticDimension{"order_date": {
+				Type: "date", Datatype: DataTypeDate, NativeGrain: "day", Grains: []string{"day"},
+				Bindings: map[string]DimensionBinding{"orders": {Field: "orders.order_date"}},
+			}},
+		}
+		err := model.ValidateDiscoveredSchemas()
+		if err == nil || !strings.Contains(err.Error(), `unknown field "order_date" on table "orders"`) {
+			t.Fatalf("missing resolved semantic binding error = %v", err)
+		}
+	})
 }
