@@ -397,6 +397,18 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(artifacts, "task image:qualify:performance IMAGE=\"${immutable_image}\"") {
 		t.Error("main artifact job must send its immutable digest to paired qualification")
 	}
+	for _, required := range []string{
+		".tmp/qualification/performance-pair/run-*/reference/authoring-report.json",
+		".tmp/qualification/performance-pair/run-*/reference/compose.log",
+		".tmp/qualification/performance-pair/run-*/reference/postgres.log",
+		".tmp/qualification/performance-pair/run-*/candidate/authoring-report.json",
+		".tmp/qualification/performance-pair/run-*/candidate/compose.log",
+		".tmp/qualification/performance-pair/run-*/candidate/postgres.log",
+	} {
+		if !strings.Contains(artifacts, required) {
+			t.Errorf("paired performance evidence upload must retain %q", required)
+		}
+	}
 	if !strings.Contains(read(t, filepath.Join(root, "Taskfile.yml")), "node scripts/qualify_performance_pair.mjs {{.IMAGE | quote}}") {
 		t.Error("performance task must invoke paired qualification with the requested image")
 	}

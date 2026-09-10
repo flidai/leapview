@@ -219,6 +219,12 @@ jobs:
             .tmp/qualification/performance-pair/run-*/reference/performance-report.json
             .tmp/qualification/performance-pair/run-*/reference/runtime-identity.json
             .tmp/qualification/performance-pair/run-*/reference/image-qualification-report.json
+            .tmp/qualification/performance-pair/run-*/reference/authoring-report.json
+            .tmp/qualification/performance-pair/run-*/reference/compose.log
+            .tmp/qualification/performance-pair/run-*/reference/postgres.log
             .tmp/qualification/performance-pair/run-*/candidate/performance-report.json
             .tmp/qualification/performance-pair/run-*/candidate/runtime-identity.json
             .tmp/qualification/performance-pair/run-*/candidate/image-qualification-report.json
+            .tmp/qualification/performance-pair/run-*/candidate/authoring-report.json
+            .tmp/qualification/performance-pair/run-*/candidate/compose.log
+            .tmp/qualification/performance-pair/run-*/candidate/postgres.log
