@@ -72,6 +72,7 @@ const (
 type SpatialTile struct {
 	Latitude     Field
 	Longitude    Field
+	Dimensions   []Field
 	Identity     []Field
 	Zoom         int
 	TargetZoom   int
@@ -82,6 +83,18 @@ type SpatialTile struct {
 	Buffer       int
 	FeatureCap   int
 	Precision    SpatialTilePrecision
+	Cluster      *SpatialClusterPolicy
+}
+
+// SpatialClusterPolicy is the authored point-cluster contract carried into
+// governed tile planning. CellPixels remains an independent transport
+// setting; Radius is never used as a transport cell radius by callers.
+type SpatialClusterPolicy struct {
+	Enabled       bool  `json:"enabled"`
+	Radius        int32 `json:"radius"`
+	MaximumZoom   int32 `json:"maximumZoom"`
+	MinimumPoints int32 `json:"minimumPoints"`
+	ShowCount     bool  `json:"showCount"`
 }
 
 // SpatialTileBudget describes one revision-wide raw-precision probe. Unlike a
@@ -95,6 +108,7 @@ type SpatialTileBudget struct {
 	Buffer       int
 	FeatureCap   int
 	MaximumBytes int64
+	Cluster      *SpatialClusterPolicy
 }
 
 type SpatialMetadata struct {
@@ -103,6 +117,7 @@ type SpatialMetadata struct {
 	FeatureCap     int
 	RawMinimumZoom int
 	MaximumZoom    int
+	Cluster        *SpatialClusterPolicy
 }
 
 type Field struct {
@@ -452,6 +467,9 @@ func (q Query) Validate() error {
 		if tile.Precision != SpatialTilePrecisionRaw && tile.Precision != SpatialTilePrecisionAggregated {
 			return fmt.Errorf("unsupported semantic spatial tile precision %q", tile.Precision)
 		}
+		if err := validateSpatialClusterPolicy(tile.Cluster); err != nil {
+			return fmt.Errorf("semantic spatial tile cluster policy: %w", err)
+		}
 	case KindSemanticSpatialTileBudget:
 		if len(q.Fields) == 0 || q.SpatialTileBudget == nil {
 			return fmt.Errorf("semantic spatial tile budget query requires selected fields and a budget probe")
@@ -459,6 +477,9 @@ func (q Query) Validate() error {
 		budget := q.SpatialTileBudget
 		if strings.TrimSpace(budget.Latitude.Field) == "" || strings.TrimSpace(budget.Longitude.Field) == "" || budget.Zoom < 0 || budget.Zoom > 18 || budget.Buffer < 0 || budget.FeatureCap <= 0 || budget.MaximumBytes <= 0 {
 			return fmt.Errorf("semantic spatial tile budget query requires coordinates, zoom, buffer, and feature cap")
+		}
+		if err := validateSpatialClusterPolicy(budget.Cluster); err != nil {
+			return fmt.Errorf("semantic spatial tile budget cluster policy: %w", err)
 		}
 	case KindSemanticSpatialMetadata:
 		if len(q.Fields) == 0 || q.SpatialMetadata == nil || strings.TrimSpace(q.SpatialMetadata.Latitude.Field) == "" || strings.TrimSpace(q.SpatialMetadata.Longitude.Field) == "" {
@@ -468,8 +489,21 @@ func (q Query) Validate() error {
 		if metadata.FeatureCap <= 0 || metadata.RawMinimumZoom < 0 || metadata.MaximumZoom < metadata.RawMinimumZoom || metadata.MaximumZoom > 18 {
 			return fmt.Errorf("semantic spatial metadata requires valid global raw-tile budgets")
 		}
+		if err := validateSpatialClusterPolicy(metadata.Cluster); err != nil {
+			return fmt.Errorf("semantic spatial metadata cluster policy: %w", err)
+		}
 	default:
 		return fmt.Errorf("unsupported data query kind %q", q.Kind)
+	}
+	return nil
+}
+
+func validateSpatialClusterPolicy(policy *SpatialClusterPolicy) error {
+	if policy == nil {
+		return nil
+	}
+	if policy.Radius <= 0 || policy.MaximumZoom < 0 || policy.MaximumZoom > 18 || policy.MinimumPoints < 2 {
+		return fmt.Errorf("requires positive radius, maximum zoom between 0 and 18, and minimum points at least 2")
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 func TestFromDashboardDocumentMonthlyRevenueByCustomerState(t *testing.T) {
@@ -251,6 +252,119 @@ func TestFromDashboardCartesianAliasesAndUnsupportedOptions(t *testing.T) {
 	}
 }
 
+func TestFromDashboardRejectsMainCartesianFormattingFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		apply func(*document.CartesianDashboardPresentation, *document.DashboardVisual)
+	}{
+		{name: "axis visible", apply: func(_ *document.CartesianDashboardPresentation, visual *document.DashboardVisual) {
+			visible := true
+			visual.Presentation.Value.(*document.CartesianDashboardPresentation).AxisVisible = &visible
+		}},
+		{name: "legend title", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			p.LegendTitle = stringPointer("Revenue")
+		}},
+		{name: "legend items", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			p.LegendItems = &[]document.DashboardLegendItem{{Value: "paid"}}
+		}},
+		{name: "series intent", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			p.SeriesIntent = &[]document.DashboardSeriesIntent{{Value: "paid"}}
+		}},
+		{name: "candlestick gain color", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			color := visualizationir.VisualizationColorIntentSuccess
+			p.GainColor = &color
+		}},
+		{name: "candlestick loss color", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			color := visualizationir.VisualizationColorIntentDanger
+			p.LossColor = &color
+		}},
+		{name: "tooltip", apply: func(p *document.CartesianDashboardPresentation, _ *document.DashboardVisual) {
+			p.Tooltip = &[]document.DashboardTooltip{{String: stringPointer("revenue")}}
+		}},
+		{name: "title visibility", apply: func(_ *document.CartesianDashboardPresentation, visual *document.DashboardVisual) {
+			visible := false
+			visual.TitleVisible = &visible
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			visual := document.DashboardVisual{
+				Type: document.DashboardVisualTypeLine,
+				Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+					DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"},
+					Type:               "aggregate",
+					Dimensions:         []document.DashboardDimensionSelection{{String: stringPointer("region")}},
+					Metrics:            []document.DashboardMetricSelection{{String: stringPointer("revenue")}},
+				}},
+				Presentation: document.DashboardPresentation{Value: &document.CartesianDashboardPresentation{
+					DashboardPresentationBase: document.DashboardPresentationBase{Type: "cartesian"},
+					Type:                      "cartesian",
+				}},
+			}
+			test.apply(visual.Presentation.Value.(*document.CartesianDashboardPresentation), &visual)
+			if _, err := FromDashboardVisual(visual, ReverseOptions{ModelID: "semantic:sales"}); err == nil || !strings.Contains(err.Error(), "not representable") {
+				t.Fatalf("formatting field error = %v", err)
+			}
+		})
+	}
+}
+
+func TestForwardReversePreservesSupportedKPIRanges(t *testing.T) {
+	mode := exploration.ExplorationVisualizationKPIModeBullet
+	displayUnits := exploration.ExplorationVisualizationDisplayUnitsThousands
+	ranges := []exploration.ExplorationVisualizationKPIQualitativeRange{
+		{Maximum: float64Pointer(0), Label: "unfavorable", Tone: exploration.ExplorationVisualizationToneDanger},
+		{Minimum: float64Pointer(0), Label: "favorable", Tone: exploration.ExplorationVisualizationToneSuccess},
+	}
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		ModelID:       "semantic:sales",
+		Dimensions:    []exploration.ExplorationDimensionRef{{Field: "region"}},
+		Metrics: []exploration.ExplorationMetricRef{
+			{Field: "revenue"},
+			{Field: "prior_revenue"},
+			{Field: "goal_revenue"},
+		},
+		Limit: 100,
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{
+			Kind:       "kpi",
+			Value:      exploration.ExplorationVisualizationFieldRef{Field: "revenue"},
+			Comparison: &exploration.ExplorationVisualizationFieldRef{Field: "prior_revenue"},
+			Goal:       &exploration.ExplorationVisualizationFieldRef{Field: "goal_revenue"},
+			Trend: &exploration.ExplorationKPITrend{
+				Category: exploration.ExplorationVisualizationFieldRef{Field: "region"},
+				Value:    exploration.ExplorationVisualizationFieldRef{Field: "revenue"},
+			},
+			Presentation: &exploration.ExplorationKPIPresentation{
+				Mode:         &mode,
+				Ranges:       &ranges,
+				DisplayUnits: &displayUnits,
+			},
+		}},
+	}
+	forward, err := Convert(spec, Options{VisualID: "kpi"})
+	if err != nil {
+		t.Fatalf("forward KPI conversion: %v", err)
+	}
+	reverse, err := FromDashboardVisual(forward.Visual, ReverseOptions{ModelID: spec.ModelID})
+	if err != nil {
+		t.Fatalf("reverse KPI conversion: %v", err)
+	}
+	value, ok := reverse.Visualization.Value.(*exploration.KPIExplorationVisualization)
+	if !ok || value.Presentation == nil || value.Presentation.Ranges == nil {
+		t.Fatalf("reverse KPI presentation = %#v", reverse.Visualization.Value)
+	}
+	if !reflect.DeepEqual(*value.Presentation.Ranges, ranges) {
+		t.Fatalf("KPI ranges = %#v, want %#v", *value.Presentation.Ranges, ranges)
+	}
+	if value.Presentation.Mode == nil || *value.Presentation.Mode != mode || value.Presentation.DisplayUnits == nil || *value.Presentation.DisplayUnits != displayUnits {
+		t.Fatalf("KPI presentation modes = %#v", value.Presentation)
+	}
+	if value.Comparison == nil || value.Comparison.Field != "prior_revenue" || value.Goal == nil || value.Goal.Field != "goal_revenue" || value.Trend == nil || value.Trend.Category.Field != "region" || value.Trend.Value.Field != "revenue" {
+		t.Fatalf("KPI bindings = %#v", value)
+	}
+}
+
 func TestFromDashboardDetachesInputPointers(t *testing.T) {
 	model := "semantic:sales"
 	dataset := "orders"
@@ -407,3 +521,4 @@ func dashboardGrainPointer(value document.DashboardTimeGrain) *document.Dashboar
 }
 func int32Pointer(value int32) *int32             { return &value }
 func stringSlicePointer(value []string) *[]string { return &value }
+func float64Pointer(value float64) *float64       { return &value }

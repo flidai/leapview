@@ -358,6 +358,9 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if base.Title == "" || base.Accessibility.Title == "" || base.Accessibility.Description == "" {
 		return nil, fmt.Errorf("visualization title and accessibility text are required")
 	}
+	if err := validateAxisVisibility(spec); err != nil {
+		return nil, err
+	}
 	schemas := make(map[string]VisualizationDatasetSchema, len(base.Datasets))
 	for _, schema := range base.Datasets {
 		if err := validateSchema(schema); err != nil {
@@ -371,7 +374,13 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	if len(schemas) == 0 {
 		return nil, fmt.Errorf("visualization requires at least one dataset")
 	}
+	if err := validateTooltipAndLegendMetadata(spec, base, schemas); err != nil {
+		return nil, err
+	}
 	if err := validateVisualCalculations(base.Calculations, schemas); err != nil {
+		return nil, err
+	}
+	if err := validateGeographicReferenceTooltips(spec); err != nil {
 		return nil, err
 	}
 	for _, ref := range specificationRefs(spec) {
@@ -427,11 +436,384 @@ func validateSpecification(spec VisualizationSpec, base VisualizationSpecBase) (
 	return schemas, nil
 }
 
+func validateAxisVisibility(spec VisualizationSpec) error {
+	unsupported := func(kind string) error {
+		return fmt.Errorf("spec.presentation.axisVisible is unsupported for %s visuals", kind)
+	}
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec, *PointVisualizationSpec:
+		return nil
+	case *ProportionalVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("proportional")
+		}
+	case *HierarchyVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("hierarchy")
+		}
+	case *PolarVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("polar")
+		}
+	case *GeographicVisualizationSpec:
+		if value.Presentation.AxisVisible != nil {
+			return unsupported("geographic")
+		}
+	}
+	return nil
+}
+
+func validateGeographicReferenceTooltips(spec VisualizationSpec) error {
+	value, ok := spec.Value.(*GeographicVisualizationSpec)
+	if !ok {
+		return nil
+	}
+	for index, layer := range value.Layers {
+		base, err := layer.Base()
+		if err != nil {
+			return err
+		}
+		if _, ok := layer.Value.(*VisualizationReferenceLayer); ok {
+			if len(base.Tooltip) > 0 {
+				return fmt.Errorf("spec.layers[%d].tooltip: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+			}
+			if base.TooltipItems != nil {
+				return fmt.Errorf("spec.layers[%d].tooltipItems: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+			}
+		}
+	}
+	return nil
+}
+
+func validateTooltipAndLegendMetadata(spec VisualizationSpec, base VisualizationSpecBase, schemas map[string]VisualizationDatasetSchema) error {
+	if base.TooltipItems != nil {
+		switch spec.Value.(type) {
+		case *CartesianVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*CartesianVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		case *PointVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*PointVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		case *ProportionalVisualizationSpec:
+			// Row-backed families own the root tooltip projection.
+			value := spec.Value.(*ProportionalVisualizationSpec)
+			if value.Tooltip != nil {
+				if err := validateTooltipRefsMatch("spec.tooltipItems", "spec.tooltip", *base.TooltipItems, *value.Tooltip); err != nil {
+					return err
+				}
+			}
+			if err := validateTooltipItemList("spec.tooltipItems", *base.TooltipItems, schemas, value.Category.Dataset); err != nil {
+				return err
+			}
+		case *GeographicVisualizationSpec:
+			return fmt.Errorf("spec.tooltipItems is unsupported for geographic visuals; tooltip projections belong to row-backed geographic layers")
+		default:
+			return fmt.Errorf("spec.tooltipItems is unsupported for %s visuals", base.Kind)
+		}
+	}
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		}
+	case *PointVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.X.Dataset); err != nil {
+				return err
+			}
+		}
+	case *ProportionalVisualizationSpec:
+		if value.Tooltip != nil {
+			if err := validateTooltipRefList("spec.tooltip", *value.Tooltip, schemas, value.Category.Dataset); err != nil {
+				return err
+			}
+		}
+	}
+	if err := validatePresentationLegendMetadata(spec); err != nil {
+		return err
+	}
+	if geographic, ok := spec.Value.(*GeographicVisualizationSpec); ok {
+		for index, layer := range geographic.Layers {
+			layerBase, err := layer.Base()
+			if err != nil {
+				return err
+			}
+			if _, reference := layer.Value.(*VisualizationReferenceLayer); reference {
+				if layerBase.TooltipItems != nil {
+					return fmt.Errorf("spec.layers[%d].tooltipItems: reference layers do not support tooltip fields because reference geometry has no query-row locator", index)
+				}
+				continue
+			}
+			if layerBase.TooltipItems != nil || layerBase.Tooltip != nil {
+				rowDataset, err := geographicLayerRowDataset(layer)
+				if err != nil {
+					return fmt.Errorf("spec.layers[%d]: %w", index, err)
+				}
+				if layerBase.Tooltip != nil {
+					if layerBase.TooltipItems != nil {
+						if err := validateTooltipRefsMatch(fmt.Sprintf("spec.layers[%d].tooltipItems", index), fmt.Sprintf("spec.layers[%d].tooltip", index), *layerBase.TooltipItems, layerBase.Tooltip); err != nil {
+							return err
+						}
+					}
+					if err := validateTooltipRefList(fmt.Sprintf("spec.layers[%d].tooltip", index), layerBase.Tooltip, schemas, rowDataset); err != nil {
+						return err
+					}
+				}
+				if layerBase.TooltipItems != nil {
+					if err := validateTooltipItemList(fmt.Sprintf("spec.layers[%d].tooltipItems", index), *layerBase.TooltipItems, schemas, rowDataset); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateTooltipRefsMatch(itemsPath, refsPath string, items []VisualizationTooltipItem, refs []VisualizationFieldRef) error {
+	if len(items) != len(refs) {
+		return fmt.Errorf("%s and %s must contain the same ordered field refs (got %d and %d)", itemsPath, refsPath, len(items), len(refs))
+	}
+	for index, item := range items {
+		if item.Field != refs[index] {
+			return fmt.Errorf("%s[%d].field must match %s[%d]", itemsPath, index, refsPath, index)
+		}
+	}
+	return nil
+}
+
+func validateTooltipRefList(path string, refs []VisualizationFieldRef, schemas map[string]VisualizationDatasetSchema, rowDataset string) error {
+	for index, ref := range refs {
+		if err := validateFieldRef(ref, schemas); err != nil {
+			return fmt.Errorf("%s[%d].field: %w", path, index, err)
+		}
+		if ref.Dataset != rowDataset {
+			return fmt.Errorf("%s[%d].field dataset %q does not match row dataset %q", path, index, ref.Dataset, rowDataset)
+		}
+	}
+	return nil
+}
+
+// geographicLayerRowDataset returns the dataset whose rows back a geographic
+// layer's rendered features. Tooltip fields must come from that same dataset;
+// renderers do not have a join available for arbitrary secondary datasets.
+func geographicLayerRowDataset(layer VisualizationGeographicLayer) (string, error) {
+	switch value := layer.Value.(type) {
+	case *VisualizationPointLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationChoroplethLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Join.Dataset, nil
+	case *VisualizationHeatLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationDensityLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationPathLayer:
+		if value == nil {
+			return "", fmt.Errorf("geographic layer variant is nil")
+		}
+		return value.Latitude.Dataset, nil
+	case *VisualizationReferenceLayer:
+		return "", nil
+	case nil:
+		return "", fmt.Errorf("geographic layer variant is required")
+	default:
+		return "", fmt.Errorf("unsupported geographic layer variant %T", value)
+	}
+}
+
+func validateTooltipItemList(path string, items []VisualizationTooltipItem, schemas map[string]VisualizationDatasetSchema, rowDataset string) error {
+	seen := make(map[string]int, len(items))
+	for index, item := range items {
+		if err := validateFieldRef(item.Field, schemas); err != nil {
+			return fmt.Errorf("%s[%d].field: %w", path, index, err)
+		}
+		if item.Field.Dataset != rowDataset {
+			return fmt.Errorf("%s[%d].field dataset %q does not match row dataset %q", path, index, item.Field.Dataset, rowDataset)
+		}
+		key := item.Field.Dataset + "\x00" + item.Field.Field
+		if previous, ok := seen[key]; ok {
+			return fmt.Errorf("%s[%d].field duplicates %s[%d]", path, index, path, previous)
+		}
+		seen[key] = index
+		if item.Label != nil {
+			if err := validateMetadataText(*item.Label, fmt.Sprintf("%s[%d].label", path, index)); err != nil {
+				return err
+			}
+		}
+		field, _ := visualizationField(item.Field, schemas)
+		if err := validateVisualizationTooltipFormat(item.Format, field.DataType, fmt.Sprintf("%s[%d].format", path, index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePresentationLegendMetadata(spec VisualizationSpec) error {
+	var presentation *VisualizationPresentation
+	switch value := spec.Value.(type) {
+	case *CartesianVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Mark != VisualizationCartesianMarkLine && value.Mark != VisualizationCartesianMarkArea && value.Mark != VisualizationCartesianMarkBar && value.Mark != VisualizationCartesianMarkColumn && value.Mark != VisualizationCartesianMarkCombo && value.Mark != VisualizationCartesianMarkCandlestick) {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for %s cartesian visuals", value.Mark)
+		}
+		if value.Mark == VisualizationCartesianMarkCandlestick && value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legendItems is unsupported for candlestick visuals")
+		}
+		if value.Series == nil && value.Presentation.LegendItems != nil {
+			allowed := make(map[string]struct{}, len(value.Y))
+			for _, field := range value.Y {
+				allowed[field.Field] = struct{}{}
+			}
+			for index, item := range *value.Presentation.LegendItems {
+				itemValue := strings.TrimSpace(item.Value)
+				if _, ok := allowed[itemValue]; !ok {
+					return fmt.Errorf("spec.presentation.legendItems[%d].value %q is not a compiled metric field", index, itemValue)
+				}
+			}
+		}
+	case *PointVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Color == nil || value.ColorScale == nil || value.ColorScale.Kind != VisualizationPointColorScaleKindCategorical) {
+			return fmt.Errorf("spec.presentation.legend metadata requires a categorical point color series")
+		}
+	case *ProportionalVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+	case *PolarVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		hasMetadata := value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil
+		if hasMetadata && (value.Mark != VisualizationPolarMarkRadar || value.Series == nil) {
+			return fmt.Errorf("spec.presentation.legend metadata requires a radar series")
+		}
+	case *HierarchyVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		if value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for hierarchy visuals without named series")
+		}
+	case *GeographicVisualizationSpec:
+		presentation = &value.Presentation.VisualizationPresentation
+		if value.Presentation.LegendTitle != nil || value.Presentation.LegendItems != nil {
+			return fmt.Errorf("spec.presentation.legend metadata is unsupported for geographic visuals")
+		}
+	default:
+		return nil
+	}
+	if presentation.Legend != VisualizationLegendPositionHidden {
+		// Compact legends retain existing defaults. Configured metadata is
+		// validated below and is meaningful only when a legend is visible.
+	} else if presentation.LegendTitle != nil || presentation.LegendItems != nil {
+		return fmt.Errorf("spec.presentation.legend metadata cannot be used with a hidden legend")
+	}
+	if presentation.LegendTitle != nil {
+		if err := validateMetadataText(*presentation.LegendTitle, "spec.presentation.legendTitle"); err != nil {
+			return err
+		}
+	}
+	if presentation.LegendItems != nil {
+		if len(*presentation.LegendItems) == 0 {
+			return fmt.Errorf("spec.presentation.legendItems must contain at least one item")
+		}
+		seen := make(map[string]int, len(*presentation.LegendItems))
+		for index, item := range *presentation.LegendItems {
+			value := strings.TrimSpace(item.Value)
+			if value != item.Value {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value must not contain surrounding whitespace", index)
+			}
+			if value == "" {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value must not be empty", index)
+			}
+			if previous, ok := seen[value]; ok {
+				return fmt.Errorf("spec.presentation.legendItems[%d].value duplicates legendItems[%d]", index, previous)
+			}
+			seen[value] = index
+			if item.Label != nil {
+				if err := validateMetadataText(*item.Label, fmt.Sprintf("spec.presentation.legendItems[%d].label", index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validateMetadataText(value, path string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s must not be empty", path)
+	}
+	if len([]rune(value)) > 128 {
+		return fmt.Errorf("%s must not exceed 128 characters", path)
+	}
+	return nil
+}
+
+func validateIRFractionDigits(minimum, maximum *int32, path string) error {
+	if (minimum != nil && (*minimum < 0 || *minimum > 12)) || (maximum != nil && (*maximum < 0 || *maximum > 12)) {
+		return fmt.Errorf("%s fraction digits must be between 0 and 12", path)
+	}
+	if minimum != nil && maximum != nil && *minimum > *maximum {
+		return fmt.Errorf("%s minimumFractionDigits must be less than or equal to maximumFractionDigits", path)
+	}
+	return nil
+}
+
+func validIRTemporalStyle(value string) bool {
+	switch value {
+	case "full", "long", "medium", "short":
+		return true
+	default:
+		return false
+	}
+}
+
 func validateLabelPolicy(spec VisualizationSpec) error {
 	var policy VisualizationLabelPolicy
 	switch value := spec.Value.(type) {
 	case *CartesianVisualizationSpec:
 		policy = value.Presentation.LabelPolicy
+		if value.Mark == VisualizationCartesianMarkCandlestick || value.Mark == VisualizationCartesianMarkBoxplot {
+			// Before financial labels became an explicitly unsupported authored
+			// control, the compiler populated this generic automatic default on
+			// every Cartesian mark. ECharts never rendered it for financial marks,
+			// so preserve that exact serialized default for already-persisted
+			// definitions while new compilation emits the explicit hidden policy.
+			if policy.Density != VisualizationLabelDensityHidden && !isHistoricalFinancialAutomaticLabelPolicy(policy) {
+				return fmt.Errorf("spec.presentation.labelPolicy is not supported for cartesian mark %q", value.Mark)
+			}
+			if value.Presentation.LabelPosition != nil {
+				return fmt.Errorf("spec.presentation.labelPosition is not supported for cartesian mark %q", value.Mark)
+			}
+		}
 	case *PointVisualizationSpec:
 		policy = value.Presentation.LabelPolicy
 	case *ProportionalVisualizationSpec:
@@ -474,10 +856,24 @@ func validateLabelPolicy(spec VisualizationSpec) error {
 	return nil
 }
 
+func isHistoricalFinancialAutomaticLabelPolicy(policy VisualizationLabelPolicy) bool {
+	return policy.Density == VisualizationLabelDensityAutomatic &&
+		len(policy.Priority) == 3 &&
+		policy.Priority[0] == VisualizationLabelPrioritySelected &&
+		policy.Priority[1] == VisualizationLabelPriorityAnomaly &&
+		policy.Priority[2] == VisualizationLabelPriorityThreshold &&
+		policy.MaxCharacters == 24 &&
+		policy.MinimumSpacing == 6 &&
+		policy.TooltipFallback
+}
+
 func validatePointSpecification(spec VisualizationSpec, schemas map[string]VisualizationDatasetSchema) error {
 	point, ok := spec.Value.(*PointVisualizationSpec)
 	if !ok {
 		return nil
+	}
+	if !finite(point.Presentation.Opacity) {
+		return fmt.Errorf("point presentation.overplot.opacity must be finite")
 	}
 	if len(point.Identity) == 0 {
 		return fmt.Errorf("point visualization requires identity fields")
@@ -512,6 +908,18 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 		return fmt.Errorf("point size scale requires a size field")
 	}
 	if scale := point.SizeScale; scale != nil {
+		if scale.Minimum != nil && !finite(*scale.Minimum) {
+			return fmt.Errorf("point presentation.sizeScale.minimum must be finite")
+		}
+		if scale.Maximum != nil && !finite(*scale.Maximum) {
+			return fmt.Errorf("point presentation.sizeScale.maximum must be finite")
+		}
+		if !finite(scale.MinimumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.minimumPixels must be finite")
+		}
+		if !finite(scale.MaximumPixels) {
+			return fmt.Errorf("point presentation.sizeScale.maximumPixels must be finite")
+		}
 		if scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
 			return fmt.Errorf("point size scale minimum must be less than maximum")
 		}
@@ -534,8 +942,22 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 	if point.Color == nil && point.ColorScale != nil {
 		return fmt.Errorf("point color scale requires a color field")
 	}
-	if scale := point.ColorScale; scale != nil && scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
-		return fmt.Errorf("point color scale minimum must be less than maximum")
+	if scale := point.ColorScale; scale != nil {
+		if scale.Kind != VisualizationPointColorScaleKindCategorical && scale.Kind != VisualizationPointColorScaleKindQuantitative {
+			return fmt.Errorf("point color scale kind %q is unsupported", scale.Kind)
+		}
+		if scale.Kind == VisualizationPointColorScaleKindCategorical && (scale.Minimum != nil || scale.Maximum != nil) {
+			return fmt.Errorf("point color scale domain requires a quantitative scale")
+		}
+		if scale.Minimum != nil && !finite(*scale.Minimum) {
+			return fmt.Errorf("point color scale minimum must be finite")
+		}
+		if scale.Maximum != nil && !finite(*scale.Maximum) {
+			return fmt.Errorf("point color scale maximum must be finite")
+		}
+		if scale.Minimum != nil && scale.Maximum != nil && *scale.Minimum >= *scale.Maximum {
+			return fmt.Errorf("point color scale minimum must be less than maximum")
+		}
 	}
 	if point.Presentation.Opacity <= 0 || point.Presentation.Opacity > 1 {
 		return fmt.Errorf("point opacity must be greater than zero and at most one")
@@ -561,7 +983,7 @@ func validatePointSpecification(spec VisualizationSpec, schemas map[string]Visua
 		X: point.X, Y: []VisualizationFieldRef{point.Y}, Axes: point.Axes, ReferenceLines: point.ReferenceLines,
 		ReferenceBands: point.ReferenceBands, EventAnnotations: point.EventAnnotations,
 	}}
-	return validateCartesianDecisionContext(decisionContext)
+	return validateCartesianDecisionContextWithPointSemantics(decisionContext, true)
 }
 
 func validateKPISpecification(spec VisualizationSpec, schemas map[string]VisualizationDatasetSchema) error {
@@ -667,7 +1089,8 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 	}
 	ids := make(map[string]struct{}, len(*base.ConditionalFormatting))
 	targets := make(map[string]struct{}, len(*base.ConditionalFormatting))
-	for _, format := range *base.ConditionalFormatting {
+	pointMarkFill := false
+	for formatIndex, format := range *base.ConditionalFormatting {
 		if strings.TrimSpace(format.ID) == "" {
 			return fmt.Errorf("conditional formatting ID is required")
 		}
@@ -681,10 +1104,22 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		}
 		targets[targetKey] = struct{}{}
 		if err := validateConditionalFormattingTarget(base.Kind, format); err != nil {
-			return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			return fmt.Errorf("conditional formatting %q target: %w", format.ID, err)
+		}
+		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
+			if pointMarkFill {
+				return fmt.Errorf("conditional formatting %q: point visualizations allow one mark_fill rule", format.ID)
+			}
+			pointMarkFill = true
 		}
 		if err := validateFieldRef(format.Field, schemas); err != nil {
 			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
+		if err := validateConditionalFormattingApplicability(spec, format); err != nil {
+			return fmt.Errorf("conditional formatting %q field: %w", format.ID, err)
+		}
+		if err := validateConditionalFormattingRowDataset(spec, formatIndex, "field", format.Field); err != nil {
+			return err
 		}
 		field, _ := visualizationField(format.Field, schemas)
 		switch rule := format.Rule.Value.(type) {
@@ -740,6 +1175,12 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 			if err := validateFieldRef(rule.Source, schemas); err != nil {
 				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
 			}
+			if err := validateConditionalFormattingRowDataset(spec, formatIndex, "rule.source", rule.Source); err != nil {
+				return err
+			}
+			if err := validateConditionalFormattingSource(spec, format); err != nil {
+				return fmt.Errorf("conditional formatting %q source: %w", format.ID, err)
+			}
 			if len(rule.Values) == 0 {
 				return fmt.Errorf("conditional formatting %q requires values", format.ID)
 			}
@@ -770,6 +1211,185 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 		default:
 			return fmt.Errorf("conditional formatting %q has unsupported rule %T", format.ID, rule)
 		}
+		if base.Kind == "point" && format.Target == VisualizationConditionalTargetMarkFill {
+			if err := validatePointMarkFillColors(format.Rule); err != nil {
+				return fmt.Errorf("conditional formatting %q: %w", format.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
+// validateConditionalFormattingRowDataset keeps row-backed conditional
+// formatting on the dataset that backs rendered datum rows. Renderers have no
+// join available for conditional fields or field-rule sources from an
+// unrelated result frame.
+func validateConditionalFormattingRowDataset(spec VisualizationSpec, formatIndex int, path string, ref VisualizationFieldRef) error {
+	rowDataset, ok := conditionalFormattingRowDataset(spec)
+	if !ok || ref.Dataset == rowDataset {
+		return nil
+	}
+	return fmt.Errorf("spec.conditionalFormatting[%d].%s.dataset %q does not match row dataset %q", formatIndex, path, ref.Dataset, rowDataset)
+}
+
+func conditionalFormattingRowDataset(spec VisualizationSpec) (string, bool) {
+	switch value := spec.Value.(type) {
+	case *PointVisualizationSpec:
+		return value.X.Dataset, true
+	case *CartesianVisualizationSpec:
+		// Category-series charts are split from the series dataset; all other
+		// Cartesian translations consume the x dataset as their row frame.
+		if value.Series != nil && len(value.Y) == 1 {
+			return value.Series.Dataset, true
+		}
+		return value.X.Dataset, true
+	case *ProportionalVisualizationSpec:
+		return value.Category.Dataset, true
+	case *KPIVisualizationSpec:
+		return value.Value.Dataset, true
+	default:
+		return "", false
+	}
+}
+
+// validateConditionalFormattingApplicability keeps authored target bindings
+// honest about the channels a renderer actually emits. Schema membership alone
+// is insufficient: ECharts and the table adapter intentionally omit source
+// fields that do not participate in the visible mark or column.
+func validateConditionalFormattingApplicability(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := format.Field
+	switch value := spec.Value.(type) {
+	case *PointVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, 6)
+		visible = append(visible, value.X, value.Y)
+		if value.Size != nil {
+			visible = append(visible, *value.Size)
+		}
+		if value.Color != nil {
+			visible = append(visible, *value.Color)
+		}
+		if value.Label != nil {
+			visible = append(visible, *value.Label)
+		}
+		if value.Tooltip != nil {
+			visible = append(visible, (*value.Tooltip)...)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by point channels (x, y, size, color, label, or tooltip)", field.Field)
+		}
+	case *KPIVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not the rendered KPI value field %q", field.Field, value.Value.Field)
+		}
+	case *CartesianVisualizationSpec:
+		visible := value.Y
+		channel := "y"
+		switch value.Mark {
+		case VisualizationCartesianMarkHeatmap:
+			visible = nil
+			if len(value.Y) >= 2 {
+				visible = value.Y[1:2]
+			}
+			channel = "y[1] value"
+		case VisualizationCartesianMarkWaterfall:
+			visible = waterfallMetricRefs(value.Y)
+			channel = "value"
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not rendered by the cartesian %s channel", field.Field, channel)
+		}
+	case *ProportionalVisualizationSpec:
+		if field.Dataset != value.Value.Dataset || field.Field != value.Value.Field {
+			return fmt.Errorf("field %q is not rendered by the proportional value channel", field.Field)
+		}
+	case *TableVisualizationSpec:
+		visible := make([]VisualizationFieldRef, 0, len(value.Columns))
+		for _, column := range value.Columns {
+			visible = append(visible, column.Field)
+		}
+		if !contains(visible, field) {
+			return fmt.Errorf("field %q is not a visible table column", field.Field)
+		}
+	case *MatrixVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible matrix row or metric alias", field.Field)
+		}
+	case *PivotVisualizationSpec:
+		if !contains(value.Rows, field) && !contains(value.Metrics, field) {
+			return fmt.Errorf("field %q is not a visible pivot row or metric alias", field.Field)
+		}
+	}
+	return nil
+}
+
+// waterfallMetricRefs returns the authored metric channel while tolerating
+// both the compiled [start, value] shape and older direct-IR [value, start]
+// fixtures. A malformed all-start shape falls back to its first reference so
+// validation remains safe and deterministic.
+func waterfallMetricRefs(refs []VisualizationFieldRef) []VisualizationFieldRef {
+	for index, ref := range refs {
+		if ref.Field != "start" {
+			return refs[index : index+1]
+		}
+	}
+	if len(refs) > 0 {
+		return refs[:1]
+	}
+	return nil
+}
+
+// validateConditionalFormattingSource limits field-rule sources to values
+// that are actually delivered in tabular rows. Other renderers intentionally
+// preserve full result rows, so their arbitrary source fields remain valid.
+func validateConditionalFormattingSource(spec VisualizationSpec, format VisualizationConditionalFormat) error {
+	rule, ok := format.Rule.Value.(*FieldVisualizationConditionalRule)
+	if !ok || rule == nil {
+		return nil
+	}
+	contains := func(refs []VisualizationFieldRef, target VisualizationFieldRef) bool {
+		for _, ref := range refs {
+			if ref.Dataset == target.Dataset && ref.Field == target.Field {
+				return true
+			}
+		}
+		return false
+	}
+	field := rule.Source
+	var delivered []VisualizationFieldRef
+	var kind string
+	switch value := spec.Value.(type) {
+	case *TableVisualizationSpec:
+		for _, column := range value.Columns {
+			delivered = append(delivered, column.Field)
+		}
+		kind = "table"
+	case *MatrixVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive matrix row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "matrix"
+	case *PivotVisualizationSpec:
+		if contains(value.Rows, format.Field) && contains(value.Metrics, field) {
+			return fmt.Errorf("metric source %q cannot drive pivot row target %q; metric aliases are emitted only as generated cells", field.Field, format.Field.Field)
+		}
+		delivered = append(delivered, value.Rows...)
+		delivered = append(delivered, value.Metrics...)
+		kind = "pivot"
+	default:
+		return nil
+	}
+	if !contains(delivered, field) {
+		return fmt.Errorf("field %q is not delivered in %s rows", field.Field, kind)
 	}
 	return nil
 }
@@ -796,7 +1416,46 @@ func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 
 func validateConditionalFormattingTarget(kind string, format VisualizationConditionalFormat) error {
 	switch format.Target {
-	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetMarkStroke, VisualizationConditionalTargetSeriesColor:
+	case VisualizationConditionalTargetMarkFill,
+		VisualizationConditionalTargetSeriesColor,
+		VisualizationConditionalTargetLabelForeground,
+		VisualizationConditionalTargetVisualBackground,
+		VisualizationConditionalTargetCellForeground,
+		VisualizationConditionalTargetCellBackground,
+		VisualizationConditionalTargetKpiValue,
+		VisualizationConditionalTargetIcon:
+	default:
+		return fmt.Errorf("unsupported target %q", format.Target)
+	}
+
+	// Keep target validation aligned with the renderer-owned channels. These
+	// families intentionally do not inherit every target that happens to be
+	// present in the shared conditional-format enum.
+	switch kind {
+	case "point":
+		if format.Target != VisualizationConditionalTargetMarkFill {
+			return fmt.Errorf("target %q is incompatible with point visualizations; use %q", format.Target, VisualizationConditionalTargetMarkFill)
+		}
+		return nil
+	case "proportional":
+		if format.Target != VisualizationConditionalTargetMarkFill && format.Target != VisualizationConditionalTargetSeriesColor {
+			return fmt.Errorf("target %q is incompatible with proportional visualizations", format.Target)
+		}
+		return nil
+	case "kpi":
+		if format.Target != VisualizationConditionalTargetVisualBackground && format.Target != VisualizationConditionalTargetKpiValue {
+			return fmt.Errorf("target %q is incompatible with KPI visualizations", format.Target)
+		}
+		return nil
+	case "table", "matrix", "pivot":
+		if format.Target != VisualizationConditionalTargetCellForeground && format.Target != VisualizationConditionalTargetCellBackground && format.Target != VisualizationConditionalTargetIcon {
+			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
+		}
+		return nil
+	}
+
+	switch format.Target {
+	case VisualizationConditionalTargetMarkFill, VisualizationConditionalTargetSeriesColor:
 		if kind == "kpi" || kind == "table" || kind == "matrix" || kind == "pivot" {
 			return fmt.Errorf("target %q is incompatible with %s visualizations", format.Target, kind)
 		}
@@ -919,7 +1578,6 @@ func (visitor *specificationReferenceVisitor) VisitPointVisualizationSpec(value 
 	visitor.refs = append(visitor.refs, value.X, value.Y)
 	visitor.add(value.Size)
 	visitor.add(value.Color)
-	visitor.add(value.Series)
 	visitor.add(value.Label)
 	if value.Tooltip != nil {
 		visitor.refs = append(visitor.refs, *value.Tooltip...)
@@ -1043,14 +1701,47 @@ func (visitor *specificationReferenceVisitor) VisitGeographicVisualizationSpec(v
 }
 
 func validateCartesianDecisionContext(spec VisualizationSpec) error {
+	return validateCartesianDecisionContextWithPointSemantics(spec, false)
+}
+
+func validateCartesianDecisionContextWithPointSemantics(spec VisualizationSpec, pointSemantics bool) error {
 	value, ok := spec.Value.(*CartesianVisualizationSpec)
 	if !ok {
 		return nil
 	}
+	pointAxisDefaults := pointSemantics
+	base, err := specificationBase(spec)
+	if err != nil {
+		return err
+	}
+	schemas := make(map[string]VisualizationDatasetSchema, len(base.Datasets))
+	for _, dataset := range base.Datasets {
+		schemas[dataset.ID] = dataset
+	}
 	if err := validateCartesianSeriesPresentation(*value); err != nil {
 		return err
 	}
+	if value.Presentation.GainColor != nil || value.Presentation.LossColor != nil {
+		if value.Mark != VisualizationCartesianMarkCandlestick {
+			if value.Presentation.GainColor != nil {
+				return fmt.Errorf("spec.presentation.gainColor is unsupported for cartesian mark %q", value.Mark)
+			}
+			return fmt.Errorf("spec.presentation.lossColor is unsupported for cartesian mark %q", value.Mark)
+		}
+		for _, color := range []struct {
+			name   string
+			intent *VisualizationColorIntent
+		}{
+			{name: "gainColor", intent: value.Presentation.GainColor},
+			{name: "lossColor", intent: value.Presentation.LossColor},
+		} {
+			if color.intent != nil && !validVisualizationColorIntent(*color.intent) {
+				return fmt.Errorf("spec.presentation.%s %q is unsupported", color.name, *color.intent)
+			}
+		}
+	}
 	axes := map[VisualizationCartesianAxis]struct{}{}
+	effectiveAxisTypes := map[VisualizationCartesianAxis]VisualizationAxisType{}
 	if value.Axes != nil {
 		for _, axis := range *value.Axes {
 			if axis.ID != VisualizationCartesianAxisX && axis.ID != VisualizationCartesianAxisPrimaryY && axis.ID != VisualizationCartesianAxisSecondaryY {
@@ -1063,10 +1754,123 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			if axis.ID == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 				return fmt.Errorf("secondary_y axis requires combo mark")
 			}
+			if value.Mark == VisualizationCartesianMarkCombo && axis.ID != VisualizationCartesianAxisX {
+				if _, found := CartesianComboAxisOwner(*value, axis.ID); !found {
+					return fmt.Errorf("axis %q requires a %s combo series", axis.ID, comboAxisOwnerName(axis.ID))
+				}
+			}
+			switch axis.Scale {
+			case VisualizationAxisScaleAutomatic, VisualizationAxisScaleLinear, VisualizationAxisScaleLog:
+			default:
+				return fmt.Errorf("axis %q has unsupported scale %q", axis.ID, axis.Scale)
+			}
+			switch axis.Zero {
+			case VisualizationAxisZeroPolicyAutomatic, VisualizationAxisZeroPolicyInclude, VisualizationAxisZeroPolicyExclude:
+			default:
+				return fmt.Errorf("axis %q has unsupported zero policy %q", axis.ID, axis.Zero)
+			}
+			switch axis.TickDensity {
+			case VisualizationAxisTickDensityAutomatic, VisualizationAxisTickDensitySparse, VisualizationAxisTickDensityNormal, VisualizationAxisTickDensityDense:
+			default:
+				return fmt.Errorf("axis %q has unsupported tick density %q", axis.ID, axis.TickDensity)
+			}
+			if axis.DisplayUnits != nil {
+				switch *axis.DisplayUnits {
+				case VisualizationDisplayUnitsAuto, VisualizationDisplayUnitsNone, VisualizationDisplayUnitsThousands, VisualizationDisplayUnitsMillions, VisualizationDisplayUnitsBillions, VisualizationDisplayUnitsTrillions:
+				default:
+					return fmt.Errorf("axis %q has unsupported display units %q", axis.ID, *axis.DisplayUnits)
+				}
+			}
+			if axis.ID == VisualizationCartesianAxisPrimaryY && value.Presentation.Stacking != nil && *value.Presentation.Stacking == VisualizationStackingModePercent && axis.DisplayUnits != nil {
+				return fmt.Errorf("axis %q display units are incompatible with percent stacking because the renderer owns the percent formatter", axis.ID)
+			}
+			switch axis.Type {
+			case VisualizationAxisTypeAutomatic, VisualizationAxisTypeCategory, VisualizationAxisTypeValue, VisualizationAxisTypeTime:
+			default:
+				return fmt.Errorf("axis %q has unsupported type %q", axis.ID, axis.Type)
+			}
+			switch axis.Inversion {
+			case VisualizationAxisInversionAutomatic, VisualizationAxisInversionNormal, VisualizationAxisInversionInverted:
+			default:
+				return fmt.Errorf("axis %q has unsupported inversion %q", axis.ID, axis.Inversion)
+			}
+			switch axis.Ticks {
+			case VisualizationAxisTickVisibilityAutomatic, VisualizationAxisTickVisibilityVisible, VisualizationAxisTickVisibilityHidden:
+			default:
+				return fmt.Errorf("axis %q has unsupported tick visibility %q", axis.ID, axis.Ticks)
+			}
+			switch axis.Grid {
+			case VisualizationAxisGridVisibilityAutomatic, VisualizationAxisGridVisibilityVisible, VisualizationAxisGridVisibilityHidden:
+			default:
+				return fmt.Errorf("axis %q has unsupported grid visibility %q", axis.ID, axis.Grid)
+			}
+			switch axis.LabelRotation {
+			case VisualizationAxisLabelRotationAutomatic, VisualizationAxisLabelRotationHorizontal, VisualizationAxisLabelRotationDiagonal, VisualizationAxisLabelRotationVertical:
+			default:
+				return fmt.Errorf("axis %q has unsupported label rotation %q", axis.ID, axis.LabelRotation)
+			}
+			switch axis.DateUnit {
+			case VisualizationDateDisplayUnitAutomatic, VisualizationDateDisplayUnitYear, VisualizationDateDisplayUnitQuarter, VisualizationDateDisplayUnitMonth, VisualizationDateDisplayUnitWeek, VisualizationDateDisplayUnitDay, VisualizationDateDisplayUnitHour, VisualizationDateDisplayUnitMinute, VisualizationDateDisplayUnitSecond:
+			default:
+				return fmt.Errorf("axis %q has unsupported date unit %q", axis.ID, axis.DateUnit)
+			}
+			if axis.Minimum != nil && (math.IsNaN(*axis.Minimum) || math.IsInf(*axis.Minimum, 0)) || axis.Maximum != nil && (math.IsNaN(*axis.Maximum) || math.IsInf(*axis.Maximum, 0)) {
+				return fmt.Errorf("axis %q domain bounds must be finite", axis.ID)
+			}
 			if axis.Minimum != nil && axis.Maximum != nil && *axis.Minimum >= *axis.Maximum {
 				return fmt.Errorf("axis %q minimum must be less than maximum", axis.ID)
 			}
+			axisField := value.X
+			if axis.ID != VisualizationCartesianAxisX {
+				if value.Mark == VisualizationCartesianMarkCombo {
+					axisField, _ = CartesianComboAxisOwner(*value, axis.ID)
+				} else if len(value.Y) > 0 {
+					axisField = value.Y[0]
+				}
+			}
+			field, hasField := visualizationField(axisField, schemas)
+			numeric := hasField && numericVisualizationField(field)
+			temporal := hasField && (field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal)
+			effectiveType := VisualizationAxisTypeCategory
+			if temporal {
+				effectiveType = VisualizationAxisTypeTime
+			} else if numeric && (pointAxisDefaults || (value.Mark != VisualizationCartesianMarkHeatmap && axis.ID != VisualizationCartesianAxisX)) {
+				effectiveType = VisualizationAxisTypeValue
+			}
+			switch axis.Type {
+			case VisualizationAxisTypeValue:
+				if !numeric {
+					return fmt.Errorf("axis %q value type requires a numeric field", axis.ID)
+				}
+				effectiveType = VisualizationAxisTypeValue
+			case VisualizationAxisTypeCategory:
+				effectiveType = VisualizationAxisTypeCategory
+			case VisualizationAxisTypeTime:
+				if !temporal {
+					return fmt.Errorf("axis %q time type requires a date or temporal field", axis.ID)
+				}
+				effectiveType = VisualizationAxisTypeTime
+			}
+			effectiveNumeric := effectiveType == VisualizationAxisTypeValue
+			if axis.DisplayUnits != nil && !effectiveNumeric {
+				return fmt.Errorf("axis %q display units require an effective numeric field", axis.ID)
+			}
+			if axis.DateUnit != VisualizationDateDisplayUnitAutomatic && effectiveType != VisualizationAxisTypeTime {
+				return fmt.Errorf("axis %q date unit requires an effective time field", axis.ID)
+			}
+			if axis.Zero != VisualizationAxisZeroPolicyAutomatic && !effectiveNumeric {
+				return fmt.Errorf("axis %q zero policy requires an effective numeric field", axis.ID)
+			}
+			if (axis.Minimum != nil || axis.Maximum != nil) && !effectiveNumeric {
+				return fmt.Errorf("axis %q domain bounds require an effective numeric field", axis.ID)
+			}
+			if (axis.Scale == VisualizationAxisScaleLinear || axis.Scale == VisualizationAxisScaleLog) && !effectiveNumeric {
+				return fmt.Errorf("axis %q %s scale requires an effective numeric field", axis.ID, axis.Scale)
+			}
 			if axis.Scale == VisualizationAxisScaleLog {
+				if !numeric {
+					return fmt.Errorf("axis %q log scale requires a numeric field", axis.ID)
+				}
 				if axis.Zero == VisualizationAxisZeroPolicyInclude {
 					return fmt.Errorf("axis %q log scale cannot include zero", axis.ID)
 				}
@@ -1074,7 +1878,69 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 					return fmt.Errorf("axis %q log scale requires positive bounds", axis.ID)
 				}
 			}
+			effectiveAxisTypes[axis.ID] = effectiveType
 		}
+	}
+	axisEffectiveType := func(axis VisualizationCartesianAxis) VisualizationAxisType {
+		if effective, ok := effectiveAxisTypes[axis]; ok {
+			return effective
+		}
+		axisField := value.X
+		if axis != VisualizationCartesianAxisX {
+			if value.Mark == VisualizationCartesianMarkCombo {
+				axisField, _ = CartesianComboAxisOwner(*value, axis)
+			} else if len(value.Y) > 0 {
+				axisField = value.Y[0]
+			}
+		}
+		field, hasField := visualizationField(axisField, schemas)
+		if hasField && (field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal) {
+			return VisualizationAxisTypeTime
+		}
+		if hasField && numericVisualizationField(field) && (pointAxisDefaults || (value.Mark != VisualizationCartesianMarkHeatmap && axis != VisualizationCartesianAxisX)) {
+			return VisualizationAxisTypeValue
+		}
+		return VisualizationAxisTypeCategory
+	}
+	validateAxisValue := func(reference VisualizationReferenceValue, axis VisualizationCartesianAxis, path string) error {
+		domain := "text"
+		switch typed := reference.Value.(type) {
+		case *NumberVisualizationReferenceValue:
+			domain = "number"
+		case *FieldVisualizationReferenceValue:
+			field, ok := visualizationField(typed.Field, schemas)
+			if !ok {
+				return fmt.Errorf("%s references an unknown visualization field %q", path, typed.Field.Field)
+			}
+			if numericVisualizationField(field) {
+				domain = "number"
+			} else if field.DataType == VisualizationDataTypeDate || field.DataType == VisualizationDataTypeTemporal {
+				domain = "time"
+			}
+		}
+		if axis != VisualizationCartesianAxisX && domain != "number" {
+			return fmt.Errorf("%s must use a numeric value on %s", path, axis)
+		}
+		if axis == VisualizationCartesianAxisX {
+			switch axisEffectiveType(axis) {
+			case VisualizationAxisTypeValue:
+				if domain != "number" {
+					return fmt.Errorf("%s must use a numeric value on x (effective type is value)", path)
+				}
+			}
+		}
+		if value.Axes != nil {
+			for _, authoredAxis := range *value.Axes {
+				if authoredAxis.ID != axis || authoredAxis.Scale != VisualizationAxisScaleLog {
+					continue
+				}
+				if number, ok := reference.Value.(*NumberVisualizationReferenceValue); ok && number != nil && number.Value <= 0 {
+					return fmt.Errorf("%s must be positive on a log axis", path)
+				}
+				break
+			}
+		}
+		return nil
 	}
 	ids := map[string]struct{}{}
 	addID := func(id string) error {
@@ -1094,6 +1960,15 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 		if axis == VisualizationCartesianAxisSecondaryY && value.Mark != VisualizationCartesianMarkCombo {
 			return fmt.Errorf("secondary_y decision context requires combo mark")
 		}
+		if value.Mark == VisualizationCartesianMarkCombo {
+			ownerAxis := axis
+			if ownerAxis == VisualizationCartesianAxisX {
+				ownerAxis = VisualizationCartesianAxisPrimaryY
+			}
+			if _, found := CartesianComboAxisOwner(*value, ownerAxis); !found {
+				return fmt.Errorf("%s decision context requires a %s combo series", axis, comboAxisOwnerName(ownerAxis))
+			}
+		}
 		return nil
 	}
 	if value.ReferenceLines != nil {
@@ -1109,6 +1984,9 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			}
 			if err := validateVisualizationReferenceValue(line.Value); err != nil {
 				return fmt.Errorf("reference line %q: %w", line.ID, err)
+			}
+			if err := validateAxisValue(line.Value, line.Axis, fmt.Sprintf("reference line %q", line.ID)); err != nil {
+				return err
 			}
 		}
 	}
@@ -1129,6 +2007,12 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			if err := validateVisualizationReferenceValue(band.To); err != nil {
 				return fmt.Errorf("reference band %q to: %w", band.ID, err)
 			}
+			if err := validateAxisValue(band.From, band.Axis, fmt.Sprintf("reference band %q from", band.ID)); err != nil {
+				return err
+			}
+			if err := validateAxisValue(band.To, band.Axis, fmt.Sprintf("reference band %q to", band.ID)); err != nil {
+				return err
+			}
 			from, fromOK := band.From.Value.(*NumberVisualizationReferenceValue)
 			to, toOK := band.To.Value.(*NumberVisualizationReferenceValue)
 			if fromOK && toOK && from.Value >= to.Value {
@@ -1144,18 +2028,32 @@ func validateCartesianDecisionContext(spec VisualizationSpec) error {
 			if annotation.Axis != VisualizationCartesianAxisX {
 				return fmt.Errorf("event annotation %q must use x axis", annotation.ID)
 			}
+			if value.Mark == VisualizationCartesianMarkCombo {
+				if _, found := CartesianComboAxisOwner(*value, VisualizationCartesianAxisPrimaryY); !found {
+					return fmt.Errorf("event annotation %q requires a primary_y combo series", annotation.ID)
+				}
+			}
 			if strings.TrimSpace(annotation.Label) == "" {
 				return fmt.Errorf("event annotation %q requires a label", annotation.ID)
 			}
 			if err := validateVisualizationReferenceValue(annotation.Value); err != nil {
 				return fmt.Errorf("event annotation %q: %w", annotation.ID, err)
 			}
+			if err := validateAxisValue(annotation.Value, annotation.Axis, fmt.Sprintf("event annotation %q", annotation.ID)); err != nil {
+				return err
+			}
 		}
+	}
+	if err := validateCartesianComboMetricCompleteness(*value); err != nil {
+		return err
 	}
 	return nil
 }
 
 func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error {
+	if err := validateCartesianComboSeries(spec); err != nil {
+		return err
+	}
 	stacking := VisualizationStackingModeNone
 	if spec.Presentation.Stacked {
 		stacking = VisualizationStackingModeNormal
@@ -1175,6 +2073,9 @@ func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error 
 	default:
 		return fmt.Errorf("unsupported stacking mode %q", stacking)
 	}
+	if stacking == VisualizationStackingModePercent && spec.Presentation.DisplayUnits != nil {
+		return fmt.Errorf("percent stacking cannot use presentation display units because the renderer owns the percent formatter")
+	}
 	if stacking == VisualizationStackingModePercent && spec.Series == nil && len(spec.Y) < 2 {
 		return fmt.Errorf("percent stacking requires multiple series")
 	}
@@ -1188,30 +2089,128 @@ func validateCartesianSeriesPresentation(spec CartesianVisualizationSpec) error 
 	if spec.Presentation.SeriesIntent == nil {
 		return nil
 	}
-	if spec.Series == nil && len(spec.Y) < 2 {
-		return fmt.Errorf("series intent requires multiple series")
+	if len(*spec.Presentation.SeriesIntent) == 0 {
+		return fmt.Errorf("series intent must contain at least one intent")
 	}
 	values := map[string]struct{}{}
 	orders := map[int32]struct{}{}
-	for _, intent := range *spec.Presentation.SeriesIntent {
-		if strings.TrimSpace(intent.Value) == "" {
-			return fmt.Errorf("series intent value is required")
+	for index, intent := range *spec.Presentation.SeriesIntent {
+		rawValue := intent.Value
+		value := strings.TrimSpace(rawValue)
+		if rawValue != value {
+			return fmt.Errorf("series intent[%d].value %q must not contain surrounding whitespace", index, rawValue)
 		}
-		if _, exists := values[intent.Value]; exists {
-			return fmt.Errorf("duplicate series intent %q", intent.Value)
+		if value == "" {
+			return fmt.Errorf("series intent[%d].value is required", index)
 		}
-		values[intent.Value] = struct{}{}
+		if _, exists := values[value]; exists {
+			return fmt.Errorf("duplicate series intent %q at index %d", value, index)
+		}
+		values[value] = struct{}{}
 		if intent.Order != nil {
+			if spec.Series == nil && len(spec.Y) == 1 {
+				return fmt.Errorf("series intent[%d].order cannot be used with a single metric", index)
+			}
 			if *intent.Order < 0 {
-				return fmt.Errorf("series intent %q has negative order", intent.Value)
+				return fmt.Errorf("series intent[%d] %q has negative order %d", index, value, *intent.Order)
 			}
 			if _, exists := orders[*intent.Order]; exists {
-				return fmt.Errorf("duplicate series order %d", *intent.Order)
+				return fmt.Errorf("duplicate series order %d at index %d", *intent.Order, index)
 			}
 			orders[*intent.Order] = struct{}{}
 		}
 		if intent.Color != nil && !validVisualizationColorIntent(*intent.Color) {
-			return fmt.Errorf("series intent %q has unsupported color %q", intent.Value, *intent.Color)
+			return fmt.Errorf("series intent[%d].color %q is unsupported", index, *intent.Color)
+		}
+		if spec.Series == nil {
+			found := false
+			for _, field := range spec.Y {
+				if strings.TrimSpace(field.Field) == value {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("series intent %q is not a compiled metric field", value)
+			}
+		}
+	}
+	return nil
+}
+
+// validateCartesianComboSeries keeps combo policies closed at the IR boundary
+// even when callers bypass Dashboard authoring. Combo marks are measure-only:
+// their policies must configure compiled Y metric fields, not a dynamic
+// category-series binding.
+func validateCartesianComboSeries(spec CartesianVisualizationSpec) error {
+	if spec.Mark == VisualizationCartesianMarkCombo && spec.Series != nil {
+		return fmt.Errorf("combo.series cannot use a dynamic category series; configure compiled metric aliases in combo series")
+	}
+	if spec.Presentation.ComboSeries == nil {
+		return nil
+	}
+	if spec.Mark != VisualizationCartesianMarkCombo {
+		return fmt.Errorf("combo series presentation requires combo mark")
+	}
+	if len(*spec.Presentation.ComboSeries) == 0 {
+		return fmt.Errorf("combo series presentation requires at least one series")
+	}
+	seen := make(map[string]int, len(*spec.Presentation.ComboSeries))
+	allowedY := make(map[string]struct{}, len(spec.Y))
+	for _, field := range spec.Y {
+		allowedY[field.Field] = struct{}{}
+	}
+	hasBar, hasColumn := false, false
+	for index, series := range *spec.Presentation.ComboSeries {
+		rawValue := series.SeriesValue
+		value := strings.TrimSpace(rawValue)
+		if rawValue != value {
+			return fmt.Errorf("combo series[%d].seriesValue %q must not contain surrounding whitespace", index, rawValue)
+		}
+		if value == "" {
+			return fmt.Errorf("combo series %d requires a series value", index)
+		}
+		if previous, exists := seen[value]; exists {
+			return fmt.Errorf("duplicate combo series value %q at series %d (already configured at series %d)", value, index, previous)
+		}
+		seen[value] = index
+		switch series.Mark {
+		case "", VisualizationCartesianMarkLine, VisualizationCartesianMarkArea:
+		case VisualizationCartesianMarkBar:
+			hasBar = true
+		case VisualizationCartesianMarkColumn:
+			hasColumn = true
+		default:
+			return fmt.Errorf("combo series %q has unsupported mark %q", value, series.Mark)
+		}
+		switch series.Axis {
+		case VisualizationAxisPrimary, VisualizationAxisSecondary:
+		default:
+			return fmt.Errorf("combo series %q has unsupported axis %q", value, series.Axis)
+		}
+		if spec.Series == nil {
+			if _, exists := allowedY[value]; !exists {
+				return fmt.Errorf("combo series %q is not a compiled metric field", value)
+			}
+		}
+	}
+	if hasBar && hasColumn {
+		return fmt.Errorf("combo series cannot mix bar and column marks because they require different orientations")
+	}
+	return nil
+}
+
+func validateCartesianComboMetricCompleteness(spec CartesianVisualizationSpec) error {
+	if spec.Mark != VisualizationCartesianMarkCombo || spec.Series != nil || spec.Presentation.ComboSeries == nil {
+		return nil
+	}
+	configured := make(map[string]struct{}, len(*spec.Presentation.ComboSeries))
+	for _, series := range *spec.Presentation.ComboSeries {
+		configured[strings.TrimSpace(series.SeriesValue)] = struct{}{}
+	}
+	for _, field := range spec.Y {
+		if _, ok := configured[strings.TrimSpace(field.Field)]; !ok {
+			return fmt.Errorf("combo series must configure every compiled metric exactly once (missing %q)", field.Field)
 		}
 	}
 	return nil
@@ -1239,6 +2238,46 @@ func cartesianMarkSupportsReferences(mark VisualizationCartesianMark) bool {
 	default:
 		return false
 	}
+}
+
+// CartesianComboAxisOwner returns the first result field that actually owns a
+// combo value axis in canonical Y order. Combo series policies may reorder the
+// ownership relative to Y[0], and a category-series combo owns the value axis
+// when at least one configured category is assigned to it.
+func CartesianComboAxisOwner(spec CartesianVisualizationSpec, axis VisualizationCartesianAxis) (VisualizationFieldRef, bool) {
+	if spec.Mark != VisualizationCartesianMarkCombo || axis == VisualizationCartesianAxisX || len(spec.Y) == 0 {
+		return VisualizationFieldRef{}, false
+	}
+	if spec.Presentation.ComboSeries == nil {
+		return spec.Y[0], axis == VisualizationCartesianAxisPrimaryY
+	}
+	wanted := VisualizationAxisPrimary
+	if axis == VisualizationCartesianAxisSecondaryY {
+		wanted = VisualizationAxisSecondary
+	}
+	if spec.Series != nil {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted {
+				return spec.Y[0], true
+			}
+		}
+		return VisualizationFieldRef{}, false
+	}
+	for _, candidate := range spec.Y {
+		for _, series := range *spec.Presentation.ComboSeries {
+			if series.Axis == wanted && series.SeriesValue == candidate.Field {
+				return candidate, true
+			}
+		}
+	}
+	return VisualizationFieldRef{}, false
+}
+
+func comboAxisOwnerName(axis VisualizationCartesianAxis) string {
+	if axis == VisualizationCartesianAxisSecondaryY {
+		return "secondary_y"
+	}
+	return "primary_y"
 }
 
 func validateVisualizationReferenceValue(value VisualizationReferenceValue) error {
@@ -1279,6 +2318,9 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 	if !ok {
 		return nil
 	}
+	if err := validateGeographicCamera(value.Presentation.Camera); err != nil {
+		return err
+	}
 	if len(value.Layers) == 0 {
 		return fmt.Errorf("geographic visualization requires at least one layer")
 	}
@@ -1311,7 +2353,10 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 			if typed.Size.MinimumRadius < 0 || typed.Size.MaximumRadius < typed.Size.MinimumRadius {
 				return fmt.Errorf("point layer %q has invalid size scale", base.ID)
 			}
-			if typed.Cluster.Radius <= 0 || typed.Cluster.MinimumPoints < 2 {
+			if typed.Cluster.Radius < 1 || typed.Cluster.Radius > 512 {
+				return fmt.Errorf("point layer %q cluster.radius must be between 1 and 512 CSS pixels", base.ID)
+			}
+			if typed.Cluster.MinimumPoints < 2 {
 				return fmt.Errorf("point layer %q has invalid cluster configuration", base.ID)
 			}
 		case *VisualizationHeatLayer, *VisualizationDensityLayer, *VisualizationPathLayer:
@@ -1324,6 +2369,66 @@ func validateGeographicSpecification(spec VisualizationSpec) error {
 		asset := value.Presentation.Basemap
 		if asset.ID == "" || asset.StyleURL == "" || asset.ArchiveURL == "" || len(asset.StyleDigest) != 71 || len(asset.ArchiveDigest) != 71 || asset.Attribution == "" {
 			return fmt.Errorf("geographic basemap has incomplete provenance")
+		}
+	}
+	return nil
+}
+
+func validateGeographicCamera(camera VisualizationMapCamera) error {
+	switch camera.Mode {
+	case VisualizationMapCameraModeFitData, VisualizationMapCameraModeFixed, VisualizationMapCameraModePreserve:
+	default:
+		return fmt.Errorf("presentation.camera.mode must be fit_data, fixed, or preserve")
+	}
+	if camera.Center != nil {
+		if len(*camera.Center) != 2 {
+			return fmt.Errorf("presentation.camera.center must contain exactly two coordinates")
+		}
+		for index, coordinate := range *camera.Center {
+			if !finite(coordinate) {
+				return fmt.Errorf("presentation.camera.center[%d] must be finite", index)
+			}
+			if index == 0 && (coordinate < -180 || coordinate > 180) {
+				return fmt.Errorf("presentation.camera.center[0] must be between -180 and 180")
+			}
+			if index == 1 && (coordinate < -90 || coordinate > 90) {
+				return fmt.Errorf("presentation.camera.center[1] must be between -90 and 90")
+			}
+		}
+	}
+	if camera.Zoom != nil && !finite(*camera.Zoom) {
+		return fmt.Errorf("presentation.camera.zoom must be finite")
+	}
+	if camera.Zoom != nil && (*camera.Zoom < 0 || *camera.Zoom > 24) {
+		return fmt.Errorf("presentation.camera.zoom must be between 0 and 24")
+	}
+	if camera.Padding < 0 {
+		return fmt.Errorf("presentation.camera.padding must be non-negative")
+	}
+	if !finite(camera.MinimumZoom) {
+		return fmt.Errorf("presentation.camera.minimumZoom must be finite")
+	}
+	if camera.MinimumZoom < 0 || camera.MinimumZoom > 24 {
+		return fmt.Errorf("presentation.camera.minimumZoom must be between 0 and 24")
+	}
+	if !finite(camera.MaximumZoom) {
+		return fmt.Errorf("presentation.camera.maximumZoom must be finite")
+	}
+	if camera.MaximumZoom < 0 || camera.MaximumZoom > 24 {
+		return fmt.Errorf("presentation.camera.maximumZoom must be between 0 and 24")
+	}
+	if camera.MinimumZoom > camera.MaximumZoom {
+		return fmt.Errorf("presentation.camera.minimumZoom must be less than or equal to maximumZoom")
+	}
+	if camera.Mode == VisualizationMapCameraModeFixed {
+		if camera.Center == nil {
+			return fmt.Errorf("presentation.camera.center is required for fixed camera")
+		}
+		if camera.Zoom == nil {
+			return fmt.Errorf("presentation.camera.zoom is required for fixed camera")
+		}
+		if *camera.Zoom < camera.MinimumZoom || *camera.Zoom > camera.MaximumZoom {
+			return fmt.Errorf("presentation.camera.zoom must be within presentation.camera.minimumZoom and presentation.camera.maximumZoom")
 		}
 	}
 	return nil

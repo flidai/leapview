@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json",
+  "$defs": {
+    "LeapViewInvocationRunFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "leapViewRunId": { "type": "string", "minLength": 1 },
+            "invocationSource": {
+              "type": "string",
+              "enum": ["manual", "schedule", "retry", "backfill", "external"]
+            },
+            "matchingScheduleIds": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            },
+            "startingDeadlineSeconds": { "type": "integer", "minimum": 0 },
+            "concurrencyPolicy": {
+              "type": "string",
+              "enum": ["Forbid", "Replace"]
+            }
+          },
+          "required": ["leapViewRunId"]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "leapView_invocation": {
+      "$ref": "#/$defs/LeapViewInvocationRunFacet"
+    }
+  }
+}

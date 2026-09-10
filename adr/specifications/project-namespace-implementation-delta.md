@@ -112,11 +112,11 @@ binding service, lifecycle, Project context, or registry framework.
 
 | Requirement | Disposition | Current evidence or conflict | Gap owner |
 | --- | --- | --- | --- |
-| SEM-01 | Partial | SemanticModel datasets resolve through the candidate-local Model map, and unknown/wrong-kind references fail in [`internal/project/compiler/project_flat_test.go`](../../internal/project/compiler/project_flat_test.go). There is no explicit foreign-Project qualifier rejection corpus. | [FAI-675](https://linear.app/flid/issue/FAI-675) |
+| SEM-01 | Conforming | SemanticModel datasets resolve only through the candidate-local Model map, while `TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically` and `TestSourceBundleRejectsMissingAndForeignSemanticModelReferences` reject missing and foreign-qualified references during compilation and bundle admission. | — |
 | SEM-02 | Conforming | Compiled models are stored inside one graph/artifact, and active graph readers pin one exact runtime lease in [`internal/project/module/active_graph_test.go`](../../internal/project/module/active_graph_test.go); there is no resolver path to another active catalog. | — |
-| SEM-03 | Partial | Source-to-Model-to-SemanticModel is the ordinary compiler path and no dbt runtime kind exists, but maintained evidence that dbt provenance cannot affect semantic resolution is absent. FAI-678 later supplies the adoption fixture using FAI-675's closed resolver contract. | [FAI-675](https://linear.app/flid/issue/FAI-675) |
+| SEM-03 | Conforming | Source-to-Model-to-SemanticModel is the ordinary compiler path and no dbt runtime kind exists. `TestResourceResolverDoesNotResolveThroughProvenance` proves provenance cannot become a semantic resolver alias; FAI-678 separately owns the dbt adoption fixture. | — |
 | SEM-04 | Missing | ADR-0019 documents the upstream dbt boundary, but no fixture proves upstream dependencies become consumer-owned ordinary Sources/Models before LeapView compilation. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
-| SEM-05 | Partial | The current singleton runtime cannot resolve across active Projects, but no focused topology/foreign-reference test preserves this rule independently of future hosting changes. | [FAI-675](https://linear.app/flid/issue/FAI-675) |
+| SEM-05 | Conforming | The graph is a closed project-local topology: `TestSourceBundleRejectsIncompleteSemanticModelClosure` requires each semantic dataset dependency and its exact edge, and the foreign-reference corpus rejects resolution outside that topology. | — |
 
 ### Isolation boundary
 
@@ -130,8 +130,8 @@ binding service, lifecycle, Project context, or registry framework.
 
 | Requirement | Disposition | Current evidence or conflict | Gap owner |
 | --- | --- | --- | --- |
-| XPR-01 | Partial | Graph edges must resolve locally and compiler diagnostics reject unknown Models, but there is no explicit foreign-Project syntax and nondisclosure rejection corpus. | [FAI-675](https://linear.app/flid/issue/FAI-675) |
-| XPR-02 | Partial | The generated Source location union contains ordinary path/object variants and no `projectOutput`/import-lock variant. A maintained negative schema/compile fixture is still required. | [FAI-675](https://linear.app/flid/issue/FAI-675) |
+| XPR-01 | Conforming | `TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically` rejects a foreign-qualified Model reference through the same closed local resolver on every run without disclosing a matching local resource identity. | — |
+| XPR-02 | Conforming | The generated Source location union contains only ordinary path/relation variants, and `TestTypedDataResourceLoweringRejectsProjectOutputLocation` preserves rejection of a native `projectOutput` selector without disclosing its Project or resource values. | — |
 | XPR-03 | Conforming | `TestCompileProjectGraphResolvesStableIDsAndProvenance` in [`internal/project/compiler/project_flat_test.go`](../../internal/project/compiler/project_flat_test.go) compiles an ordinary Connection-backed Source and closes its Source-to-Model-to-SemanticModel edges inside one graph. | — |
 | XPR-04 | Conforming | `TestActiveServingStateGraphReaderPinsExactRuntimeGeneration` and `TestActiveServingStateGraphReaderRejectsScopeMismatch` in [`internal/project/module/active_graph_test.go`](../../internal/project/module/active_graph_test.go) keep serving authority inside one exact leased Project generation. | — |
 | XPR-05 | Conforming | ADR-0018's maintained [cross-project boundary](../0018-retain-project-as-the-durable-deployment-namespace.md#cross-project-boundary) explicitly requires a separate future ADR and enumerates its minimum semantics; the accepted v1 profile therefore supplies no native import authority. | — |

@@ -428,7 +428,18 @@ func renderSpatialBucketExpr(expr, field string, bucket *SpatialBucket) string {
 	if bucket == nil {
 		return expr
 	}
-	globalCells := (1 << bucket.Zoom) * (256 / bucket.CellPixels)
+	cellPixels := bucket.CellPixels
+	if bucket.ClusterRadius > 0 {
+		cellPixels = int(bucket.ClusterRadius)
+	}
+	if cellPixels <= 0 {
+		return expr
+	}
+	cellsPerTile := 256 / cellPixels
+	if cellsPerTile < 1 {
+		cellsPerTile = 1
+	}
+	globalCells := (1 << bucket.Zoom) * cellsPerTile
 	if globalCells <= 0 {
 		return expr
 	}

@@ -6466,7 +6466,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -6982,7 +6982,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -7020,6 +7019,21 @@
                           "additionalProperties": false,
                           "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
                           "properties": {
+                            "dateUnit": {
+                              "description": "Semantic date granularity for labels on a temporal axis.",
+                              "enum": [
+                                "automatic",
+                                "year",
+                                "quarter",
+                                "month",
+                                "week",
+                                "day",
+                                "hour",
+                                "minute",
+                                "second"
+                              ],
+                              "type": "string"
+                            },
                             "displayUnits": {
                               "enum": [
                                 "auto",
@@ -7031,11 +7045,37 @@
                               ],
                               "type": "string"
                             },
+                            "grid": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "id": {
                               "enum": [
                                 "x",
                                 "primary_y",
                                 "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "inversion": {
+                              "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+                              "enum": [
+                                "automatic",
+                                "normal",
+                                "inverted"
+                              ],
+                              "type": "string"
+                            },
+                            "labelRotation": {
+                              "enum": [
+                                "automatic",
+                                "horizontal",
+                                "diagonal",
+                                "vertical"
                               ],
                               "type": "string"
                             },
@@ -7062,7 +7102,25 @@
                               ],
                               "type": "string"
                             },
+                            "ticks": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
+                              "enum": [
+                                "automatic",
+                                "category",
+                                "value",
+                                "time"
+                              ],
                               "type": "string"
                             },
                             "unit": {
@@ -7265,6 +7323,25 @@
                         },
                         "type": "array"
                       },
+                      "gainColor": {
+                        "enum": [
+                          "accent",
+                          "neutral",
+                          "ink",
+                          "success",
+                          "warning",
+                          "danger",
+                          "data_1",
+                          "data_2",
+                          "data_3",
+                          "data_4",
+                          "data_5",
+                          "data_6",
+                          "data_7",
+                          "data_8"
+                        ],
+                        "type": "string"
+                      },
                       "labelPosition": {
                         "enum": [
                           "automatic",
@@ -7319,6 +7396,47 @@
                           "right",
                           "bottom",
                           "left"
+                        ],
+                        "type": "string"
+                      },
+                      "legendItems": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "One canonical legend value. Array order is the display order.",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "legendTitle": {
+                        "type": "string"
+                      },
+                      "lossColor": {
+                        "enum": [
+                          "accent",
+                          "neutral",
+                          "ink",
+                          "success",
+                          "warning",
+                          "danger",
+                          "data_1",
+                          "data_2",
+                          "data_3",
+                          "data_4",
+                          "data_5",
+                          "data_6",
+                          "data_7",
+                          "data_8"
                         ],
                         "type": "string"
                       },
@@ -7806,6 +7924,45 @@
                         },
                         "type": "array"
                       },
+                      "seriesIntent": {
+                        "description": "Stable per-series color and order policy. Category values may be data-dependent for non-combo Cartesian series.",
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A stable renderer-neutral policy for one named chart series.",
+                          "properties": {
+                            "color": {
+                              "enum": [
+                                "accent",
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger",
+                                "data_1",
+                                "data_2",
+                                "data_3",
+                                "data_4",
+                                "data_5",
+                                "data_6",
+                                "data_7",
+                                "data_8"
+                              ],
+                              "type": "string"
+                            },
+                            "order": {
+                              "type": "integer"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "showSymbols": {
                         "type": "boolean"
                       },
@@ -7827,6 +7984,246 @@
                       "symbolSize": {
                         "type": "number"
                       },
+                      "tooltip": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                              "properties": {
+                                "field": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
+                                "format": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "number"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "currency": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "currency"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "currency",
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "percent"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "compact"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "duration"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "unit"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "dateStyle": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "temporal"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "timeStyle": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      },
                       "type": {
                         "enum": [
                           "cartesian"
@@ -7846,7 +8243,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -8362,7 +8759,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -8401,6 +8797,21 @@
                           "additionalProperties": false,
                           "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
                           "properties": {
+                            "dateUnit": {
+                              "description": "Semantic date granularity for labels on a temporal axis.",
+                              "enum": [
+                                "automatic",
+                                "year",
+                                "quarter",
+                                "month",
+                                "week",
+                                "day",
+                                "hour",
+                                "minute",
+                                "second"
+                              ],
+                              "type": "string"
+                            },
                             "displayUnits": {
                               "enum": [
                                 "auto",
@@ -8412,11 +8823,37 @@
                               ],
                               "type": "string"
                             },
+                            "grid": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "id": {
                               "enum": [
                                 "x",
                                 "primary_y",
                                 "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "inversion": {
+                              "description": "Renderer-neutral axis direction. Automatic keeps the conventional direction.",
+                              "enum": [
+                                "automatic",
+                                "normal",
+                                "inverted"
+                              ],
+                              "type": "string"
+                            },
+                            "labelRotation": {
+                              "enum": [
+                                "automatic",
+                                "horizontal",
+                                "diagonal",
+                                "vertical"
                               ],
                               "type": "string"
                             },
@@ -8443,7 +8880,25 @@
                               ],
                               "type": "string"
                             },
+                            "ticks": {
+                              "enum": [
+                                "automatic",
+                                "visible",
+                                "hidden"
+                              ],
+                              "type": "string"
+                            },
                             "title": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "description": "Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes.",
+                              "enum": [
+                                "automatic",
+                                "category",
+                                "value",
+                                "time"
+                              ],
                               "type": "string"
                             },
                             "unit": {
@@ -8499,9 +8954,6 @@
                           },
                           "minimum": {
                             "type": "number"
-                          },
-                          "scheme": {
-                            "type": "string"
                           }
                         },
                         "required": [
@@ -8732,6 +9184,28 @@
                           "bottom",
                           "left"
                         ],
+                        "type": "string"
+                      },
+                      "legendItems": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "One canonical legend value. Array order is the display order.",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "legendTitle": {
                         "type": "string"
                       },
                       "overplot": {
@@ -9203,11 +9677,6 @@
                         },
                         "type": "array"
                       },
-                      "series": {
-                        "minLength": 1,
-                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                        "type": "string"
-                      },
                       "size": {
                         "minLength": 1,
                         "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -9238,9 +9707,241 @@
                       },
                       "tooltip": {
                         "items": {
-                          "minLength": 1,
-                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                          "type": "string"
+                          "oneOf": [
+                            {
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                              "properties": {
+                                "field": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
+                                "format": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "number"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "currency": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "currency"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "currency",
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "percent"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "compact"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "duration"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "unit"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "dateStyle": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "temporal"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "timeStyle": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "type": "object"
+                            }
+                          ]
                         },
                         "type": "array"
                       },
@@ -9276,7 +9977,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -9792,7 +10493,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -9907,6 +10607,28 @@
                         ],
                         "type": "string"
                       },
+                      "legendItems": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "One canonical legend value. Array order is the display order.",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "legendTitle": {
+                        "type": "string"
+                      },
                       "orientation": {
                         "enum": [
                           "horizontal",
@@ -9927,6 +10649,246 @@
                         ],
                         "type": "string"
                       },
+                      "tooltip": {
+                        "items": {
+                          "oneOf": [
+                            {
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                              "type": "string"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                              "properties": {
+                                "field": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
+                                "format": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "number"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "currency": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "currency"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "currency",
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "percent"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        },
+                                        "minimumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "compact"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "maximumFractionDigits": {
+                                          "type": "integer"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "kind": {
+                                          "enum": [
+                                            "duration"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "unit": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "unit"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "allOf": [
+                                        {
+                                          "properties": {
+                                            "kind": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ],
+                                      "properties": {
+                                        "dateStyle": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "enum": [
+                                            "temporal"
+                                          ],
+                                          "type": "string"
+                                        },
+                                        "timeStyle": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        "type": "array"
+                      },
                       "type": {
                         "enum": [
                           "proportional"
@@ -9946,7 +10908,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -10462,7 +11424,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -10566,6 +11527,28 @@
                         ],
                         "type": "string"
                       },
+                      "legendItems": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "One canonical legend value. Array order is the display order.",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "legendTitle": {
+                        "type": "string"
+                      },
                       "nodeGap": {
                         "type": "number"
                       },
@@ -10598,7 +11581,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -11114,7 +12097,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -11209,6 +12191,28 @@
                         ],
                         "type": "string"
                       },
+                      "legendItems": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "One canonical legend value. Array order is the display order.",
+                          "properties": {
+                            "label": {
+                              "type": "string"
+                            },
+                            "value": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "legendTitle": {
+                        "type": "string"
+                      },
                       "maximum": {
                         "type": "number"
                       },
@@ -11269,7 +12273,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -11785,7 +12789,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -11876,44 +12879,6 @@
                         ],
                         "type": "string"
                       },
-                      "labels": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "density": {
-                            "enum": [
-                              "hidden",
-                              "automatic",
-                              "dense",
-                              "always"
-                            ],
-                            "type": "string"
-                          },
-                          "maxCharacters": {
-                            "type": "integer"
-                          },
-                          "minimumSpacing": {
-                            "type": "integer"
-                          },
-                          "priority": {
-                            "items": {
-                              "enum": [
-                                "selected",
-                                "anomaly",
-                                "threshold"
-                              ],
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "tooltipFallback": {
-                            "type": "boolean"
-                          }
-                        },
-                        "required": [
-                          "density"
-                        ],
-                        "type": "object"
-                      },
                       "layers": {
                         "items": {
                           "oneOf": [
@@ -11928,11 +12893,6 @@
                                           "maxLength": 128,
                                           "minLength": 1,
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-                                          "type": "string"
-                                        },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                           "type": "string"
                                         },
                                         "maximumZoom": {
@@ -11950,9 +12910,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -11993,6 +13185,9 @@
                                       "type": "integer"
                                     },
                                     "radius": {
+                                      "description": "Approximate CSS-pixel clustering target for tiled maps. The server uses a\nglobally aligned grid with max(1, floor(256 / radius)) cells per tile;\nradii 129–512 therefore share one cell per tile. This does not promise\npixel-identical cluster membership between inline and tiled data.",
+                                      "maximum": 512,
+                                      "minimum": 1,
                                       "type": "integer"
                                     },
                                     "showCount": {
@@ -12037,6 +13232,11 @@
                                   "enum": [
                                     "point"
                                   ],
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
                                   "type": "string"
                                 },
                                 "latitude": {
@@ -12111,11 +13311,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12131,9 +13326,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -12207,6 +13634,11 @@
                                   ],
                                   "type": "string"
                                 },
+                                "label": {
+                                  "minLength": 1,
+                                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                  "type": "string"
+                                },
                                 "opacity": {
                                   "type": "number"
                                 },
@@ -12251,11 +13683,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12271,9 +13698,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -12375,11 +14034,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12395,9 +14049,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -12509,11 +14395,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12529,9 +14410,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -12643,11 +14756,6 @@
                                           "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
                                           "type": "string"
                                         },
-                                        "label": {
-                                          "minLength": 1,
-                                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                          "type": "string"
-                                        },
                                         "maximumZoom": {
                                           "type": "number"
                                         },
@@ -12663,9 +14771,241 @@
                                         },
                                         "tooltip": {
                                           "items": {
-                                            "minLength": 1,
-                                            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-                                            "type": "string"
+                                            "oneOf": [
+                                              {
+                                                "minLength": 1,
+                                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                "type": "string"
+                                              },
+                                              {
+                                                "additionalProperties": false,
+                                                "description": "One ordered tooltip field projection. Compact string entries remain supported.",
+                                                "properties": {
+                                                  "field": {
+                                                    "minLength": 1,
+                                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "format": {
+                                                    "oneOf": [
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Numeric display format. With no fraction bounds, values use 0..3 digits.\nA one-sided bound preserves that default on the unconstrained side unless\nit would make the range invalid: a maximum below the default minimum lowers\nthe minimum, and a minimum above the default maximum raises the maximum.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "number"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "currency": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "currency"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "currency",
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "description": "Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule.",
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "percent"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          },
+                                                          "minimumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "compact"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "maximumFractionDigits": {
+                                                            "type": "integer"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "kind": {
+                                                            "enum": [
+                                                              "duration"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "unit": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind",
+                                                          "unit"
+                                                        ],
+                                                        "type": "object"
+                                                      },
+                                                      {
+                                                        "additionalProperties": false,
+                                                        "allOf": [
+                                                          {
+                                                            "properties": {
+                                                              "kind": {
+                                                                "type": "string"
+                                                              }
+                                                            },
+                                                            "required": [
+                                                              "kind"
+                                                            ],
+                                                            "type": "object"
+                                                          }
+                                                        ],
+                                                        "properties": {
+                                                          "dateStyle": {
+                                                            "type": "string"
+                                                          },
+                                                          "kind": {
+                                                            "enum": [
+                                                              "temporal"
+                                                            ],
+                                                            "type": "string"
+                                                          },
+                                                          "timeStyle": {
+                                                            "type": "string"
+                                                          }
+                                                        },
+                                                        "required": [
+                                                          "kind"
+                                                        ],
+                                                        "type": "object"
+                                                      }
+                                                    ]
+                                                  },
+                                                  "label": {
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "field"
+                                                ],
+                                                "type": "object"
+                                              }
+                                            ]
                                           },
                                           "type": "array"
                                         }
@@ -12739,9 +15079,6 @@
                                 "line": {
                                   "additionalProperties": false,
                                   "properties": {
-                                    "curvature": {
-                                      "type": "number"
-                                    },
                                     "width": {
                                       "type": "number"
                                     }
@@ -12830,7 +15167,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -13346,7 +15683,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -13410,7 +15746,7 @@
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
                           "axisVisible": {
-                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "description": "Whether axes are rendered for Cartesian marks and point (scatter)\nvisuals. Omit this field to use the renderer default; an authored value\non another presentation family is invalid rather than silently ignored.",
                             "type": "boolean"
                           },
                           "conditionalFormatting": {
@@ -13926,7 +16262,6 @@
                                 "target": {
                                   "enum": [
                                     "mark_fill",
-                                    "mark_stroke",
                                     "series_color",
                                     "label_foreground",
                                     "visual_background",
@@ -14104,32 +16439,6 @@
                           "required": [
                             "label",
                             "tone"
-                          ],
-                          "type": "object"
-                        },
-                        "type": "array"
-                      },
-                      "thresholds": {
-                        "items": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "tone": {
-                              "enum": [
-                                "neutral",
-                                "ink",
-                                "success",
-                                "warning",
-                                "danger"
-                              ],
-                              "type": "string"
-                            },
-                            "value": {
-                              "type": "number"
-                            }
-                          },
-                          "required": [
-                            "tone",
-                            "value"
                           ],
                           "type": "object"
                         },

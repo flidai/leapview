@@ -28,7 +28,7 @@ Headless operations cover semantic model and dataset discovery, field listing, r
 
 ## Dashboard presentation
 
-Dashboards support report pages, deterministic grid placement, date-range, multi-select, and text filters, KPI cards, renderer-neutral chart visuals, data tables, matrices, pivots, conditional formatting, and semantic point/row selections.
+Dashboards support report pages, deterministic grid placement, date-range, multi-select, and text filters, KPI cards, renderer-neutral chart visuals, data tables, matrices, pivots, conditional formatting, semantic point/row selections, and authored tooltip/legend display metadata. Tooltip rows preserve authored order and formatting; supported legends preserve canonical selection identities while allowing ordered display labels.
 
 The [visual catalog](/docs/visuals/overview) lists every documented registered chart type and renders a live example. Dashboard configuration lists accepted page component kinds and query shapes.
 

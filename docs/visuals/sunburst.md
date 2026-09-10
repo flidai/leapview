@@ -42,7 +42,7 @@ visuals:
 
 ## Three-level hierarchy
 
-Add a third ordered dimension for deeper nesting, set `initialDepth` to control the first visible level, and enable roaming for exploration.
+Add a third ordered dimension for deeper nesting and enable roaming for drill-down exploration.
 
 {{< visual id="category_state_status_sunburst" >}}
 
@@ -53,7 +53,6 @@ visuals:
     type: sunburst
     presentation:
       type: hierarchy
-      initialDepth: 2
       roam: true
     query:
       type: aggregate

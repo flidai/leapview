@@ -2,7 +2,20 @@
 
 Use a candlestick chart to compare open, close, low, and high metrics across an ordered category.
 
+Candlestick legends support position and an optional `legendTitle`. Per-item
+`legendItems` overrides are not supported because the renderer exposes one
+visual-title series rather than independently named metric aliases.
+
 Every preview on this page is generated from the YAML shown below it using a fixed documentation dataset.
+
+Candles use the four authored metrics in query order as open, close, low, and
+high. Set `presentation.gainColor` and `presentation.lossColor` to a supported
+color intent when the theme defaults are not appropriate. Omitted colors resolve
+to theme `success` and `danger`; equal open/close values always use the theme's
+neutral/muted color, preserving a truthful flat-candle cue in both light and
+dark themes and exports. Source row identities remain attached to each candle.
+Candle data labels and `labelPosition` are not supported; use the ordered
+dimension and tooltip to identify each OHLC row.
 
 ## Market OHLC
 
@@ -31,6 +44,8 @@ visuals:
       limit: 12
     presentation:
       type: cartesian
+      gainColor: data_2
+      lossColor: warning
 ```
 
 ## Revenue range

@@ -135,6 +135,26 @@ func TestConvertRejectsUnboundPhysicalFieldsAndUnrepresentableFormats(t *testing
 	}
 }
 
+func TestConvertRejectsRemovedKPIThresholdFormatting(t *testing.T) {
+	thresholds := []exploration.ExplorationVisualizationThreshold{{Value: 10, Tone: exploration.ExplorationVisualizationToneWarning}}
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		ModelID:       "semantic:sales",
+		Metrics:       []exploration.ExplorationMetricRef{{Field: "revenue"}},
+		Limit:         10,
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.KPIExplorationVisualization{
+			Kind:  "kpi",
+			Value: exploration.ExplorationVisualizationFieldRef{Field: "revenue"},
+			Presentation: &exploration.ExplorationKPIPresentation{
+				Thresholds: &thresholds,
+			},
+		}},
+	}
+	if _, err := Convert(spec, Options{}); err == nil || !strings.Contains(err.Error(), "KPI thresholds") {
+		t.Fatalf("removed KPI threshold error = %v", err)
+	}
+}
+
 func TestConvertPivotAppliesTimeToExistingRowAndDateRangeFilter(t *testing.T) {
 	rowAlias := "month"
 	lower := "2026-01-01"

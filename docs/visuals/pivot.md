@@ -23,3 +23,6 @@ visuals:
       showHeader: true
       striped: false
 ```
+
+Conditional-format targets may name the visible row field or metric alias.
+Pivot column dimensions generate headers and are not visible target columns.

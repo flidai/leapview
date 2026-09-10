@@ -20,14 +20,18 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 		{ID: "connection:sample", Kind: projectgraph.KindConnection, Name: "sample"},
 		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "semantic-model:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
-	}, nil)
+	}, []projectgraph.Edge{{From: "semantic-model:sales", To: "model:orders"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest := projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{"connection:sample": {Kind: "managed"}},
 		SemanticModels: map[string]*semanticmodel.Model{
-			"semantic-model:sales": {Name: "sales", Connections: map[string]semanticmodel.Connection{"sample": {Kind: "managed"}}},
+			"semantic-model:sales": {
+				Name:        "sales",
+				Connections: map[string]semanticmodel.Connection{"sample": {Kind: "managed"}},
+				Datasets:    map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+			},
 		},
 		Models: map[string]semanticmodel.Table{"model:orders": {
 			ModelName: "orders",

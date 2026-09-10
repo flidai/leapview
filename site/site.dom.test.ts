@@ -7,6 +7,7 @@ const baseURL = `http://127.0.0.1:${sitePort}`
 let browser: Browser
 let siteServer: SiteTestServer | undefined
 const siteReadyTimeout = 60_000
+const lineExampleIDs = ['revenue_line', 'revenue_line_axis_policies', 'revenue_line_status', 'revenue_line_running', 'revenue_line_step', 'revenue_line_context']
 
 beforeAll(async () => {
   const startupDeadline = Date.now() + siteReadyTimeout
@@ -920,6 +921,7 @@ test('documentation search finds authored and generated content', async () => {
 })
 
 test('chart documentation renders every executable variation from its YAML', async () => {
+  const expectedExampleIDs = lineExampleIDs
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/docs/visuals/line`)
@@ -968,26 +970,22 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await page.getByRole('heading', { name: 'Multiple series' }).isVisible()).toBe(true)
     expect(await page.getByRole('heading', { name: 'Visual calculation' }).isVisible()).toBe(true)
     expect(await page.getByRole('heading', { name: 'Stepped line' }).isVisible()).toBe(true)
-    await page.waitForFunction(() => {
+    await page.waitForFunction((expectedIDs) => {
       const examples = [...document.querySelectorAll('lv-site-visual-example')] as Array<HTMLElement & { shadowRoot: ShadowRoot }>
-      return examples.length === 5 && examples.every((example) => {
+      return examples.length === expectedIDs.length && examples.every((example, index) => {
         const host = example.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { dataState?: { datasets?: Array<{ rows?: unknown[] }> } } }
-        return Boolean(host?.envelope?.dataState?.datasets?.some((dataset) => dataset.rows?.length))
+        return example.getAttribute('example-id') === expectedIDs[index] && Boolean(host?.envelope?.dataState?.datasets?.some((dataset) => dataset.rows?.length))
       })
-    })
-    expect(await page.locator('lv-site-visual-example').count()).toBe(5)
-    expect(await page.locator('lv-site-visual-example').nth(0).getAttribute('example-id')).toBe('revenue_line')
-    expect(await page.locator('lv-site-visual-example').nth(2).getAttribute('example-id')).toBe('revenue_line_running')
-    expect(await page.locator('lv-site-visual-example').nth(3).getAttribute('example-id')).toBe('revenue_line_step')
-    expect(await page.locator('lv-site-visual-example').nth(4).getAttribute('example-id')).toBe('revenue_line_context')
+    }, expectedExampleIDs)
+    expect(await page.locator('lv-site-visual-example').evaluateAll((examples) => examples.map((example) => example.getAttribute('example-id')))).toEqual(expectedExampleIDs)
     const configurations = await page.locator('.site-docs-article pre code').allTextContents()
     expect(configurations.some((source) => source.includes('visuals:\n  revenue_line:'))).toBe(true)
     expect(configurations.every((source) => !source.includes('shape:'))).toBe(true)
     expect(configurations.some((source) => source.includes('step: true'))).toBe(true)
     const keyFields = await page.locator('.site-visual-key-fields').allTextContents()
-    expect(keyFields).toHaveLength(5)
-    expect(keyFields[2]).toContain('calculations')
-    expect(keyFields[3]).toContain('presentation.step')
+    expect(keyFields).toHaveLength(expectedExampleIDs.length)
+    expect(keyFields[expectedExampleIDs.indexOf('revenue_line_running')]).toContain('calculations')
+    expect(keyFields[expectedExampleIDs.indexOf('revenue_line_step')]).toContain('presentation.step')
     await page.waitForFunction(() => document.querySelectorAll('lv-code-block[data-visual-example="revenue_line_step"] .code-block-highlighted-line').length === 3)
     const steppedConfiguration = page.locator('lv-code-block[data-visual-example="revenue_line_step"]')
     expect(await steppedConfiguration.getAttribute('data-highlighted-fields')).toBe('presentation.dataZoom,presentation.showSymbols,presentation.step')
@@ -1009,7 +1007,7 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await steppedConfiguration.locator('.code-block-focused-line').allTextContents()).toEqual(['      step: true'])
     await stepField.blur()
     await page.waitForFunction(() => document.querySelectorAll('lv-code-block[data-visual-example="revenue_line_step"] .code-block-focused-line').length === 0)
-    const stepped = await page.locator('lv-site-visual-example').nth(3).evaluate((element) => {
+    const stepped = await page.locator('lv-site-visual-example[example-id="revenue_line_step"]').evaluate((element) => {
       const host = element.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: { spec?: { presentation?: Record<string, unknown> } } }
       return host?.envelope?.spec?.presentation?.step
     })
@@ -1283,7 +1281,7 @@ test('every visual documentation page mounts its generated production payloads',
   try {
     for (const visualType of visualTypes) {
       await page.goto(`${baseURL}/docs/visuals/${visualType}`)
-      const expected = visualType === 'map' ? 6 : visualType === 'line' ? 5 : visualType === 'candlestick' ? 2 : visualType === 'kpi' ? 9 : visualType === 'table' ? 2 : ['matrix', 'pivot'].includes(visualType) ? 1 : 3
+      const expected = visualType === 'map' ? 6 : visualType === 'line' ? lineExampleIDs.length : visualType === 'candlestick' ? 2 : visualType === 'kpi' ? 9 : visualType === 'table' ? 2 : ['matrix', 'pivot'].includes(visualType) ? 1 : 3
       await page.waitForFunction(
         ({ count }) => {
           const examples = [...document.querySelectorAll('lv-site-visual-example')]
@@ -1665,10 +1663,28 @@ test('documentation articles provide a readable, navigable reference experience'
     expect(page.url()).toBe(`${baseURL}/docs/guides/build/dashboard`)
     const resultCount = await search.locator('.status').innerText()
     expect(resultCount).toMatch(/^[1-9]\d* results$/)
-    await searchInput.fill('no-document-can-match-this-query-9f83c1')
+    const emptyQuery = 'no-document-can-match-this-query-9f83c1'
+    const expectedEmptyStatus = `No results for “${emptyQuery}”.`
+    const emptySearchResponse = page.waitForResponse((response) => {
+      const responseURL = new URL(response.url())
+      if (responseURL.pathname !== '/docs/search/active' || !response.ok()) return false
+      const encodedSignals = responseURL.searchParams.get('datastar')
+      if (!encodedSignals) return false
+      try {
+        const signals = JSON.parse(encodedSignals) as { docsSearch?: { query?: string } }
+        return signals.docsSearch?.query === emptyQuery
+      } catch {
+        return false
+      }
+    })
+    await searchInput.fill(emptyQuery)
+    expect(await (await emptySearchResponse).finished()).toBeNull()
     const emptyStatus = search.locator('.status')
-    await page.waitForFunction(() => document.querySelector('lv-site-search')?.shadowRoot?.querySelector('.status')?.textContent?.startsWith('No results'))
-    expect(await emptyStatus.innerText()).toBe('No results for “no-document-can-match-this-query-9f83c1”.')
+    await page.waitForFunction((expected) => {
+      const shadowRoot = document.querySelector('lv-site-search')?.shadowRoot
+      return shadowRoot?.querySelector('.status')?.textContent === expected && shadowRoot?.querySelector('.results')?.getAttribute('aria-busy') === 'false'
+    }, expectedEmptyStatus)
+    expect(await emptyStatus.innerText()).toBe(expectedEmptyStatus)
     expect(await emptyStatus.getAttribute('role')).toBe('status')
     await search.getByRole('button', { name: 'Close search' }).click()
     await page.keyboard.press('/')
@@ -2483,8 +2499,8 @@ test('visual showcase renders every supported visual type', async () => {
     const chartLabelPolicies = await page.locator('lv-site-visual-showcase').evaluate((element) =>
       Array.from(element.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).flatMap((host: any) => {
         const { kind, mark, presentation } = host.envelope?.spec ?? {}
-        const supportsDataLabels = ['cartesian', 'point', 'proportional', 'hierarchy'].includes(kind) || (kind === 'polar' && mark === 'gauge')
-        return supportsDataLabels ? [{ visualID: host.envelope?.visualID, density: presentation?.labelPolicy?.density }] : []
+        const hasChartLabelPolicy = ['cartesian', 'point', 'proportional', 'hierarchy'].includes(kind) || (kind === 'polar' && mark === 'gauge')
+        return hasChartLabelPolicy ? [{ visualID: host.envelope?.visualID, density: presentation?.labelPolicy?.density }] : []
       }),
     )
     expect(chartLabelPolicies.length).toBeGreaterThan(0)
@@ -2493,6 +2509,8 @@ test('visual showcase renders every supported visual type', async () => {
       'state_status_heatmap',
     ])
     expect(chartLabelPolicies.filter(({ density }) => density === 'hidden').map(({ visualID }) => visualID).sort()).toEqual([
+      'delivery_distribution',
+      'market_candlestick',
       'revenue',
       'revenue_line',
       'revenue_orders_combo',
@@ -2691,17 +2709,6 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
           const canvases = Array.from(host.shadowRoot?.querySelectorAll<HTMLCanvasElement>('canvas') ?? [])
           const table = renderer?.querySelector<HTMLElement>('lv-report-table')
           const bounds = renderer?.getBoundingClientRect()
-          const expectsColoredMarks = (() => {
-            const envelope = host.envelope
-            if (envelope?.spec?.mark !== 'boxplot' || envelope.dataState?.kind !== 'inline') return true
-            const fields = envelope.spec.y ?? []
-            const dataset = envelope.dataState.datasets?.find((candidate) => candidate.id === fields[0]?.dataset)
-            const indices = fields.map((field) => dataset?.columns.indexOf(field.field) ?? -1)
-            return Boolean(dataset?.rows.some((row) => indices.every((index) => {
-              const value = row[index]
-              return index >= 0 && value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
-            })))
-          })()
           let sampledPixels = 0
           let coloredPixels = 0
           for (const canvas of canvases) {
@@ -2731,7 +2738,6 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             canvasHeight: Math.max(0, ...canvases.map((canvas) => canvas.height)),
             sampledPixels,
             coloredPixels,
-            expectsColoredMarks,
             mapFrame: host.shadowRoot?.querySelectorAll('.maplibregl-map .maplibregl-canvas').length ?? 0,
             tableText: table?.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
             rendererText: renderer?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
@@ -2755,9 +2761,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             expect(metric.mapFrame, `${theme}/${metric.visualID} MapLibre frame`).toBe(1)
           } else {
             expect(metric.sampledPixels, `${theme}/${metric.visualID} painted pixels`).toBeGreaterThan(10)
-            if (metric.expectsColoredMarks) {
-              expect(metric.coloredPixels, `${theme}/${metric.visualID} visible data marks`).toBeGreaterThan(0)
-            }
+            expect(metric.coloredPixels, `${theme}/${metric.visualID} visible data marks`).toBeGreaterThan(0)
           }
         }
       }

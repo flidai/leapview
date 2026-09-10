@@ -107,7 +107,6 @@ func (c converter) presentation() (string, document.DashboardPresentation, error
 				return visualizationir.VisualizationKPIMissingComparison(value)
 			})
 			p.Ranges = cloneKPIRanges(value.Presentation.Ranges)
-			p.Thresholds = cloneThresholds(value.Presentation.Thresholds)
 			p.DisplayUnits = cloneMapped(value.Presentation.DisplayUnits, func(value exploration.ExplorationVisualizationDisplayUnits) visualizationir.VisualizationDisplayUnits {
 				return visualizationir.VisualizationDisplayUnits(value)
 			})

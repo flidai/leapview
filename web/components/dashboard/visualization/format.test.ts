@@ -46,12 +46,38 @@ test('formatting accepts canonical exact decimal transport strings', () => {
 	 expect(() => formatValue('en-US', { kind: 'number' }, '1e3')).toThrow()
 })
 
+test('partial fraction digit bounds preserve compatible numeric defaults', () => {
+  expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 0 }, 1.6)).toBe('1.6')
+  expect(formatValue('en-US', { kind: 'number', maximumFractionDigits: 0 }, 1.6)).toBe('2')
+  expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 1 }, '1.23456')).toBe('1.235')
+  expect(formatValue('en-US', { kind: 'number', maximumFractionDigits: 6 }, '1.2345678')).toBe('1.234568')
+  expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 12 }, '1.2')).toBe('1.200000000000')
+  expect(formatValue('en-US', { kind: 'number', maximumFractionDigits: 12 }, '1.2')).toBe('1.2')
+
+  expect(formatValue('en-US', { kind: 'currency', currency: 'USD', maximumFractionDigits: 0 }, '252.24')).toBe('$252')
+  expect(formatValue('en-US', { kind: 'currency', currency: 'USD', maximumFractionDigits: 3 }, '252.2')).toBe('$252.20')
+  expect(formatValue('en-US', { kind: 'currency', currency: 'USD', minimumFractionDigits: 12 }, '2')).toBe('$2.000000000000')
+
+  expect(formatValue('en-US', { kind: 'percent', minimumFractionDigits: 0 }, '0.125')).toBe('12.5%')
+  expect(formatValue('en-US', { kind: 'percent', maximumFractionDigits: 0 }, '0.125')).toBe('13%')
+  expect(formatValue('en-US', { kind: 'percent', minimumFractionDigits: 1 }, '0.125')).toBe('12.5%')
+  expect(formatValue('en-US', { kind: 'percent', maximumFractionDigits: 2 }, '0.125')).toBe('12.5%')
+  expect(formatValue('en-US', { kind: 'percent', minimumFractionDigits: 12 }, '0.125')).toBe('12.500000000000%')
+  expect(formatValue('en-US', { kind: 'percent', maximumFractionDigits: 12 }, '0.125')).toBe('12.5%')
+})
+
+test('explicit invalid fraction digit pairs remain rejected', () => {
+  expect(() => formatValue('en-US', { kind: 'number', minimumFractionDigits: 2, maximumFractionDigits: 1 }, 1)).toThrow(/invalid fraction digit range 2\.\.1/)
+  expect(() => formatValue('en-US', { kind: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 1 }, 1)).toThrow(/invalid fraction digit range 2\.\.1/)
+  expect(() => formatValue('en-US', { kind: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 1 }, 1)).toThrow(/invalid fraction digit range 2\.\.1/)
+})
+
 test('decimal display-unit boundaries are compared without binary-number rounding', () => {
   expect(resolveDisplayUnit('auto', ['999999999999.9999'])).toEqual({ scale: 1e9, suffix: 'B', exact: false })
   expect(resolveDisplayUnit('auto', ['1000000000000.0001'])).toEqual({ scale: 1e12, suffix: 'T', exact: false })
 })
 
 test('decimal rounding does not render a negative zero', () => {
-  expect(formatValue('en-US', { kind: 'number', maximumFractionDigits: 2 }, '-0.004')).toBe('0')
+  expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 0, maximumFractionDigits: 2 }, '-0.004')).toBe('0')
   expect(formatValue('en-US', { kind: 'number', minimumFractionDigits: 2, maximumFractionDigits: 2 }, '-0.004')).toBe('0.00')
 })

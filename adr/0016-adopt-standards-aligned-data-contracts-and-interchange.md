@@ -26,6 +26,7 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md);
 [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md);
 [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md);
+[OpenLineage projection conformance](specifications/openlineage-conformance.md);
 [Open Data Contract Standard 3.1.0](https://github.com/bitol-io/open-data-contract-standard/tree/v3.1.0);
 [Bitol Open Data Product Standard 1.0.0](https://github.com/bitol-io/open-data-product-standard/tree/v1.0.0);
 [W3C DCAT 3](https://www.w3.org/TR/2024/REC-vocab-dcat-3-20240822/);
@@ -782,7 +783,9 @@ receive production credentials by default.
   only authorization-visible catalogs, datasets, distributions, and services.
 - OpenLineage contract tests validate standard schema, version, quality,
   statistics, parent, and lineage facets plus immutable canonical schema URLs
-  for every LeapView extension facet.
+  for every LeapView extension facet. The export-only projection and its
+  evidence boundaries are recorded in the [OpenLineage conformance
+  specification](specifications/openlineage-conformance.md).
 - The generated conformance matrix is checked against registered adapters,
   pinned schemas, documentation, CLI commands, and test fixtures. No adapter or
   public compliance claim can exist without a matching matrix entry.

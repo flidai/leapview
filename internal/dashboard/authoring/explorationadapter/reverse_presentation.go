@@ -10,6 +10,16 @@ import (
 )
 
 func (c reverseConverter) visualization(value document.DashboardVisual, outputs map[string]string, spec exploration.ExplorationSpec) (*exploration.ExplorationVisualizationConfig, error) {
+	if value.TitleVisible != nil {
+		return nil, fmt.Errorf("visual title visibility is not representable by an exploration")
+	}
+	basePresentation, err := (&value.Presentation).Base()
+	if err != nil {
+		return nil, err
+	}
+	if basePresentation.AxisVisible != nil {
+		return nil, fmt.Errorf("dashboard presentation axis visibility is not representable by an exploration")
+	}
 	base := func(kind string) exploration.ExplorationVisualizationConfigBase {
 		return exploration.ExplorationVisualizationConfigBase{Kind: kind, Title: cloneString(value.Title), Subtitle: cloneString(value.Subtitle)}
 	}
@@ -150,7 +160,7 @@ func rejectCartesianExtras(value *document.CartesianDashboardPresentation) error
 	if value.DashboardPresentationBase.ConditionalFormatting != nil && len(*value.DashboardPresentationBase.ConditionalFormatting) != 0 {
 		return fmt.Errorf("cartesian conditional formatting is not representable by exploration")
 	}
-	if value.Labels != nil || value.Step != nil || value.DataZoom != nil || value.SymbolSize != nil || value.LabelPosition != nil || value.Series != nil || value.Axes != nil || value.ReferenceLines != nil || value.ReferenceBands != nil || value.EventAnnotations != nil {
+	if value.LegendTitle != nil || value.LegendItems != nil || value.Labels != nil || value.Step != nil || value.DataZoom != nil || value.SymbolSize != nil || value.LabelPosition != nil || value.Series != nil || value.SeriesIntent != nil || value.GainColor != nil || value.LossColor != nil || value.Axes != nil || value.ReferenceLines != nil || value.ReferenceBands != nil || value.EventAnnotations != nil || value.Tooltip != nil {
 		return fmt.Errorf("dashboard cartesian renderer options are not representable by exploration")
 	}
 	return nil
@@ -249,14 +259,7 @@ func (c reverseConverter) reverseKPI(value document.DashboardVisual, outputs map
 		}
 		p.Ranges = &converted
 	}
-	if presentation.Thresholds != nil {
-		converted := make([]exploration.ExplorationVisualizationThreshold, len(*presentation.Thresholds))
-		for i, item := range *presentation.Thresholds {
-			converted[i] = exploration.ExplorationVisualizationThreshold{Value: item.Value, Tone: exploration.ExplorationVisualizationTone(item.Tone)}
-		}
-		p.Thresholds = &converted
-	}
-	if p.Mode != nil || p.Delta != nil || p.FavorableDirection != nil || p.MissingComparison != nil || p.DisplayUnits != nil || p.Note != nil || p.Tone != nil || p.Ranges != nil || p.Thresholds != nil {
+	if p.Mode != nil || p.Delta != nil || p.FavorableDirection != nil || p.MissingComparison != nil || p.DisplayUnits != nil || p.Note != nil || p.Tone != nil || p.Ranges != nil {
 		result.Presentation = p
 	}
 	return &exploration.ExplorationVisualizationConfig{Value: result}, nil
@@ -284,7 +287,7 @@ func (c reverseConverter) reversePoint(value document.DashboardVisual, outputs m
 	if !ok || presentation == nil {
 		return nil, fmt.Errorf("scatter visual requires point presentation")
 	}
-	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.Labels != nil || presentation.Label != nil || presentation.Tooltip != nil || presentation.ColorScale != nil || presentation.SizeScale != nil || presentation.Overplot != nil || presentation.Brush != nil || presentation.Axes != nil || presentation.ReferenceLines != nil || presentation.ReferenceBands != nil || presentation.EventAnnotations != nil {
+	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.LegendTitle != nil || presentation.LegendItems != nil || presentation.Labels != nil || presentation.Label != nil || presentation.Tooltip != nil || presentation.ColorScale != nil || presentation.SizeScale != nil || presentation.Overplot != nil || presentation.Brush != nil || presentation.Axes != nil || presentation.ReferenceLines != nil || presentation.ReferenceBands != nil || presentation.EventAnnotations != nil {
 		return nil, fmt.Errorf("dashboard point renderer options are not representable by exploration")
 	}
 	x, err := c.fieldRef(presentation.X, outputs)
@@ -310,9 +313,6 @@ func (c reverseConverter) reversePoint(value document.DashboardVisual, outputs m
 		}
 		result.Color = &ref
 	}
-	if presentation.Series != nil {
-		return nil, fmt.Errorf("dashboard point series is not representable by exploration")
-	}
 	if len(presentation.Identity) > 0 {
 		refs := make([]exploration.ExplorationVisualizationFieldRef, 0, len(presentation.Identity))
 		for _, field := range presentation.Identity {
@@ -333,7 +333,7 @@ func (c reverseConverter) reverseProportional(value document.DashboardVisual, ou
 	if !ok || presentation == nil {
 		return nil, fmt.Errorf("%s visual requires proportional presentation", value.Type)
 	}
-	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.Labels != nil || presentation.Rose != nil || presentation.CenterLabel != nil || presentation.LabelPosition != nil || presentation.InnerRadius != nil || presentation.OuterRadius != nil || presentation.Align != nil || presentation.Sort != nil {
+	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.LegendTitle != nil || presentation.LegendItems != nil || presentation.Labels != nil || presentation.Rose != nil || presentation.CenterLabel != nil || presentation.LabelPosition != nil || presentation.InnerRadius != nil || presentation.OuterRadius != nil || presentation.Align != nil || presentation.Sort != nil || presentation.Tooltip != nil {
 		return nil, fmt.Errorf("dashboard proportional renderer options are not representable by exploration")
 	}
 	if len(spec.Dimensions) == 0 || len(spec.Metrics) == 0 {
@@ -351,7 +351,7 @@ func (c reverseConverter) reversePolar(value document.DashboardVisual, outputs m
 	if !ok || presentation == nil {
 		return nil, fmt.Errorf("%s visual requires polar presentation", value.Type)
 	}
-	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.Labels != nil || presentation.Minimum != nil || presentation.Maximum != nil || presentation.Target != nil || presentation.ShowPointer != nil || presentation.Area != nil || presentation.ProgressWidth != nil || presentation.Thresholds != nil {
+	if presentation.DashboardPresentationBase.ConditionalFormatting != nil && len(*presentation.DashboardPresentationBase.ConditionalFormatting) != 0 || presentation.LegendTitle != nil || presentation.LegendItems != nil || presentation.Labels != nil || presentation.Minimum != nil || presentation.Maximum != nil || presentation.Target != nil || presentation.ShowPointer != nil || presentation.Area != nil || presentation.ProgressWidth != nil || presentation.Thresholds != nil {
 		return nil, fmt.Errorf("dashboard polar renderer options are not representable by exploration")
 	}
 	if len(spec.Metrics) == 0 {

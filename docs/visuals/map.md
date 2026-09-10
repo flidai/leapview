@@ -4,8 +4,34 @@ Use a map for governed observations with geographic coordinates or a named
 geometry asset. Geographic presentation and layer fields are typed and lower
 directly into the renderer-independent map Visual IR.
 
+Layer `tooltip` fields are projected in authored order. Use the structured
+tooltip item form when a row needs a display label or format override; an
+explicit empty list suppresses hover rows. Values are escaped by the MapLibre
+overlay, null values display as `—`, and reference layers do not support row
+tooltips.
+
+The tiled map accessible table reports precision family separately from
+geometry: an aggregate-resolution tile can contain individual points and
+aggregate cells. Rows identify these as `Point (aggregate resolution)` or
+`Aggregated area`; individual points retain their stable selection identity
+and remain selectable.
+
 Every preview on this page is generated from the YAML shown below against the
 fixed documentation dataset.
+
+## Basemap label density
+
+Use `presentation.labelDensity` to control the amount of basemap labeling
+without changing geographic data layers. `hidden` suppresses governed labels,
+`normal` keeps the primary labels while reducing secondary detail, and `dense`
+enables the full governed basemap label set. Labels authored on geographic
+data layers are unaffected.
+
+```yaml
+presentation:
+  type: geographic
+  labelDensity: normal
+```
 
 ## Choropleth
 
@@ -51,6 +77,21 @@ visuals:
 Bind latitude and longitude dimensions to semantic fields. The compiler owns
 the geographic renderer, tile policy, and point styling.
 
+Tiled point layers keep the authored `cluster` policy as renderer-neutral
+contract data. `radius` is an approximate CSS-pixel clustering target (1–512),
+not an exact radial distance. Tiled aggregation uses a globally aligned grid
+with `max(1, floor(256 / radius))` cells per tile, so the effective cell width
+is `256 / max(1, floor(256 / radius))` CSS pixels and radii 129–512 share one
+cell per tile. The transport cell radius remains separate; cluster membership
+is not promised to be pixel-identical between inline and tiled data.
+`maximumZoom` is the last zoom at which clusters may be served,
+`minimumPoints` controls the cluster threshold, and `showCount` labels a
+cluster with its contained coordinate count. These settings are shared by
+point layers on one tiled source; incompatible policies are rejected during
+compilation. `maximumZoom` must be below the
+tiled terminal zoom (18); at the terminal zoom and above there is no valid
+`maximumZoom + 1` raw transition.
+
 {{< visual id="order_point_map" >}}
 
 ```yaml visual-example=order_point_map
@@ -74,9 +115,6 @@ visuals:
         mode: fit_data
         padding: 32
         maximumZoom: 9
-      labels:
-        density: automatic
-        tooltipFallback: true
       layers:
       - kind: point
         id: orders
@@ -88,6 +126,12 @@ visuals:
         size:
           minimumRadius: 5
           maximumRadius: 28
+        cluster:
+          enabled: true
+          radius: 40
+          maximumZoom: 14
+          minimumPoints: 2
+          showCount: true
         stroke:
           color: "#ffffff"
           width: 1.5
@@ -130,6 +174,8 @@ visuals:
 ## Density
 
 Emphasize the concentration of observations without requiring a value binding.
+With no value binding, raw features contribute one observation and aggregate
+cells are weighted by their contained row count.
 
 {{< visual id="order_density_map" >}}
 
@@ -160,7 +206,9 @@ visuals:
 ## Reference boundary
 
 Reference layers add immutable, content-addressed geometry without joining
-query values into the shape.
+query values into the shape. Because reference geometry has no query-row
+locator, reference layers do not support `tooltip`; use a data-backed layer
+such as `choropleth` when row-level tooltip context is needed.
 
 {{< visual id="state_reference_map" >}}
 
@@ -237,6 +285,5 @@ visuals:
           opacity: 0.9
         line:
           width: 3
-          curvature: 0
         opacity: 0.9
 ```

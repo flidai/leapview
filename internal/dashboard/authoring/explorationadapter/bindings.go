@@ -195,17 +195,6 @@ func cloneKPIRanges(value *[]exploration.ExplorationVisualizationKPIQualitativeR
 	return &result
 }
 
-func cloneThresholds(value *[]exploration.ExplorationVisualizationThreshold) *[]visualizationir.VisualizationThreshold {
-	if value == nil {
-		return nil
-	}
-	result := make([]visualizationir.VisualizationThreshold, len(*value))
-	for index, item := range *value {
-		result[index] = visualizationir.VisualizationThreshold{Value: item.Value, Tone: visualizationir.VisualizationTone(item.Tone)}
-	}
-	return &result
-}
-
 func cloneFloat64(value *float64) *float64 {
 	if value == nil {
 		return nil
@@ -217,6 +206,13 @@ func cloneFloat64(value *float64) *float64 {
 func validateKPIPresentation(value *exploration.ExplorationKPIPresentation) error {
 	if value == nil {
 		return nil
+	}
+	// Dashboard KPI presentations intentionally expose qualitative ranges but
+	// no numeric threshold list. Thresholds and ranges are not equivalent:
+	// converting a threshold to a range would require inventing bounds and a
+	// label, so reject authored thresholds instead of silently dropping them.
+	if value.Thresholds != nil {
+		return fmt.Errorf("KPI thresholds are not representable by the dashboard presentation")
 	}
 	if value.Mode != nil && *value.Mode != exploration.ExplorationVisualizationKPIModeCompact && *value.Mode != exploration.ExplorationVisualizationKPIModeBullet && *value.Mode != exploration.ExplorationVisualizationKPIModeProgress {
 		return fmt.Errorf("unsupported KPI mode %q", *value.Mode)
@@ -240,13 +236,6 @@ func validateKPIPresentation(value *exploration.ExplorationKPIPresentation) erro
 		for index, item := range *value.Ranges {
 			if !validTone(item.Tone) {
 				return fmt.Errorf("unsupported KPI range %d tone %q", index, item.Tone)
-			}
-		}
-	}
-	if value.Thresholds != nil {
-		for index, item := range *value.Thresholds {
-			if !validTone(item.Tone) {
-				return fmt.Errorf("unsupported KPI threshold %d tone %q", index, item.Tone)
 			}
 		}
 	}

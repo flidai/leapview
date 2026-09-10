@@ -27,6 +27,8 @@ type CartesianDashboardPresentation struct {
 	DashboardPresentationBase
 	Type             string                                     `json:"type" yaml:"type"`
 	Legend           *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
+	LegendTitle      *string                                    `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems      *[]DashboardLegendItem                     `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 	Labels           *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Stacking         *DashboardStackingMode                     `json:"stacking,omitempty" yaml:"stacking,omitempty"`
 	Orientation      *DashboardOrientation                      `json:"orientation,omitempty" yaml:"orientation,omitempty"`
@@ -38,10 +40,14 @@ type CartesianDashboardPresentation struct {
 	LabelPosition    *DashboardLabelPosition                    `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
 	DisplayUnits     *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Series           *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
+	SeriesIntent     *[]DashboardSeriesIntent                   `json:"seriesIntent,omitempty" yaml:"seriesIntent,omitempty"`
+	GainColor        *visualizationir.VisualizationColorIntent  `json:"gainColor,omitempty" yaml:"gainColor,omitempty"`
+	LossColor        *visualizationir.VisualizationColorIntent  `json:"lossColor,omitempty" yaml:"lossColor,omitempty"`
 	Axes             *[]DashboardAxisConfiguration              `json:"axes,omitempty" yaml:"axes,omitempty"`
 	ReferenceLines   *[]DashboardReferenceLine                  `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
 	ReferenceBands   *[]DashboardReferenceBand                  `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
 	EventAnnotations *[]DashboardEventAnnotation                `json:"eventAnnotations,omitempty" yaml:"eventAnnotations,omitempty"`
+	Tooltip          *[]DashboardTooltip                        `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 }
 
 type ComparisonDashboardFilterExpression struct {
@@ -94,15 +100,21 @@ const (
 )
 
 type DashboardAxisConfiguration struct {
-	ID           visualizationir.VisualizationCartesianAxis   `json:"id" yaml:"id"`
-	Title        *string                                      `json:"title,omitempty" yaml:"title,omitempty"`
-	Scale        visualizationir.VisualizationAxisScale       `json:"scale" yaml:"scale"`
-	Zero         visualizationir.VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
-	Minimum      *float64                                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum      *float64                                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Unit         *string                                      `json:"unit,omitempty" yaml:"unit,omitempty"`
-	DisplayUnits *visualizationir.VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	TickDensity  visualizationir.VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
+	ID            visualizationir.VisualizationCartesianAxis       `json:"id" yaml:"id"`
+	Title         *string                                          `json:"title,omitempty" yaml:"title,omitempty"`
+	Type          *visualizationir.VisualizationAxisType           `json:"type,omitempty" yaml:"type,omitempty"`
+	Scale         visualizationir.VisualizationAxisScale           `json:"scale" yaml:"scale"`
+	Zero          visualizationir.VisualizationAxisZeroPolicy      `json:"zero" yaml:"zero"`
+	Inversion     *visualizationir.VisualizationAxisInversion      `json:"inversion,omitempty" yaml:"inversion,omitempty"`
+	Minimum       *float64                                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum       *float64                                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit          *string                                          `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits  *visualizationir.VisualizationDisplayUnits       `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity   visualizationir.VisualizationAxisTickDensity     `json:"tickDensity" yaml:"tickDensity"`
+	Ticks         *visualizationir.VisualizationAxisTickVisibility `json:"ticks,omitempty" yaml:"ticks,omitempty"`
+	Grid          *visualizationir.VisualizationAxisGridVisibility `json:"grid,omitempty" yaml:"grid,omitempty"`
+	LabelRotation *visualizationir.VisualizationAxisLabelRotation  `json:"labelRotation,omitempty" yaml:"labelRotation,omitempty"`
+	DateUnit      *visualizationir.VisualizationDateDisplayUnit    `json:"dateUnit,omitempty" yaml:"dateUnit,omitempty"`
 }
 
 type DashboardCalculation struct {
@@ -133,6 +145,7 @@ type DashboardChoroplethGeographicLayer struct {
 	Join          string                  `json:"join" yaml:"join"`
 	Value         *string                 `json:"value,omitempty" yaml:"value,omitempty"`
 	Category      *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Label         *string                 `json:"label,omitempty" yaml:"label,omitempty"`
 	Color         *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
 	Stroke        *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
 	Opacity       *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
@@ -1953,8 +1966,7 @@ type DashboardGeographicLayerBase struct {
 
 type DashboardGeographicLayerOptions struct {
 	ID          string                                         `json:"id" yaml:"id"`
-	Label       *string                                        `json:"label,omitempty" yaml:"label,omitempty"`
-	Tooltip     *[]string                                      `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	Tooltip     *[]DashboardTooltip                            `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	Position    *visualizationir.VisualizationMapLayerPosition `json:"position,omitempty" yaml:"position,omitempty"`
 	MinimumZoom *float64                                       `json:"minimumZoom,omitempty" yaml:"minimumZoom,omitempty"`
 	MaximumZoom *float64                                       `json:"maximumZoom,omitempty" yaml:"maximumZoom,omitempty"`
@@ -2250,6 +2262,11 @@ type DashboardLayoutOverride struct {
 	Padding   *int32 `json:"padding,omitempty" yaml:"padding,omitempty"`
 }
 
+type DashboardLegendItem struct {
+	Value string  `json:"value" yaml:"value"`
+	Label *string `json:"label,omitempty" yaml:"label,omitempty"`
+}
+
 type DashboardLegendPosition string
 
 const (
@@ -2299,8 +2316,7 @@ type DashboardMapHeatStyle struct {
 }
 
 type DashboardMapLineStyle struct {
-	Width     *float64 `json:"width,omitempty" yaml:"width,omitempty"`
-	Curvature *float64 `json:"curvature,omitempty" yaml:"curvature,omitempty"`
+	Width *float64 `json:"width,omitempty" yaml:"width,omitempty"`
 }
 
 type DashboardMapSizeScale struct {
@@ -2683,6 +2699,7 @@ type DashboardPointGeographicLayer struct {
 	Longitude string                  `json:"longitude" yaml:"longitude"`
 	Value     *string                 `json:"value,omitempty" yaml:"value,omitempty"`
 	Category  *string                 `json:"category,omitempty" yaml:"category,omitempty"`
+	Label     *string                 `json:"label,omitempty" yaml:"label,omitempty"`
 	Size      *DashboardMapSizeScale  `json:"size,omitempty" yaml:"size,omitempty"`
 	Color     *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
 	Stroke    *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
@@ -3697,6 +3714,12 @@ const (
 	DashboardSelectionModeMultiple DashboardSelectionMode = "multiple"
 )
 
+type DashboardSeriesIntent struct {
+	Value string                                    `json:"value" yaml:"value"`
+	Order *int32                                    `json:"order,omitempty" yaml:"order,omitempty"`
+	Color *visualizationir.VisualizationColorIntent `json:"color,omitempty" yaml:"color,omitempty"`
+}
+
 type DashboardSort struct {
 	Field     string                 `json:"field" yaml:"field"`
 	Direction DashboardSortDirection `json:"direction" yaml:"direction"`
@@ -3762,6 +3785,78 @@ const (
 	DashboardTimeGrainQuarter DashboardTimeGrain = "quarter"
 	DashboardTimeGrainYear    DashboardTimeGrain = "year"
 )
+
+type DashboardTooltip struct {
+	String *string
+	Item   *DashboardTooltipItem
+}
+
+func (value DashboardTooltip) MarshalJSON() ([]byte, error) {
+	count := 0
+	if value.String != nil {
+		count++
+	}
+	if value.Item != nil {
+		count++
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("DashboardTooltip variant is required")
+	}
+	if count > 1 {
+		return nil, fmt.Errorf("DashboardTooltip has multiple variants")
+	}
+	if value.String != nil {
+		return json.Marshal(value.String)
+	}
+	if value.Item != nil {
+		return json.Marshal(value.Item)
+	}
+	return nil, fmt.Errorf("DashboardTooltip variant is required")
+}
+
+func (value *DashboardTooltip) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal DashboardTooltip into nil receiver")
+	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return fmt.Errorf("decode DashboardTooltip: empty JSON value")
+	}
+	*value = DashboardTooltip{}
+	switch trimmed[0] {
+	case '"':
+		var parsed string
+		if err := json.Unmarshal(trimmed, &parsed); err != nil {
+			return fmt.Errorf("decode DashboardTooltip: %w", err)
+		}
+		value.String = &parsed
+		return nil
+	case '{':
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(trimmed, &fields); err != nil {
+			return fmt.Errorf("decode DashboardTooltip object: %w", err)
+		}
+		if _, ok := fields["field"]; !ok {
+			return fmt.Errorf("decode DashboardTooltip object: required property field is missing")
+		}
+		var parsed DashboardTooltipItem
+		decoder := json.NewDecoder(bytes.NewReader(trimmed))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&parsed); err != nil {
+			return fmt.Errorf("decode DashboardTooltip object: %w", err)
+		}
+		value.Item = &parsed
+		return nil
+	default:
+		return fmt.Errorf("decode DashboardTooltip: expected a string or object")
+	}
+}
+
+type DashboardTooltipItem struct {
+	Field  string                               `json:"field" yaml:"field"`
+	Label  *string                              `json:"label,omitempty" yaml:"label,omitempty"`
+	Format *visualizationir.VisualizationFormat `json:"format,omitempty" yaml:"format,omitempty"`
+}
 
 type DashboardVisual struct {
 	Type          DashboardVisualType        `json:"type" yaml:"type"`
@@ -3864,7 +3959,6 @@ type FilterDashboardPageComponent struct {
 type GeographicDashboardPresentation struct {
 	DashboardPresentationBase
 	Type         string                                        `json:"type" yaml:"type"`
-	Labels       *DashboardLabelPolicy                         `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Theme        *visualizationir.VisualizationMapTheme        `json:"theme,omitempty" yaml:"theme,omitempty"`
 	Basemap      *string                                       `json:"basemap,omitempty" yaml:"basemap,omitempty"`
 	LabelDensity *visualizationir.VisualizationMapLabelDensity `json:"labelDensity,omitempty" yaml:"labelDensity,omitempty"`
@@ -3885,6 +3979,8 @@ type HierarchyDashboardPresentation struct {
 	DashboardPresentationBase
 	Type         string                                        `json:"type" yaml:"type"`
 	Legend       *DashboardLegendPosition                      `json:"legend,omitempty" yaml:"legend,omitempty"`
+	LegendTitle  *string                                       `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems  *[]DashboardLegendItem                        `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 	Labels       *DashboardLabelPolicy                         `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Orientation  *DashboardOrientation                         `json:"orientation,omitempty" yaml:"orientation,omitempty"`
 	InitialDepth *int32                                        `json:"initialDepth,omitempty" yaml:"initialDepth,omitempty"`
@@ -3920,7 +4016,6 @@ type KPIDashboardPresentation struct {
 	FavorableDirection *visualizationir.VisualizationKPIDirection          `json:"favorableDirection,omitempty" yaml:"favorableDirection,omitempty"`
 	MissingComparison  *visualizationir.VisualizationKPIMissingComparison  `json:"missingComparison,omitempty" yaml:"missingComparison,omitempty"`
 	Ranges             *[]visualizationir.VisualizationKPIQualitativeRange `json:"ranges,omitempty" yaml:"ranges,omitempty"`
-	Thresholds         *[]visualizationir.VisualizationThreshold           `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
 	Comparison         *DashboardKPIValueBinding                           `json:"comparison,omitempty" yaml:"comparison,omitempty"`
 	Goal               *DashboardKPIValueBinding                           `json:"goal,omitempty" yaml:"goal,omitempty"`
 	Trend              *DashboardKPITrendBinding                           `json:"trend,omitempty" yaml:"trend,omitempty"`
@@ -3968,7 +4063,6 @@ type PointDashboardColorScale struct {
 	Kind    visualizationir.VisualizationPointColorScaleKind `json:"kind" yaml:"kind"`
 	Minimum *float64                                         `json:"minimum,omitempty" yaml:"minimum,omitempty"`
 	Maximum *float64                                         `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Scheme  *string                                          `json:"scheme,omitempty" yaml:"scheme,omitempty"`
 }
 
 type PointDashboardOverplot struct {
@@ -3982,15 +4076,16 @@ type PointDashboardPresentation struct {
 	DashboardPresentationBase
 	Type             string                                            `json:"type" yaml:"type"`
 	Legend           *DashboardLegendPosition                          `json:"legend,omitempty" yaml:"legend,omitempty"`
+	LegendTitle      *string                                           `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems      *[]DashboardLegendItem                            `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 	Labels           *DashboardLabelPolicy                             `json:"labels,omitempty" yaml:"labels,omitempty"`
 	Identity         []string                                          `json:"identity" yaml:"identity"`
 	X                string                                            `json:"x" yaml:"x"`
 	Y                string                                            `json:"y" yaml:"y"`
 	Size             *string                                           `json:"size,omitempty" yaml:"size,omitempty"`
 	Color            *string                                           `json:"color,omitempty" yaml:"color,omitempty"`
-	Series           *string                                           `json:"series,omitempty" yaml:"series,omitempty"`
 	Label            *string                                           `json:"label,omitempty" yaml:"label,omitempty"`
-	Tooltip          *[]string                                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	Tooltip          *[]DashboardTooltip                               `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 	ColorScale       *PointDashboardColorScale                         `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
 	SizeScale        *PointDashboardSizeScale                          `json:"sizeScale,omitempty" yaml:"sizeScale,omitempty"`
 	Overplot         *PointDashboardOverplot                           `json:"overplot,omitempty" yaml:"overplot,omitempty"`
@@ -4012,6 +4107,8 @@ type PolarDashboardPresentation struct {
 	DashboardPresentationBase
 	Type          string                                     `json:"type" yaml:"type"`
 	Legend        *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
+	LegendTitle   *string                                    `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems   *[]DashboardLegendItem                     `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 	Labels        *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
 	DisplayUnits  *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Minimum       *float64                                   `json:"minimum,omitempty" yaml:"minimum,omitempty"`
@@ -4027,6 +4124,8 @@ type ProportionalDashboardPresentation struct {
 	DashboardPresentationBase
 	Type          string                                      `json:"type" yaml:"type"`
 	Legend        *DashboardLegendPosition                    `json:"legend,omitempty" yaml:"legend,omitempty"`
+	LegendTitle   *string                                     `json:"legendTitle,omitempty" yaml:"legendTitle,omitempty"`
+	LegendItems   *[]DashboardLegendItem                      `json:"legendItems,omitempty" yaml:"legendItems,omitempty"`
 	Labels        *DashboardLabelPolicy                       `json:"labels,omitempty" yaml:"labels,omitempty"`
 	DisplayUnits  *visualizationir.VisualizationDisplayUnits  `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
 	Orientation   *DashboardOrientation                       `json:"orientation,omitempty" yaml:"orientation,omitempty"`
@@ -4037,6 +4136,7 @@ type ProportionalDashboardPresentation struct {
 	OuterRadius   *float64                                    `json:"outerRadius,omitempty" yaml:"outerRadius,omitempty"`
 	Align         *DashboardProportionalAlignment             `json:"align,omitempty" yaml:"align,omitempty"`
 	Sort          *visualizationir.VisualizationSortDirection `json:"sort,omitempty" yaml:"sort,omitempty"`
+	Tooltip       *[]DashboardTooltip                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
 }
 
 type RangeDashboardFilterExpression struct {

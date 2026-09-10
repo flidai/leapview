@@ -19,7 +19,10 @@ func TestResourceUIDForwardMigrationMatchesCapability(t *testing.T) {
 	if string(contents) != want {
 		t.Fatal("ResourceUID migration differs from reviewed capability schema")
 	}
-	if CurrentRevision != 7 {
-		t.Fatalf("current schema revision = %d, want 7", CurrentRevision)
+	if CurrentRevision != 8 {
+		t.Fatalf("current schema revision = %d, want 8", CurrentRevision)
+	}
+	if CurrentRevision < 5 {
+		t.Fatalf("current schema revision = %d, want at least 5", CurrentRevision)
 	}
 }

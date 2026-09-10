@@ -734,6 +734,9 @@ func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T
 		func(tile *dataquery.SpatialTile) { tile.MetatileY += 4 },
 		func(tile *dataquery.SpatialTile) { tile.CellPixels = 64 },
 		func(tile *dataquery.SpatialTile) { tile.Precision = dataquery.SpatialTilePrecisionAggregated },
+		func(tile *dataquery.SpatialTile) {
+			tile.Cluster = &dataquery.SpatialClusterPolicy{Enabled: true, Radius: 40, MaximumZoom: 14, MinimumPoints: 2, ShowCount: true}
+		},
 	}
 	for index, mutate := range variants {
 		variant := request

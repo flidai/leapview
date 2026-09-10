@@ -2,6 +2,38 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 10 current-main reconciliation
+
+Main advanced to `372039da7` after the September 9 exact-head verification,
+introducing chart formatting, contract-publication evidence, ODCS/OpenLineage,
+and closed resource-graph references. The previous 28 green hosted checks on
+`e940363d1` do not validate this new combination.
+
+This normal merge preserves released migrations 001–007 and renumbers only the
+unmerged saved-exploration migration to 008, without changing its SQL contents.
+Validation must cover fresh installation and released revision 7 to 8. Earlier
+development databases using unmerged saved migrations 003, 005, 006, or 007 need
+explicit migration-history inspection/reconciliation; no live database work or
+automatic history rewrite is included.
+
+Catalog-browser conflicts are reviewed as a union of saved-exploration behavior
+and main's updated fixtures. JavaScript vulnerability evidence is refreshed from
+the live registries using canonical tooling, not chosen from either stale parent.
+Generation exposed removed dashboard KPI-threshold and point-series fields;
+the exploration adapter was reconciled with the new canonical contract. Legacy
+KPI thresholds and newly unsupported dashboard formatting fail explicitly at
+handoff rather than being silently discarded. Supported KPI ranges, comparison,
+goal, and trend bindings retain round-trip coverage. Dashboard signal schema
+version now matches visualization version 14 in TypeSpec; bindings and OpenAPI
+were regenerated canonically.
+
+Generation, migration tests (25.481s), catalog browser tests (29 passed), adapter
+regressions, app/contract typechecking, security-runner contracts, architecture
+checks (26.758s), and the unchanged quality budget passed. Broader integration
+tests and independent review are underway; full CI and exact-head hosted checks
+are pending. The PR must remain unmerged, with auto-merge disabled and no merge
+queue enrollment, until explicit user approval. No force push is permitted.
+
 ## September 9 RecoverySet v3 base refresh
 
 Main advanced again to `285514606` with RecoverySet v3 while validation ran.

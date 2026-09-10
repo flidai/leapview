@@ -27,6 +27,11 @@ test('mixed renderer targets preserve comparison frames and project one governed
   expect(faceted.dataState.kind === 'inline' ? faceted.dataState.datasets[0]!.rows : []).toEqual(originalRows)
   expect(option.aria.description).toContain('Comparison totals are unchanged')
 
+  faceted.highlights = []
+  const cleared = echartsOption(faceted) as any
+  expect(cleared.series.every((series: any) => series.itemStyle?.opacity === undefined)).toBe(true)
+  expect(cleared.aria.description).not.toContain('Comparison totals are unchanged')
+
   const table = tableSignal(tableEnvelope())
   expect(table.blocks.a.rows.map((row) => row.__lv_highlighted)).toEqual([true, false])
   expect(table.highlight).toMatchObject({ active: true })
@@ -36,6 +41,20 @@ test('mixed renderer targets preserve comparison frames and project one governed
   expect(kpi.current).toBe(42)
   expect(kpi.highlightActive).toBe(true)
   expect(kpi.highlightAnnouncement).toContain('Comparison total is unchanged')
+})
+
+test('ECharts cross-highlight maps typed category series to their source rows', () => {
+  const faceted = facetedEnvelope() as any
+  faceted.dataState.datasets[0].rows = [['SP', 1, 10], ['SP', '1', 20]]
+  faceted.highlights = [{
+    sourceVisualID: 'source', interactionID: 'point_selection', label: 'String one',
+    entries: [{ label: 'String one', mappings: [{ targetFieldID: 'orders.status', value: '1' }] }],
+  }]
+  const option = echartsOption(faceted) as any
+  const numberSeries = option.series.find((series: any) => series.name === '1 [number:1]')
+  const stringSeries = option.series.find((series: any) => series.name === '1 [string:1]')
+  expect(numberSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(0.2)
+  expect(stringSeries.itemStyle.opacity({ dataIndex: 0 })).toBe(1)
 })
 
 test('MapLibre projects highlight state into governed feature properties and paint policy', () => {

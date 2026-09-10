@@ -242,6 +242,53 @@ enum VisualizationAxisScale {
   log: "log",
 }
 
+/** Renderer-neutral axis coordinate type. Automatic preserves the established chart-family default while temporal axes remain time axes. */
+enum VisualizationAxisType {
+  automatic: "automatic",
+  category: "category",
+  value: "value",
+  time: "time",
+}
+
+/** Renderer-neutral axis direction. Automatic keeps the conventional direction. */
+enum VisualizationAxisInversion {
+  automatic: "automatic",
+  normal: "normal",
+  inverted: "inverted",
+}
+
+enum VisualizationAxisTickVisibility {
+  automatic: "automatic",
+  visible: "visible",
+  hidden: "hidden",
+}
+
+enum VisualizationAxisGridVisibility {
+  automatic: "automatic",
+  visible: "visible",
+  hidden: "hidden",
+}
+
+enum VisualizationAxisLabelRotation {
+  automatic: "automatic",
+  horizontal: "horizontal",
+  diagonal: "diagonal",
+  vertical: "vertical",
+}
+
+/** Semantic date granularity for labels on a temporal axis. */
+enum VisualizationDateDisplayUnit {
+  automatic: "automatic",
+  year: "year",
+  quarter: "quarter",
+  month: "month",
+  week: "week",
+  day: "day",
+  hour: "hour",
+  minute: "minute",
+  second: "second",
+}
+
 enum VisualizationAxisZeroPolicy {
   automatic: "automatic",
   include: "include",
@@ -289,7 +336,6 @@ enum VisualizationColorIntent {
 
 enum VisualizationConditionalTarget {
   markFill: "mark_fill",
-  markStroke: "mark_stroke",
   seriesColor: "series_color",
   labelForeground: "label_foreground",
   visualBackground: "visual_background",
@@ -431,12 +477,32 @@ model VisualizationFormat {
   `kind`: string;
 }
 
+/** Ordered tooltip projection; labels and formats are display-only. */
+model VisualizationTooltipItem {
+  `field`: VisualizationFieldRef;
+  `label`?: string;
+  `format`?: VisualizationFormat;
+}
+
+/** Canonical legend value with an optional display label. */
+model VisualizationLegendItem {
+  `value`: string;
+  `label`?: string;
+}
+
+/**
+ * Numeric display format. With no fraction bounds, values use 0..3 digits.
+ * A one-sided bound preserves that default on the unconstrained side unless
+ * it would make the range invalid: a maximum below the default minimum lowers
+ * the minimum, and a minimum above the default maximum raises the maximum.
+ */
 model NumberVisualizationFormat extends VisualizationFormat {
   `kind`: "number";
   `minimumFractionDigits`?: int32;
   `maximumFractionDigits`?: int32;
 }
 
+/** Currency display format; the default fraction range is 2..2. One-sided bounds follow the numeric format rule. */
 model CurrencyVisualizationFormat extends VisualizationFormat {
   `kind`: "currency";
   `currency`: string;
@@ -444,6 +510,7 @@ model CurrencyVisualizationFormat extends VisualizationFormat {
   `maximumFractionDigits`?: int32;
 }
 
+/** Percent display format; the default fraction range is 0..1. One-sided bounds follow the numeric format rule. */
 model PercentVisualizationFormat extends VisualizationFormat {
   `kind`: "percent";
   `minimumFractionDigits`?: int32;
@@ -555,13 +622,19 @@ model FieldVisualizationReferenceValue extends VisualizationReferenceValue {
 model VisualizationAxisConfiguration {
   `id`: VisualizationCartesianAxis;
   `title`?: string;
+  `type`: VisualizationAxisType;
   `scale`: VisualizationAxisScale;
   `zero`: VisualizationAxisZeroPolicy;
+  `inversion`: VisualizationAxisInversion;
   `minimum`?: float64;
   `maximum`?: float64;
   `unit`?: string;
   `displayUnits`?: VisualizationDisplayUnits;
   `tickDensity`: VisualizationAxisTickDensity;
+  `ticks`: VisualizationAxisTickVisibility;
+  `grid`: VisualizationAxisGridVisibility;
+  `labelRotation`: VisualizationAxisLabelRotation;
+  `dateUnit`: VisualizationDateDisplayUnit;
 }
 
 model VisualizationReferenceLine {
@@ -698,9 +771,15 @@ model VisualizationLabelPolicy {
 model VisualizationPresentation {
   `legend`: VisualizationLegendPosition;
   `labelPolicy`: VisualizationLabelPolicy;
-  /** False hides cartesian axes while retaining governed field encodings. */
+  /**
+   * Whether axes are rendered for Cartesian and point (scatter) visuals.
+   * Omission retains the renderer default; authored values on other visual
+   * families are rejected by IR validation.
+   */
   `axisVisible`?: boolean;
   `displayUnits`?: VisualizationDisplayUnits;
+  `legendTitle`?: string;
+  `legendItems`?: VisualizationLegendItem[];
 }
 
 model VisualizationThreshold {
@@ -734,13 +813,16 @@ model CartesianVisualizationPresentation extends VisualizationPresentation {
   `comboSeries`?: VisualizationComboSeries[];
   `stacking`?: VisualizationStackingMode;
   `seriesIntent`?: VisualizationSeriesIntent[];
+  /** Candlestick gain intent; omitted values use the theme success color. */
+  `gainColor`?: VisualizationColorIntent;
+  /** Candlestick loss intent; omitted values use the theme danger color. */
+  `lossColor`?: VisualizationColorIntent;
 }
 
 model PointVisualizationColorScale {
   `kind`: VisualizationPointColorScaleKind;
   `minimum`?: float64;
   `maximum`?: float64;
-  `scheme`?: string;
 }
 
 model PointVisualizationSizeScale {
@@ -805,7 +887,6 @@ model KPIVisualizationPresentation {
   `displayUnits`?: VisualizationDisplayUnits;
   `note`?: string;
   `tone`?: VisualizationTone;
-  `thresholds`?: VisualizationThreshold[];
 }
 
 model VisualizationKPIValueBinding {
@@ -851,6 +932,7 @@ model VisualizationSpec {
   `conditionalFormatting`?: VisualizationConditionalFormat[];
   `metadataBindings`?: VisualizationMetadataBindings;
   `calculations`?: VisualizationCalculation[];
+  `tooltipItems`?: VisualizationTooltipItem[];
 }
 
 model CartesianVisualizationSpec extends VisualizationSpec {
@@ -874,7 +956,6 @@ model PointVisualizationSpec extends VisualizationSpec {
   `y`: VisualizationFieldRef;
   `size`?: VisualizationFieldRef;
   `color`?: VisualizationFieldRef;
-  `series`?: VisualizationFieldRef;
   `label`?: VisualizationFieldRef;
   `tooltip`?: VisualizationFieldRef[];
   `colorScale`?: PointVisualizationColorScale;
@@ -892,6 +973,7 @@ model ProportionalVisualizationSpec extends VisualizationSpec {
   `category`: VisualizationFieldRef;
   `value`: VisualizationFieldRef;
   `series`?: VisualizationFieldRef;
+  `tooltip`?: VisualizationFieldRef[];
   `presentation`: ProportionalVisualizationPresentation;
 }
 
@@ -1070,6 +1152,8 @@ model VisualizationMapStroke {
 
 model VisualizationMapCluster {
   `enabled`: boolean;
+  @minValue(1)
+  @maxValue(512)
   `radius`: int32;
   `maximumZoom`: int32;
   `minimumPoints`: int32;
@@ -1083,7 +1167,6 @@ model VisualizationMapHeatStyle {
 
 model VisualizationMapLineStyle {
   `width`: float64;
-  `curvature`: float64;
 }
 
 model VisualizationSpatialFieldMapping {
@@ -1152,6 +1235,7 @@ model VisualizationGeographicLayer {
   `kind`: string;
   `label`?: VisualizationFieldRef;
   `tooltip`: VisualizationFieldRef[];
+  `tooltipItems`?: VisualizationTooltipItem[];
   `position`: VisualizationMapLayerPosition;
   `visibility`: VisualizationMapVisibility;
 }
@@ -1396,7 +1480,7 @@ model VisualizationDiagnostic {
 @apigen.contract(#{ kind: "visualization-envelope", tags: #["visualization", "ir"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "visualization-envelope" })
 model VisualizationEnvelope {
-  `schemaVersion`: 11;
+  `schemaVersion`: 14;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;

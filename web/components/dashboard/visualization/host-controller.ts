@@ -10,7 +10,8 @@ export enum Change {
   Selection = 1 << 2,
   Status = 1 << 3,
   Context = 1 << 4,
-  All = Spec | Data | Selection | Status | Context,
+  Highlight = 1 << 5,
+  All = Spec | Data | Selection | Status | Context | Highlight,
 }
 
 export type RendererLocale = 'en-US' | 'pt-BR'
@@ -323,6 +324,7 @@ function changes(previous: VisualizationEnvelope | undefined, next: Visualizatio
   if (previous.rendererID !== next.rendererID || previous.specRevision !== next.specRevision) result |= Change.Spec
   if (previous.specRevision !== next.specRevision || previous.dataRevision !== next.dataRevision || !sameJSON(previous.dataState, next.dataState)) result |= Change.Data
   if (!sameJSON(previous.selection, next.selection) || !sameJSON(previous.spatialSelection, next.spatialSelection)) result |= Change.Selection
+  if (!sameJSON(previous.highlights, next.highlights)) result |= Change.Highlight
   if (!sameJSON(previous.status, next.status) || !sameJSON(previous.diagnostics, next.diagnostics)) result |= Change.Status
   return result
 }

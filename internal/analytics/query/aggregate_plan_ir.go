@@ -240,7 +240,7 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 		}
 		var spatial *planir.SpatialBucket
 		if request.SpatialBucket != nil {
-			spatial = &planir.SpatialBucket{Latitude: request.SpatialBucket.Latitude.Field, Longitude: request.SpatialBucket.Longitude.Field, Zoom: request.SpatialBucket.Zoom, CellPixels: request.SpatialBucket.CellPixels}
+			spatial = &planir.SpatialBucket{Latitude: request.SpatialBucket.Latitude.Field, Longitude: request.SpatialBucket.Longitude.Field, Zoom: request.SpatialBucket.Zoom, CellPixels: request.SpatialBucket.CellPixels, ClusterRadius: request.SpatialBucket.ClusterRadius}
 		}
 		graph.Nodes[aggregateID] = planir.AggregateMetrics{NodeMeta: aggregateMeta, Input: inputID, GroupBy: groupBy, TimeBuckets: timeBuckets, Spatial: spatial, Metrics: metrics}
 		branchIDs = append(branchIDs, aggregateID)

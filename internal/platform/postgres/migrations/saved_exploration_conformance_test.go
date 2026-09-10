@@ -16,10 +16,11 @@ import (
 )
 
 // This is intentionally an upgrade test, not a second schema unit test. It
-// applies the released control-plane migrations through revision six,
-// upgrades with 007, and then exercises the exact roles used by production
+// applies the released control-plane migrations through revision seven,
+// upgrades with 008, and then exercises the exact roles used by production
 // pools. The checks around the upgrade ensure the dashboard builder's released
-// lock/evidence guards remain present while saved-exploration guards are added.
+// lock/evidence guards and contract-publication guards remain present while
+// saved-exploration guards are added.
 func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
@@ -56,23 +57,25 @@ func TestSavedExplorationMigrationUpgradeAndRoleBoundary(t *testing.T) {
 	}
 	ctx, cancel := contextWithTimeout(t)
 	defer cancel()
-	if _, err := provider.UpTo(ctx, 6); err != nil {
-		t.Fatalf("apply migrations through released revision six: %v", err)
+	if _, err := provider.UpTo(ctx, 7); err != nil {
+		t.Fatalf("apply migrations through released revision seven: %v", err)
 	}
 	if current, target, err := provider.GetVersions(ctx); err != nil {
 		t.Fatal(err)
-	} else if current != 6 || target != platformmigrations.CurrentRevision {
-		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 6/%d", current, target, platformmigrations.CurrentRevision)
+	} else if current != 7 || target != platformmigrations.CurrentRevision {
+		t.Fatalf("pre-upgrade Goose versions = %d/%d, want 7/%d", current, target, platformmigrations.CurrentRevision)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "released revision six")
-	assertResourceUIDRegistry(t, ctx, admin, "released revision six")
-	assertRecoverySuccessorV3(t, ctx, admin, "released revision six")
+	assertDashboardBuilderGuards(t, ctx, admin, "released revision seven")
+	assertResourceUIDRegistry(t, ctx, admin, "released revision seven")
+	assertRecoverySuccessorV3(t, ctx, admin, "released revision seven")
+	assertContractPublicationGuards(t, ctx, admin, "released revision seven")
 	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
-		t.Fatalf("upgrade to saved exploration revision seven: %v", err)
+		t.Fatalf("upgrade to saved exploration revision eight: %v", err)
 	}
-	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision seven")
-	assertResourceUIDRegistry(t, ctx, admin, "saved exploration revision seven")
-	assertRecoverySuccessorV3(t, ctx, admin, "saved exploration revision seven")
+	assertDashboardBuilderGuards(t, ctx, admin, "saved exploration revision eight")
+	assertResourceUIDRegistry(t, ctx, admin, "saved exploration revision eight")
+	assertRecoverySuccessorV3(t, ctx, admin, "saved exploration revision eight")
+	assertContractPublicationGuards(t, ctx, admin, "saved exploration revision eight")
 	assertSavedExplorationGuards(t, ctx, admin)
 
 	// VerifyGoose is the startup read-only gate. It must succeed through the
@@ -245,6 +248,20 @@ func assertSavedExplorationGuards(t *testing.T, ctx context.Context, db *pgxpool
 	}
 	if !operationSnapshot || !lifecycle || !currentRevision || !revisionInsert {
 		t.Fatalf("saved exploration guards = operation/lifecycle/current-revision/revision-insert %t/%t/%t/%t", operationSnapshot, lifecycle, currentRevision, revisionInsert)
+	}
+}
+
+func assertContractPublicationGuards(t *testing.T, ctx context.Context, db *pgxpool.Pool, stage string) {
+	t.Helper()
+	var table, guard bool
+	if err := db.QueryRow(ctx, `
+		SELECT to_regclass('project.contract_publication') IS NOT NULL,
+		       to_regprocedure('project.reject_contract_publication_mutation()') IS NOT NULL`).
+		Scan(&table, &guard); err != nil {
+		t.Fatalf("%s contract publication guard query: %v", stage, err)
+	}
+	if !table || !guard {
+		t.Fatalf("%s contract publication table/guard = %t/%t", stage, table, guard)
 	}
 }
 
