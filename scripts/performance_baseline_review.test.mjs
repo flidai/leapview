@@ -139,6 +139,6 @@ test('renaming a protected policy cannot evade review and missing reviews fail',
   const api = (path) => path.includes('/files')
     ? [[{ filename: 'renamed.json', previous_filename: '.quality/performance-reference.json' }]]
     : path.includes('/reviews') ? [[]] : [pull]
-  assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', api), /independent repository collaborator/)
+  assert.throws(() => checkPerformanceBaselineReview({ pull_request: pull }, 'owner/repo', api, null), /independent repository collaborator/)
   assert.throws(() => checkPerformanceBaselineReview({}, 'owner/repo', api), /pull-request event/)
 })
