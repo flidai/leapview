@@ -1691,7 +1691,6 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(opened.drawerWidth).toBeGreaterThanOrEqual(360)
     expect(opened.drawerWidth).toBeLessThanOrEqual(520)
 
-    // Keep signal patches on one imported module to avoid repeated imports under merge-queue contention.
     await moduleHandle.evaluate((module: any, search: any) => module.mergePatch({ agentReferenceSearch: search }), {
         query: 'orders', requestId: 1,
         results: [
