@@ -243,6 +243,87 @@ test('Data Explorer retains the last good result through draft and run lifecycle
   }
 })
 
+test('cleared query settings stay cleared after canonical response patches', async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const spec = {
+        schemaVersion: 1, modelId: 'sales', datasetId: 'orders', limit: 100,
+        dimensions: [{ field: 'orders.status' }, { field: 'orders.channel' }], metrics: [{ field: 'revenue' }], filters: [], sort: [],
+        time: { field: 'orders.created_at', grain: 'month' },
+        pivot: { rows: [{ field: 'orders.status' }], columns: [{ field: 'orders.channel' }], metrics: [{ field: 'revenue' }], window: { limit: 100 } },
+      }
+      const command = { spec, requestSeq: 1, resetVersion: 1, columnWidths: {}, action: 'configure' }
+      const orders = {
+        key: 'model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      }
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          command: { mode: 'explore', clientId: 'clear-settings', objectKey: orders.key, explore: command, count: 100, start: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          objects: [orders], selectedObject: orders, selectedKey: orders.key,
+          preview: { columns: [], blocks: {}, sort: {}, chunkSize: 100, rowHeight: 32 },
+          explore: {
+            command, views: {}, recommendedView: 'table', defaultView: 'table',
+            semanticModels: [{ id: 'sales', title: 'Sales', datasets: [] }], datasets: [{ id: 'orders', title: 'Orders', fieldCount: 4, entities: [] }],
+            fields: [
+              { id: 'orders.status', label: 'Status', type: 'string', kind: 'dimension' },
+              { id: 'orders.channel', label: 'Channel', type: 'string', kind: 'dimension' },
+              { id: 'orders.created_at', label: 'Created', type: 'timestamp', kind: 'dimension' },
+              { id: 'revenue', label: 'Revenue', type: 'number', kind: 'metric' },
+            ].map((field) => ({ ...field, datasetId: 'orders', compatible: true, selected: true })),
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 1, truncated: false, warnings: [] },
+            status: { loading: false, stale: true, requestSeq: 1, state: 'stale' },
+          },
+        },
+      })
+      const element = document.createElement('lv-data-explorer')
+      ;(window as any).clearSettingCommands = []
+      element.addEventListener('lv-data-explorer-command', (event) => {
+        const next = JSON.parse(JSON.stringify((event as CustomEvent).detail))
+        ;(window as any).clearSettingCommands.push(next)
+        // Match dataExplorerSignalPatch's null tombstones, whose serialized
+        // shape is separately asserted by the Go endpoint projection tests.
+        for (const key of ['datasetId', 'time', 'pivot', 'table', 'visualization']) {
+          if (!(key in next.explore.spec)) next.explore.spec[key] = null
+        }
+        mergePatch({ dataExplorerCommand: next, dataExplorer: { command: next, explore: { command: next.explore } } })
+      })
+      document.body.append(element)
+    })
+    const controls = page.locator('lv-data-explorer-query-controls')
+    const pivotLimit = controls.getByRole('spinbutton', { name: 'Pivot limit', exact: true })
+    await pivotLimit.fill('250')
+    await pivotLimit.dispatchEvent('change')
+    await page.waitForFunction(() => (window as any).clearSettingCommands.at(-1)?.explore.spec.pivot?.window.limit === 250)
+    await controls.getByRole('combobox', { name: 'Time field', exact: true }).selectOption('')
+    await page.waitForFunction(() => (window as any).clearSettingCommands.at(-1)?.explore.spec.time === null)
+    await controls.getByRole('button', { name: 'Clear pivot', exact: true }).click()
+    await page.waitForFunction(() => (window as any).clearSettingCommands.at(-1)?.explore.spec.pivot === null)
+    const state = await page.evaluate(async () => {
+      const { getPath } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      return {
+        command: getPath('dataExplorerCommand.explore.spec'),
+        explorerCommand: getPath('dataExplorer.command.explore.spec'),
+        controlsCommand: getPath('dataExplorer.explore.command.spec'),
+      }
+    })
+    for (const spec of Object.values(state)) {
+      expect(spec).not.toHaveProperty('time')
+      expect(spec).not.toHaveProperty('pivot')
+      expect(spec.limit).toBe(100)
+    }
+    expect(await controls.getByRole('combobox', { name: 'Time field', exact: true }).inputValue()).toBe('')
+    expect(await controls.getByRole('button', { name: 'Configure pivot', exact: true, includeHidden: true }).count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument() {
   return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%}lv-data-explorer{display:block;min-height:720px}</style></head><body><main data-signals="{}"></main><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/data-explorer-under-test.js"></script></body></html>`
 }

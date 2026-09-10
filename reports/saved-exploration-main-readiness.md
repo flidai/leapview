@@ -2,6 +2,43 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 10 independent-review corrections
+
+Independent review of `d8153f1` identified six correctness defects despite that
+checkpoint's green CI. This follow-up covers bucket-aware drill predicates,
+clearing optional query settings, pivot-window edits, browser-shaped pivot
+handoff, time-filter/grouping parity, and independent suggestion transport.
+Regression tests must exercise composed controls and the bundled Datastar
+transport, not only isolated helpers. Suggestion responses must not replace
+semantic query state or cancel an active Run.
+
+The adapter now accepts matching redundant browser selections, rejects
+conflicting selections, and keeps out-of-axis time ranges as filters. Clearing
+time/pivot uses explicit client removal markers and server signal tombstones;
+the canonical persisted spec contract is unchanged. Date and timestamp bucket
+drills create typed half-open ranges. Zoned timestamp bucket drills fail closed
+until the interaction contract carries the named timezone; no timezone is
+guessed. Suggestions use independent cancellation scopes and narrow, freshness-
+checked response patches rather than replacing the semantic result envelope.
+
+Focused authoring and HTTP tests passed, including five race-enabled runs of
+suggestion endpoint/lifecycle/response-lease tests. Canonical patch serialization
+tests cover both clearing and populated-spec preservation. The unchanged quality
+budget passes after extracting the transport logic and browser regressions into
+bounded files. All 37 focused control/drill tests passed with
+`TZ=America/Los_Angeles`. Actual bundled-Datastar browser regressions confirm
+independent suggestion cancellation, a surviving delayed Run, cleared errors,
+retained results, reachable Stop, and time/pivot/limit edits surviving response
+patches. These tests are included in the normal frontend CI script.
+
+Full local `task ci` passed exit 0 on the reviewed correction checkpoint,
+including PostgreSQL conformance, all frontend shards, and generated-file
+consistency (`/tmp/fai769-review-fixes-ci.log`). Exact-head hosted results are
+recorded on PR #543 and FAI-769 after the normal push. The earlier green checks
+below are historical evidence. FAI-769 stays In Review. No database migration
+changes, force push, main merge, auto-merge, or merge-queue enrollment are part
+of this correction pass.
+
 ## September 10 current-main reconciliation
 
 Main advanced to `372039da7` after the September 9 exact-head verification,
@@ -42,7 +79,9 @@ Malformed visualization pointers and conflicting formats receive regression
 coverage. Final review and focused visualization tests passed (0.091s).
 Main's subsequent exact-version managed-object retrieval change (`ab9f8e124`)
 was integrated by a clean normal merge, without changing migration numbering.
-Restarted full CI and exact-head hosted checks remain pending.
+Restarted full CI subsequently passed on `d8153f1`; all 28 hosted checks
+succeeded, with four conditional skips. That checkpoint was then superseded by
+the independent-review corrections above.
 
 The PR must remain unmerged, with auto-merge disabled and no merge
 queue enrollment, until explicit user approval. No force push is permitted.

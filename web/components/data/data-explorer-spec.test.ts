@@ -10,7 +10,11 @@ import {
   moveExplorationSort,
   setExplorationTime,
   setExplorationTimeRange,
+  removeExplorationPivot,
+  updateExplorationPivotWindow,
   updateExplorationPivot,
+  filterOperator,
+  filterValues,
   upsertExplorationSort,
 } from './data-explorer-spec'
 
@@ -45,6 +49,38 @@ test('time controls add and remove a canonical time selection and range', () => 
   })
   expect(ranged.time?.range?.kind).toBe('relative')
   expect(setExplorationTime(ranged, '').time).toBeUndefined()
+  expect(Object.prototype.hasOwnProperty.call(setExplorationTime(ranged, ''), 'time')).toBe(true)
+})
+
+test('whole-spec removal helpers explicitly retain undefined fields for controller updates', () => {
+  const spec = updateExplorationPivot({ ...baseSpec(), pivot: { rows: [], columns: [], metrics: [] } }, 'rows', [{ field: 'orders.status' }])
+  const removed = removeExplorationPivot(spec)
+  expect(removed).toHaveProperty('pivot', undefined)
+})
+
+test('pivot window updates do not overwrite a newly selected limit', () => {
+  const spec = {
+    ...baseSpec(),
+    pivot: {
+      rows: [{ field: 'orders.status' }], columns: [{ field: 'orders.created_at' }], metrics: [{ field: 'revenue' }],
+      window: { limit: 50, offset: 0 },
+    },
+  }
+  expect(updateExplorationPivotWindow(spec, 'limit', 250).pivot?.window).toEqual({ limit: 250, offset: 0 })
+  expect(updateExplorationPivotWindow(spec, 'offset', 3).pivot?.window).toEqual({ limit: 50, offset: 3 })
+})
+
+test('range filter chips expose their bounds', () => {
+  const filter = {
+    field: 'orders.created_at',
+    expression: {
+      kind: 'range',
+      lower: { value: { kind: 'date', value: '2024-02-01' }, inclusive: true },
+      upper: { value: { kind: 'date', value: '2024-03-01' }, inclusive: false },
+    },
+  } as ExplorationSpec['filters'][number]
+  expect(filterOperator(filter)).toBe('range')
+  expect(filterValues(filter)).toEqual(['2024-02-01', '2024-03-01'])
 })
 
 test('changing or clearing time removes sorts for the old field and alias', () => {

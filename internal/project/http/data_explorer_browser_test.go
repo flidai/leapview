@@ -249,6 +249,83 @@ func TestDataExplorerCommandEndpointPatchesFreshAgentContext(t *testing.T) {
 	}
 }
 
+func TestDataExplorerSuggestionEndpointPatchesOnlySuggestionSignal(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	clientID := "suggestion-narrow-patch-client"
+	datasetID := "orders"
+	search := "paid"
+	command := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), Mode: projectsignals.Optional("explore"), RequestSeq: 1,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("configure"), RequestSeq: 1,
+			Spec:              exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", Search: &search, SuggestionRequestSeq: 1},
+		},
+	}
+	payload, err := json.Marshal(struct {
+		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+	}{Command: command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	recorder := httptest.NewRecorder()
+	h.DataExplorerCommand(recorder, request)
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("suggestion endpoint status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	patch := recorder.Body.String()
+	if !strings.Contains(patch, `"filterSuggestions"`) || !strings.Contains(patch, `"suggestionRequestSeq":1`) {
+		t.Fatalf("suggestion endpoint patch = %s, want suggestion signal", patch)
+	}
+	for _, forbidden := range []string{`"page"`, `"dataExplorerCommand"`, `"result"`, `"status"`} {
+		if strings.Contains(patch, forbidden) {
+			t.Fatalf("suggestion endpoint patch = %s, must not contain full explorer field %s", patch, forbidden)
+		}
+	}
+	if executor.calls != 1 {
+		t.Fatalf("suggestion endpoint executed %d analytical queries, want one suggestion query", executor.calls)
+	}
+}
+
+func TestDataExplorerSuggestionEndpointRejectsOlderSemanticResponse(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	clientID := "suggestion-semantic-stale-endpoint-client"
+	keyRequest := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", nil)
+	keyRequest.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(keyRequest, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 2) {
+		t.Fatal("failed to establish newer semantic lifecycle state")
+	}
+	datasetID := "orders"
+	search := "paid"
+	command := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), Mode: projectsignals.Optional("explore"), RequestSeq: 1,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("configure"), RequestSeq: 1,
+			Spec:              exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", Search: &search, SuggestionRequestSeq: 1},
+		},
+	}
+	payload, err := json.Marshal(struct {
+		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
+	}{Command: command})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	recorder := httptest.NewRecorder()
+	h.DataExplorerCommand(recorder, request)
+	if recorder.Code != stdhttp.StatusOK || recorder.Body.Len() != 0 {
+		t.Fatalf("stale suggestion endpoint response = status %d body %q, want empty successful response", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("stale suggestion endpoint executed %d analytical queries, want one suggestion query", executor.calls)
+	}
+}
+
 func TestDataExplorerCommandEndpointRejectsOutOfOrderContextPatch(t *testing.T) {
 	h, _ := newDataExplorerURLTestHandler(t)
 	clientID := "tab-agent-context-order"

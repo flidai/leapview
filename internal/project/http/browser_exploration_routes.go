@@ -59,14 +59,18 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 		return
 	}
 	defer unlock()
+	if dataExplorerSuggestionCommand(explorer.Command) {
+		_ = pagestream.PatchResponse(w, r, dataExplorerSuggestionPatch(explorer.Explore.FilterSuggestions))
+		return
+	}
 	// Keep the agent's explore link coupled to the same canonical, authorized
 	// projection as the command response.  This must be emitted only after the
 	// response lease check so a late query cannot replace a newer context.
 	context := projectui.DataExplorerAgentContext(page, explorer)
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"page": page, "dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-		"agentContext": context,
-	})
+	patch := dataExplorerSignalPatch(explorer)
+	patch["page"] = page
+	patch["agentContext"] = context
+	_ = pagestream.PatchResponse(w, r, patch)
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -106,9 +110,48 @@ func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *s
 		return
 	}
 	defer unlock()
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"dataExplorer": explorer, "dataExplorerCommand": explorer.Command,
-	})
+	if dataExplorerSuggestionCommand(explorer.Command) {
+		_ = pagestream.PatchResponse(w, r, dataExplorerSuggestionPatch(explorer.Explore.FilterSuggestions))
+		return
+	}
+	_ = pagestream.PatchResponse(w, r, dataExplorerSignalPatch(explorer))
+}
+
+func dataExplorerSuggestionCommand(command projectsignals.DataExplorerCommand) bool {
+	return dataExplorerAction(command) == "configure" && command.Explore != nil && command.Explore.FilterSuggestions != nil
+}
+
+// Suggestions are a side lane. Patch only that signal so a late response
+// cannot replace the current semantic command, result, status, or agent
+// context. Null optional values intentionally clear a prior error/type in
+// Datastar's recursive signal merge.
+func dataExplorerSuggestionPatch(suggestion *projectsignals.DataExploreFilterSuggestionsSignal) pagestream.SignalPatch {
+	if suggestion == nil {
+		return nil
+	}
+	values := suggestion.Values
+	if values == nil {
+		values = []projectsignals.DataExploreFilterValueSuggestionSignal{}
+	}
+	var errorValue any
+	if suggestion.Error != nil {
+		errorValue = *suggestion.Error
+	}
+	var typeValue any
+	if suggestion.Type != nil {
+		typeValue = *suggestion.Type
+	}
+	return pagestream.SignalPatch{
+		"dataExplorer": map[string]any{
+			"explore": map[string]any{
+				"filterSuggestions": map[string]any{
+					"error": errorValue, "field": suggestion.Field, "loading": suggestion.Loading,
+					"requestSeq": suggestion.RequestSeq, "suggestionRequestSeq": suggestion.SuggestionRequestSeq,
+					"stale": suggestion.Stale, "truncated": suggestion.Truncated, "type": typeValue, "values": values,
+				},
+			},
+		},
+	}
 }
 
 // Updates is the shared browser bootstrap router. The explore branch carries

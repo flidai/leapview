@@ -11,6 +11,7 @@ import {
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { DataExplorerClientState } from './data-explorer-client'
+import { removeExplorationPivot, setExplorationTime } from './data-explorer-spec'
 
 function memoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -52,6 +53,41 @@ test('query controller advances request and reset sequences', () => {
   expect((next.spec as ExplorationSpec & { requestSeq?: number }).requestSeq).toBeUndefined()
   const clearedDataset = query.explore(first, { datasetId: undefined })
   expect(clearedDataset.spec.datasetId).toBeUndefined()
+})
+
+test('query controller applies complete specs so helper removals clear old selections', () => {
+  const query = new DataExplorerQueryController()
+  const current: DataExploreCommand = {
+    spec: {
+      schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+      time: { field: 'orders.created_at', grain: 'day' },
+      pivot: { rows: [{ field: 'orders.status' }], columns: [{ field: 'orders.channel' }], metrics: [{ field: 'revenue' }] },
+    },
+    requestSeq: 1, resetVersion: 1, columnWidths: {},
+  }
+
+  const withoutTime = setExplorationTime(current.spec, '')
+  const timeCleared = query.explore(current, withoutTime)
+  expect(timeCleared.spec.time).toBeUndefined()
+
+  const withoutPivot = removeExplorationPivot(current.spec)
+  const pivotCleared = query.explore(current, withoutPivot)
+  expect(pivotCleared.spec.pivot).toBeUndefined()
+  expect(JSON.parse(JSON.stringify(timeCleared.spec)).time).toBeUndefined()
+  expect(JSON.parse(JSON.stringify(pivotCleared.spec)).pivot).toBeUndefined()
+})
+
+test('query controller does not restore a pivot cleared by a drill-shaped full spec', () => {
+  const query = new DataExplorerQueryController()
+  const current: DataExploreCommand = {
+    spec: {
+      schemaVersion: 1, modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+      pivot: { rows: [{ field: 'orders.status' }], columns: [{ field: 'orders.channel' }], metrics: [{ field: 'revenue' }] },
+    },
+    requestSeq: 1, resetVersion: 1, columnWidths: {},
+  }
+  const drillSpec = { ...current.spec, pivot: undefined }
+  expect(query.explore(current, drillSpec).spec.pivot).toBeUndefined()
 })
 
 test('explicit run creates a fresh sequence while stop preserves the addressed run', () => {

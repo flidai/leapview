@@ -249,6 +249,37 @@ func TestDataExplorerResponseLeaseAllowsConfigureWithoutRunIDAfterStop(t *testin
 	}
 }
 
+func TestDataExplorerResponseLeaseRequiresCurrentSemanticSequenceForSuggestion(t *testing.T) {
+	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:test", nil
+	}}
+	request := httptest.NewRequest("POST", "/explore/command", nil)
+	clientID := "suggestion-semantic-freshness-client"
+	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
+	key := h.dataExplorerClientKey(request, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 1) {
+		t.Fatal("failed to establish initial semantic sequence")
+	}
+	if accepted, _ := h.dataExplorerLifecycle.acceptSuggestions(key, 1); !accepted {
+		t.Fatal("failed to establish suggestion sequence")
+	}
+	if !h.dataExplorerLifecycle.acceptSemantic(key, 2) {
+		t.Fatal("failed to advance semantic sequence")
+	}
+	search := "paid"
+	command := projectsignals.DataExplorerCommand{
+		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), RequestSeq: 1,
+		Explore: &projectsignals.DataExploreCommand{
+			Action: projectsignals.Optional("configure"), RequestSeq: 1,
+			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", Search: &search, SuggestionRequestSeq: 1},
+		},
+	}
+	if unlock, current := h.dataExplorerResponseLease(request, command); current {
+		unlock()
+		t.Fatal("late suggestion acquired the emission lease after a newer semantic request")
+	}
+}
+
 func TestDataExplorerLifecycleSuggestionLaneDoesNotCancelSemanticRun(t *testing.T) {
 	var lifecycle dataExplorerLifecycle
 	semantic, finishSemantic, semanticID := lifecycle.beginRun("client", "run-1", 10, context.Background())

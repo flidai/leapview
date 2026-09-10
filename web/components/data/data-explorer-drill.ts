@@ -84,6 +84,16 @@ export function explorationSpecFromInteraction(
       if (!timeGrains.has(grain) || !isTemporalType(field.type)) {
         return failure('invalid_grain', `${field.label || fieldID} does not support the selected time grain ${JSON.stringify(grain)}.`, fieldID)
       }
+      // A DateTimeTz value is interpreted by the governed planner in its
+      // authored named timezone before truncation. The browser only receives
+      // the rendered bucket value, so it cannot safely reconstruct the next
+      // boundary without that semantic metadata.
+      if (mapping.value !== null && isZonedTemporalType(field.type)) {
+        return failure('invalid_grain', `${field.label || fieldID} uses a zoned timestamp; its bucket timezone is unavailable for a safe drill filter.`, fieldID)
+      }
+      if (mapping.value !== null && isDateType(field.type) && (grain === 'second' || grain === 'minute' || grain === 'hour')) {
+        return failure('invalid_grain', `${field.label || fieldID} is a date and cannot be drilled at the ${grain} grain.`, fieldID)
+      }
       const configuredGrains = configuredGrainsFor(spec, fieldID)
       if (configuredGrains.some((configured) => configured !== grain)) {
         return failure('mismatched_grain', `${field.label || fieldID} is configured at a different time grain.`, fieldID)
@@ -92,7 +102,9 @@ export function explorationSpecFromInteraction(
 
     const filter = mapping.value === null
       ? makeExplorationFilter(field, 'is_null', [], field.type, spec.datasetId)
-      : makeExplorationFilter(field, 'equals', scalarValue(mapping.value), field.type, spec.datasetId)
+      : grain
+        ? timeBucketFilter(field, mapping.value, grain, field.type, spec.datasetId)
+        : makeExplorationFilter(field, 'equals', scalarValue(mapping.value), field.type, spec.datasetId)
     if (!filter) {
       return failure('unsupported_value', `${field.label || fieldID} does not contain a valid finite value for its declared type.`, fieldID)
     }
@@ -244,6 +256,11 @@ function isTemporalType(type: string | undefined): boolean {
   return normalized === 'date' || normalized.endsWith('.date') || normalized === 'day' || /timestamp|datetime/.test(normalized)
 }
 
+function isZonedTemporalType(type: string | undefined): boolean {
+  const normalized = type?.trim().toLowerCase() ?? ''
+  return normalized.includes('datetimetz') || normalized.includes('timestamptz') || normalized.includes('time zone')
+}
+
 function isInteractionScalar(value: unknown): value is string | number | boolean | null {
   return value === null
     || typeof value === 'string'
@@ -251,9 +268,111 @@ function isInteractionScalar(value: unknown): value is string | number | boolean
     || (typeof value === 'number' && Number.isFinite(value))
 }
 
+function timeBucketFilter(
+  field: DataExploreFieldSignal,
+  value: string | number | boolean,
+  grain: string,
+  type: string | undefined,
+  queryDatasetID: string | undefined,
+): ExplorationFilter | undefined {
+  if (typeof value !== 'string') return undefined
+  const upperValue = nextBucketBoundary(value, grain, type)
+  if (!upperValue) return undefined
+  const lower = makeExplorationFilter(field, 'equals', [value], type, queryDatasetID)
+  const upper = makeExplorationFilter(field, 'equals', [upperValue], type, queryDatasetID)
+  if (!lower || !upper || lower.expression.kind !== 'comparison' || upper.expression.kind !== 'comparison') return undefined
+  return {
+    ...lower,
+    expression: {
+      kind: 'range',
+      lower: { value: lower.expression.value, inclusive: true },
+      upper: { value: upper.expression.value, inclusive: false },
+    },
+  }
+}
+
+function nextBucketBoundary(value: string, grain: string, type: string | undefined): string | undefined {
+  if (isDateType(type)) return nextDateBoundary(value, grain)
+  if (isTimestampType(type)) return nextTimestampBoundary(value, grain)
+  return undefined
+}
+
+function isDateType(type: string | undefined): boolean {
+  const normalized = type?.trim().toLowerCase() ?? ''
+  return normalized === 'date' || normalized.endsWith('.date') || normalized === 'day'
+}
+
+function isTimestampType(type: string | undefined): boolean {
+  const normalized = type?.trim().toLowerCase() ?? ''
+  return normalized.includes('timestamp') || normalized.includes('datetime')
+}
+
+function nextDateBoundary(value: string, grain: string): string | undefined {
+  if (!validDate(value)) return undefined
+  const boundary = new Date(`${value}T00:00:00Z`)
+  if (!Number.isFinite(boundary.getTime())) return undefined
+  if (!advanceBoundary(boundary, grain)) return undefined
+  return formatDate(boundary)
+}
+
+function nextTimestampBoundary(value: string, grain: string): string | undefined {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(value)
+  if (!match || !validDate(match[1]!) || !validClock(match[2]!, match[3]!, match[4]!) || !validOffset(match[6]!)) return undefined
+  // Operate on the wall-clock components and append the original offset. This
+  // keeps a rendered bucket in its source timezone instead of silently
+  // converting it to UTC while deriving the exclusive upper bound.
+  const boundary = new Date(`${match[1]}T${match[2]}:${match[3]}:${match[4]}${match[5] ?? ''}Z`)
+  if (!Number.isFinite(boundary.getTime()) || !advanceBoundary(boundary, grain)) return undefined
+  return `${formatDate(boundary)}T${formatClock(boundary)}${match[5] ?? ''}${match[6]}`
+}
+
+function advanceBoundary(value: Date, grain: string): boolean {
+  switch (grain) {
+    case 'second': value.setUTCSeconds(value.getUTCSeconds() + 1); return true
+    case 'minute': value.setUTCMinutes(value.getUTCMinutes() + 1); return true
+    case 'hour': value.setUTCHours(value.getUTCHours() + 1); return true
+    case 'day': value.setUTCDate(value.getUTCDate() + 1); return true
+    case 'week': value.setUTCDate(value.getUTCDate() + 7); return true
+    case 'month': value.setUTCMonth(value.getUTCMonth() + 1); return true
+    case 'quarter': value.setUTCMonth(value.getUTCMonth() + 3); return true
+    case 'year': value.setUTCFullYear(value.getUTCFullYear() + 1); return true
+    default: return false
+  }
+}
+
+function formatDate(value: Date): string {
+  return `${String(value.getUTCFullYear()).padStart(4, '0')}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`
+}
+
+function formatClock(value: Date): string {
+  return `${String(value.getUTCHours()).padStart(2, '0')}:${String(value.getUTCMinutes()).padStart(2, '0')}:${String(value.getUTCSeconds()).padStart(2, '0')}`
+}
+
+function validDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  if (month < 1 || month > 12 || day < 1) return false
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  return day <= days[month - 1]!
+}
+
+function validClock(hour: string, minute: string, second: string): boolean {
+  return Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59
+}
+
+function validOffset(value: string): boolean {
+  if (value === 'Z') return true
+  const match = /^[+-](\d{2}):(\d{2})$/.exec(value)
+  return Boolean(match && Number(match[1]) <= 23 && Number(match[2]) <= 59)
+}
+
 function withoutSpecPivot(spec: ExplorationSpec): ExplorationSpec {
   const { pivot: _pivot, ...withoutPivot } = spec
-  return withoutPivot as ExplorationSpec
+  return { ...withoutPivot, pivot: undefined } as ExplorationSpec
 }
 
 function failure(code: ExplorationInteractionErrorCode, error: string, field?: string): ExplorationInteractionResult {

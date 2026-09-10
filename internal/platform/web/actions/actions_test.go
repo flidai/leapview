@@ -21,6 +21,14 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 	}
 }
 
+func TestEventRequestCanUseScopedCancellation(t *testing.T) {
+	got := EventPostWithCancellation("/explore/command", "window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)", "dataExplorerCommand")
+	want := `@post('/explore/command', {filterSignals: {include: /^(?:dataExplorerCommand)(?:[.]|$)/}, headers: window.LeapViewCommand.headers(), requestCancellation: window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)})`
+	if got != want {
+		t.Fatalf("EventPostWithCancellation() = %q, want %q", got, want)
+	}
+}
+
 func TestGetPathExpressionKeepsDynamicReadPathSeparateFromCommandHeaders(t *testing.T) {
 	got := GetPathExpression("'/explore/saved/' + encodeURIComponent(evt.detail.explorationId)", "page", "savedExplorations")
 	want := `@get('/explore/saved/' + encodeURIComponent(evt.detail.explorationId), {filterSignals: {include: /^(?:page|savedExplorations)(?:[.]|$)/}, headers: window.LeapViewCommand.headers()})`

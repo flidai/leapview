@@ -452,7 +452,11 @@ func (h *BrowserHandler) dataExplorerResponseLease(r *stdhttp.Request, command p
 	current := true
 	if command.Explore != nil && command.Explore.FilterSuggestions != nil && dataExplorerAction(command) == "configure" {
 		suggestionSeq := dataExplorerSuggestionRequestSeq(command)
-		current = suggestionSeq > 0 && suggestionSeq <= dataExplorerMaxSuggestionRequestSeq && l.currentSuggestionsLocked(key, suggestionSeq, "")
+		// A suggestion token orders only the suggestion lane. Its response must
+		// also belong to the semantic draft that was current when it started;
+		// otherwise a late suggestion can replace a newer query/status envelope.
+		current = suggestionSeq > 0 && suggestionSeq <= dataExplorerMaxSuggestionRequestSeq &&
+			l.currentSuggestionsLocked(key, suggestionSeq, "") && l.currentRunLocked(key, seq, "")
 	} else if dataExplorerAction(command) == "stop" && l.stoppedLocked(key, dataExplorerRunID(command)) {
 		current = true
 	} else {

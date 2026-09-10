@@ -112,6 +112,180 @@ func TestConvertPivotPreservesPivotSemantics(t *testing.T) {
 	}
 }
 
+func TestConvertPivotAcceptsBrowserSelectionsAndKeepsOutOfAxisTimeAsFilter(t *testing.T) {
+	rowAlias := "region_label"
+	metricAlias := "amount"
+	lower := "2026-01-01"
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		ModelID:       "semantic:sales",
+		// The browser keeps its ordinary selections populated when pivot is
+		// enabled. The pivot axes are the same selections, with their own axis
+		// ownership and order.
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "region", Alias: &rowAlias}, {Field: "channel"}},
+		Metrics:    []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &metricAlias}},
+		Filters:    []exploration.ExplorationFilter{},
+		Limit:      100,
+		Pivot: &exploration.ExplorationPivotConfig{
+			Rows:    []exploration.ExplorationDimensionRef{{Field: "region", Alias: &rowAlias}},
+			Columns: []exploration.ExplorationDimensionRef{{Field: "channel"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &metricAlias}},
+		},
+		// A range-only time selection must constrain the pivot without adding a
+		// hidden grouping axis.
+		Time: &exploration.ExplorationTimeSelection{
+			Field: "created_at", Grain: exploration.ExplorationTimeGrainDay,
+			Range: &exploration.ExplorationTimeRange{Value: &exploration.AbsoluteExplorationTimeRange{
+				Kind:  "absolute",
+				Lower: &exploration.ExplorationTimeBound{Value: exploration.ExplorationTemporalValue{Value: &exploration.DateExplorationTemporalValue{Kind: "date", Value: lower}}, Inclusive: true},
+			}},
+		},
+		Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.PivotExplorationVisualization{
+			Kind:    "pivot",
+			Rows:    []exploration.ExplorationVisualizationFieldRef{{Field: "region"}},
+			Columns: []exploration.ExplorationVisualizationFieldRef{{Field: "channel"}},
+			Metrics: []exploration.ExplorationVisualizationFieldRef{{Field: "revenue"}},
+		}},
+	}
+	result, err := Convert(spec, Options{VisualID: "component_range"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Visual.Type != document.DashboardVisualTypePivot {
+		t.Fatalf("visual type = %q, want pivot", result.Visual.Type)
+	}
+	pivot, ok := result.Visual.Query.Value.(*document.PivotDashboardQuery)
+	if !ok {
+		t.Fatalf("query = %T, want pivot", result.Visual.Query.Value)
+	}
+	if len(pivot.Rows) != 1 || dimensionOutput(pivot.Rows[0]) != rowAlias || len(pivot.Columns) != 1 || dimensionOutput(pivot.Columns[0]) != "channel" || len(pivot.Metrics) != 1 || metricOutput(pivot.Metrics[0]) != metricAlias {
+		t.Fatalf("pivot selections = %#v, want browser axes only", pivot)
+	}
+	if _, ok := result.Visual.Presentation.Value.(*document.TableDashboardPresentation); !ok {
+		t.Fatalf("presentation = %T, want table presentation", result.Visual.Presentation.Value)
+	}
+	if len(result.Filters) != 1 || result.Filters[0].Dimension != "created_at" || result.Filters[0].Targets == nil || len(*result.Filters[0].Targets) != 1 || (*result.Filters[0].Targets)[0] != "component_range" {
+		t.Fatalf("time filter = %#v, want scoped out-of-axis range", result.Filters)
+	}
+	if got, _ := result.Filters[0].Default.Type(); got != "range" {
+		t.Fatalf("time filter expression type = %q, want range", got)
+	}
+
+	conflicting := spec
+	conflicting.Dimensions = []exploration.ExplorationDimensionRef{{Field: "unrelated"}}
+	if _, err := Convert(conflicting, Options{VisualID: "component_range"}); err == nil || !strings.Contains(err.Error(), "top-level dimensions are not redundant") {
+		t.Fatalf("conflicting top-level dimensions error = %v, want fail-closed pivot shape diagnostic", err)
+	}
+}
+
+func TestConvertPivotRejectsMismatchedRedundantSelections(t *testing.T) {
+	rowGrain := exploration.ExplorationTimeGrainMonth
+	rowAlias := "region_month"
+	metricAlias := "amount"
+	base := exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		ModelID:       "semantic:sales",
+		Dimensions: []exploration.ExplorationDimensionRef{
+			{Field: "region", Alias: &rowAlias, Grain: &rowGrain},
+			{Field: "channel"},
+		},
+		Metrics: []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &metricAlias}},
+		Filters: []exploration.ExplorationFilter{},
+		Limit:   100,
+		Pivot: &exploration.ExplorationPivotConfig{
+			Rows:    []exploration.ExplorationDimensionRef{{Field: "region", Alias: &rowAlias, Grain: &rowGrain}},
+			Columns: []exploration.ExplorationDimensionRef{{Field: "channel"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "revenue", Alias: &metricAlias}},
+		},
+	}
+	tests := []struct {
+		name   string
+		mutate func(*exploration.ExplorationSpec)
+		want   string
+	}{
+		{
+			name: "metric alias",
+			mutate: func(spec *exploration.ExplorationSpec) {
+				spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue", Alias: stringPointer("other_amount")}}
+			},
+			want: "top-level metrics are not redundant",
+		},
+		{
+			name: "metric selection",
+			mutate: func(spec *exploration.ExplorationSpec) {
+				spec.Metrics = []exploration.ExplorationMetricRef{{Field: "orders"}}
+			},
+			want: "top-level metrics are not redundant",
+		},
+		{
+			name: "dimension grain",
+			mutate: func(spec *exploration.ExplorationSpec) {
+				grain := exploration.ExplorationTimeGrainDay
+				spec.Dimensions[0].Grain = &grain
+			},
+			want: "top-level dimensions are not redundant",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := base
+			test.mutate(&spec)
+			if _, err := Convert(spec, Options{}); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("mismatched redundant selection error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestConvertPivotAllowsOmittedOrTimeDecoratedRedundantSelections(t *testing.T) {
+	month := exploration.ExplorationTimeGrainMonth
+	monthAlias := "region_month"
+	makeSpec := func(includeRedundantSelections bool) exploration.ExplorationSpec {
+		row := exploration.ExplorationDimensionRef{Field: "region"}
+		if includeRedundantSelections {
+			row.Alias = &monthAlias
+			row.Grain = &month
+		}
+		pivot := exploration.ExplorationPivotConfig{
+			Rows:    []exploration.ExplorationDimensionRef{row},
+			Columns: []exploration.ExplorationDimensionRef{{Field: "channel"}},
+			Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}},
+		}
+		spec := exploration.ExplorationSpec{
+			SchemaVersion: 1,
+			ModelID:       "semantic:sales",
+			Filters:       []exploration.ExplorationFilter{},
+			Limit:         100,
+			Pivot:         &pivot,
+			Time:          &exploration.ExplorationTimeSelection{Field: "region", Grain: month, Alias: &monthAlias},
+			Visualization: &exploration.ExplorationVisualizationConfig{Value: &exploration.PivotExplorationVisualization{Kind: "pivot", Rows: []exploration.ExplorationVisualizationFieldRef{{Field: "region"}}, Columns: []exploration.ExplorationVisualizationFieldRef{{Field: "channel"}}, Metrics: []exploration.ExplorationVisualizationFieldRef{{Field: "revenue"}}}},
+		}
+		if includeRedundantSelections {
+			spec.Dimensions = []exploration.ExplorationDimensionRef{{Field: "region", Alias: &monthAlias, Grain: &month}, {Field: "channel"}}
+			spec.Metrics = []exploration.ExplorationMetricRef{{Field: "revenue"}}
+		}
+		return spec
+	}
+	for _, test := range []struct {
+		name string
+		spec exploration.ExplorationSpec
+	}{
+		{name: "omitted", spec: makeSpec(false)},
+		{name: "canonical after time decoration", spec: makeSpec(true)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Convert(test.spec, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pivot, ok := result.Visual.Query.Value.(*document.PivotDashboardQuery)
+			if !ok || len(pivot.Rows) != 1 || pivot.Rows[0].Reference == nil || pivot.Rows[0].Reference.Alias == nil || *pivot.Rows[0].Reference.Alias != monthAlias || pivot.Rows[0].Reference.Grain == nil || *pivot.Rows[0].Reference.Grain != document.DashboardTimeGrainMonth {
+				t.Fatalf("pivot time decoration = %#v, want one month-decorated row", result.Visual.Query.Value)
+			}
+		})
+	}
+}
+
 func TestConvertRejectsUnboundPhysicalFieldsAndUnrepresentableFormats(t *testing.T) {
 	dataset := "orders"
 	spec := exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &dataset, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.region"}}, Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 10}

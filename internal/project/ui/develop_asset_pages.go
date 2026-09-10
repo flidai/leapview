@@ -55,7 +55,7 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(ca
 	if activeSection == "data" && assetDataInspectable(asset.Type) {
 		extras.CSRFToken = refresh.CSRFToken
 		commandPath := projectAssetDataHref(asset) + "/command"
-		attrs = append(attrs, g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost(commandPath)))
+		attrs = append(attrs, g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPostWithCancellation(commandPath, "window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)")))
 	}
 	if assetRefreshable(asset.Type) {
 		extras.CSRFToken = refresh.CSRFToken

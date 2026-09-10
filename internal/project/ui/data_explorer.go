@@ -143,7 +143,7 @@ func dataExplorerPageWithAgentAndSaved(page uisignals.DataExplorerPageSignal, ex
 			g.El("lv-data-explorer",
 				g.Attr("slot", "page"),
 				g.Attr("data-indicator", "agentTurnPending"),
-				g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/explore/command")),
+				g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPostWithCancellation("/explore/command", "window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)")),
 				g.Attr("data-on:lv-chat-submit", agentTurn),
 				g.Attr("data-on:lv-chat-restore", agentRestore),
 				g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),

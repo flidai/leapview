@@ -39,6 +39,9 @@ func TestDataExplorerDashboardBootstrapCarriesTypedTargetAndCommandBridge(t *tes
 	if !strings.Contains(rendered.String(), `data-lv-dashboard-action="append"`) || !strings.Contains(rendered.String(), `data-on:lv-data-explorer-add-to-dashboard__document`) {
 		t.Fatalf("dashboard mutation did not get an isolated document action owner: %s", rendered.String())
 	}
+	if !strings.Contains(rendered.String(), "requestCancellation: window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)") {
+		t.Fatalf("data explorer command did not use scoped browser cancellation: %s", rendered.String())
+	}
 	if !strings.Contains(rendered.String(), "$addExplorationToDashboard = evt.detail") || !strings.Contains(rendered.String(), "filterSignals: {include: /^(?:addExplorationToDashboard)") {
 		t.Fatalf("dashboard mutation did not use the generated envelope key: %s", rendered.String())
 	}

@@ -11,8 +11,8 @@ import (
 
 func (c converter) presentation() (string, document.DashboardPresentation, error) {
 	if c.spec.Pivot != nil {
-		if len(c.spec.Dimensions) != 0 || len(c.spec.Metrics) != 0 {
-			return "", document.DashboardPresentation{}, fmt.Errorf("pivot exploration cannot carry top-level dimensions or metrics")
+		if err := c.validatePivotTopLevelSelections(); err != nil {
+			return "", document.DashboardPresentation{}, err
 		}
 		if err := c.validatePivotVisualization(); err != nil {
 			return "", document.DashboardPresentation{}, err
@@ -306,6 +306,61 @@ func (c converter) presentation() (string, document.DashboardPresentation, error
 	default:
 		return "", document.DashboardPresentation{}, fmt.Errorf("unsupported exploration visualization %T", value)
 	}
+}
+
+// validatePivotTopLevelSelections accepts the ordinary selections retained by
+// the browser when pivot mode is enabled, but does not let a second selection
+// source broaden or change the pivot query. The server normally normalizes
+// these arrays from the pivot axes; when a caller supplies them directly they
+// must therefore be exact redundant copies (or omitted).
+func (c converter) validatePivotTopLevelSelections() error {
+	wantDimensions := append([]exploration.ExplorationDimensionRef(nil), c.spec.Pivot.Rows...)
+	wantDimensions = append(wantDimensions, c.spec.Pivot.Columns...)
+	if len(c.spec.Dimensions) != 0 && !sameDimensionRefs(c.spec.Dimensions, wantDimensions) {
+		return fmt.Errorf("pivot top-level dimensions are not redundant with pivot rows and columns")
+	}
+	if len(c.spec.Metrics) != 0 && !sameMetricRefs(c.spec.Metrics, c.spec.Pivot.Metrics) {
+		return fmt.Errorf("pivot top-level metrics are not redundant with pivot metrics")
+	}
+	return nil
+}
+
+func sameDimensionRefs(left, right []exploration.ExplorationDimensionRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Field != right[index].Field || !sameStringPtr(left[index].Alias, right[index].Alias) || !sameGrainPtr(left[index].Grain, right[index].Grain) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameMetricRefs(left, right []exploration.ExplorationMetricRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].Field != right[index].Field || !sameStringPtr(left[index].Alias, right[index].Alias) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStringPtr(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
+}
+
+func sameGrainPtr(left, right *exploration.ExplorationTimeGrain) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func (c converter) validateChartRefs(single *exploration.ExplorationVisualizationFieldRef, many []exploration.ExplorationVisualizationFieldRef, series *exploration.ExplorationVisualizationFieldRef) error {

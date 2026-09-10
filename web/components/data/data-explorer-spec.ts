@@ -221,7 +221,26 @@ export function updateExplorationPivot(
 export function removeExplorationPivot(spec: ExplorationSpec): ExplorationSpec {
   if (!spec.pivot) return spec
   const { pivot: _pivot, ...withoutPivot } = spec
-  return withoutPivot as ExplorationSpec
+  // Keep the property present so a complete-spec update can explicitly clear
+  // a pivot instead of allowing a controller merge to restore the old value.
+  return { ...withoutPivot, pivot: undefined } as ExplorationSpec
+}
+
+export function updateExplorationPivotWindow(
+  spec: ExplorationSpec,
+  key: 'limit' | 'offset',
+  value: number,
+): ExplorationSpec {
+  const pivot = pivotForSpec(spec)
+  const numeric = key === 'offset'
+    ? Math.max(0, Math.trunc(Number(value) || 0))
+    : boundedExplorationLimit(Number(value), spec.limit)
+  const window = {
+    ...pivot.window,
+    limit: pivot.window?.limit ?? spec.limit,
+    ...(key === 'limit' ? { limit: numeric } : { offset: numeric }),
+  }
+  return { ...spec, pivot: { ...pivot, window } }
 }
 
 /**
@@ -290,6 +309,8 @@ export function setExplorationTime(
     const { time: _time, ...withoutTime } = spec
     return {
       ...withoutTime,
+      // Preserve an explicit undefined marker for complete-spec callers.
+      time: undefined,
       sort: previousTimeKeys
         ? spec.sort.filter((sort) => !previousTimeKeys.has(sort.field))
         : spec.sort,
@@ -363,8 +384,9 @@ export function filterOperatorsForType(type: string | undefined): ExplorationFil
   ]
 }
 
-export function filterOperator(filter: ExplorationFilter): ExploreFilterOperator | '' {
+export function filterOperator(filter: ExplorationFilter): ExploreFilterOperator | 'range' | '' {
   const expression = filter.expression
+  if (expression.kind === 'range') return 'range'
   if ('operator' in expression) return expression.operator
   return ''
 }
@@ -440,7 +462,7 @@ function typedFilterValue(value: string, type?: string): ExplorationFilterValue 
   if (normalized === 'number' || normalized.includes('decimal') || normalized.includes('numeric') || normalized.includes('double') || normalized.includes('float')) {
     return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value) ? { kind: 'decimal', value } : undefined
   }
-  if (normalized === 'date' || normalized.endsWith('.date')) {
+  if (normalized === 'date' || normalized.endsWith('.date') || normalized === 'day') {
     return validDate(value) ? { kind: 'date', value } : undefined
   }
   if (normalized.includes('timestamp') || normalized.includes('datetime')) {

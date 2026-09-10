@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import type { ExplorationSpec } from '../../generated/exploration'
 import type { DataExploreFieldSignal } from '../../generated/signals'
 import type { OptimisticInteractionCommand } from '../dashboard/interaction-selection'
+import { DataExplorerQueryController } from './data-explorer-controller'
 import { explorationSpecFromInteraction } from './data-explorer-drill'
 
 const field = (id: string, type: string, extra: Partial<DataExploreFieldSignal> = {}): DataExploreFieldSignal => ({
@@ -93,6 +94,18 @@ test('drill switches to a table and keeps governed query selections', () => {
   expect(result.spec.time).toEqual(spec.time)
 })
 
+test('drill pivot removal survives the query controller complete-spec merge', () => {
+  const spec = {
+    ...baseSpec(),
+    pivot: { rows: [{ field: 'orders.status' }], columns: [{ field: 'orders.created_at', grain: 'month' }], metrics: [{ field: 'revenue' }] },
+  }
+  const result = explorationSpecFromInteraction(spec, [field('orders.status', 'string'), field('orders.id', 'string')], command([{ field: 'orders.status', value: 'shipped' }]), 'drill', ['id'])
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  const commandAfterMerge = new DataExplorerQueryController().explore({ spec, requestSeq: 1, resetVersion: 1, columnWidths: {} }, result.spec)
+  expect(commandAfterMerge.spec.pivot).toBeUndefined()
+})
+
 test('scopes physical fields to the query dataset and leaves conformed fields unscoped', () => {
   const fields = [field('orders.status', 'string'), field('order_status', 'string', { datasetId: 'orders' })]
   const result = explorationSpecFromInteraction({ ...baseSpec(), filters: [] }, fields, command([
@@ -127,4 +140,109 @@ test('fails closed for unsafe fields, values, grains, and clear interactions', (
   expect(explorationSpecFromInteraction(spec, [field('orders.created_at', 'timestamp')], command([{ field: 'orders.created_at', grain: 'day', value: '2026-02-28T12:30:00Z' }]), 'drill')).toMatchObject({ ok: false, code: 'mismatched_grain' })
   expect(explorationSpecFromInteraction(spec, [field('orders.status', 'string')], command([], 'clear'), 'drill')).toMatchObject({ ok: false, code: 'empty_interaction' })
   expect(explorationSpecFromInteraction(spec, [field('orders.status', 'string')], command([{ field: 'orders.status', value: 'paid' }]), 'drill')).toMatchObject({ ok: false, code: 'missing_grain' })
+})
+
+test('converts a date bucket selection into a typed half-open range', () => {
+  const spec = { ...baseSpec(), filters: [] }
+  const result = explorationSpecFromInteraction(spec, [field('orders.created_day', 'date')], command([
+    { field: 'orders.created_day', grain: 'month', value: '2024-02-01' },
+  ]), 'explore_from_here')
+
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.spec.filters).toEqual([{
+    field: 'orders.created_day', datasetId: 'orders', expression: {
+      kind: 'range',
+      lower: { value: { kind: 'date', value: '2024-02-01' }, inclusive: true },
+      upper: { value: { kind: 'date', value: '2024-03-01' }, inclusive: false },
+    },
+  }])
+})
+
+test('handles leap-day date and quarter timestamp bucket boundaries', () => {
+  const dateResult = explorationSpecFromInteraction({ ...baseSpec(), filters: [] }, [field('orders.created_day', 'date')], command([
+    { field: 'orders.created_day', grain: 'day', value: '2024-02-29' },
+  ]), 'explore_from_here')
+  expect(dateResult.ok).toBe(true)
+  if (dateResult.ok) expect(dateResult.spec.filters[0]?.expression).toMatchObject({ upper: { value: { kind: 'date', value: '2024-03-01' }, inclusive: false } })
+
+  const quarterResult = explorationSpecFromInteraction({ ...baseSpec(), time: undefined, filters: [] }, [field('orders.created_at', 'timestamp')], command([
+    { field: 'orders.created_at', grain: 'quarter', value: '2024-10-01T00:00:00Z' },
+  ]), 'explore_from_here')
+  expect(quarterResult.ok).toBe(true)
+  if (quarterResult.ok) expect(quarterResult.spec.filters[0]?.expression).toMatchObject({ upper: { value: { kind: 'timestamp', value: '2025-01-01T00:00:00Z' }, inclusive: false } })
+})
+
+test('preserves timestamp offsets while advancing calendar bucket boundaries', () => {
+  const spec = { ...baseSpec(), filters: [] }
+  const result = explorationSpecFromInteraction(spec, [field('orders.created_at', 'timestamp')], command([
+    { field: 'orders.created_at', grain: 'month', value: '2024-02-01T00:00:00-05:00' },
+  ]), 'explore_from_here')
+
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.spec.filters[0]?.expression).toEqual({
+    kind: 'range',
+    lower: { value: { kind: 'timestamp', value: '2024-02-01T00:00:00-05:00' }, inclusive: true },
+    upper: { value: { kind: 'timestamp', value: '2024-03-01T00:00:00-05:00' }, inclusive: false },
+  })
+})
+
+test('supports week and year bucket edges and intersects authored predicates', () => {
+  const created = field('orders.created_at', 'timestamp')
+  const spec: ExplorationSpec = {
+    ...baseSpec(),
+    time: undefined,
+    filters: [{ field: 'orders.created_at', datasetId: 'orders', expression: { kind: 'comparison', operator: 'greater_than_or_equal', value: { kind: 'timestamp', value: '2024-01-01T00:00:00Z' } } }],
+  }
+  const result = explorationSpecFromInteraction(spec, [created], command([
+    { field: 'orders.created_at', grain: 'week', value: '2024-02-04T00:00:00Z' },
+  ]), 'explore_from_here')
+
+  expect(result.ok).toBe(true)
+  if (!result.ok) return
+  expect(result.spec.filters).toHaveLength(2)
+  expect(result.spec.filters[1]?.expression).toEqual({
+    kind: 'range',
+    lower: { value: { kind: 'timestamp', value: '2024-02-04T00:00:00Z' }, inclusive: true },
+    upper: { value: { kind: 'timestamp', value: '2024-02-11T00:00:00Z' }, inclusive: false },
+  })
+
+  const year = explorationSpecFromInteraction({ ...baseSpec(), time: undefined, filters: [] }, [created], command([
+    { field: 'orders.created_at', grain: 'year', value: '2024-01-01T00:00:00Z' },
+  ]), 'explore_from_here')
+  expect(year.ok).toBe(true)
+  if (year.ok) expect(year.spec.filters[0]?.expression).toMatchObject({ upper: { value: { kind: 'timestamp', value: '2025-01-01T00:00:00Z' }, inclusive: false } })
+})
+
+test('fails closed for zoned timestamp bucket selections', () => {
+  const result = explorationSpecFromInteraction({ ...baseSpec(), filters: [] }, [field('orders.event_at', 'DateTimeTz')], command([
+    { field: 'orders.event_at', grain: 'day', value: '2024-02-01T00:00:00-05:00' },
+  ]), 'explore_from_here')
+  expect(result).toMatchObject({ ok: false, code: 'invalid_grain' })
+})
+
+test('rejects date subday buckets instead of constructing an empty range', () => {
+  const result = explorationSpecFromInteraction({ ...baseSpec(), time: undefined, filters: [] }, [field('orders.created_day', 'date')], command([
+    { field: 'orders.created_day', grain: 'hour', value: '2024-02-01' },
+  ]), 'explore_from_here')
+  expect(result).toMatchObject({ ok: false, code: 'invalid_grain' })
+})
+
+test('rejects malformed calendar, clock, and offset bucket values', () => {
+  const created = field('orders.created_at', 'timestamp')
+  for (const value of ['2024-02-30T00:00:00Z', '2024-02-01T24:00:00Z', '2024-02-01T00:00:00+24:00']) {
+    const result = explorationSpecFromInteraction({ ...baseSpec(), time: undefined, filters: [] }, [created], command([
+      { field: 'orders.created_at', grain: 'day', value },
+    ]), 'explore_from_here')
+    expect(result).toMatchObject({ ok: false, code: 'unsupported_value' })
+  }
+})
+
+test('allows null checks on zoned timestamp mappings without deriving a bucket', () => {
+  const result = explorationSpecFromInteraction({ ...baseSpec(), filters: [] }, [field('orders.event_at', 'DateTimeTz')], command([
+    { field: 'orders.event_at', grain: 'day', value: null },
+  ]), 'explore_from_here')
+  expect(result.ok).toBe(true)
+  if (result.ok) expect(result.spec.filters[0]?.expression).toEqual({ kind: 'null_check', operator: 'is_null' })
 })

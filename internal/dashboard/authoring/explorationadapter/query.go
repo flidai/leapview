@@ -12,9 +12,6 @@ func (c converter) querySelections() ([]document.DashboardDimensionSelection, []
 	if c.spec.Pivot != nil {
 		rows := append([]exploration.ExplorationDimensionRef(nil), c.spec.Pivot.Rows...)
 		columns := append([]exploration.ExplorationDimensionRef(nil), c.spec.Pivot.Columns...)
-		if !containsTimeDimension(rows, c.spec.Time) && !containsTimeDimension(columns, c.spec.Time) {
-			rows = appendTimeDimension(rows, c.spec.Time)
-		}
 		dimensions := make([]document.DashboardDimensionSelection, 0, len(rows)+len(columns))
 		for _, value := range rows {
 			value = applyTimeDimension(value, c.spec.Time)
@@ -76,30 +73,6 @@ func (c converter) querySelections() ([]document.DashboardDimensionSelection, []
 	return dimensions, metrics, nil
 }
 
-func appendTimeDimension(values []exploration.ExplorationDimensionRef, timeSelection *exploration.ExplorationTimeSelection) []exploration.ExplorationDimensionRef {
-	if timeSelection == nil {
-		return values
-	}
-	for _, value := range values {
-		if value.Field == timeSelection.Field {
-			return values
-		}
-	}
-	return append(values, exploration.ExplorationDimensionRef{Field: timeSelection.Field, Alias: timeSelection.Alias, Grain: &timeSelection.Grain})
-}
-
-func containsTimeDimension(values []exploration.ExplorationDimensionRef, timeSelection *exploration.ExplorationTimeSelection) bool {
-	if timeSelection == nil {
-		return false
-	}
-	for _, value := range values {
-		if value.Field == timeSelection.Field {
-			return true
-		}
-	}
-	return false
-}
-
 func applyTimeDimension(value exploration.ExplorationDimensionRef, timeSelection *exploration.ExplorationTimeSelection) exploration.ExplorationDimensionRef {
 	if timeSelection == nil || value.Field != timeSelection.Field {
 		return value
@@ -114,7 +87,7 @@ func applyTimeDimension(value exploration.ExplorationDimensionRef, timeSelection
 
 func (c converter) query(visualType string, dimensions []document.DashboardDimensionSelection, metrics []document.DashboardMetricSelection) (document.DashboardQuery, error) {
 	if c.spec.Pivot != nil {
-		rows := make([]document.DashboardDimensionSelection, 0, len(c.spec.Pivot.Rows)+1)
+		rows := make([]document.DashboardDimensionSelection, 0, len(c.spec.Pivot.Rows))
 		for _, value := range c.spec.Pivot.Rows {
 			value = applyTimeDimension(value, c.spec.Time)
 			selection, err := c.dimension(value)
@@ -122,28 +95,6 @@ func (c converter) query(visualType string, dimensions []document.DashboardDimen
 				return document.DashboardQuery{}, err
 			}
 			rows = append(rows, selection)
-		}
-		if c.spec.Time != nil {
-			present := false
-			for _, value := range c.spec.Pivot.Rows {
-				if value.Field == c.spec.Time.Field {
-					present = true
-					break
-				}
-			}
-			for _, value := range c.spec.Pivot.Columns {
-				if value.Field == c.spec.Time.Field {
-					present = true
-					break
-				}
-			}
-			if !present {
-				selection, err := c.dimension(exploration.ExplorationDimensionRef{Field: c.spec.Time.Field, Alias: c.spec.Time.Alias, Grain: &c.spec.Time.Grain})
-				if err != nil {
-					return document.DashboardQuery{}, err
-				}
-				rows = append(rows, selection)
-			}
 		}
 		columns := make([]document.DashboardDimensionSelection, 0, len(c.spec.Pivot.Columns))
 		for _, value := range c.spec.Pivot.Columns {

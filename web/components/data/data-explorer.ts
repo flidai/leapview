@@ -74,6 +74,7 @@ import './data-explorer-results'
 import './data-explorer-dashboard-picker'
 import { type ExplorationInteractionMode } from './data-explorer-drill'
 import { handleDataExploreInteraction, handleDataExploreWindowRequest } from './data-explorer-window'
+import { releaseDataExplorerTransport } from './data-explorer-transport'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -1086,6 +1087,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   disconnectedCallback(): void {
     window.clearTimeout(this.exploreTimer)
     window.clearTimeout(this.filterSuggestionTimer)
+    releaseDataExplorerTransport(this.clientState.clientID(this.dataExplorer.command?.clientId))
     this.browserResizeCleanup?.()
     if (typeof window !== 'undefined') window.removeEventListener('popstate', this.handleHistoryPopState)
     if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
@@ -1979,6 +1981,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       explore: current.explore ?? this.dataExplorer?.explore?.command,
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
     }, { ...partial, clientId })
+    // Any semantic draft/run/stop command supersedes in-flight suggestions.
+    // This is a browser-side freshness guard for the interval before the
+    // corresponding semantic request reaches the server.
+    if (partial.explore && partial.explore.filterSuggestions === undefined) this.clientState.invalidateSuggestions()
     if (!this.embedded) {
       const action = partial.action ?? next.action
       const exploreAction = partial.explore?.action ?? next.explore?.action

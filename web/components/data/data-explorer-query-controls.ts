@@ -21,6 +21,7 @@ import {
   setExplorationTimeRange,
   unsupportedRelativeTimeRangeMessage,
   updateExplorationPivot,
+  updateExplorationPivotWindow,
   upsertExplorationSort,
 } from './data-explorer-spec'
 
@@ -220,7 +221,7 @@ export class DataExplorerQueryControls extends LitElement {
   private addPivotRef(section: PivotSection, available: DataExploreFieldSignal[], spec: ExplorationSpec) { const pivot = pivotForSpec(spec); const field = available.find((candidate) => !pivot[section].some((ref) => ref.field === candidate.id)); if (field) this.emitSpec(updateExplorationPivot(spec, section, [...pivot[section], { field: field.id }] as never)) }
   private removePivotRef(section: PivotSection, index: number, spec: ExplorationSpec) { const pivot = pivotForSpec(spec); this.emitSpec(updateExplorationPivot(spec, section, pivot[section].filter((_, current) => current !== index) as never)) }
   private changePivotTotal(key: 'rows' | 'columns' | 'grand', value: boolean, spec: ExplorationSpec) { const pivot = pivotForSpec(spec); this.emitSpec({ ...spec, pivot: { ...pivot, totals: { ...pivot.totals, [key]: value } } }) }
-  private changePivotWindow(key: 'limit' | 'offset', value: string, spec: ExplorationSpec) { const pivot = pivotForSpec(spec); const numeric = key === 'offset' ? Math.max(0, Math.trunc(Number(value) || 0)) : boundedExplorationLimit(Number(value), spec.limit); this.emitSpec({ ...spec, pivot: { ...pivot, window: { ...pivot.window, [key]: numeric, limit: pivot.window?.limit ?? spec.limit } } }) }
+  private changePivotWindow(key: 'limit' | 'offset', value: string, spec: ExplorationSpec) { this.emitSpec(updateExplorationPivotWindow(spec, key, Number(value))) }
 }
 
 type ExploreFieldGroup = { kind: 'dimension' | 'metric'; label: string; fields: DataExploreFieldSignal[] }
