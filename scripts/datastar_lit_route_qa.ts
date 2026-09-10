@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
+import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -340,8 +341,7 @@ async function assertDocumentFocusReset(page: Page, label: string): Promise<void
 }
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
-  const catalogPath = '/'
-  const dashboardHref = '/dashboards/dashboard:visual-showcase'
+  const catalogPath = '/', dashboardHref = '/dashboards/dashboard:visual-showcase'
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   const messages = collectBlockingConsoleMessages(page)
 
@@ -349,7 +349,7 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
     const response = await page.goto(new URL(catalogPath, baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`${catalogPath}: status ${response?.status() ?? 'unknown'}`)
     await page.locator(`a[href="${dashboardHref}"]`).click()
-    await page.waitForURL(`**${dashboardPath}`)
+    await page.waitForURL(`**${dashboardPath}`); await ensureDashboardVisualizationsMounted(page, ['revenue'])
     try {
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -808,7 +808,7 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
   try {
     const response = await page.goto(new URL(path, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 120_000 })
     if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
-    await page.waitForSelector('lv-dashboard-page')
+    await page.waitForSelector('lv-dashboard-page'); await ensureDashboardVisualizationsMounted(page, visualIDs)
     await page.waitForFunction((expectedVisualIDs) => {
       const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
       const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }>
@@ -892,7 +892,7 @@ async function verifySpatialMapWindowing(): Promise<void> {
       const response = await page.goto(new URL(`${path}?qaLoad=${load}`, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 120_000 })
       if (!response?.ok()) throw new Error(`${path}: status ${response?.status() ?? 'unknown'}`)
       await page.waitForSelector('lv-dashboard-page')
-      await waitForUpdatesRequest(path, updates)
+      await waitForUpdatesRequest(path, updates); await ensureDashboardVisualizationsMounted(page)
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
         const host = dashboard?.shadowRoot?.querySelector('lv-visualization-host') as HTMLElement & { envelope?: any }
