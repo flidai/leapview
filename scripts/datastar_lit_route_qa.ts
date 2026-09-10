@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
-import { ensureDashboardVisualizationsMounted, isDashboardUpdateURL } from './dashboard_visualization_readiness'
+import { ensureDashboardVisualizationsMounted, observeDashboardUpdateStream } from './dashboard_visualization_readiness'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -341,29 +341,17 @@ async function assertDocumentFocusReset(page: Page, label: string): Promise<void
 }
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
-  const catalogPath = '/', dashboardID = 'dashboard:visual-showcase', pageID = 'overview'
-  const dashboardHref = `/dashboards/${dashboardID}`
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  const messages = collectBlockingConsoleMessages(page)
-  const updates: string[] = []
-  const updateResponseStatuses: number[] = []
-  page.on('request', (request) => {
-    if (isDashboardUpdateURL(request.url(), dashboardID, pageID)) updates.push(request.url())
-  })
-  page.on('response', (response) => {
-    if (isDashboardUpdateURL(response.url(), dashboardID, pageID)) updateResponseStatuses.push(response.status())
-  })
-
+  const catalogPath = '/', dashboardID = 'dashboard:visual-showcase', pageID = 'overview', dashboardHref = `/dashboards/${dashboardID}`
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } }), messages = collectBlockingConsoleMessages(page)
+  const stream = observeDashboardUpdateStream(page, dashboardID, pageID)
   try {
     const response = await page.goto(new URL(catalogPath, baseURL).toString(), { waitUntil: 'domcontentloaded' })
     if (!response?.ok()) throw new Error(`${catalogPath}: status ${response?.status() ?? 'unknown'}`)
-    updates.length = 0
-    updateResponseStatuses.length = 0
+    stream.reset()
     await page.locator(`a[href="${dashboardHref}"]`).click()
     await page.waitForURL(`**${dashboardPath}`)
     try {
-      await waitForUpdatesRequest('ECharts first navigation', updates)
-      await waitForSuccessfulUpdatesResponse('ECharts first navigation', updateResponseStatuses)
+      await stream.waitForReady('ECharts first navigation')
       await ensureDashboardVisualizationsMounted(page, ['revenue'])
       await page.waitForFunction(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
@@ -393,10 +381,7 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
     } catch (error) {
       const state = await page.evaluate(() => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot } & Record<string, any>
-        return {
-          page: dashboard?.page?.pageId,
-          status: dashboard?.status,
-          visualSignals: Object.keys(dashboard?.visualSignals ?? {}),
+        return { page: dashboard?.page?.pageId, status: dashboard?.status, visualSignals: Object.keys(dashboard?.visualSignals ?? {}),
           hosts: Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []).map((candidate) => {
             const host = candidate as HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }
             const renderer = host.shadowRoot?.querySelector('.renderer')
@@ -426,7 +411,7 @@ async function verifyEChartsFirstNavigation(): Promise<void> {
           }),
         }
       })
-      throw new Error(`ECharts first navigation did not paint: requestCount=${updates.length}, responseStatuses=${JSON.stringify(updateResponseStatuses)}, state=${JSON.stringify(state)}; ${String(error)}`)
+      throw new Error(`ECharts first navigation did not paint: ${stream.describe()}, state=${JSON.stringify(state)}; ${String(error)}`)
     }
     assertNoBlockingConsoleMessages('ECharts first navigation', messages)
   } finally {
@@ -438,14 +423,6 @@ async function waitForUpdatesRequest(label: string, updates: string[]): Promise<
   const deadline = Date.now() + 5000
   while (updates.length === 0) {
     if (Date.now() > deadline) throw new Error(`${label}: timed out waiting for /updates request`)
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-}
-
-async function waitForSuccessfulUpdatesResponse(label: string, statuses: number[]): Promise<void> {
-  const deadline = Date.now() + 5000
-  while (!statuses.some((status) => status >= 200 && status < 300)) {
-    if (Date.now() > deadline) throw new Error(`${label}: no successful /updates response; statuses=${JSON.stringify(statuses)}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
 }

@@ -128,8 +128,8 @@ test('browser QA uses canonical project resource IDs', async () => {
 
   expect(source).toContain('/dashboards/dashboard:visual-showcase')
   expect(source).toContain("visualID === 'revenue'")
-  expect(source).toContain("await waitForUpdatesRequest('ECharts first navigation', updates)")
-  expect(source).toContain("await waitForSuccessfulUpdatesResponse('ECharts first navigation', updateResponseStatuses)")
+  expect(source).toContain('const stream = observeDashboardUpdateStream(page, dashboardID, pageID)')
+  expect(source).toContain("await stream.waitForReady('ECharts first navigation')")
   expect(source).not.toContain("'/dashboards/visual-showcase")
   expect(source).not.toContain("visualID === 'revenue_by_month'")
 })

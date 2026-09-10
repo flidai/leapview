@@ -17,6 +17,33 @@ export function isDashboardUpdateURL(value: string, dashboard: string, page: str
   }
 }
 
+/** Observe one dashboard stream across navigation and require both its request and successful response. */
+export function observeDashboardUpdateStream(page: Page, dashboard: string, pageID: string) {
+  let requests = 0
+  const statuses: number[] = []
+  page.on('request', (request) => {
+    if (isDashboardUpdateURL(request.url(), dashboard, pageID)) requests++
+  })
+  page.on('response', (response) => {
+    if (isDashboardUpdateURL(response.url(), dashboard, pageID)) statuses.push(response.status())
+  })
+  return {
+    reset: () => { requests = 0; statuses.length = 0 },
+    waitForReady: async (label: string) => {
+      const deadline = Date.now() + 5000
+      while (requests === 0) {
+        if (Date.now() > deadline) throw new Error(`${label}: timed out waiting for /updates request`)
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      while (!statuses.some((status) => status >= 200 && status < 300)) {
+        if (Date.now() > deadline) throw new Error(`${label}: no successful /updates response; statuses=${JSON.stringify(statuses)}`)
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+    },
+    describe: () => `requestCount=${requests}, responseStatuses=${JSON.stringify(statuses)}`,
+  }
+}
+
 /** Force only the requested dashboard renderers before renderer-specific QA. */
 export async function ensureDashboardVisualizationsMounted(page: Page, visualIDs: string[] = []): Promise<void> {
   await page.waitForFunction((expected) => {
