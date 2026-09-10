@@ -60,6 +60,10 @@ test('bundled Datastar isolates suggestions from a delayed run and reaches Stop'
   let suggestionCount = 0
   let firstSuggestionSeq = 0
   let firstSuggestionAborted = false
+  let resolveRunResponse!: () => void
+  const runResponse = new Promise<void>((resolve) => { resolveRunResponse = resolve })
+  let resolveStopResponse!: () => void
+  const stopResponse = new Promise<void>((resolve) => { resolveStopResponse = resolve })
   page.on('requestfailed', (request) => {
     if (new URL(request.url()).pathname !== '/explore/command' || request.method() !== 'POST') return
     const command = request.postDataJSON()?.dataExplorerCommand
@@ -90,14 +94,22 @@ test('bundled Datastar isolates suggestions from a delayed run and reaches Stop'
       }
       if (command?.action === 'run') {
         runSeen = true
-        await new Promise<void>((resolve) => { releaseRun = resolve })
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+        try {
+          await new Promise<void>((resolve) => { releaseRun = resolve })
+          await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+        } finally {
+          resolveRunResponse()
+        }
         return
       }
       if (command?.action === 'stop') {
         stopSeen = true
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
-        releaseRun()
+        try {
+          await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+          releaseRun()
+        } finally {
+          resolveStopResponse()
+        }
         return
       }
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
@@ -163,10 +175,14 @@ test('bundled Datastar isolates suggestions from a delayed run and reaches Stop'
     expect(observed).toMatchObject({ error: '', values: [{ label: 'paid' }], result: { rows: [{ status: 'paid' }] }, status: { state: 'success' } })
     await explorer.getByRole('button', { name: 'Stop', exact: true }).click()
     await waitFor(() => stopSeen)
+    await stopResponse
+    await runResponse
   } finally {
     releaseFirstSuggestion()
     releaseRun()
-    await page.unroute('**/explore/command').catch(() => {})
+    if (stopSeen) await stopResponse
+    if (runSeen) await runResponse
+    await page.unroute('**/explore/command')
     await page.close()
   }
 })

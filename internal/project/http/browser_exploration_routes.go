@@ -81,6 +81,78 @@ func (h *BrowserHandler) SemanticModelDataExplorerCommand(w stdhttp.ResponseWrit
 	h.assetDataExplorerCommand(w, r, string(projectview.AssetTypeSemanticModel))
 }
 
+func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, true, false, false)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, legacyURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true, legacyURLState)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, assetID string, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, projectview.DevelopAssetView, bool) {
+	_, assets, _, ok := h.assets(w, r)
+	if !ok {
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+	asset, found := projectview.AssetByID(assets, assetID)
+	if !found || (asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel)) {
+		stdhttp.NotFound(w, r)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+
+	if asset.Type == string(projectview.AssetTypeModel) {
+		command.Mode = projectsignals.Pointer("browse")
+		command.ObjectKey = projectsignals.Pointer(asset.ID)
+	} else {
+		command.Mode = projectsignals.Pointer("explore")
+		explore := projectsignals.DataExploreCommand{Spec: defaultExplorationSpec()}
+		if command.Explore != nil {
+			explore = *command.Explore
+		}
+		explore.Spec.ModelID = asset.ID
+		command.Explore = &explore
+	}
+
+	page, explorer, ok := h.dataExplorerSignalsForCommand(w, r, command)
+	if !ok {
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
+	}
+	objects := make([]projectsignals.DataExplorerObjectSignal, 0, len(explorer.Objects))
+	for _, object := range explorer.Objects {
+		include := asset.Type == string(projectview.AssetTypeModel) && explorer.SelectedObject != nil && object.Key == explorer.SelectedObject.Key
+		include = include || asset.Type == string(projectview.AssetTypeSemanticModel) && projectsignals.ValueOrZero(object.SemanticModelID) == asset.ID
+		if include {
+			objects = append(objects, object)
+		}
+	}
+	explorer.Objects = objects
+	page.Context.ObjectCount = int64(len(objects))
+	if explorer.SelectedObject != nil {
+		selected := false
+		for _, object := range objects {
+			if object.Key == explorer.SelectedObject.Key {
+				selected = true
+				break
+			}
+		}
+		if !selected {
+			explorer.SelectedKey = nil
+			explorer.SelectedObject = nil
+			page.SelectedObject = nil
+		}
+	}
+	if asset.Type == string(projectview.AssetTypeSemanticModel) {
+		semanticModels := make([]projectsignals.DataExploreSemanticModelSignal, 0, 1)
+		for _, model := range explorer.Explore.SemanticModels {
+			if model.ID == asset.ID {
+				semanticModels = append(semanticModels, model)
+			}
+		}
+		explorer.Explore.SemanticModels = semanticModels
+	}
+	return page, explorer, asset, true
+}
+
 func (h *BrowserHandler) assetDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, expectedType string) {
 	kind, ok := catalogKindForAssetType(expectedType)
 	if !ok || !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {

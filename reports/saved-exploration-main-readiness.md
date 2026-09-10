@@ -39,6 +39,29 @@ below are historical evidence. FAI-769 stays In Review. No database migration
 changes, force push, main merge, auto-merge, or merge-queue enrollment are part
 of this correction pass.
 
+### Hosted validation follow-up
+
+Hosted checks on `63ed273` exposed two integration problems. The dependency
+security job failed before scanning because parallel TypeSpec generators
+repopulated the same bundled-package cache. Separately, GitHub tested against
+newer main `ff5398ad7`, and the combined Go production code exceeded the existing
+quality budget by 22 lines. These are failures, not accepted checks.
+
+Main was merged normally into the PR branch at `852ebc4`; this does not merge
+the PR into main. Targeted semantic-model, query-planner, and exploration-adapter
+tests passed on that combination. The follow-up fixes use the built vendored
+TypeSpec emitter and a behavior-preserving extraction, keeping security gates
+and quality thresholds unchanged. The renewed full local `task ci` run passed
+generation, APIGen, quality, Go/PostgreSQL application conformance, and the
+core/reports/chat frontend shards, then failed in the new transport browser
+fixture: releasing the delayed response raced route teardown (`Route is already
+handled!`). This run is not recorded as green
+(`/tmp/fai769-integrated-review-ci.log`). The test-only correction waits for
+started Run/Stop handlers before removing routes, without changing production
+transport behavior or weakening the cancellation assertions. Repeated focused
+tests, frontend revalidation, final generated checks, and exact-head hosted
+gates are required before the review handoff.
+
 ## September 10 current-main reconciliation
 
 Main advanced to `372039da7` after the September 9 exact-head verification,
