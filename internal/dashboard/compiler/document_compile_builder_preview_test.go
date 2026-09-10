@@ -61,6 +61,37 @@ func TestCompileDocumentBuilderPreviewIsolatesInvalidVisual(t *testing.T) {
 	}
 }
 
+func TestCompileDocumentAcceptsUnresolvedModelFieldForDashboardQuery(t *testing.T) {
+	model := dashboardQueryTestModel()
+	table := model.Tables["orders"]
+	table.AuthoredFields = map[string]semanticmodel.ModelFieldDeclaration{"order_id": {Datatype: semanticmodel.DataTypeInteger}}
+	table.Dimensions["revenue"] = semanticmodel.MetricDimension{}
+	model.Tables["orders"] = table
+	model.Metrics["order_count"] = semanticmodel.Metric{Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}}
+	model.Metrics["revenue_per_order"] = semanticmodel.Metric{Type: "ratio", Numerator: "revenue", Denominator: "order_count"}
+	metric := "revenue_per_order"
+	query := document.DashboardQuery{Value: &document.AggregateDashboardQuery{Type: "aggregate", Metrics: []document.DashboardMetricSelection{{String: &metric}}}}
+	if _, err := LowerDashboardQuery(query, model, "sales"); err == nil || !strings.Contains(err.Error(), "unavailable numeric type metadata") {
+		t.Fatalf("strict LowerDashboardQuery() error = %v, want unresolved numeric type failure", err)
+	}
+	doc := document.DashboardDocument{
+		APIVersion: document.DashboardApiVersionLeapviewDevV1,
+		Kind:       document.DashboardResourceKindDashboard,
+		Metadata:   document.DashboardMetadata{ID: "dashboard:sales", Name: "sales"},
+		Spec: document.DashboardSpec{
+			SemanticModel: "sales",
+			Visuals: map[string]document.DashboardVisual{"revenue": {
+				Type:         document.DashboardVisualTypeKpi,
+				Query:        query,
+				Presentation: document.DashboardPresentation{Value: &document.KPIDashboardPresentation{Type: "kpi"}},
+			}},
+		},
+	}
+	if _, err := CompileDocument(doc, map[string]*semanticmodel.Model{"sales": model}); err != nil {
+		t.Fatalf("CompileDocument() error = %v", err)
+	}
+}
+
 func TestCompileDocumentBuilderPreviewRejectsIncompatibleReportFilterTargets(t *testing.T) {
 	model := canonicalFilterTestModel()
 	model.Datasets["customers"] = semanticmodel.SemanticDatasetSpec{Model: "customers"}

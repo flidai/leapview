@@ -74,6 +74,43 @@ func TestLowerDashboardQueryRecordsQualifiesOnlyRootPhysicalFields(t *testing.T)
 	}
 }
 
+func TestLowerDashboardQueryBindingDefersUndeclaredRecordFieldUntilDiscovery(t *testing.T) {
+	model := dashboardQueryTestModel()
+	model.Metrics = map[string]semanticmodel.Metric{}
+	table := model.Tables["orders"]
+	table.AuthoredFields = map[string]semanticmodel.ModelFieldDeclaration{"order_id": {Datatype: semanticmodel.DataTypeInteger}}
+	delete(table.Dimensions, "revenue")
+	model.Tables["orders"] = table
+	field := "dashboard_only"
+	query := document.DashboardQuery{Value: &document.RecordsDashboardQuery{
+		Type: "records", Dataset: "orders",
+		Fields: []document.DashboardRecordFieldSelection{{String: &field}},
+	}}
+
+	lowered, err := LowerDashboardQueryBinding(query, model, "sales")
+	if err != nil {
+		t.Fatalf("LowerDashboardQueryBinding() error = %v", err)
+	}
+	if got := lowered.Binding.Detail.Fields[0].FieldID; got != "orders.dashboard_only" {
+		t.Fatalf("deferred records field = %q", got)
+	}
+	if _, ok := model.Tables["orders"].Dimensions[field]; ok {
+		t.Fatal("authoring validation mutated the source model with a provisional field")
+	}
+
+	if _, err := LowerDashboardQuery(query, model, "sales"); err == nil || !strings.Contains(err.Error(), "not a safe physical field") {
+		t.Fatalf("strict LowerDashboardQuery() error = %v, want missing physical field rejection", err)
+	}
+
+	discovered := model.ExecutionSnapshot()
+	discoveredTable := discovered.Tables["orders"]
+	discoveredTable.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "BIGINT"}}
+	discovered.Tables["orders"] = discoveredTable
+	if _, err := LowerDashboardQueryBinding(query, discovered, "sales"); err == nil || !strings.Contains(err.Error(), "not a safe physical field") {
+		t.Fatalf("authoring binding accepted missing field after discovery: %v", err)
+	}
+}
+
 func TestLowerDashboardQueryPivotUsesExplicitPivotBinding(t *testing.T) {
 	rows, columns, grand := true, false, true
 	offset, limit := int32(4), int32(25)

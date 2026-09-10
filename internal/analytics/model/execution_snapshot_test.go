@@ -88,12 +88,17 @@ func TestExecutionSnapshotDetachesEvidenceAndChecks(t *testing.T) {
 	minimum, maximum := int64(1), int64(9)
 	model := &Model{Tables: map[string]Table{"orders": Table{
 		SQLAnalysisEvidence: &SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}, ModelRefs: []string{"customers"}},
+		AuthoredFields:      map[string]ModelFieldDeclaration{"status": {Datatype: DataTypeString, Label: "Status", AIContext: &AIContext{Instructions: "Use order status."}}},
 		Checks:              []ModelCheck{{ID: "status_values", Type: "accepted_values", Fields: []string{"status"}, Values: []string{"open", "closed"}, Tags: []string{"governance"}, Minimum: &minimum, Maximum: &maximum}},
 	}}}
 	snapshot := model.ExecutionSnapshot()
 	if snapshot == nil || snapshot.Tables["orders"].SQLAnalysisEvidence == nil || len(snapshot.Tables["orders"].Checks) != 1 {
 		t.Fatal("snapshot lost table evidence or checks")
 	}
+	if got := snapshot.Tables["orders"].AuthoredFields["status"]; got.Datatype != DataTypeString || got.Label != "Status" || got.AIContext != nil {
+		t.Fatalf("snapshot authored field overlay = %#v", got)
+	}
+	snapshot.Tables["orders"].AuthoredFields["new"] = ModelFieldDeclaration{}
 	snapshotEvidence := snapshot.Tables["orders"].SQLAnalysisEvidence
 	snapshotEvidence.SourceRefs[0] = "changed"
 	snapshotEvidence.ModelRefs[0] = "changed"
@@ -107,6 +112,9 @@ func TestExecutionSnapshotDetachesEvidenceAndChecks(t *testing.T) {
 	*snapshotCheck.Minimum = 100
 	*snapshotCheck.Maximum = 200
 	authored := model.Tables["orders"]
+	if _, ok := authored.AuthoredFields["new"]; ok {
+		t.Fatal("snapshot authored fields map aliases source state")
+	}
 	if authored.Checks[0].Tags[0] != "governance" {
 		t.Fatal("snapshot check tags alias authored state")
 	}

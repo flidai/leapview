@@ -66,6 +66,9 @@ func (m *Model) validate(authored bool) error {
 		}
 		m.Sources[name] = resolved
 	}
+	if authored {
+		m.seedDeferredDiscoveredFields()
+	}
 	if len(m.Tables) == 0 {
 		return fmt.Errorf("semantic model %q has no datasets", m.Name)
 	}
@@ -169,8 +172,14 @@ func (m *Model) validate(authored bool) error {
 		}
 		seenRelationshipEndpoints[endpointKey] = relationship.ID
 	}
-	if err := m.validateSemanticGraph(); err != nil {
-		return err
+	var semanticErr error
+	if authored {
+		semanticErr = m.validateSemanticGraphAllowingUnresolvedTypes()
+	} else {
+		semanticErr = m.validateSemanticGraph()
+	}
+	if semanticErr != nil {
+		return semanticErr
 	}
 	return nil
 }
@@ -237,14 +246,24 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			column.Field = tableName + "." + name
 			columns[name] = column
 		}
-		if err := validateRequiredModelColumns(tableName, table, columns); err != nil {
-			return nil, err
+		if table.AuthoredFields == nil {
+			if err := validateRequiredModelColumns(tableName, table, columns); err != nil {
+				return nil, err
+			}
+			return columns, nil
 		}
-		return columns, nil
+		return m.addRequiredModelColumns(tableName, table, columns)
 	}
 	columns := map[string]ModelColumn{}
+	return m.addRequiredModelColumns(tableName, table, columns)
+}
+
+func (m *Model) addRequiredModelColumns(tableName string, table Table, columns map[string]ModelColumn) (map[string]ModelColumn, error) {
 	add := func(name string) {
 		if name == "" {
+			return
+		}
+		if _, exists := columns[name]; exists {
 			return
 		}
 		column := ModelColumn{Name: name, Field: tableName + "." + name, SourceField: name}
@@ -370,10 +389,18 @@ func sameStringSet(left []string, right []string) bool {
 }
 
 func (m *Model) validateSemanticGraph() error {
+	return m.validateSemanticGraphWithOptions(false)
+}
+
+func (m *Model) validateSemanticGraphAllowingUnresolvedTypes() error {
+	return m.validateSemanticGraphWithOptions(true)
+}
+
+func (m *Model) validateSemanticGraphWithOptions(allowUnresolvedTypes bool) error {
 	if len(m.Datasets) == 0 {
 		return fmt.Errorf("semantic model requires at least one dataset")
 	}
-	if err := m.validateExecutionDatasetsAndTables(); err != nil {
+	if err := m.validateExecutionDatasetsAndTables(allowUnresolvedTypes); err != nil {
 		return err
 	}
 	if err := validateRelationshipEndpointDuplicates(m.Relationships); err != nil {
@@ -427,7 +454,7 @@ func (m *Model) validateSemanticGraph() error {
 		for index := range fromFields {
 			left := m.Tables[fromTable].Dimensions[fromFields[index]]
 			right := m.Tables[toTable].Dimensions[toFields[index]]
-			if !relationshipTypesCompatible(left, right) {
+			if !relationshipTypesCompatible(left, right, allowUnresolvedTypes) {
 				return fmt.Errorf("relationship %q endpoint field %q type %q is incompatible with %q type %q", relationship.ID, fromTable+"."+fromFields[index], relationshipFieldType(left), toTable+"."+toFields[index], relationshipFieldType(right))
 			}
 		}
@@ -443,14 +470,14 @@ func (m *Model) validateSemanticGraph() error {
 	if err := m.validateDirectionalRelationshipCycles(); err != nil {
 		return err
 	}
-	return m.validateSemanticDefinitions()
+	return m.validateSemanticDefinitionsWithOptions(allowUnresolvedTypes)
 }
 
 // validateExecutionDatasetsAndTables validates the lowered serving graph. A
 // semantic model's dataset aliases are the runtime table namespace; allowing
 // an extra table or an unbound dataset would let direct construction bypass
 // the authored project binding performed by the project compiler.
-func (m *Model) validateExecutionDatasetsAndTables() error {
+func (m *Model) validateExecutionDatasetsAndTables(allowUnresolvedTypes bool) error {
 	datasetNames := make([]string, 0, len(m.Datasets))
 	for name := range m.Datasets {
 		datasetNames = append(datasetNames, name)
@@ -494,14 +521,14 @@ func (m *Model) validateExecutionDatasetsAndTables() error {
 		if err := validateExecutionTable(tableName, table); err != nil {
 			return err
 		}
-		if err := validateModelChecks(m, tableName, table); err != nil {
+		if err := validateModelChecks(m, tableName, table, allowUnresolvedTypes); err != nil {
 			return err
 		}
 	}
 	return validateExecutionTimeSemantics(m)
 }
 
-func validateModelChecks(model *Model, tableName string, table Table) error {
+func validateModelChecks(model *Model, tableName string, table Table, allowUnresolvedTypes bool) error {
 	for index, check := range table.Checks {
 		severity := strings.ToLower(strings.TrimSpace(check.Severity))
 		if severity != "" && severity != "warning" && severity != "error" {
@@ -517,7 +544,7 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 				return fmt.Errorf("semantic dataset %q check %d references unknown field %q", tableName, index, check.Field)
 			}
 			if check.Type == "accepted_values" {
-				if table.Dimensions[check.Field].Datatype != DataTypeString {
+				if datatype := table.Dimensions[check.Field].Datatype; datatype != DataTypeString && !(allowUnresolvedTypes && datatype == "") {
 					return fmt.Errorf("semantic dataset %q check %d accepted_values requires a String field", tableName, index)
 				}
 				if len(check.Values) == 0 {
@@ -569,7 +596,7 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 			if _, ok := target.Dimensions[targetField]; !ok {
 				return fmt.Errorf("semantic dataset %q check %d references unknown target field %q", tableName, index, check.To)
 			}
-			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField]) {
+			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField], allowUnresolvedTypes) {
 				return fmt.Errorf("semantic dataset %q check %d relationship field %q type %q is incompatible with target %q type %q", tableName, index, check.Field, relationshipFieldType(table.Dimensions[check.Field]), check.To, relationshipFieldType(target.Dimensions[targetField]))
 			}
 		case "row_count":
@@ -820,7 +847,10 @@ func relationshipFieldType(field MetricDimension) string {
 	return field.Type
 }
 
-func relationshipTypesCompatible(left, right MetricDimension) bool {
+func relationshipTypesCompatible(left, right MetricDimension, allowUnresolvedTypes bool) bool {
+	if allowUnresolvedTypes && (left.Datatype == "" || right.Datatype == "") {
+		return true
+	}
 	return left.Datatype != "" && right.Datatype != "" && left.Datatype == right.Datatype
 }
 

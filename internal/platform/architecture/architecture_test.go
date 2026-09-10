@@ -3546,8 +3546,7 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 		"ci:lane:go:packages:",
 		"- task: test:go:packages",
 		"ci:lane:go:application:",
-		"- task: test:go:app:shards",
-		"- task: test:go:external",
+		"- task --parallel test:go:app:shards test:go:external",
 	} {
 		if !strings.Contains(taskfile, want) {
 			t.Fatalf("Taskfile missing split Go lane fragment %q", want)
