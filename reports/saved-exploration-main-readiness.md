@@ -62,6 +62,29 @@ transport behavior or weakening the cancellation assertions. Repeated focused
 tests, frontend revalidation, final generated checks, and exact-head hosted
 gates are required before the review handoff.
 
+The corrected transport fixture passed 10 consecutive focused runs. Frontend
+revalidation passed its transport and canonical-clear regressions, then hit a
+separate admin-page navigation timeout; the unchanged data shard passed on a
+fresh run. No timeout or assertion was relaxed. Before the final push, main
+advanced again to `489798fa7` (viewport-gated shared visual mounting). The normal
+integration merge `5eea2c629` preserves both dashboard Explore actions and
+`defer-mount`, with assertions for both. Test-script and route-QA conflicts retain
+both parents' coverage. JavaScript vulnerability evidence was regenerated from
+live registries for the final merged package manifest. Frontend, generated-file,
+quality, and exact-head hosted validation must cover this newest combination.
+
+Final local frontend revalidation (all five shards) and `generated:check` passed
+exit 0 on the viewport-integrated checkpoint
+(`/tmp/fai769-viewport-final-validation.log`). The unchanged quality budget also
+passes. Independent review found no additional concrete viewport integration
+regression: exploration and chat preview hosts remain eager, while dashboards
+retain deferred mounting and authenticated Explore links. The earlier full
+`task ci` failure remains documented above; its Go/PostgreSQL stages passed,
+and subsequent changes are frontend/test/integration evidence only. The final
+hosted CI and Security gates must still be checked on the pushed head.
+Final architecture, security workflow-contract, and dependency-evidence unit
+tests also passed (`/tmp/fai769-final-contracts.log`). No gate was bypassed.
+
 ## September 10 current-main reconciliation
 
 Main advanced to `372039da7` after the September 9 exact-head verification,
