@@ -97,14 +97,16 @@ obtain independent review before applying it. A proposal's requested limits must
 match its measured candidate; it cannot introduce arbitrary extra headroom.
 
 The policy embeds the active baseline's complete validated bundle evidence, a
-canonical evidence SHA-256, and a decision audit. The initial record uses the
-verified 57b0ae997 normal report and is explicitly pending GitHub review; its
-local reviewer fields are audit context, not approval authority. Tightening or
-applying a reviewed increase replaces the active evidence and budgets together,
-while the historical calibration remains unchanged. Policy loading rejects a
-missing, malformed, hash-mismatched, or byte-mismatched active baseline. The
-current-head GitHub review guard remains the approval authority; this embedded
-record does not by itself claim tamper-resistant governance.
+canonical evidence SHA-256, and a decision audit. The active record uses the
+exact owner-approved evidence from aec05d3f7: only the dashboard builder gzip
+increase was accepted, while the remaining budgets were held or tightened with
+no spare headroom. Its local reviewer fields are audit context, not approval
+authority. Tightening or applying a reviewed increase replaces the active
+evidence and budgets together, while the historical calibration remains
+unchanged. Policy loading rejects a missing, malformed, hash-mismatched, or
+byte-mismatched active baseline. The current-head GitHub review guard remains
+the approval authority; this embedded record does not by itself claim
+tamper-resistant governance.
 
 The PR and merge-validation core shards retain the exact structured evidence as
 a 90-day artifact named with the workflow run and attempt, including failed

@@ -397,6 +397,9 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(artifacts, "task image:qualify:performance IMAGE=\"${immutable_image}\"") {
 		t.Error("main artifact job must send its immutable digest to paired qualification")
 	}
+	if !strings.Contains(artifacts, "include-hidden-files: true") {
+		t.Error("paired performance evidence upload must include the hidden .tmp evidence tree")
+	}
 	for _, required := range []string{
 		".tmp/qualification/performance-pair/run-*/reference/authoring-report.json",
 		".tmp/qualification/performance-pair/run-*/reference/compose.log",
