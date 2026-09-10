@@ -284,6 +284,7 @@ tasks:
       - task: api:generate
       - task: ui-signals:generate
       - task: visualization-ir:generate
+      - task: lucide-icons:generate
       - task: build
 
   ci:test:docs-site:

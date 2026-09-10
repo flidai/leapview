@@ -24,6 +24,14 @@ test('frontend core checks prepared bundle evidence without rebuilding productio
   expect(commands).not.toContain('bun run build')
 })
 
+test('frontend preparation generates Lucide modules before building production assets', () => {
+  const commands = tasks['ci:prepare:frontend'].cmds
+  const lucide = commands.findIndex((command: unknown) => JSON.stringify(command) === JSON.stringify({ task: 'lucide-icons:generate' }))
+  const build = commands.findIndex((command: unknown) => JSON.stringify(command) === JSON.stringify({ task: 'build' }))
+  expect(lucide).toBeGreaterThanOrEqual(0)
+  expect(lucide).toBeLessThan(build)
+})
+
 for (const workflow of ['ci', 'merge-validation', 'nightly']) {
   test(`${workflow} requires all isolated frontend shards with the existing watchdog bound`, () => {
     const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
