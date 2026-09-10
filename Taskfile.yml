@@ -307,6 +307,7 @@ tasks:
       - node --test deploy/compose/qualification/performance-resources.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/frontend_bundle_budget.test.ts
+      - bun test scripts/generate_lucide_icon_catalog.test.ts
       # ci:prepare already produced this evidence; checking it here avoids a
       # duplicate production rebuild in every frontend validation shard.
       - task: quality:frontend-bundle:check
@@ -634,6 +635,7 @@ tasks:
       - bun.lock
     generates:
       - web/generated/lucide-icon-catalog.ts
+      - web/generated/lucide-icon-nodes.ts
       - internal/dashboard/appearance/icons_gen.go
     cmds:
       - bun scripts/generate_lucide_icon_catalog.ts
