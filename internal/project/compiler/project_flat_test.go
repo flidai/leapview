@@ -428,6 +428,27 @@ func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
 	}
 }
 
+func TestResourceResolverDoesNotResolveThroughProvenance(t *testing.T) {
+	resolver, err := newResourceResolver([]projectgraph.Resource{{
+		ID:   "model:orders",
+		Kind: projectgraph.KindModel,
+		Name: "orders",
+		Provenance: projectgraph.Provenance{
+			Origin: "dbt",
+			Source: "foreign_project.orders",
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := resolver.resolve("orders", projectgraph.KindModel); err != nil || id != "model:orders" {
+		t.Fatalf("resolve(local name) = %q, %v", id, err)
+	}
+	if _, err := resolver.resolve("foreign_project.orders", projectgraph.KindModel); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Fatalf("resolve(provenance source) error = %v, want missing reference", err)
+	}
+}
+
 func TestProjectGraphRejectsDependencyCycle(t *testing.T) {
 	resources := []projectgraph.Resource{
 		{ID: "model:a", Kind: projectgraph.KindModel, Name: "a"},
@@ -772,6 +793,52 @@ spec:
 	}
 	if len(compiled.Edges()) != 5 {
 		t.Fatalf("edge count = %d, want 5", len(compiled.Edges()))
+	}
+}
+
+func TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec: {definition: {type: direct, source: orders}, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic:sales, name: sales}
+spec:
+  datasets: {orders: {model: foreign_project.orders_model}}
+  metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}, empty: zero}}
+`,
+	})
+
+	var first string
+	for attempt := 0; attempt < 2; attempt++ {
+		_, err := LoadSourceRoot(projectPath)
+		if err == nil {
+			t.Fatal("LoadSourceRoot() accepted qualified foreign Project reference")
+		}
+		if strings.Contains(err.Error(), "model:orders") {
+			t.Fatalf("foreign reference diagnostic disclosed local resource identity: %v", err)
+		}
+		if !strings.Contains(err.Error(), `reference "foreign_project.orders_model" is missing`) {
+			t.Fatalf("LoadSourceRoot() error = %v, want closed local resolver rejection", err)
+		}
+		if attempt == 0 {
+			first = err.Error()
+		} else if err.Error() != first {
+			t.Fatalf("foreign reference diagnostic changed across runs:\n%s\n%s", first, err)
+		}
 	}
 }
 

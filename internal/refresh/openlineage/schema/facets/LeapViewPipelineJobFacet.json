@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json",
+  "$defs": {
+    "LeapViewPipelineJobFacet": {
+      "allOf": [
+        {
+          "$ref": "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/JobFacet"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pipelineId": { "type": "string", "minLength": 1 },
+            "projectId": { "type": "string", "minLength": 1 },
+            "environment": { "type": "string", "minLength": 1 },
+            "semanticModelId": { "type": "string", "minLength": 1 },
+            "generationId": { "type": "string", "minLength": 1 },
+            "planDigest": { "type": "string", "minLength": 1 },
+            "selectionDigest": { "type": "string", "minLength": 1 },
+            "executionDigest": { "type": "string", "minLength": 1 },
+            "provenanceDigest": { "type": "string", "minLength": 1 },
+            "governanceDigest": { "type": "string", "minLength": 1 },
+            "evidenceDigest": { "type": "string", "minLength": 1 },
+            "qualificationChecks": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "uniqueItems": true
+            }
+          },
+          "required": ["pipelineId"]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "leapView_pipeline": {
+      "$ref": "#/$defs/LeapViewPipelineJobFacet"
+    }
+  }
+}
