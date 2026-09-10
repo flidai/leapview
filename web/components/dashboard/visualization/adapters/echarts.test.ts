@@ -356,6 +356,8 @@ test('ECharts translation preserves combo series marks and axes', () => {
   expect(option.yAxis[0].splitNumber).toBe(4)
   expect(option.yAxis[1].splitNumber).toBe(4)
   expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
+  expect(option.series[0].markLine.label.position).toBe('insideEndTop')
+  expect(option.series[0].markLine.label.formatter).toBe('{b}')
   expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
   expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
   const horizontal = structuredClone(base) as any

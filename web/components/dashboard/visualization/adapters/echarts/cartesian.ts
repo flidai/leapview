@@ -343,7 +343,7 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (!owner) continue
     const lines = markLines.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
     const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
-    if (lines.length > 0) owner.markLine = { symbol: ['none', 'none'], data: lines }
+    if (lines.length > 0) owner.markLine = { symbol: ['none', 'none'], label: { position: 'insideEndTop', formatter: '{b}' }, data: lines }
     if (areas.length > 0) owner.markArea = { silent: true, data: areas }
   }
   return option

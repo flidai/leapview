@@ -81,8 +81,12 @@ spec:
       bindings:
         pnl_statement: {field: pnl_statement.pnl_line}
         pnl_long: {field: pnl_long.pnl_line}
+    pnl_group:
+      datatype: String
+      bindings:
+        pnl_statement: {field: pnl_statement.pnl_group}
     line_order:
-      label: Sequence
+      label: Line
       datatype: Integer
       bindings:
         pnl_statement: {field: pnl_statement.line_order}
@@ -319,7 +323,7 @@ spec:
       aggregation: sum
       input: {field: pnl_statement.variance_amount}
       empty: zero
-      label: Variance
+      label: F/(U)
       unit: USD
       format: currency
     pnl_amount:

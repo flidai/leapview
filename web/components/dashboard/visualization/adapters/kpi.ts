@@ -286,6 +286,12 @@ function formatDelta(
     const rounded = formatValue(context.locale, { kind: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 1 }, absKPI(delta))
     return `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${rounded}`
   }
+  const format = fieldFormat(envelope, ref)
+  if (format?.kind === 'percent') {
+    const formatted = formatValue(context.locale, format, absKPI(delta)).replace(/%$/, ' pp')
+    const sign = signKPI(delta)
+    return `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${formatted}`
+  }
   const formatted = formatDisplayField(envelope, ref, absKPI(delta), context, displayUnit)
   const sign = signKPI(delta)
   return `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${formatted}`

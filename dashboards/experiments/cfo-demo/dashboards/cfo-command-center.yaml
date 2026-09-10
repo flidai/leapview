@@ -144,14 +144,26 @@ spec:
         - {field: segment, value: segment, label: segment}
         targets: [revenue_kpi, gross_margin_kpi, ebitda_kpi, monthly_plan, product_scorecard]
       title: Revenue variance by segment
-      description: Negative values identify segments below plan.
+      description: Positive values beat plan; negative values are below plan.
       query:
         type: aggregate
         dimensions: [segment]
         metrics: [revenue_variance]
         sort: [{field: revenue_variance, direction: asc}]
         limit: 10
-      presentation: {type: cartesian}
+      presentation:
+        type: cartesian
+        conditionalFormatting:
+        - id: revenue-variance-tone
+          target: mark_fill
+          field: revenue_variance
+          rule:
+            kind: rules
+            rules:
+            - {operator: greater_or_equal, value: 0, style: {color: success, icon: arrow_up}}
+            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: circle}
     product_scorecard:
       type: matrix
       interactions:
@@ -182,13 +194,28 @@ spec:
     pnl_matrix:
       type: matrix
       title: Profit and loss statement
-      description: Actual, budget, forecast, and actual-minus-budget variance.
+      description: Positive F/(U) is favorable; negative F/(U) is unfavorable.
       query:
         type: pivot
         rows: [line_order, pnl_line]
-        columns: [pnl_scenario]
-        metrics: [pnl_amount]
-      presentation: {type: table, rowHeight: 38, showHeader: true, striped: true}
+        columns: [pnl_group]
+        metrics: [pnl_actual, pnl_budget, pnl_forecast, pnl_variance]
+      presentation:
+        type: table
+        rowHeight: 38
+        showHeader: true
+        striped: true
+        conditionalFormatting:
+        - id: pnl-favorable-unfavorable
+          target: cell_foreground
+          field: pnl_variance
+          rule:
+            kind: rules
+            rules:
+            - {operator: greater_than, value: 0, style: {color: success, icon: arrow_up}}
+            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: circle}
     pnl_ebitda_bridge:
       type: bar
       title: EBITDA variance drivers
@@ -202,6 +229,17 @@ spec:
       presentation:
         type: cartesian
         labels: {density: automatic, priority: [anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
+        conditionalFormatting:
+        - id: ebitda-impact-tone
+          target: mark_fill
+          field: variance_impact
+          rule:
+            kind: rules
+            rules:
+            - {operator: greater_or_equal, value: 0, style: {color: success, icon: arrow_up}}
+            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: circle}
     pnl_monthly_ebitda:
       type: combo
       interactions:
@@ -278,12 +316,12 @@ spec:
         type: cartesian
         showSymbols: false
         axes:
-        - {id: primary_y, title: Cash balance, scale: linear, zero: exclude, displayUnits: millions, tickDensity: normal}
+        - {id: primary_y, title: Cash balance, scale: linear, zero: exclude, minimum: 5000000, displayUnits: millions, tickDensity: normal}
         referenceLines:
         - id: liquidity_floor
           axis: primary_y
-          value: {kind: number, value: 5000000}
-          label: Minimum cash
+          value: {kind: number, value: 5140000}
+          label: Management floor
           tone: danger
     cash_scenario_summary:
       type: matrix
@@ -399,7 +437,7 @@ spec:
         type: pivot
         rows: [segment]
         columns: [scorecard_group]
-        metrics: [net_sales, gross_margin, revenue_variance]
+        metrics: [net_sales, ebitda, revenue_variance]
       presentation: {type: table, rowHeight: 36, showHeader: true, striped: true}
     drivers_discount_analysis:
       type: combo
@@ -428,7 +466,7 @@ spec:
         labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
   pages:
   - id: overview
-    title: Executive Overview
+    title: Overview
     components:
     - {id: overview-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: overview-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
@@ -441,7 +479,7 @@ spec:
     - {id: overview-segment-variance, type: visual, visual: variance_by_segment, placement: {column: 9, row: 7, columnSpan: 4, rowSpan: 7}}
     - {id: overview-product-table, type: visual, visual: product_scorecard, placement: {column: 1, row: 14, columnSpan: 12, rowSpan: 8}}
   - id: statement
-    title: P&L and Budget
+    title: P&L
     components:
     - {id: pnl-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: pnl-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
@@ -451,7 +489,7 @@ spec:
     - {id: pnl-statement-table, type: visual, visual: pnl_matrix, placement: {column: 1, row: 10, columnSpan: 12, rowSpan: 8}}
     - {id: pnl-variance-drivers, type: visual, visual: pnl_ebitda_bridge, placement: {column: 1, row: 18, columnSpan: 12, rowSpan: 7}}
   - id: liquidity
-    title: Cash and Working Capital
+    title: Cash
     components:
     - {id: cash-current-cash, type: visual, visual: cash_current_kpi, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 4}}
     - {id: cash-ending-cash, type: visual, visual: cash_ending_kpi, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 4}}
@@ -462,7 +500,7 @@ spec:
     - {id: cash-scenario-table, type: visual, visual: cash_scenario_summary, placement: {column: 1, row: 13, columnSpan: 6, rowSpan: 7}}
     - {id: cash-movement-chart, type: visual, visual: cash_movements, placement: {column: 7, row: 13, columnSpan: 6, rowSpan: 7}}
   - id: drivers
-    title: Profitability Drivers
+    title: Drivers
     components:
     - {id: drivers-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: drivers-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}

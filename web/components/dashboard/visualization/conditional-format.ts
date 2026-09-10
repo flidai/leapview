@@ -5,6 +5,7 @@ import type {
   VisualizationConditionalStyle,
   VisualizationIconIntent,
 } from '../../../generated/visualization'
+import { parseDecimal } from './decimal'
 
 export type ResolvedConditionalStyle = Readonly<{
   color?: VisualizationColorIntent
@@ -85,9 +86,10 @@ export function resolveConditionalFormat(
     const fallback = rule.nullStyle
     return invalid(format, fallback, 'target field is unavailable')
   }
-  const value = row[index]
-  if (value === null || value === undefined) return { style: resolvedStyle(rule.nullStyle), outcome: 'null' }
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  const rawValue = row[index]
+  if (rawValue === null || rawValue === undefined) return { style: resolvedStyle(rule.nullStyle), outcome: 'null' }
+  const value = numericValue(rawValue)
+  if (value === undefined) {
     return invalid(format, rule.nullStyle, 'expected a finite numeric value')
   }
 
@@ -108,6 +110,13 @@ export function resolveConditionalFormat(
   return match
     ? { style: resolvedStyle(match.style), outcome: 'matched' }
     : { style: resolvedStyle(rule.defaultStyle), outcome: 'default' }
+}
+
+function numericValue(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string' || !parseDecimal(value)) return undefined
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : undefined
 }
 
 function comparisonMatches(value: number, operator: VisualizationComparisonOperator, threshold: number): boolean {

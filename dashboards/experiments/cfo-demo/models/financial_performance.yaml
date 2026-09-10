@@ -75,8 +75,11 @@ spec:
           cogs,
           gross_profit,
           CAST(round(net_sales * CASE
-            WHEN strftime(finance_date, '%m') = '06' OR strftime(finance_date, '%m') = '07' THEN 1.08
-            WHEN country = 'France' OR country = 'Germany' THEN 1.06
+            WHEN segment = 'Channel Partners' THEN 0.95
+            WHEN segment = 'Midmarket' THEN 0.96
+            WHEN segment = 'Enterprise' THEN 1.04
+            WHEN segment = 'Small Business' THEN 1.055
+            WHEN segment = 'Government' THEN 1.06
             ELSE 1.04
           END, 2) AS DECIMAL(38,2)) AS budget_sales,
           CAST(round(net_sales * CASE
