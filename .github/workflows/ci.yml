@@ -423,9 +423,8 @@ jobs:
             git show "$base_revision:$guard" > "$RUNNER_TEMP/performance-baseline-review.mjs"
             guard="$RUNNER_TEMP/performance-baseline-review.mjs"
           else
-            # First installation has no trusted base guard; the candidate
-            # guard is the explicit bootstrap fallback until the next PR.
-            echo "performance review guard is absent from the trusted base; using candidate bootstrap guard" >&2
+            echo "performance review guard is absent from the trusted base; bootstrap must be established on main before this PR can pass" >&2
+            exit 1
           fi
           node "$guard"
       - name: Set up gate Go toolchain

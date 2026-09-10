@@ -32,6 +32,15 @@ test('frontend preparation generates Lucide modules before building production a
   expect(lucide).toBeLessThan(build)
 })
 
+test('performance review bootstrap never executes an untrusted candidate guard', () => {
+  const config = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
+  const gate = config.jobs['ci-gate']
+  const review = gate.steps.find((step: any) => step.name === 'Verify independent review of changed performance governance')
+  expect(review?.run).toContain('git show "$base_revision:$guard"')
+  expect(review?.run).toContain('bootstrap must be established on main before this PR can pass')
+  expect(review?.run).not.toContain('using candidate bootstrap guard')
+})
+
 for (const workflow of ['ci', 'merge-validation', 'nightly']) {
   test(`${workflow} requires all isolated frontend shards with the existing watchdog bound`, () => {
     const config = parse(readFileSync(`.github/workflows/${workflow}.yml`, 'utf8'))
