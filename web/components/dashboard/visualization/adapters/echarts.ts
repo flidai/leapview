@@ -10,6 +10,7 @@ import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
 import { pointCategoryRowIndexes, pointOption } from './echarts/point'
 import { proportionalCategories, proportionalCenterText, proportionalOption } from './echarts/proportional'
+import { proportionalCueFontNeeded, requireChartCueAndBaseFonts } from '../cue-font'
 import {
   captureEChartsViewState,
   echartsNavigationDefaults,
@@ -84,6 +85,7 @@ function seriesRowIndices(
 
 export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
+    if (proportionalCueFontNeeded(envelope)) await requireChartCueAndBaseFonts(context.fontFamily)
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
     const chart = echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
@@ -116,6 +118,7 @@ export class EChartsHandle implements RendererHandle {
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
   private compactLayout?: boolean
+  private updateGeneration = 0
   private lastWidth = 0
   private lastHeight = 0
   private dataZoomInitialized = false
@@ -143,8 +146,18 @@ export class EChartsHandle implements RendererHandle {
 
   whenReady(): Promise<void> { return this.readiness }
 
-  update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): void {
+  async update(envelope: VisualizationEnvelope, change: Change, context: RendererContext): Promise<void> {
     if (this.disposed) return
+    const generation = ++this.updateGeneration
+    if (proportionalCueFontNeeded(envelope)) {
+      try {
+        await requireChartCueAndBaseFonts(context.fontFamily)
+      } catch (error) {
+        if (this.disposed || generation !== this.updateGeneration) return
+        throw error
+      }
+    }
+    if (this.disposed || generation !== this.updateGeneration) return
     const previous = this.envelope
     const viewState = previous && preservesEChartsViewState(previous, envelope) ? this.captureViewState() : undefined
     this.envelope = envelope
@@ -222,6 +235,7 @@ export class EChartsHandle implements RendererHandle {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.updateGeneration++
     this.readinessAbort?.abort()
     this.readinessAbort = undefined
     this.chart.off('click', this.handleClick)

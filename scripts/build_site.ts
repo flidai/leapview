@@ -35,6 +35,8 @@ for await (const sourcePath of fontGlob.scan({ cwd: '.', onlyFiles: true })) {
   fontCopies.push(Bun.write(`site/static/shared/files/${fileName}`, Bun.file(sourcePath)))
 }
 if (fontCopies.length === 0) throw new Error('no Inter font assets found')
+fontCopies.push(Bun.write('site/static/shared/files/noto-sans-symbols-2-cues-400-normal.woff2', Bun.file('static/files/noto-sans-symbols-2-cues-400-normal.woff2')))
+fontCopies.push(Bun.write('site/static/shared/files/noto-sans-symbols-2-cues-OFL.txt', Bun.file('static/files/noto-sans-symbols-2-cues-OFL.txt')))
 
 await Promise.all([
 	Bun.write(`${mapStyleDirectory}/style.json`, mapStyleBytes),

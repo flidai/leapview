@@ -125,6 +125,33 @@ test('browser QA uses canonical project resource IDs', async () => {
   expect(source).not.toContain("visualID === 'revenue_by_month'")
 })
 
+test('data explorer recovery waits for the selection command to settle', async () => {
+  const [source, helper] = await Promise.all([
+    readFile('scripts/datastar_lit_data_explorer_qa.ts', 'utf8'),
+    readFile('scripts/data_explorer_readiness.ts', 'utf8'),
+  ])
+  const recovery = source.slice(source.indexOf('export async function verifyDataExplorerRecoveryActions'))
+  const object = recovery.indexOf("await firstObject.waitFor({ state: 'visible' })")
+  const select = recovery.indexOf('await selectDataExplorerObject(page, firstObject)')
+  const preview = recovery.indexOf("await preview.waitFor({ state: 'visible' })")
+  const inject = recovery.indexOf("Qualification-injected preview failure.")
+  const arm = helper.indexOf('const selectionResponsePromise = page.waitForResponse')
+  const click = helper.indexOf('await object.click()')
+  const body = helper.indexOf('await selectionResponse.body()')
+
+  expect(object).toBeGreaterThanOrEqual(0)
+  expect(select).toBeGreaterThanOrEqual(0)
+  expect(select).toBeGreaterThan(object)
+  expect(preview).toBeGreaterThan(select)
+  expect(inject).toBeGreaterThan(preview)
+  expect(source).toContain("import { selectDataExplorerObject } from './data_explorer_readiness'")
+  expect(arm).toBeGreaterThanOrEqual(0)
+  expect(click).toBeGreaterThan(arm)
+  expect(body).toBeGreaterThan(click)
+  expect(helper).toContain("response.request().method() === 'POST'")
+  expect(helper).toContain('if (!selectionResponse.ok())')
+})
+
 test('Data Explorer route QA covers Analyze accessibility and recovery states', async () => {
   const [source, dataExplorerQA] = await Promise.all([
     readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),

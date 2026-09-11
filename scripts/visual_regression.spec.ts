@@ -55,6 +55,33 @@ for (const state of states) {
   }
 }
 
+for (const mode of modes) {
+  test.describe(`status-donut / desktop / ${mode}`, () => {
+    test.use({ viewport: { width: 1440, height: 900 }, colorScheme: mode })
+
+    test('keeps the small-card conditional labels readable', async ({ page, baseURL }) => {
+      await page.addInitScript((colorMode) => {
+        localStorage.setItem('leapview-color-mode', colorMode)
+        localStorage.removeItem('leapview-sidebar-collapsed')
+      }, mode)
+      await openStableDashboard(page, new URL('/dashboards/dashboard:visual-showcase/pages/overview', baseURL!).toString(), 'Visual Showcase')
+      // Verify production loaded the pinned cue face before rendering; do not
+      // load it here and hide a first-render fallback-font regression.
+      expect(await page.evaluate(() => Array.from(document.fonts).some((face) =>
+        face.family.replace(/["']/g, '') === 'LeapView Chart Cues' && face.status === 'loaded',
+      ))).toBe(true)
+      const card = page.locator('lv-visualization-host').filter({ has: page.getByText('Orders by status', { exact: true }) })
+      await expect(card).toHaveCount(1)
+      // A cropped baseline makes small-label regressions significant instead
+      // of diluting them across the full dashboard screenshot.
+      await expect(card).toHaveScreenshot(`status-donut-desktop-${mode}.png`, {
+        animations: 'disabled', caret: 'hide', scale: 'css',
+        maxDiffPixelRatio: 0.001, threshold: 0.2,
+      })
+    })
+  })
+}
+
 async function openStableDashboard(page: Page, url: string, heading: string): Promise<void> {
   const response = await page.goto(url, { waitUntil: 'domcontentloaded' })
   expect(response?.ok(), `${url} should return a successful response`).toBe(true)

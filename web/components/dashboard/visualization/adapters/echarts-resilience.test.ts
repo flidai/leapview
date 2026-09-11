@@ -44,7 +44,7 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive pie cue layout reserves dynamic columns and preserves authored radius ratios', () => {
+test('ECharts responsive pie cue layout keeps native full-card label packing and preserves authored radius ratios', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.presentation.legend = 'bottom'
   envelope.spec.conditionalFormatting = [{
@@ -64,21 +64,20 @@ test('ECharts responsive pie cue layout reserves dynamic columns and preserves a
   const wideSeries = wide.series[0]
   expect(compactSeries.id).toBe(source.series[0].id)
   expect(wideSeries.id).toBe(source.series[0].id)
-  expect(compactSeries.left).toBe(compactSeries.right)
-  expect(compactSeries.top).toBe(compactSeries.bottom)
-  expect(wideSeries.left).toBeGreaterThan(compactSeries.left)
+  expect(compactSeries.left).toBe(0)
+  expect(compactSeries.right).toBe(0)
+  expect(compactSeries.top).toBe(0)
+  expect(compactSeries.bottom).toBe(28)
+  expect(wideSeries.left).toBe(0)
+  expect(wideSeries.right).toBe(0)
+  expect(wideSeries.top).toBe(0)
+  expect(wideSeries.bottom).toBe(28)
+  expect(wideSeries.radius[1]).toBeGreaterThan(compactSeries.radius[1])
   expect(wideSeries.radius[0] / wideSeries.radius[1]).toBeCloseTo(0.54 / 0.76)
   expect(compactSeries.radius[0] / compactSeries.radius[1]).toBeCloseTo(0.54 / 0.76)
-  expect(compactSeries.labelLine.length2).toBeTypeOf('number')
-  const leftLayout = compactSeries.labelLayout({ dataIndex: 0, align: 'left' })
-  const rightLayout = compactSeries.labelLayout({ dataIndex: 7, align: 'right' })
-  expect(leftLayout).toMatchObject({ hideOverlap: false, align: 'right' })
-  expect(rightLayout).toMatchObject({ hideOverlap: false, align: 'left' })
-  expect(leftLayout.x).toBeCloseTo(320 / 2 - compactSeries.radius[1] - 8)
-  expect(rightLayout.x).toBeCloseTo(320 / 2 + compactSeries.radius[1] + 8)
-  expect(leftLayout.width).toBeGreaterThan(90)
-  expect(rightLayout.width).toBeGreaterThan(90)
-  expect(compactSeries.labelLayout({ dataIndex: 7 }).y).toBeGreaterThan(compactSeries.labelLayout({ dataIndex: 0 }).y)
+  expect(compactSeries.labelLine.length2).toBe(sourceSeries.labelLine.length2)
+  expect(compactSeries.labelLayout).toBeTypeOf('function')
+  expect(compactSeries.labelLayout({ labelRect: { x: 8, y: 80, width: 72, height: 24 }, labelLinePoints: [[120, 80], [120, 80], [120, 80]] })).toMatchObject({ hideOverlap: false })
   expect(source.series[0].id).toBe(sourceSeries.id)
   expect(source.series[0].radius).toEqual(sourceRadius)
   expect(source.series[0].labelLayout).toBe(sourceLayout)
@@ -209,7 +208,9 @@ test('ECharts handle recomputes proportional cue geometry for every size change'
   const second = calls.at(-1)!.series[0]
   expect(calls.length).toBe(count + 1)
   expect(second.id).toBe(first.id)
-  expect(second.left).toBeGreaterThan(first.left)
+  expect(second.left).toBe(0)
+  expect(second.right).toBe(0)
+  expect(second.radius[1]).toBeGreaterThan(first.radius[1])
 })
 
 function legendHandle() {

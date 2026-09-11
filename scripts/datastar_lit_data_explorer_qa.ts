@@ -1,4 +1,5 @@
 import { expect, type Browser, type Locator, type Page, type Request } from '@playwright/test'
+import { selectDataExplorerObject } from './data_explorer_readiness'
 
 type PostedDataExplorerCommand = {
   action?: string
@@ -67,7 +68,7 @@ export async function verifyDataExplorerRecoveryActions({
       await firstGroup.locator(':scope > summary').click()
       const firstObject = firstGroup.locator('.object-button').first()
       await firstObject.waitFor({ state: 'visible' })
-      await firstObject.click()
+      await selectDataExplorerObject(page, firstObject)
     }
     await preview.waitFor({ state: 'visible' })
     await page.evaluate(async () => {

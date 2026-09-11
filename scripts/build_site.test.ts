@@ -96,6 +96,14 @@ test('site build publishes every Inter subset referenced by the shared styleshee
   }
 })
 
+test('site build publishes the restricted chart cue font and its OFL notice', async () => {
+  for (const fileName of ['noto-sans-symbols-2-cues-400-normal.woff2', 'noto-sans-symbols-2-cues-OFL.txt']) {
+    expect(await Bun.file(`static/files/${fileName}`).exists()).toBe(true)
+    expect(await Bun.file(`site/static/shared/files/${fileName}`).exists()).toBe(true)
+  }
+  expect(await Bun.file('site/static/shared/files/noto-sans-symbols-2-cues-OFL.txt').text()).toContain('SIL Open Font License')
+})
+
 test('homepage flow background is composed only from continuous ribbons', async () => {
   const source = await Bun.file('site/web/site-flow-background.ts').text()
 

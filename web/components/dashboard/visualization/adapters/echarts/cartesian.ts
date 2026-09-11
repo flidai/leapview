@@ -332,13 +332,16 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   const titlelessHorizontalBar = cartesianIsHorizontal(spec)
     && spec.mark === 'bar'
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
+  const titlelessLineArea = (spec.mark === 'line' || spec.mark === 'area')
+    && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
+  const useOuterBounds = titlelessHorizontalBar || titlelessLineArea
   return {
     left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
     right: 16 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
     bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
-    containLabel: !titlelessHorizontalBar,
-    ...(titlelessHorizontalBar ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
+    containLabel: !useOuterBounds,
+    ...(useOuterBounds ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
   }
 }
 

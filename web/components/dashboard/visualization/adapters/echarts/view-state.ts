@@ -1,5 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import { proportionalConditionalCueFormat } from './proportional'
+import { proportionalLegendGeometry } from './proportional-legend-layout'
 
 export type EChartsNavigationDefaults = Readonly<{ dataZoom: boolean; roam: boolean }>
 export type EChartsViewState = Readonly<{
@@ -45,9 +46,8 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     }
   })
   const patch: Record<string, any> = option.grid === undefined ? {} : { grid: Array.isArray(option.grid) ? grid : grid[0] }
-  // The proportional branch only needs a series layout patch. Re-emitting a
-  // freshly generated legend on every resize could clear native selection
-  // state while the series itself is intentionally merged by stable id.
+  // Proportional legends receive geometry only below. Re-emitting generated
+  // data or selection here could clear native selection/page state on resize.
   if (option.legend !== undefined && !proportional) patch.legend = compact ? compactLegend(option.legend) : option.legend
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
@@ -67,84 +67,112 @@ function responsiveProportionalLayout(option: Record<string, any>, width: number
   const seriesList = Array.isArray(option.series) ? option.series : [option.series]
   const source = seriesList.find((candidate) => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && candidate.id === `series:primary:${spec.mark}`)
   if (!source) return undefined
-  return proportionalOutsideLayout(source, envelope, width, height, spec.presentation.legendTitle !== undefined)
+  const legend = proportionalLegendGeometry(option.legend, width)
+  return {
+    ...proportionalOutsideLayout(source, width, height, spec.presentation.legendTitle !== undefined),
+    ...(Object.keys(legend).length > 0 ? { legend } : {}),
+  }
 }
 
 function proportionalOutsideLayout(
   source: Record<string, any>,
-  envelope: VisualizationEnvelope,
   width: number,
   height: number,
   titledLegend: boolean,
 ): Record<string, any> {
   const series = source
   const labelLineLength = finiteNumber(series.labelLine?.length, 10)
-  const labelLineLength2 = 20
+  const labelLineLength2 = finiteNumber(series.labelLine?.length2, 8)
   const edgeDistance = finiteNumber(series.label?.edgeDistance, 8)
-  const distanceToLabelLine = finiteNumber(series.label?.distanceToLabelLine, 4)
   // Keep a substantial text column on each side, but cap it so wide cards do
   // not turn the pie into a small center ornament. Narrow cards may shrink
-  // the remaining center plot; normal eight-row cards use the full ~30%
+  // the remaining center plot; normal eight-row cards use a ~25% virtual
   // per-side reservation.
-  const requestedColumn = clamp(width * 0.3, 72, 160)
+  const requestedColumn = clamp(width * 0.25, 56, 160)
   const sideInset = Math.min(requestedColumn, width * 0.4)
-  const boundedEdgeDistance = Math.min(edgeDistance, sideInset / 4, width / 2)
   const legendBand = titledLegend ? 52 : 28
   const verticalInset = Math.min(legendBand, height / 2)
   const plotWidth = Math.max(0, width - sideInset * 2)
   const plotHeight = Math.max(0, height - verticalInset * 2)
   const availableRadius = Math.max(0, Math.min(plotWidth, plotHeight) / 2)
   const radius = responsivePieRadius(source.radius, availableRadius)
+  // Measure the two text columns against the virtual radius budget before
+  // ECharts' native pie pass runs. This keeps wrapped labels outside the ring
+  // while still letting native side-aware overlap packing use real text boxes.
+  const boundedEdgeDistance = Math.min(edgeDistance, width / 2)
   const textColumn = Math.max(0, width / 2 - radius[1] - boundedEdgeDistance * 2)
-  const rowCount = proportionalInlineRowCount(envelope)
-  const slotCount = Math.max(1, rowCount)
-  const slotTop = 4
-  const slotBottom = Math.max(slotTop, height - legendBand - 4)
-  const slotHeight = (slotBottom - slotTop) / slotCount
-  const labelLayout = (params: { dataIndex?: number; align?: string; labelRect?: { x?: number; y?: number; width?: number; height?: number }; labelLinePoints?: readonly (readonly number[])[] }) => {
-    const dataIndex = typeof params.dataIndex === 'number' && Number.isFinite(params.dataIndex) ? Math.max(0, Math.floor(params.dataIndex)) : 0
+  const labelLineHeight = 16
+  const labelPadding: [number, number] = [0, 3]
+  const label = {
+    ...(series.label && typeof series.label === 'object' && !Array.isArray(series.label) ? series.label : {}),
+    width: textColumn,
+    overflow: 'break',
+    lineHeight: labelLineHeight,
+    padding: labelPadding,
+  }
+  const distanceToLabelLine = finiteNumber(series.label?.distanceToLabelLine, 4)
+  const labelLayout = (params: {
+    dataIndex?: number
+    labelRect?: { x?: number; y?: number; width?: number; height?: number }
+    labelLinePoints?: readonly (readonly number[])[]
+  }) => {
     const anchor = params.labelLinePoints?.[0]
+    const rect = params.labelRect
     const hasAnchor = anchor && Number.isFinite(anchor[0]) && Number.isFinite(anchor[1])
-    // Edge alignment reverses the native text alignment. Prefer the sector's
-    // actual anchor so legend filtering and category ordering remain truthful.
-    const right = hasAnchor ? anchor[0] >= width / 2
-      : series.label?.alignTo === 'edge' ? params.align === 'right' : params.align === 'left'
+    const hasRect = rect && [rect.x, rect.y, rect.width, rect.height].every((value) => typeof value === 'number' && Number.isFinite(value))
+    if (!hasAnchor || !hasRect) return { hideOverlap: false }
     const centerX = width / 2
-    const x = right ? centerX + radius[1] + boundedEdgeDistance : centerX - radius[1] - boundedEdgeDistance
-    const y = slotTop + (Math.min(dataIndex, slotCount - 1) + 0.5) * slotHeight
     const centerY = height / 2
-    const vectorX = hasAnchor ? anchor[0] - centerX : 0
-    const vectorY = hasAnchor ? anchor[1] - centerY : 0
+    const vectorX = anchor[0] - centerX
+    const vectorY = anchor[1] - centerY
     const vectorLength = Math.hypot(vectorX, vectorY)
     const radial = vectorLength > 0
       ? [centerX + vectorX / vectorLength * radius[1], centerY + vectorY / vectorLength * radius[1]]
-      : [centerX + (right ? radius[1] : -radius[1]), centerY]
-    const ringEdge = centerX + (right ? radius[1] : -radius[1])
-    const lane = (ringEdge + x) / 2
-    // Route outward from the real sector through the overall circle before
-    // following the fixed label lane; a direct diagonal can cross unrelated
-    // sectors after labels are moved (especially for rose pies).
-    const labelLinePoints = hasAnchor ? [
-      [anchor[0], anchor[1]], radial, [lane, radial[1]], [lane, y],
-      [x + (right ? -distanceToLabelLine : distanceToLabelLine), y],
-    ] : undefined
+      : [centerX, centerY]
+    const right = anchor[0] >= centerX
+    const dataIndex = typeof params.dataIndex === 'number' && Number.isFinite(params.dataIndex) ? Math.max(0, Math.floor(params.dataIndex)) : 0
+    // Use only a small, bounded lane offset. This keeps guides from becoming
+    // one indistinguishable trunk without imposing data-index-based text
+    // slots or making assumptions about category count/side distribution.
+    const laneOffset = Math.min(dataIndex * 0.75, Math.max(0, distanceToLabelLine + 1))
+    const lane = centerX + (right ? radius[1] + distanceToLabelLine + laneOffset : -radius[1] - distanceToLabelLine - laneOffset)
+    const labelY = rect.y! + rect.height! / 2
+    const labelEdge = right ? rect.x! : rect.x! + rect.width!
+    const labelDeltaY = labelY - centerY
+    const ringHalfWidth = Math.sqrt(Math.max(0, radius[1] * radius[1] - labelDeltaY * labelDeltaY))
+    const safeRingEdge = centerX + (right ? ringHalfWidth + 0.5 : -ringHalfWidth - 0.5)
+    const desiredEndpoint = labelEdge + (right ? -distanceToLabelLine : distanceToLabelLine)
+    const endpointX = right ? Math.max(desiredEndpoint, safeRingEdge) : Math.min(desiredEndpoint, safeRingEdge)
+    const endpoint = [endpointX, labelY]
+    // Keep the guide's bend outside the overall circle. Native pie packing
+    // may move a label vertically, but should not drag its leader through a
+    // different sector while doing so (especially for rose charts).
     return {
       hideOverlap: false,
-      x,
-      y,
-      width: textColumn,
-      align: right ? 'left' : 'right',
-      ...(labelLinePoints ? { labelLinePoints } : {}),
+      labelLinePoints: [
+        [anchor[0], anchor[1]],
+        radial,
+        [lane, radial[1]],
+        [lane, labelY],
+        endpoint,
+      ],
     }
   }
   return {
     series: [{
       id: source.id,
-      left: sideInset,
-      right: sideInset,
-      top: verticalInset,
-      bottom: verticalInset,
+      // Keep the full card as ECharts' label view rect. The radius is sized
+      // from the virtual text-safe plot above, while native edge alignment
+      // gets the card-wide columns needed for measured status/value labels.
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: legendBand,
+      center: [width / 2, height / 2],
       radius,
+      label,
+      // Keep ECharts' native side-aware pie overlap pass and only reroute its
+      // measured leaders around the overall circle after packing.
       labelLayout,
       labelLine: {
         ...(source.labelLine && typeof source.labelLine === 'object' ? source.labelLine : {}),
@@ -169,14 +197,6 @@ function radiusPixels(value: unknown, availableRadius: number, fallback: number)
   }
   if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, Math.min(availableRadius, value))
   return fallback
-}
-
-function proportionalInlineRowCount(envelope: VisualizationEnvelope): number {
-  if (envelope.dataState.kind !== 'inline') return 1
-  if (envelope.spec.kind !== 'proportional') return 1
-  const datasetID = envelope.spec.category.dataset
-  const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === datasetID)
-  return dataset?.rows.length ?? 1
 }
 
 function finiteNumber(value: unknown, fallback: number): number {
