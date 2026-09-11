@@ -28,6 +28,7 @@ import (
 
 var (
 	ErrInvalid      = errors.New("invalid managed-data PostgreSQL input")
+	ErrCaptureLimit = errors.New("managed-data observation capture capability limit exceeded")
 	ErrConflict     = manageddata.ErrConflict
 	ErrNotFound     = manageddata.ErrNotFound
 	ErrStaleFence   = errors.New("managed-data lease fencing epoch is stale")

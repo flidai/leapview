@@ -13,6 +13,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/flidai/leapview/internal/app/config/spec"
+	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -216,6 +217,9 @@ func (c Config) CookieSecure() (bool, error) {
 func (c Config) Validate(profile Profile) error {
 	if profile != ProfileServe {
 		return fmt.Errorf("unsupported configuration profile %q", profile)
+	}
+	if c.ManagedDataMaxFiles > manageddata.MaxManifestFiles {
+		return fmt.Errorf("LEAPVIEW_MANAGED_DATA_MAX_FILES must not exceed %d", manageddata.MaxManifestFiles)
 	}
 	listen, err := ParseListenAddr(c.ListenAddr())
 	if err != nil {

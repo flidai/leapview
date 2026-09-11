@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configspec "github.com/flidai/leapview/internal/app/config/spec"
+	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 )
@@ -260,6 +261,23 @@ func TestValidateProductionAuthRequiresCSRFKey(t *testing.T) {
 	cfg := Config{Production: true, APITokenOnlyAuth: true}
 	if err := cfg.ValidateProductionAuth(); err == nil {
 		t.Fatal("expected missing CSRF key to fail production auth validation")
+	}
+}
+
+func TestValidateRejectsManagedDataFileLimitAboveCaptureBound(t *testing.T) {
+	cfg := Config{ManagedDataMaxFiles: manageddata.MaxManifestFiles + 1}
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_MANAGED_DATA_MAX_FILES") {
+		t.Fatalf("managed-data file limit validation error = %v", err)
+	}
+}
+
+func TestManagedDataDefaultFileLimitMatchesCaptureBound(t *testing.T) {
+	cfg, err := LoadEnvironment(map[string]string{})
+	if err != nil {
+		t.Fatalf("load defaults: %v", err)
+	}
+	if cfg.ManagedDataMaxFiles != manageddata.MaxManifestFiles {
+		t.Fatalf("managed-data default file limit = %d, capture bound = %d", cfg.ManagedDataMaxFiles, manageddata.MaxManifestFiles)
 	}
 }
 
