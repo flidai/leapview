@@ -24,6 +24,7 @@ import (
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	"github.com/flidai/leapview/internal/agent/ui"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
+	"github.com/flidai/leapview/internal/platform/http/pagination"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -1000,20 +1001,7 @@ func apiLimitForRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (int, bool
 }
 
 func parseAPILimit(value string) (int, error) {
-	if value == "" {
-		return defaultAPILimit, nil
-	}
-	var limit int
-	if _, err := fmt.Sscanf(value, "%d", &limit); err != nil {
-		return 0, fmt.Errorf("limit must be an integer")
-	}
-	if limit < 1 {
-		return 0, fmt.Errorf("limit must be at least 1")
-	}
-	if limit > maxAPILimit {
-		return 0, fmt.Errorf("limit must not exceed 200")
-	}
-	return limit, nil
+	return pagination.ParseLimit(value, pagination.LimitPolicy{Default: defaultAPILimit, Maximum: maxAPILimit})
 }
 
 func statusForNotFound(err error) int {

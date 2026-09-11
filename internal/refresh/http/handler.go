@@ -12,6 +12,7 @@ import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
+	"github.com/flidai/leapview/internal/platform/http/pagination"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -404,20 +405,7 @@ func apiLimitForRequest(w nethttp.ResponseWriter, r *nethttp.Request) (int, bool
 }
 
 func parseAPILimit(value string) (int, error) {
-	if value == "" {
-		return defaultAPILimit, nil
-	}
-	var limit int
-	if _, err := fmt.Sscanf(value, "%d", &limit); err != nil {
-		return 0, fmt.Errorf("limit must be an integer")
-	}
-	if limit < 1 {
-		return 0, fmt.Errorf("limit must be at least 1")
-	}
-	if limit > maxAPILimit {
-		return maxAPILimit, nil
-	}
-	return limit, nil
+	return pagination.ParseLimit(value, pagination.LimitPolicy{Default: defaultAPILimit, Maximum: maxAPILimit})
 }
 
 func statusForNotFound(err error) int {
