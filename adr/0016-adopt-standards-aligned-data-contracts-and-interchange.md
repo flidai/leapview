@@ -755,9 +755,18 @@ receive production credentials by default.
 - Architecture fixtures reject authored access-policy fields outside
   SemanticModel and delegate the access-rule schema and compiler corpus to the
   ADR-0017 conformance specification.
-- Control-plane tests prove SCIM and admin APIs own users and groups; role,
-  grant, sharing, and publication APIs own assignments and lifecycle state; and
-  analytics deployment cannot create, update, or delete any of them.
+- Control-plane ownership is executable evidence, not a deployment convention.
+  `TestDiscoverAuthoredResourcesRejectsLegacyAndRemovedEnvelopesAnywhere` and
+  `TestValidateBytesRejectsRemovedPublicAuthoringKinds` prove that analytics
+  source cannot introduce groups, role bindings, grants, or publications (and
+  the six-kind authoring registry contains no user resource). Publication and
+  sharing lifecycle remains behind its control-plane API, while
+  `TestNativeDashboardPublicationDeploymentGuardRejectsControlPlaneMutation`
+  proves that an activated analytics generation cannot create or update it and
+  `TestNativeDashboardPublicationDeploymentGuardTreatsEmptySnapshotsAsInert`
+  proves omission cannot delete it. The structural
+  `TestAnalyticsDeploymentCannotOwnControlPlaneMutation` guard prevents the
+  deployment callback from reacquiring transaction or mutation capabilities.
 - Schema and compiler tests reject duplicate check IDs, invalid semantic
   versions, unknown compatibility policies, malformed authoritative links,
   contradictory deprecation replacements, and generic extension bags.

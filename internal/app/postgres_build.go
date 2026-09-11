@@ -578,10 +578,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	reconciler, err := NewNativeDashboardPublicationReconciler(NativeDashboardPublicationActivationConfig{Begin: bootstrap.RuntimePool(), Publications: graph.DashboardPublication, Project: graph.Project, Access: accessBundle.Module, GenerationFence: graph.DashboardGenerationFence})
-	if err != nil {
-		return fail(err)
-	}
+	reconciler := NewNativeDashboardPublicationReconciler()
 	deliveryStartup, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 		TargetID:      instanceID,
 		Environment:   environment,
