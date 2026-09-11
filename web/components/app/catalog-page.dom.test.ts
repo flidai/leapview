@@ -5,15 +5,9 @@ import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 
-type CatalogListElement = TestDomElement & {
-  exportFilename?: string
-  items: Array<{ iconColor?: string; iconNode?: unknown; iconButtonLabel?: string }>
-}
-
-let server: Server
+type CatalogListElement = TestDomElement & { exportFilename?: string; items: Array<{ iconColor?: string; iconNode?: unknown; iconButtonLabel?: string }> }
+let server: Server, browser: Browser
 let baseURL = ''
-let browser: Browser
-
 const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/catalog-page-test')
 

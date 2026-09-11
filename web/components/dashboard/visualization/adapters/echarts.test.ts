@@ -31,7 +31,6 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
     maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
   } satisfies VisualizationLabelPolicy
   const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
-
   expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
   expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
   const layout = (dataIndex: number) => typeof translated.labelLayout === 'function' ? translated.labelLayout({ dataIndex }) : translated.labelLayout
@@ -103,7 +102,6 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(option.series[0].symbolSize(['o-2', 'Corporate', 7, 240, 5])).toBe(32)
   expect(option.brush.toolbox).toEqual(['rect', 'polygon'])
   expect(option.tooltip.formatter({ value: ['o-1', 'Consumer', 2, 80, 1] })).toBe('Segment: Consumer<br>Revenue: 80')
-
   const pointSpec = envelope.spec as Extract<VisualizationEnvelope['spec'], { kind: 'point' }>
   pointSpec.color = { dataset: 'primary', field: 'revenue' }
   pointSpec.colorScale = { kind: 'quantitative' }
@@ -1296,7 +1294,6 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
   })
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
-
   const gaugePresentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation']
   gaugePresentation.showPointer = false
   gaugePresentation.minimum = 0

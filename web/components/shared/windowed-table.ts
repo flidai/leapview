@@ -582,8 +582,7 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
-    // A matching empty response is still a completed request. Clear any
-    // pending loading expectation even when there is no scrollable content.
+    // A matching empty response completes the request even without scrollable content.
     if (table.availableRows <= 0) {
       this.expectedBlocks.clear()
       this.clearJumpTimer()
@@ -789,9 +788,7 @@ class WindowedTable extends LitElement {
   private scheduleJumpBlock(start: number): void {
     this.pendingJumpStart = start
     this.requestUpdate()
-    // Keep one bounded trailing request alive while fast scrolling updates the
-    // destination. Restarting it for every crossed chunk can postpone loading
-    // indefinitely until scrolling stops.
+    // Keep one bounded trailing request alive; restarting per chunk can postpone loading indefinitely.
     if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
