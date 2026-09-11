@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	awss3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
@@ -28,8 +31,9 @@ type S3Client interface {
 }
 
 type S3Store struct {
-	client         S3Client
-	bucket, prefix string
+	client                S3Client
+	bucket, prefix        string
+	providerEncryptionKey string
 }
 
 const s3OwnershipMarkerKey = ".leapview-pool-owner.json"
@@ -51,10 +55,12 @@ func (s *S3Store) AcquireNamespaceOwnership(ctx context.Context, claim physicalp
 	if err != nil {
 		return err
 	}
-	_, err = writer.PutObject(ctx, &awss3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader(encoded), IfNoneMatch: aws.String("*"), Metadata: map[string]string{
+	input := &awss3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader(encoded), IfNoneMatch: aws.String("*"), Metadata: map[string]string{
 		"leapview-pool-id": string(claim.PoolID), "leapview-compatibility-digest": claim.CompatibilityDigest,
 		"leapview-evidence-digest": claim.EvidenceDigest, "leapview-owner-id": claim.OwnerID,
-	}})
+	}}
+	s.applyEncryption(input)
+	_, err = writer.PutObject(ctx, input)
 	if err == nil {
 		return nil
 	}
@@ -103,7 +109,9 @@ func (s *S3Store) AcquireNamespaceDeletionLease(ctx context.Context, ownerID str
 		return "", err
 	}
 	metadata := map[string]string{"leapview-lease-owner": lease.OwnerID, "leapview-lease-token": lease.Token, "leapview-lease-expires": lease.ExpiresAt.Format(time.RFC3339Nano)}
-	_, putErr := writer.PutObject(ctx, &awss3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader(encoded), IfNoneMatch: aws.String("*"), Metadata: metadata})
+	putInput := &awss3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader(encoded), IfNoneMatch: aws.String("*"), Metadata: metadata}
+	s.applyEncryption(putInput)
+	_, putErr := writer.PutObject(ctx, putInput)
 	if putErr == nil {
 		return lease.Token, nil
 	}
@@ -118,6 +126,7 @@ func (s *S3Store) AcquireNamespaceDeletionLease(ctx context.Context, ownerID str
 		return "", physicalpool.ErrDeletionLeaseConflict
 	}
 	input := &awss3.PutObjectInput{Bucket: &s.bucket, Key: &key, Body: bytes.NewReader(encoded), IfMatch: head.ETag, Metadata: metadata}
+	s.applyEncryption(input)
 	if _, err := writer.PutObject(ctx, input); err != nil {
 		return "", physicalpool.ErrDeletionLeaseConflict
 	}
@@ -128,23 +137,22 @@ func (s *S3Store) VerifyNamespaceDeletionLease(ctx context.Context, ownerID, tok
 	if ownerID == "" || token == "" {
 		return physicalpool.ErrDeletionLeaseConflict
 	}
-	key, err := s.key(s3DeletionLeaseKey)
+	present, err := s.verifyNamespaceDeletionLease(ctx, ownerID, token)
 	if err != nil {
 		return err
 	}
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: &s.bucket, Key: &key})
-	if err != nil {
-		return physicalpool.ErrDeletionLeaseConflict
-	}
-	expires, parseErr := time.Parse(time.RFC3339Nano, head.Metadata["leapview-lease-expires"])
-	if parseErr != nil || head.Metadata["leapview-lease-owner"] != ownerID || head.Metadata["leapview-lease-token"] != token || !expires.After(time.Now().UTC()) {
+	if !present {
 		return physicalpool.ErrDeletionLeaseConflict
 	}
 	return nil
 }
 
 func (s *S3Store) ReleaseNamespaceDeletionLease(ctx context.Context, ownerID, token string) error {
-	if err := s.VerifyNamespaceDeletionLease(ctx, ownerID, token); err != nil {
+	present, err := s.verifyNamespaceDeletionLease(ctx, ownerID, token)
+	if err != nil {
+		return err
+	}
+	if !present {
 		return nil
 	}
 	key, err := s.key(s3DeletionLeaseKey)
@@ -153,7 +161,10 @@ func (s *S3Store) ReleaseNamespaceDeletionLease(ctx context.Context, ownerID, to
 	}
 	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: &s.bucket, Key: &key})
 	if err != nil {
-		return nil
+		if isS3ObjectNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("%w: read deletion lease for release: %v", physicalpool.ErrDeletionLeaseConflict, err)
 	}
 	input := &awss3.DeleteObjectInput{Bucket: &s.bucket, Key: &key}
 	if head.ETag == nil || *head.ETag == "" {
@@ -164,7 +175,53 @@ func (s *S3Store) ReleaseNamespaceDeletionLease(ctx context.Context, ownerID, to
 	return err
 }
 
+// verifyNamespaceDeletionLease reports whether the marker exists separately
+// from whether its contents authorize the requested owner/token. A missing
+// marker is the only benign release outcome; provider failures remain a
+// deletion-lease conflict so callers cannot proceed as if the fence vanished.
+func (s *S3Store) verifyNamespaceDeletionLease(ctx context.Context, ownerID, token string) (bool, error) {
+	key, err := s.key(s3DeletionLeaseKey)
+	if err != nil {
+		return false, err
+	}
+	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: &s.bucket, Key: &key})
+	if err != nil {
+		if isS3ObjectNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("%w: verify deletion lease marker: %v", physicalpool.ErrDeletionLeaseConflict, err)
+	}
+	expires, parseErr := time.Parse(time.RFC3339Nano, head.Metadata["leapview-lease-expires"])
+	if parseErr != nil || head.Metadata["leapview-lease-owner"] != ownerID || head.Metadata["leapview-lease-token"] != token || !expires.After(time.Now().UTC()) {
+		return true, physicalpool.ErrDeletionLeaseConflict
+	}
+	return true, nil
+}
+
+func isS3ObjectNotFound(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NoSuchKey", "NoSuchObject", "NotFound":
+			return true
+		}
+	}
+	var statusErr interface{ HTTPStatusCode() int }
+	return errors.As(err, &statusErr) && statusErr.HTTPStatusCode() == 404
+}
+
 func NewS3(client S3Client, bucket, prefix string) (*S3Store, error) {
+	return newS3(client, bucket, prefix, "")
+}
+
+// NewS3WithEncryption constructs an S3 GC store whose marker writes use the
+// target-resolved KMS identity. The opaque admission reference is resolved by
+// the caller and is never sent to the provider.
+func NewS3WithEncryption(client S3Client, bucket, prefix, providerEncryptionKey string) (*S3Store, error) {
+	return newS3(client, bucket, prefix, providerEncryptionKey)
+}
+
+func newS3(client S3Client, bucket, prefix, providerEncryptionKey string) (*S3Store, error) {
 	if client == nil || strings.TrimSpace(bucket) == "" {
 		return nil, fmt.Errorf("S3 GC client and bucket are required")
 	}
@@ -172,7 +229,19 @@ func NewS3(client S3Client, bucket, prefix string) (*S3Store, error) {
 	if strings.ContainsAny(prefix, "\x00\r\n") {
 		return nil, fmt.Errorf("S3 GC prefix is invalid")
 	}
-	return &S3Store{client: client, bucket: bucket, prefix: prefix}, nil
+	providerEncryptionKey = strings.TrimSpace(providerEncryptionKey)
+	if strings.ContainsAny(providerEncryptionKey, "\x00\r\n") {
+		return nil, fmt.Errorf("S3 GC encryption key is invalid")
+	}
+	return &S3Store{client: client, bucket: bucket, prefix: prefix, providerEncryptionKey: providerEncryptionKey}, nil
+}
+
+func (s *S3Store) applyEncryption(input *awss3.PutObjectInput) {
+	if s.providerEncryptionKey == "" {
+		return
+	}
+	input.ServerSideEncryption = awss3types.ServerSideEncryptionAwsKms
+	input.SSEKMSKeyId = aws.String(s.providerEncryptionKey)
 }
 func (s *S3Store) key(key string) (string, error) {
 	key = strings.Trim(strings.ReplaceAll(key, "\\", "/"), "/")

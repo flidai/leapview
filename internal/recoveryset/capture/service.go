@@ -345,7 +345,11 @@ func (s *Service) resolve(ctx context.Context, request Request) (TrustPolicy, er
 }
 
 func (s *Service) trustedNow(deadline time.Time) (time.Time, error) {
-	now := s.clock.Now()
+	// Persist only the canonical UTC microsecond representation. Trusted
+	// clocks are ordinary time sources and may return local time or carry
+	// sub-microsecond precision; normalizing here keeps the persistence
+	// boundary independent of the clock implementation.
+	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	if !canonicalCaptureTime(now) {
 		return time.Time{}, fmt.Errorf("%w: trusted verification clock must use a UTC microsecond timestamp", ErrInvalid)
 	}

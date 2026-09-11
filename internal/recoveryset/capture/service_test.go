@@ -54,6 +54,21 @@ func TestFAI520CaptureCanonicalizesSameFixedCapturedEvidence(t *testing.T) {
 	}
 }
 
+func TestCaptureNormalizesPlainClockPrecisionAtPersistenceBoundary(t *testing.T) {
+	service, request, _ := captureFixture(t)
+	service.clock = ClockFunc(func() time.Time {
+		return time.Date(2026, 9, 10, 2, 0, 0, 123456789, time.FixedZone("plain-clock", 3600))
+	})
+	result, err := service.Capture(t.Context(), request)
+	if err != nil {
+		t.Fatalf("plain time.Now-style clock rejected: %v", err)
+	}
+	want := time.Date(2026, 9, 10, 1, 0, 0, 123456000, time.UTC)
+	if !result.Evidence.VerificationTime.Equal(want) || result.Evidence.VerificationTime.Location() != time.UTC {
+		t.Fatalf("verification time = %v (%s), want %v UTC", result.Evidence.VerificationTime, result.Evidence.VerificationTime.Location(), want)
+	}
+}
+
 func TestFAI520CaptureContentMutationChangesManifestAndFrontierDigests(t *testing.T) {
 	service, request, source := captureFixture(t)
 	first, err := service.Capture(t.Context(), request)
