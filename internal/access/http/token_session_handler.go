@@ -207,7 +207,7 @@ func (h Handler) RevokeCurrentSession(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if h.rejectAuthoringCredential(w, r) {
 		return
 	}
-	h.revokeSession(w, r, principal.ID, principal.ID)
+	h.revokeSession(w, r, principal.ID, principal.ID, accessgen.GenCommandOperationRevokeCurrentSession())
 }
 func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	target := chi.URLParam(r, "principal")
@@ -216,9 +216,9 @@ func (h Handler) RevokePrincipalSession(w stdhttp.ResponseWriter, r *stdhttp.Req
 			return
 		}
 	}
-	h.revokeSession(w, r, h.currentPrincipalID(r), target)
+	h.revokeSession(w, r, h.currentPrincipalID(r), target, accessgen.GenCommandOperationRevokePrincipalSession())
 }
-func (h Handler) revokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request, actor, target string) {
+func (h Handler) revokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request, actor, target string, operation accessgen.GenCommandOperationID) {
 	if actor == "" || target == "" {
 		writeJSONError(w, errUnauthorized, stdhttp.StatusUnauthorized)
 		return
@@ -229,13 +229,31 @@ func (h Handler) revokeSession(w stdhttp.ResponseWriter, r *stdhttp.Request, act
 		return
 	}
 	id := chi.URLParam(r, "session")
-	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationRevokeCurrentSession(), func(tx access.Repository) (access.AuditEventInput, error) {
+	auditPayload, err := revokeSessionAuditPayload(operation, id, target)
+	if err != nil {
+		writeCommandFailure(w, r, operation, err)
+		return
+	}
+	err = executeAuditedMutation(r, repo, operation, func(tx access.Repository) (access.AuditEventInput, error) {
 		mutationErr := tx.RevokeSessionForPrincipal(r.Context(), target, id)
-		return auditInput(r, "session.revoked", actor, "session", id, "", "success", nil), mutationErr
+		audit := auditInput(r, "session.revoked", actor, "session", id, "", "success", nil)
+		audit.MetadataJSON = auditPayload
+		return audit, mutationErr
 	})
 	if err != nil {
 		writeJSONError(w, err, statusForNotFound(err))
 		return
 	}
 	w.WriteHeader(stdhttp.StatusNoContent)
+}
+
+func revokeSessionAuditPayload(operation accessgen.GenCommandOperationID, sessionID, targetPrincipalID string) (string, error) {
+	switch operation.APIGenOperationID() {
+	case accessgen.GenCommandOperationRevokeCurrentSession().APIGenOperationID():
+		return accessgen.EncodeGenRevokeCurrentSessionAuditPayload(accessgen.GenSchemaCurrentSessionRevokedAuditPayload{SessionId: sessionID})
+	case accessgen.GenCommandOperationRevokePrincipalSession().APIGenOperationID():
+		return accessgen.EncodeGenRevokePrincipalSessionAuditPayload(accessgen.GenSchemaPrincipalSessionRevokedAuditPayload{TargetPrincipalId: targetPrincipalID})
+	default:
+		return "", fmt.Errorf("unsupported session revoke operation %q", operation.APIGenOperationID())
+	}
 }
