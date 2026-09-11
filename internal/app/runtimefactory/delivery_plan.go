@@ -335,12 +335,20 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject", Description: "target revision or active base changes reject before physical work"},
 		Rollback:      deployment.DeliveryRollbackEvidence{Class: policy.RollbackClass, RetentionWindow: policy.RetentionWindow, Description: "sealed catalog remains immutable; rollback class and retention are target policy"},
 	}
+	targetPolicyDigest := artifacts.AuthorizationPolicyDigest
+	if targetPolicyDigest == "" {
+		// Compatibility-only artifact providers predate the separately versioned
+		// target policy identity. Native PostgreSQL planning rejects this shape;
+		// retaining it here keeps the generic plan constructor able to decode and
+		// validate historical test/profile evidence.
+		targetPolicyDigest = artifacts.AuthorizationFingerprint
+	}
 	request := deployment.DeliveryPlanRequest{
 		ID: "plan-" + input.Candidate.ID, ActorID: input.OwnerID, TargetID: input.Candidate.TargetID, ProjectID: input.ProjectID.String(), Environment: input.Candidate.Scope.Environment,
 		Operation: operation, SourceDigest: input.ArtifactDigest,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: input.ArtifactDigest, MaterializationDigest: materializationDigest, CompilerDigest: compilerDigest, ExecutableDigest: planDigest("leapview-executable:" + runtimeVersion), DependencyDigest: planDigest("leapview-dependencies:" + runtimeVersion), ConfigDigest: configDigest, BindingDigest: bindingDigest, RuntimeDigest: runtimeDigest, CapabilityDigest: bindingDigest, DataInputs: dataInputs},
 		Provenance: deployment.DeliveryProvenance{Repository: sourceRepository(input), SourceRevision: sourceRevision(input), Builder: "leapview", BuildDefinition: artifacts.Artifact.CompilerVersion, AttestationDigest: input.Source.SourceAttestationDigest},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: artifacts.AuthorizationFingerprint, AuthorizationDigest: artifacts.AuthorizationFingerprint, QualificationDigest: qualificationDigest, ExpiresAt: func() time.Time {
+		Governance: deployment.DeliveryGovernance{PolicyDigest: targetPolicyDigest, PolicyRevision: artifacts.AuthorizationPolicyRevision, AuthorizationDigest: artifacts.AuthorizationFingerprint, QualificationDigest: qualificationDigest, ExpiresAt: func() time.Time {
 			if input.Plan != nil && !input.Plan.Governance.ExpiresAt.IsZero() {
 				return input.Plan.Governance.ExpiresAt
 			}

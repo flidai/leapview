@@ -15,6 +15,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
@@ -24,6 +26,7 @@ import (
 	project "github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/release"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
@@ -69,10 +72,24 @@ type GenerationAdmissionInput struct {
 	// revision is finalized from the completed delivery row in the admission
 	// transaction before this evidence is retained.
 	Provenance release.ProvenanceInput
-	Graph      projectgraph.ProjectGraph
+	// AuthorizationPolicy is the exact target-owned mutable policy revision
+	// from which the immutable serving access snapshot was compiled. Admission
+	// locks the current head and validates this identity in the same transaction
+	// as generation and bundle persistence.
+	AuthorizationPolicy AuthorizationPolicyEvidence
+	Graph               projectgraph.ProjectGraph
 	// ResourceInventory is derived from the same verified portable artifact.
 	// It is retained at admission but cannot allocate a ResourceUID.
 	ResourceInventory project.ResourceUIDInventory
+}
+
+// AuthorizationPolicyEvidence binds native generation admission to one
+// reviewed target policy revision. Digest identifies the policy document;
+// the graph-bound compiled authorization digest remains part of the seal and
+// release provenance.
+type AuthorizationPolicyEvidence struct {
+	Revision int64
+	Digest   string
 }
 
 // CommitEvidence is the immutable attempt completion proof written by the
@@ -103,6 +120,8 @@ type SnapshotSealEvidence struct {
 	RelationNamespace, ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                                string
 	RelationManifestDigest, ClosureDigest                                                                            string
 	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                                             string
+	AuthorizationPolicyRevision                                                                                      int64
+	AuthorizationPolicyDigest                                                                                        string
 	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactID, ServingArtifactDigest                         string
 	DuckDBVersion, RuntimeVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion               string
 	QualificationEvidence                                                                                            json.RawMessage
@@ -300,6 +319,20 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if err := a.physical.ValidateBuildAdmissionTx(ctx, tx, normalized.Seal.PhysicalPoolID, normalized.Seal.CatalogID); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
+	policy, err := accesspostgres.ValidateAuthorizationPolicyRevisionTx(ctx, tx, access.AuthorizationPolicyScope{
+		TargetID:    normalized.Generation.TargetID,
+		ProjectID:   normalized.Bundle.ProjectID.String(),
+		Environment: string(normalized.Bundle.Environment),
+	}, normalized.AuthorizationPolicy.Revision, normalized.AuthorizationPolicy.Digest)
+	if err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("validate generation authorization policy: %w", err)
+	}
+	if policy.Revision != normalized.AuthorizationPolicy.Revision || policy.Digest != normalized.AuthorizationPolicy.Digest {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation authorization policy identity differs", deploymentnative.ErrConflict)
+	}
+	if err := validateGenerationAuthorizationSnapshot(policy, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 
 	// Establish target lease -> delivery attempt ordering.
 	// Build orchestrators acquire the operation row before entering this
@@ -436,6 +469,51 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}, nil
 }
 
+func validateGenerationAuthorizationSnapshot(policy access.AuthorizationPolicy, admission GenerationAdmissionInput) error {
+	manifestPolicy := projectmanifest.AccessPolicy{RoleBindings: make(map[string]projectmanifest.RoleBinding, len(policy.RoleBindings))}
+	for _, binding := range policy.RoleBindings {
+		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
+			return fmt.Errorf("%w: target authorization role binding %q: %v", deploymentnative.ErrInvalid, binding.ID, err)
+		}
+		subject := projectmanifest.Subject{Kind: string(binding.Subject.Kind)}
+		switch binding.Subject.Kind {
+		case access.SubjectKindPrincipal:
+			subject.PrincipalID = binding.Subject.ID
+		case access.SubjectKindGroup:
+			subject.Group = binding.Subject.ID
+		default:
+			return fmt.Errorf("%w: unsupported target authorization subject kind %q", deploymentnative.ErrInvalid, binding.Subject.Kind)
+		}
+		if _, exists := manifestPolicy.RoleBindings[binding.ID]; exists {
+			return fmt.Errorf("%w: duplicate target authorization role binding %q", deploymentnative.ErrConflict, binding.ID)
+		}
+		manifestPolicy.RoleBindings[binding.ID] = projectmanifest.RoleBinding{ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: subject}
+	}
+	encoded, err := json.Marshal(manifestPolicy)
+	if err != nil {
+		return fmt.Errorf("%w: encode target authorization policy: %v", deploymentnative.ErrInvalid, err)
+	}
+	if !sameBundleObject(string(encoded), admission.Bundle.AccessPolicyJSON) {
+		return fmt.Errorf("%w: serving access policy differs from target authorization policy", deploymentnative.ErrConflict)
+	}
+	identity, err := projectgraph.NewServingIdentity(admission.Bundle.ProjectID, string(admission.Bundle.Environment), release.CandidatePolicyGenerationID)
+	if err != nil {
+		return fmt.Errorf("%w: serving authorization identity: %v", deploymentnative.ErrInvalid, err)
+	}
+	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(identity, admission.Graph, manifestPolicy)
+	if err != nil {
+		return fmt.Errorf("%w: compile target authorization policy: %v", deploymentnative.ErrInvalid, err)
+	}
+	digest, err := snapshot.Digest()
+	if err != nil {
+		return fmt.Errorf("%w: digest target authorization snapshot: %v", deploymentnative.ErrInvalid, err)
+	}
+	if digest != admission.Generation.SecurityDomainFingerprint {
+		return fmt.Errorf("%w: serving authorization fingerprint differs from target authorization policy", deploymentnative.ErrConflict)
+	}
+	return nil
+}
+
 func validateAdmissionProvenanceInput(input release.ProvenanceInput, admission GenerationAdmissionInput) error {
 	if input.Artifact.ContentDigest != admission.Bundle.Artifact.Digest || input.Artifact.ProjectDigest != admission.Bundle.ProjectDigest {
 		return fmt.Errorf("%w: release provenance artifact identity differs", deploymentnative.ErrConflict)
@@ -444,7 +522,9 @@ func validateAdmissionProvenanceInput(input release.ProvenanceInput, admission G
 	if identity.ProjectID != admission.Bundle.ProjectID || identity.Environment != string(admission.Bundle.Environment) || identity.GenerationID != admission.Generation.GenerationID {
 		return fmt.Errorf("%w: release provenance serving identity differs", deploymentnative.ErrConflict)
 	}
-	if input.Plan.TargetID != admission.Generation.TargetID || input.Plan.RuntimeVersion != admission.Seal.RuntimeVersion || input.Plan.PolicyDigest != admission.Generation.SecurityDomainFingerprint {
+	if input.Plan.TargetID != admission.Generation.TargetID || input.Plan.RuntimeVersion != admission.Seal.RuntimeVersion ||
+		input.Plan.PolicyRevision != admission.AuthorizationPolicy.Revision || input.Plan.PolicyDigest != admission.AuthorizationPolicy.Digest ||
+		input.Plan.AuthorizationDigest != admission.Generation.SecurityDomainFingerprint {
 		return fmt.Errorf("%w: release provenance plan identity differs", deploymentnative.ErrConflict)
 	}
 	return nil
@@ -524,7 +604,8 @@ func sameSnapshotSeal(got deploymentnative.SnapshotSeal, want SnapshotSealEviden
 		got.CatalogVersion == want.CatalogVersion && got.DuckLakeSnapshotID == want.DuckLakeSnapshotID && got.RelationNamespace == want.RelationNamespace &&
 		got.ObjectRoot == want.ObjectRoot && got.ObjectRootDigest == want.ObjectRootDigest && got.ArtifactRoot == want.ArtifactRoot && got.ArtifactRootDigest == want.ArtifactRootDigest &&
 		got.RelationManifestDigest == want.RelationManifestDigest && got.ClosureDigest == want.ClosureDigest && got.CompiledGraphDigest == want.CompiledGraphDigest &&
-		got.CompiledConfigDigest == want.CompiledConfigDigest && got.SecurityDomainFingerprint == want.SecurityDomainFingerprint && got.RequestDigest == want.RequestDigest &&
+		got.CompiledConfigDigest == want.CompiledConfigDigest && got.SecurityDomainFingerprint == want.SecurityDomainFingerprint &&
+		got.AuthorizationPolicyRevision == want.AuthorizationPolicyRevision && got.AuthorizationPolicyDigest == want.AuthorizationPolicyDigest && got.RequestDigest == want.RequestDigest &&
 		got.PlanDigest == want.PlanDigest && got.CompatibilityDigest == want.CompatibilityDigest && got.ServingArtifactID == want.ServingArtifactID &&
 		got.ServingArtifactDigest == want.ServingArtifactDigest && got.DuckDBVersion == want.DuckDBVersion && got.RuntimeVersion == want.RuntimeVersion &&
 		got.DuckLakeExtensionVersion == want.DuckLakeExtensionVersion && got.DuckLakeSpecVersion == want.DuckLakeSpecVersion && got.CatalogSchemaVersion == want.CatalogSchemaVersion &&
@@ -746,6 +827,15 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	if ctx.Generation.GenerationRevision != 0 {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: generation revision must be allocated by the target", deploymentnative.ErrInvalid)
 	}
+	if ctx.AuthorizationPolicy.Revision <= 0 {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: authorization policy revision must be positive", deploymentnative.ErrInvalid)
+	}
+	if err := validateDigest(ctx.AuthorizationPolicy.Digest, "authorization policy digest"); err != nil {
+		return GenerationAdmissionInput{}, err
+	}
+	if ctx.Seal.AuthorizationPolicyRevision != ctx.AuthorizationPolicy.Revision || ctx.Seal.AuthorizationPolicyDigest != ctx.AuthorizationPolicy.Digest {
+		return GenerationAdmissionInput{}, conflict("snapshot seal and authorization policy evidence differ")
+	}
 	for label, value := range map[string]string{
 		"commit owner id": ctx.Commit.OwnerID, "lease owner id": ctx.Fence.OwnerID,
 		"lease target id": ctx.Fence.TargetID, "generation target id": ctx.Generation.TargetID,
@@ -962,7 +1052,7 @@ func toNativeFence(f LeaseFenceEvidence) deploymentnative.LeaseFence {
 }
 
 func toNativeSeal(s SnapshotSealEvidence) deploymentnative.SnapshotSealInput {
-	return deploymentnative.SnapshotSealInput{SealID: s.SealID, AttemptID: s.AttemptID, CandidateID: s.CandidateID, PhysicalPoolID: s.PhysicalPoolID, TenantDomain: s.TenantDomain, Region: s.Region, EncryptionDomain: s.EncryptionDomain, ObjectNamespace: s.ObjectNamespace, CatalogDatabase: s.CatalogDatabase, CatalogID: s.CatalogID, CatalogUUID: s.CatalogUUID, CatalogVersion: s.CatalogVersion, DuckLakeSnapshotID: s.DuckLakeSnapshotID, RelationNamespace: s.RelationNamespace, ObjectRoot: s.ObjectRoot, ObjectRootDigest: s.ObjectRootDigest, ArtifactRoot: s.ArtifactRoot, ArtifactRootDigest: s.ArtifactRootDigest, RelationManifestDigest: s.RelationManifestDigest, ClosureDigest: s.ClosureDigest, CompiledGraphDigest: s.CompiledGraphDigest, CompiledConfigDigest: s.CompiledConfigDigest, SecurityDomainFingerprint: s.SecurityDomainFingerprint, RequestDigest: s.RequestDigest, PlanDigest: s.PlanDigest, CompatibilityDigest: s.CompatibilityDigest, ServingArtifactID: s.ServingArtifactID, ServingArtifactDigest: s.ServingArtifactDigest, DuckDBVersion: s.DuckDBVersion, RuntimeVersion: s.RuntimeVersion, DuckLakeExtensionVersion: s.DuckLakeExtensionVersion, DuckLakeSpecVersion: s.DuckLakeSpecVersion, CatalogSchemaVersion: s.CatalogSchemaVersion, QualificationEvidence: append(json.RawMessage(nil), s.QualificationEvidence...)}
+	return deploymentnative.SnapshotSealInput{SealID: s.SealID, AttemptID: s.AttemptID, CandidateID: s.CandidateID, PhysicalPoolID: s.PhysicalPoolID, TenantDomain: s.TenantDomain, Region: s.Region, EncryptionDomain: s.EncryptionDomain, ObjectNamespace: s.ObjectNamespace, CatalogDatabase: s.CatalogDatabase, CatalogID: s.CatalogID, CatalogUUID: s.CatalogUUID, CatalogVersion: s.CatalogVersion, DuckLakeSnapshotID: s.DuckLakeSnapshotID, RelationNamespace: s.RelationNamespace, ObjectRoot: s.ObjectRoot, ObjectRootDigest: s.ObjectRootDigest, ArtifactRoot: s.ArtifactRoot, ArtifactRootDigest: s.ArtifactRootDigest, RelationManifestDigest: s.RelationManifestDigest, ClosureDigest: s.ClosureDigest, CompiledGraphDigest: s.CompiledGraphDigest, CompiledConfigDigest: s.CompiledConfigDigest, SecurityDomainFingerprint: s.SecurityDomainFingerprint, AuthorizationPolicyRevision: s.AuthorizationPolicyRevision, AuthorizationPolicyDigest: s.AuthorizationPolicyDigest, RequestDigest: s.RequestDigest, PlanDigest: s.PlanDigest, CompatibilityDigest: s.CompatibilityDigest, ServingArtifactID: s.ServingArtifactID, ServingArtifactDigest: s.ServingArtifactDigest, DuckDBVersion: s.DuckDBVersion, RuntimeVersion: s.RuntimeVersion, DuckLakeExtensionVersion: s.DuckLakeExtensionVersion, DuckLakeSpecVersion: s.DuckLakeSpecVersion, CatalogSchemaVersion: s.CatalogSchemaVersion, QualificationEvidence: append(json.RawMessage(nil), s.QualificationEvidence...)}
 }
 
 func toNativeGeneration(g GenerationEvidence) deploymentnative.GenerationInput {

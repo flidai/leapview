@@ -25,9 +25,10 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-// Current main's 192 operations plus the eight analytics-owned saved
-// exploration operations. Keep one count for the shared aggregate contract.
-const expectedAPIGenAggregateOperationCount = 200
+// Current main's 192 operations plus eight analytics-owned saved-exploration
+// operations and two target-policy operations. Keep one count for the shared
+// aggregate contract.
+const expectedAPIGenAggregateOperationCount = 202
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -244,7 +245,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 74; got != want {
+	if got, want := len(accessContracts), 76; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}

@@ -119,6 +119,16 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if schemaCount != 10 {
 		t.Fatalf("capability schema count = %d, want 10", schemaCount)
 	}
+	var sealPolicyColumns int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema='delivery' AND table_name='delivery_snapshot_seal'
+		  AND column_name = ANY($1::text[])`, []string{"authorization_policy_revision", "authorization_policy_digest"}).Scan(&sealPolicyColumns); err != nil {
+		t.Fatal(err)
+	}
+	if sealPolicyColumns != 2 {
+		t.Fatalf("snapshot seal policy evidence columns = %d, want 2", sealPolicyColumns)
+	}
 	var schemaOwner, capabilityOwner string
 	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'platform'`).Scan(&schemaOwner); err != nil {
 		t.Fatal(err)
@@ -145,6 +155,22 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if version != postgresbaseline.CurrentRevision || !applied {
 		t.Fatalf("Goose baseline identity = %d/applied=%t", version, applied)
+	}
+	backupTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backupTx.Exec(ctx, `SET LOCAL ROLE leapview_control_backup`); err != nil {
+		_ = backupTx.Rollback(ctx)
+		t.Fatalf("assume backup role: %v", err)
+	}
+	var policyRows int
+	if err := backupTx.QueryRow(ctx, `SELECT count(*) FROM access.authorization_policy`).Scan(&policyRows); err != nil {
+		_ = backupTx.Rollback(ctx)
+		t.Fatalf("backup role cannot read target authorization policies: %v", err)
+	}
+	if err := backupTx.Rollback(ctx); err != nil {
+		t.Fatalf("release backup role transaction: %v", err)
 	}
 	var successorTables, successorOwners int
 	if err := db.QueryRow(ctx, `

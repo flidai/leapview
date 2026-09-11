@@ -47,6 +47,10 @@ type beginner interface {
 type Repository struct {
 	db             DBTX
 	fingerprintKey []byte
+	// authorizationScope is optional for the aggregate access repository. A
+	// target-policy-only repository sets it to make project/environment scope
+	// part of the authority configuration rather than caller input.
+	authorizationScope *access.AuthorizationPolicyScope
 }
 
 var _ access.Repository = (*Repository)(nil)
@@ -106,6 +110,19 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 // SchemaSQL returns the standalone access schema for migration runners.
 func SchemaSQL() string { return schemaSQL }
+
+// NewAuthorizationPolicyRepository constructs a target-scoped policy
+// authority. Reads and writes reject any project/environment/target tuple
+// outside this configured target namespace before touching PostgreSQL.
+func NewAuthorizationPolicyRepository(db DBTX, scope access.AuthorizationPolicyScope) (*Repository, error) {
+	if db == nil {
+		return nil, errors.New("authorization policy PostgreSQL database is required")
+	}
+	if err := access.ValidateAuthorizationPolicyScope(scope); err != nil {
+		return nil, err
+	}
+	return &Repository{db: db, authorizationScope: &scope}, nil
+}
 
 // Event is the persisted audit row. IntentDigest is the digest of the
 // canonical access.AuditIntent and binds every immutable identity/payload

@@ -23,19 +23,24 @@ type Config struct {
 	// Profile is an explicitly injected, non-production profile/test surface.
 	// It keeps those surfaces governed without allowing the composition root to
 	// infer a database backend. Internal OAuth state remains PostgreSQL-owned.
-	Profile                      *ProfileSurface
-	Production                   bool
-	Auth                         AuthConfig
-	ExistingAuth                 *Auth
-	PublicURL                    string
-	InstanceID                   string
-	MCPIssuerURL                 string
-	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	AuthoringProjectID           func(context.Context) (projectgraph.ResourceID, error)
-	Presentation                 webpage.Presentation
-	Assets                       staticasset.Resolver
-	AvatarBlobs                  avatar.BlobStore
+	Profile      *ProfileSurface
+	Production   bool
+	Auth         AuthConfig
+	ExistingAuth *Auth
+	PublicURL    string
+	InstanceID   string
+	// AuthorizationPolicyTargetID and AuthorizationPolicyEnvironment bind the
+	// project policy HTTP surface to this target. When TargetID is empty,
+	// InstanceID is used; neither value is accepted from request payloads.
+	AuthorizationPolicyTargetID    string
+	AuthorizationPolicyEnvironment string
+	MCPIssuerURL                   string
+	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	Presentation                   webpage.Presentation
+	Assets                         staticasset.Resolver
+	AvatarBlobs                    avatar.BlobStore
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
@@ -51,8 +56,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Persistence: config.Persistence,
-			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			Persistence:                    config.Persistence,
+			AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
+			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
+			Auth:                           auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID:   config.CurrentProjectID,
 			AuthoringProjectID: config.AuthoringProjectID,
 			Presentation:       config.Presentation, Assets: config.Assets,
@@ -127,16 +134,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth.authoringAuth = authoringAuth
 	}
 	surface := surfaceConfig{
-		Persistence:                  config.Persistence,
-		Repository:                   func() (access.Repository, error) { return repository, nil },
-		Auth:                         auth,
-		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-		CurrentProjectID:             config.CurrentProjectID,
-		AuthoringProjectID:           config.AuthoringProjectID,
-		AuthoringAuth:                authoringAuth,
-		Avatar:                       avatarService,
-		Presentation:                 config.Presentation,
-		Assets:                       config.Assets,
+		Persistence:                    config.Persistence,
+		AuthorizationPolicyTargetID:    firstNonEmpty(config.AuthorizationPolicyTargetID, config.InstanceID),
+		AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment,
+		Repository:                     func() (access.Repository, error) { return repository, nil },
+		Auth:                           auth,
+		CurrentEffectiveCapabilities:   config.CurrentEffectiveCapabilities,
+		CurrentProjectID:               config.CurrentProjectID,
+		AuthoringProjectID:             config.AuthoringProjectID,
+		AuthoringAuth:                  authoringAuth,
+		Avatar:                         avatarService,
+		Presentation:                   config.Presentation,
+		Assets:                         config.Assets,
 	}
 	if auth != nil {
 		surface.CurrentPrincipal = func(r *http.Request) (Principal, bool) {

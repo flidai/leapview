@@ -485,6 +485,10 @@ func candidateReleaseProvenance(
 	if candidate.Scope.BaseGenerationID != "" {
 		baseIdentity, _ = candidate.Scope.BaseIdentity()
 	}
+	policyDigest := artifacts.AuthorizationPolicyDigest
+	if policyDigest == "" {
+		policyDigest = artifacts.AuthorizationFingerprint
+	}
 	return release.NewProvenance(release.ProvenanceInput{
 		Artifact: artifacts.Artifact,
 		Candidate: release.CandidateProvenance{
@@ -495,7 +499,8 @@ func candidateReleaseProvenance(
 		SourceRevision: candidateSourceRevision(sourceRevision),
 		Plan: release.GenerationPlanProvenance{
 			Identity: identity, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
-			RuntimeVersion: receipt.RuntimeVersion, PolicyDigest: artifacts.AuthorizationFingerprint,
+			RuntimeVersion: receipt.RuntimeVersion, PolicyDigest: policyDigest,
+			PolicyRevision: artifacts.AuthorizationPolicyRevision, AuthorizationDigest: artifacts.AuthorizationFingerprint,
 			DataRevision: artifacts.Generation.DataRevision, DataMode: artifacts.Generation.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifacts.Generation.ManagedDataPins...),
 			Bindings:        bindings, AuthoredConnections: candidateProvenanceAuthoredConnections(artifacts.Generation.AuthoredConnections),

@@ -74,6 +74,8 @@ model ReleaseGenerationPlanProvenance {
   targetId: string;
   runtimeVersion: string;
   policyDigest: string;
+  policyRevision?: int64;
+  authorizationDigest?: string;
   dataRevision: string;
   dataMode: ReleaseGenerationDataMode;
   managedDataPins: ReleaseManagedDataPin[];
