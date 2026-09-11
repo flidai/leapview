@@ -53,9 +53,51 @@ func TestExecutorSelectsBestEffortFromGeneratedContract(t *testing.T) {
 	if transactionalCalled || !guard.Completed() {
 		t.Fatalf("transactionalCalled=%v completed=%v", transactionalCalled, guard.Completed())
 	}
-	for _, value := range []string{"best-effort command audit failed", "createWidget", "widget.created", "target_id=w-1", "sink unavailable"} {
+	for _, value := range []string{"best-effort command audit failed", "createWidget", "widget.created", "target_id=w-1", "error=audit_recorder_failure", "error_class=generic"} {
 		if !strings.Contains(logs.String(), value) {
 			t.Fatalf("log %q does not contain %q", logs.String(), value)
+		}
+	}
+}
+
+func TestExecutorDoesNotLogBestEffortErrorDetails(t *testing.T) {
+	var logs bytes.Buffer
+	executor, err := NewExecutor(testLookup(GuaranteeBestEffort), slog.New(slog.NewTextHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, _ := testLookup(GuaranteeBestEffort)("createWidget")
+	ctx, _, err := Begin(t.Context(), contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.Execute(ctx, contract.OperationID, Execution{
+		BestEffortAudit: func(context.Context, Contract) error {
+			return errors.New("upstream Retry-After: response-secret")
+		},
+		LogAttributes: []slog.Attr{
+			slog.String("target_id", "w-1"),
+			slog.String("reason", "caller-supplied-context"),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	logged := logs.String()
+	for _, value := range []string{"target_id=w-1", "reason=caller-supplied-context"} {
+		if !strings.Contains(logged, value) {
+			t.Fatalf("log %q does not contain caller attribute %q", logged, value)
+		}
+	}
+	if strings.Contains(logged, "response-secret") {
+		t.Fatalf("log %q contains callback error detail", logged)
+	}
+	if !strings.Contains(logged, "error_class=generic") {
+		t.Fatalf("log %q does not contain safe error class", logged)
+	}
+	for _, secret := range []string{"Retry-After: response-secret", "error=upstream"} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("log %q contains sensitive value %q", logged, secret)
 		}
 	}
 }

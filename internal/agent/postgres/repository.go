@@ -1044,6 +1044,20 @@ func (r *Repository) AppendEvent(ctx context.Context, input agent.EventInput) (a
 func (r *Repository) ListEvents(ctx context.Context, principal, runID string) ([]agent.Event, error) {
 	return r.ListEventsPage(ctx, principal, runID, agent.Page{})
 }
+
+const maxAgentEventPageLimit int64 = 10000
+
+// boundedAgentEventPageLimit preserves the repository's default and clamp
+// semantics while keeping the narrowing conversion to the sqlc int32
+// parameter explicitly bounded.
+func boundedAgentEventPageLimit(limit int) int32 {
+	limit64 := int64(limit)
+	if limit64 < 1 || limit64 > maxAgentEventPageLimit {
+		return int32(maxAgentEventPageLimit)
+	}
+	return int32(limit64)
+}
+
 func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string, page agent.Page) ([]agent.Event, error) {
 	principal, err := principalID(principal)
 	if err != nil {
@@ -1056,10 +1070,7 @@ func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string
 	if !exists {
 		return nil, agent.ErrNotFound
 	}
-	limit := page.Limit
-	if limit <= 0 || limit > 10000 {
-		limit = 10000
-	}
+	limit := boundedAgentEventPageLimit(page.Limit)
 	after := int64(0)
 	if strings.TrimSpace(page.After) != "" {
 		after, err = strconv.ParseInt(strings.TrimSpace(page.After), 10, 64)
@@ -1067,7 +1078,7 @@ func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string
 			return nil, errors.New("invalid event cursor")
 		}
 	}
-	rows, err := agentdb.New(r.db).ListAgentEvents(ctx, agentdb.ListAgentEventsParams{RunID: runID, AfterID: after, PageLimit: int32(limit)})
+	rows, err := agentdb.New(r.db).ListAgentEvents(ctx, agentdb.ListAgentEventsParams{RunID: runID, AfterID: after, PageLimit: limit})
 	if err != nil {
 		return nil, mapDBError(err)
 	}

@@ -281,6 +281,29 @@ func TestAgentUUIDv7Generation(t *testing.T) {
 	}
 }
 
+func TestBoundedAgentEventPageLimit(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	tests := []struct {
+		name  string
+		input int
+		want  int32
+	}{
+		{name: "default for zero", input: 0, want: int32(maxAgentEventPageLimit)},
+		{name: "default for negative", input: -1, want: int32(maxAgentEventPageLimit)},
+		{name: "preserves valid limit", input: 25, want: 25},
+		{name: "preserves maximum", input: int(maxAgentEventPageLimit), want: int32(maxAgentEventPageLimit)},
+		{name: "clamps above maximum", input: int(maxAgentEventPageLimit) + 1, want: int32(maxAgentEventPageLimit)},
+		{name: "clamps maximum int", input: maxInt, want: int32(maxAgentEventPageLimit)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := boundedAgentEventPageLimit(test.input); got != test.want {
+				t.Fatalf("boundedAgentEventPageLimit(%d) = %d, want %d", test.input, got, test.want)
+			}
+		})
+	}
+}
+
 func TestPostgreSQL18ConcurrentAgentEventAllocation(t *testing.T) {
 	pool, repo := agentPostgresTestRepo(t, "events")
 	ctx := t.Context()

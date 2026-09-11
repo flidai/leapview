@@ -144,11 +144,18 @@ func extractExpectedCSVs(archivePath, target string) (int, error) {
 
 	copied := 0
 	for _, file := range reader.File {
+		if _, err := bootstrap.SafeZipEntryPath(file.Name); err != nil {
+			continue
+		}
 		name := path.Clean(file.Name)
 		if _, ok := remaining[name]; !ok || file.FileInfo().IsDir() {
 			continue
 		}
-		if err := bootstrap.ExtractZipFile(file, filepath.Join(target, name), "Olist"); err != nil {
+		safeName, err := bootstrap.SafeZipEntryPath(name)
+		if err != nil {
+			return copied, fmt.Errorf("unsafe Olist archive entry %q: %w", file.Name, err)
+		}
+		if err := bootstrap.ExtractZipFile(file, target, safeName, "Olist"); err != nil {
 			return copied, err
 		}
 		delete(remaining, name)

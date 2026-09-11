@@ -121,7 +121,11 @@ func extractExpectedFiles(archivePath, target string) (int, error) {
 		if _, ok := remaining[name]; !ok {
 			continue
 		}
-		if err := bootstrap.ExtractZipFile(file, filepath.Join(target, name), "MovieLens"); err != nil {
+		safeName, err := bootstrap.SafeZipEntryPath(name)
+		if err != nil {
+			return copied, fmt.Errorf("unsafe MovieLens archive entry %q: %w", file.Name, err)
+		}
+		if err := bootstrap.ExtractZipFile(file, target, safeName, "MovieLens"); err != nil {
 			return copied, err
 		}
 		delete(remaining, name)
@@ -142,6 +146,9 @@ func extractExpectedFiles(archivePath, target string) (int, error) {
 
 func expectedArchiveFileName(file *zip.File) string {
 	if file.FileInfo().IsDir() {
+		return ""
+	}
+	if _, err := bootstrap.SafeZipEntryPath(file.Name); err != nil {
 		return ""
 	}
 	name := path.Clean(file.Name)

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,37 @@ func TestTruthyAcceptsDocumentedValues(t *testing.T) {
 		if Truthy(value) {
 			t.Errorf("Truthy(%q) = true, want false", value)
 		}
+	}
+}
+
+func TestSafeZipEntryPathRejectsEscapes(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range []string{
+		"../outside.csv",
+		"nested/../../outside.csv",
+		"/outside.csv",
+		`..\outside.csv`,
+		"C:/outside.csv",
+	} {
+		if got, err := SafeZipEntryPath(entry); err == nil {
+			t.Errorf("SafeZipEntryPath(%q) = %q, want an error", entry, got)
+		}
+	}
+}
+
+func TestSafeZipEntryPathAllowsNestedRelativeFiles(t *testing.T) {
+	t.Parallel()
+
+	got, err := SafeZipEntryPath("nested/data.csv")
+	if err != nil {
+		t.Fatalf("SafeZipEntryPath returned error: %v", err)
+	}
+	want := filepath.Join("nested", "data.csv")
+	if got != want {
+		t.Fatalf("SafeZipEntryPath = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(got, ".."+string(filepath.Separator)) {
+		t.Fatalf("SafeZipEntryPath returned escaping path %q", got)
 	}
 }

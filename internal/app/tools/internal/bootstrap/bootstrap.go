@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"archive/zip"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
@@ -239,29 +240,81 @@ func DownloadArchive(client *http.Client, archivePath, downloadURL, name string)
 	return nil
 }
 
-func ExtractZipFile(file *zip.File, destination, name string) error {
+// SafeZipEntryPath validates a ZIP entry as a relative path beneath an
+// extraction root. ZIP paths use slash separators regardless of the host OS,
+// so backslashes and drive-qualified paths are rejected explicitly as well.
+func SafeZipEntryPath(entry string) (string, error) {
+	if strings.TrimSpace(entry) == "" {
+		return "", fmt.Errorf("ZIP entry path is empty")
+	}
+	if strings.Contains(entry, `\`) {
+		return "", fmt.Errorf("ZIP entry path %q contains a backslash", entry)
+	}
+	if filepath.IsAbs(filepath.FromSlash(entry)) || filepath.VolumeName(entry) != "" || isDriveQualifiedPath(entry) {
+		return "", fmt.Errorf("ZIP entry path %q must be relative", entry)
+	}
+	for _, component := range strings.Split(entry, "/") {
+		if component == ".." {
+			return "", fmt.Errorf("ZIP entry path %q escapes the extraction root", entry)
+		}
+	}
+
+	clean := filepath.Clean(filepath.FromSlash(entry))
+	if clean == "." || clean == "" {
+		return "", fmt.Errorf("ZIP entry path %q does not name a file", entry)
+	}
+	return clean, nil
+}
+
+func isDriveQualifiedPath(entry string) bool {
+	return len(entry) >= 2 && ((entry[0] >= 'a' && entry[0] <= 'z') || (entry[0] >= 'A' && entry[0] <= 'Z')) && entry[1] == ':'
+}
+
+func ExtractZipFile(file *zip.File, target, relativePath, name string) error {
+	relativePath, err := SafeZipEntryPath(relativePath)
+	if err != nil {
+		return fmt.Errorf("extract %s archive entry %q: %w", name, file.Name, err)
+	}
+
 	source, err := file.Open()
 	if err != nil {
 		return fmt.Errorf("open %s from %s archive: %w", file.Name, name, err)
 	}
 	defer source.Close()
 
-	tmp, err := os.CreateTemp(filepath.Dir(destination), filepath.Base(destination)+".*.tmp")
+	root, err := os.OpenRoot(target)
 	if err != nil {
-		return fmt.Errorf("create temporary CSV %s: %w", destination, err)
+		return fmt.Errorf("open %s extraction root %s: %w", name, target, err)
 	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer root.Close()
+
+	tmpName, err := temporaryZipEntryName(relativePath)
+	if err != nil {
+		return fmt.Errorf("create temporary CSV %s: %w", relativePath, err)
+	}
+	tmp, err := root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("create temporary CSV %s: %w", relativePath, err)
+	}
+	defer root.Remove(tmpName)
 
 	if _, err := io.Copy(tmp, source); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("copy %s from %s archive: %w", file.Name, name, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary CSV %s: %w", destination, err)
+		return fmt.Errorf("close temporary CSV %s: %w", relativePath, err)
 	}
-	if err := os.Rename(tmpPath, destination); err != nil {
-		return fmt.Errorf("store CSV %s: %w", destination, err)
+	if err := root.Rename(tmpName, relativePath); err != nil {
+		return fmt.Errorf("store CSV %s: %w", relativePath, err)
 	}
 	return nil
+}
+
+func temporaryZipEntryName(relativePath string) (string, error) {
+	var suffix [16]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	return "." + filepath.Base(relativePath) + "." + fmt.Sprintf("%x", suffix) + ".tmp", nil
 }
