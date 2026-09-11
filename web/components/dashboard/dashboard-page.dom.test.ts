@@ -799,7 +799,6 @@ test('canvas dropdown popovers follow the authored report zoom scale', async () 
     })
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
