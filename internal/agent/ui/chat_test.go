@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/agent"
-	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	appshell "github.com/flidai/leapview/internal/app/shell"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 )
@@ -17,10 +16,9 @@ func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 		ParentMessageID: "message-1",
 		Text:            "Hello",
 		Artifact: &agent.ChatArtifact{
-			Type:        "visualization",
-			ID:          "visual-1",
-			Summary:     "A chart",
-			Exploration: &exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "commerce", Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+			Type:    "visualization",
+			ID:      "visual-1",
+			Summary: "A chart",
 		},
 		References: []agent.TurnReference{{
 			Reference: agent.TurnReferenceKey{Kind: "metric", ID: "revenue"},
@@ -37,9 +35,6 @@ func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 	}
 	if items[0].Artifact == nil || items[0].Artifact.ID != "visual-1" {
 		t.Fatalf("artifact = %#v", items[0].Artifact)
-	}
-	if items[0].Artifact.Exploration == nil || items[0].Artifact.Exploration.ModelID != "commerce" {
-		t.Fatalf("artifact exploration = %#v", items[0].Artifact)
 	}
 	if items[0].References == nil || len(*items[0].References) != 1 {
 		t.Fatalf("references = %#v", items[0].References)

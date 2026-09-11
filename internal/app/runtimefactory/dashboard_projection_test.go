@@ -117,15 +117,7 @@ func TestCompiledSemanticModelAdaptsActivationPlannerAndFailsClosed(t *testing.T
 		t.Fatal(err)
 	}
 	defer service.Close()
-	// Identity must remain the service's bound serving identity. The graph
-	// projection carries legacy metadata fields, but they must not be able to
-	// mask a mismatched underlying runtime.
-	runtime := dashboardRuntimeWithGraph{
-		Service: service, projectID: "project:wrong", servingStateID: "state-wrong",
-	}
-	if got := runtime.Identity(); got != service.Identity() {
-		t.Fatalf("runtime identity = %#v, want bound service identity %#v", got, service.Identity())
-	}
+	runtime := dashboardRuntimeWithGraph{Service: service}
 	compiled, ok := runtime.CompiledSemanticModel(modelID.String())
 	if !ok || compiled == nil || compiled != planner.CompiledModel() {
 		t.Fatalf("compiled semantic model = %p/%v, want activation planner %p/true", compiled, ok, planner.CompiledModel())

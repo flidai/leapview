@@ -37,7 +37,6 @@ import '../shared/code-block'
 import '../shared/config-viewer'
 import '../shared/drawer'
 import { updateURLSearchParameter } from '../shared/url-search-state'
-import { modelExploreHref } from './explore-model'
 import './connection-administration'
 import './dashboard-appearance-editor'
 import './pipelines-page'
@@ -674,7 +673,6 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                 .administration=${this.connectionAdmin}
               ></lv-connection-administration>
             ` : nothing}
-            ${page.asset.type === 'model' && modelExploreHref(page.asset) ? html`<a class="action-link model-explore-link" href=${modelExploreHref(page.asset)} aria-label="Explore this model in Data Explorer">Explore data</a>` : nothing}
             ${page.actions?.map((action) => this.renderAction(action, page))}
           </div>
         </header>

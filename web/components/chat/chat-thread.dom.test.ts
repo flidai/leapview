@@ -251,7 +251,6 @@ test('chat thread renders visual artifacts with dashboard web components', async
     await customElements.whenDefined('lv-chat-thread')
     await customElements.whenDefined('lv-visual-modal')
     const thread = document.querySelector('lv-chat-thread') as any
-    thread.conversationId = 'conversation_chat_1'
     const field = (id: string, role: string, dataType: string, label: string) => ({ id, role, dataType, nullable: false, label })
     thread.visuals = {
       agent_chart_1: {
@@ -278,16 +277,6 @@ test('chat thread renders visual artifacts with dashboard web components', async
           type: 'bar',
           id: 'agent_chart_1',
           summary: 'Created chart.',
-          exploration: {
-            schemaVersion: 1,
-            modelId: 'sales',
-            datasetId: 'orders',
-            dimensions: [{ field: 'orders.status' }],
-            metrics: [{ field: 'revenue' }],
-            filters: [],
-            sort: [],
-            limit: 50,
-          },
         },
       },
       {
@@ -329,7 +318,6 @@ test('chat thread renders visual artifacts with dashboard web components', async
       bodyText: root.textContent || '',
       artifactBackground: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).backgroundColor,
       artifactBorderTopWidth: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).borderTopWidth,
-      exploreHref: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('.explore-action') as HTMLAnchorElement | null)?.getAttribute('href'),
     }
   })
   expect(rendered.chart).toBe('cartesian')
@@ -338,9 +326,6 @@ test('chat thread renders visual artifacts with dashboard web components', async
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
-  expect(rendered.exploreHref).toContain('returnSurface=chat')
-  expect(rendered.exploreHref).toContain('returnConversation=conversation_chat_1')
-  expect(rendered.exploreHref).toContain('state=')
 
   await page.close()
 })

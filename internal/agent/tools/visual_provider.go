@@ -13,9 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -39,12 +37,6 @@ type VisualQueryContextFunc func(ctx context.Context, scope Scope) context.Conte
 
 type VisualModelFunc func(projectID, modelID string) (*semanticmodel.Model, bool)
 
-// VisualExplorationModelFunc returns the model and activation-owned planner
-// paired with the serving snapshot used by query_visual. Implementations must
-// authorize the principal against that active lease; callers never infer
-// bindings from mutable semantic-model metadata or recompile on the tool hot path.
-type VisualExplorationModelFunc func(ctx context.Context, projectID, principalID, modelID, servingSnapshot string) (*semanticmodel.Model, *semanticquery.CompiledModel, error)
-
 // VisualDefinitionQueryFunc is the single canonical execution seam for agent
 // visuals. Implementations execute the supplied compiler definition through
 // the active runtime, preserving its exact bindings, result shape, and
@@ -59,13 +51,12 @@ type VisualQueryMetadata struct {
 type VisualQueryMetadataFunc func(ctx context.Context, projectID, modelID string) VisualQueryMetadata
 
 type VisualProvider struct {
-	Authorize        VisualAuthorizeFunc
-	Resolve          ResourceResolver
-	QueryContext     VisualQueryContextFunc
-	SemanticModel    VisualModelFunc
-	ExplorationModel VisualExplorationModelFunc
-	QueryDefinition  VisualDefinitionQueryFunc
-	QueryMetadata    VisualQueryMetadataFunc
+	Authorize       VisualAuthorizeFunc
+	Resolve         ResourceResolver
+	QueryContext    VisualQueryContextFunc
+	SemanticModel   VisualModelFunc
+	QueryDefinition VisualDefinitionQueryFunc
+	QueryMetadata   VisualQueryMetadataFunc
 }
 
 type VisualAuthorizationRequest struct {
@@ -143,10 +134,6 @@ type agentVisualResult struct {
 	Patch   map[string]map[string]visualizationir.VisualizationEnvelope `json:"patch"`
 	Filters dashboard.Filters                                           `json:"-"`
 	Summary string                                                      `json:"summary"`
-	// Exploration is derived from the authored query_visual input. It is
-	// optional because unsupported display/query branches must not break the
-	// already-rendered visual; Data Explorer reauthorizes it on navigation.
-	Exploration *exploration.ExplorationSpec `json:"exploration,omitempty"`
 }
 
 func (p VisualProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
@@ -192,10 +179,6 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 		return apigenAgentToolError("catalog_not_found", "semantic model is unknown or unauthorized")
 	}
 	visualID := agentVisualID(call.ID)
-	input, err = normalizeAgentVisualFilterTargets(input, visualID)
-	if err != nil {
-		return apigenAgentToolError("invalid_arguments", err.Error())
-	}
 	dashboardDefinition, err := compileAgentVisual(input, model, visualID)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
@@ -241,13 +224,6 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	result, err := p.queryAgentVisual(ctx, runScope.ProjectID, input, visualID, model, dashboardDefinition, definition)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
-	}
-	if p.ExplorationModel != nil {
-		if explorationModel, compiled, err := p.ExplorationModel(ctx, runScope.ProjectID, runScope.PrincipalID, input.Model, queryMetadata.ServingSnapshot); err == nil {
-			if spec, err := agentVisualExploration(input, model, explorationModel, compiled, definition); err == nil {
-				result.Exploration = spec
-			}
-		}
 	}
 	compact, err := compactAgentVisualResult(runScope.ProjectID, call.ID, queryMetadata, model, input, dashboardDefinition, definition, result)
 	if err != nil {
@@ -378,8 +354,7 @@ func (p VisualProvider) queryAgentVisual(ctx context.Context, projectID string, 
 	if err != nil {
 		return agentVisualResult{}, err
 	}
-	result := agentVisualResult{Type: agentVisualType(input), ID: id, Filters: filters, Patch: map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}}, Summary: fmt.Sprintf("Created visual %q.", agentDefinitionTitle(definition))}
-	return result, nil
+	return agentVisualResult{Type: agentVisualType(input), ID: id, Filters: filters, Patch: map[string]map[string]visualizationir.VisualizationEnvelope{"visuals": {id: envelope}}, Summary: fmt.Sprintf("Created visual %q.", agentDefinitionTitle(definition))}, nil
 }
 
 func compactAgentVisualResult(

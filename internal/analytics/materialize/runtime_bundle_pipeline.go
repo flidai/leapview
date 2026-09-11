@@ -84,7 +84,6 @@ type plannedBundle struct {
 
 type bundleExecution struct {
 	decoded map[string]semanticquery.Rows
-	columns map[string][]dataquery.Column
 	bytes   map[string]int64
 	summary dataquery.Result
 }
@@ -494,7 +493,7 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 	if err := ctx.Err(); err != nil {
 		return bundleExecution{}, err
 	}
-	execution := bundleExecution{decoded: make(map[string]semanticquery.Rows, len(branches)), columns: make(map[string][]dataquery.Column, len(branches)), bytes: make(map[string]int64, len(branches))}
+	execution := bundleExecution{decoded: make(map[string]semanticquery.Rows, len(branches)), bytes: make(map[string]int64, len(branches))}
 	for _, request := range planned.resolved.misses {
 		branch := branches[request.ID]
 		if branch == nil {
@@ -505,7 +504,6 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		if err != nil {
 			return bundleExecution{}, err
 		}
-		execution.columns[request.ID] = dataQueryColumnsFromArrowSchema(branchLease.Schema(), "")
 		values, decodeErr := arrowdecode.DecodeRows(branchLease)
 		branchLease.Release()
 		if decodeErr != nil {
@@ -537,11 +535,7 @@ func finishExecutedBundle(ctx context.Context, planned plannedBundle, execution 
 	resolved.result.SQL = planned.plan.Plan.SQL
 	for _, branch := range resolved.misses {
 		rows := dataQueryRows(execution.decoded[branch.ID])
-		columns := execution.columns[branch.ID]
-		if len(columns) == 0 {
-			columns = dataquery.ColumnsFromNames(bundleOutputColumns(planned.plan, branch.ID))
-		}
-		branchResult := dataquery.Result{Rows: rows, Columns: columns, SQL: planned.plan.Plan.SQL, PlanningMS: execution.summary.PlanningMS, ConnectionWaitMS: execution.summary.ConnectionWaitMS, DatabaseMS: execution.summary.DatabaseMS, ExecutionState: dataquery.ExecutionSucceeded, Status: dataquery.StatusSuccess, RowsReturned: len(rows), BytesEstimate: execution.bytes[branch.ID], CacheOutcome: dataquery.CacheMiss}
+		branchResult := dataquery.Result{Rows: rows, Columns: dataquery.ColumnsFromNames(bundleOutputColumns(planned.plan, branch.ID)), SQL: planned.plan.Plan.SQL, PlanningMS: execution.summary.PlanningMS, ConnectionWaitMS: execution.summary.ConnectionWaitMS, DatabaseMS: execution.summary.DatabaseMS, ExecutionState: dataquery.ExecutionSucceeded, Status: dataquery.StatusSuccess, RowsReturned: len(rows), BytesEstimate: execution.bytes[branch.ID], CacheOutcome: dataquery.CacheMiss}
 		if shared {
 			branchResult.CacheOutcome = dataquery.CacheCoalesced
 		}

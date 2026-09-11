@@ -3,7 +3,6 @@ package module
 import "github.com/flidai/leapview/internal/runtimehost"
 
 type Provider = runtimehost.Provider
-type Runtime = runtimehost.Runtime
 type ManagedDataResolver = runtimehost.ManagedDataResolver
 type CandidateRegistration = runtimehost.CandidateRegistration
 type CandidateLeaseRequest = runtimehost.CandidateLeaseRequest

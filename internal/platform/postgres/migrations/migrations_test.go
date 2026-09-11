@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	savedpostgres "github.com/flidai/leapview/internal/analytics/exploration/saved/postgres"
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -28,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_saved_explorations.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -76,43 +75,6 @@ func TestManagedProviderVersionObservationMigrationIsAdditiveAndImmutable(t *tes
 	down := migration[strings.Index(migration, "-- +goose Down"):]
 	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
 		t.Error("provider observation Down must refuse instead of deleting evidence")
-	}
-}
-
-func TestSavedExplorationMigrationMirrorsNativeSchemaAndRoleFence(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "009_saved_explorations.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(contents)
-	if !strings.Contains(text, "SET LOCAL ROLE leapview_control_owner") {
-		t.Fatal("saved exploration migration does not assume the durable owner role")
-	}
-	if !strings.HasSuffix(strings.TrimSpace(text), "RESET ROLE;") {
-		t.Fatal("saved exploration migration must restore the migrator role")
-	}
-	start := strings.Index(text, "SET LOCAL ROLE leapview_control_owner;")
-	if start < 0 {
-		t.Fatal("saved exploration migration schema block is missing")
-	}
-	end := strings.Index(text[start:], "-- The repository runs against")
-	if end < 0 {
-		t.Fatal("saved exploration migration role policy boundary is missing")
-	}
-	body := text[start+len("SET LOCAL ROLE leapview_control_owner;") : start+end]
-	body = strings.ReplaceAll(body, "-- +goose StatementBegin\n", "")
-	body = strings.ReplaceAll(body, "-- +goose StatementEnd\n", "")
-	if got, want := strings.TrimSpace(body), strings.TrimSpace(savedpostgres.SchemaSQL()); got != want {
-		t.Fatal("saved exploration migration schema differs from the native capability schema")
-	}
-	for _, required := range []string{
-		"GRANT USAGE ON SCHEMA saved_exploration",
-		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE",
-		"ALTER DEFAULT PRIVILEGES FOR ROLE leapview_control_owner",
-	} {
-		if !strings.Contains(text, required) {
-			t.Errorf("saved exploration migration missing role policy %q", required)
-		}
 	}
 }
 

@@ -222,14 +222,13 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 		return nil, err
 	}
 	return testPreparedRuntime{
-		authorization: authorization, identity: identity, snapshotID: input.State.DuckLakeSnapshotID,
+		authorization: authorization, snapshotID: input.State.DuckLakeSnapshotID,
 		semanticModel: model, compiledModel: planner.CompiledModel(),
 	}, nil
 }
 
 type testPreparedRuntime struct {
 	authorization accesssnapshot.AuthorizationSnapshot
-	identity      projectgraph.ServingIdentity
 	snapshotID    int64
 	semanticModel *semanticmodel.Model
 	compiledModel *semanticquery.CompiledModel
@@ -239,19 +238,7 @@ func (r testPreparedRuntime) Close() error { return nil }
 func (r testPreparedRuntime) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
 	return r.authorization
 }
-func (r testPreparedRuntime) DuckLakeSnapshotID() int64              { return r.snapshotID }
-func (r testPreparedRuntime) Identity() projectgraph.ServingIdentity { return r.identity }
-
-// SemanticModelProjection keeps the assembled app fixture on the same
-// runtime-owned model seam used by saved-exploration mutations. The
-// projection is detached per call, so a test cannot accidentally mutate the
-// immutable fixture generation through an API request.
-func (r testPreparedRuntime) SemanticModelProjection(modelID projectgraph.ResourceID) (*semanticmodel.Model, bool) {
-	if modelID != "test" {
-		return nil, false
-	}
-	return testSemanticModel(), true
-}
+func (r testPreparedRuntime) DuckLakeSnapshotID() int64 { return r.snapshotID }
 
 // ProjectManifest and CompiledSemanticModel make the app fixture expose the
 // same activation-owned semantic metadata that the public catalog consumes in
