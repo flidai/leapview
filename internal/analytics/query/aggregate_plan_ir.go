@@ -374,15 +374,7 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 	}
 	projection := make([]planir.Projection, 0, len(resolved.Dimensions)+len(resolved.Members))
 	for _, dimension := range resolved.Dimensions {
-		item := planir.Projection{Name: dimension.Alias, Source: dimension.Name}
-		mask, err := p.aggregateDimensionMask(dimension, resolved)
-		if err != nil {
-			return nil, err
-		}
-		if mask != "" {
-			item.Mask = mask
-		}
-		projection = append(projection, item)
+		projection = append(projection, planir.Projection{Name: dimension.Alias, Source: dimension.Name})
 	}
 	for _, member := range resolved.Members {
 		projection = append(projection, planir.Projection{Name: member.Alias, Source: member.Name})
@@ -406,35 +398,6 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 	graph.Output = finalMeta.NodeID
 	graph.Roots = append([]string(nil), graph.Roots...)
 	return graph, nil
-}
-
-func (p *Planner) aggregateDimensionMask(dimension aggregateDimension, resolved aggregateResolution) (string, error) {
-	// Match the same source references used by policy resolution. The output
-	// alias is presentation-only and must not select a mask for an unrelated
-	// physical field with the same name.
-	keys := []string{dimension.Name}
-	if dimension.Semantic {
-		for _, dataset := range resolved.Datasets {
-			binding, ok := p.compiled.DimensionBinding(dimension.Name, dataset)
-			if !ok {
-				continue
-			}
-			keys = append(keys, binding.Physical.Field, binding.Physical.Table+"."+binding.Physical.Name, binding.Physical.Name)
-		}
-	} else {
-		keys = append(keys, dimension.Physical.Field, dimension.Physical.Table+"."+dimension.Physical.Name, dimension.Physical.Name)
-	}
-	selected := ""
-	for _, key := range keys {
-		if mask, ok := resolved.Masks[strings.ToLower(strings.TrimSpace(key))]; ok {
-			value := string(mask)
-			if selected != "" && selected != value {
-				return "", fmt.Errorf("conflicting masks for dimension %q across selected physical bindings", dimension.Name)
-			}
-			selected = value
-		}
-	}
-	return selected, nil
 }
 
 func (p *Planner) planIRAverageType(dataset, field string) string {

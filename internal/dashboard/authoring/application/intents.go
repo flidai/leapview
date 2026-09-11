@@ -58,11 +58,6 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
 			return a.validateAssignedField(ctx, project, request.Command, lifecycle, field)
 		}
-	} else if request.Command.AppendExplorationVisual != nil {
-		payload := request.Command.AppendExplorationVisual
-		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
-			return a.validateAppendExploration(ctx, project, request.Command, lifecycle, payload)
-		}
 	}
 	if request.Command.RemoveField != nil {
 		field := request.Command.RemoveField
@@ -85,7 +80,6 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.prepareVisualTypeSwitch(ctx, project, request.Command, lifecycle, visual)
 		}
 	}
-	ctx = normalizeAuthoringAuditCapability(ctx, request.Command)
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	savedapplication "github.com/flidai/leapview/internal/analytics/exploration/saved/application"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
@@ -34,10 +33,6 @@ func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
 		t.Fatalf("missing agent persistence error = %v", err)
 	}
 	capabilities.AgentPersistence = &agentmodule.Persistence{}
-	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "saved exploration service") {
-		t.Fatalf("missing saved exploration service error = %v", err)
-	}
-	capabilities.SavedExplorationService = &savedapplication.Service{}
 	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "refresh persistence") {
 		t.Fatalf("missing refresh persistence error = %v", err)
 	}
@@ -48,25 +43,6 @@ func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
 	production.DeliveryTargetReader = bootstrapTargetReaderFake{}
 	if err := validateProductionRuntimeInputs(data, capabilities, production); err != nil {
 		t.Fatalf("complete native production authorities rejected: %v", err)
-	}
-}
-
-func TestProductionRuntimeInputsRejectTypedNilSavedExplorationService(t *testing.T) {
-	production := runtimeAssemblyInputs{Production: true, DeliveryTargetReader: bootstrapTargetReaderFake{}}
-	data := dataAssemblyInputs{
-		DashboardPersistence:       &dashboardmodule.NativePersistence{},
-		RequireNativeDashboard:     true,
-		RequireExplicitAPIProtocol: true,
-		RefreshPersistence:         &refreshmodule.Persistence{},
-	}
-	var typedNil *savedapplication.Service
-	capabilities := capabilityAssemblyInputs{
-		JobModule:               &jobsmodule.Module{},
-		AgentPersistence:        &agentmodule.Persistence{},
-		SavedExplorationService: typedNil,
-	}
-	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "saved exploration service") {
-		t.Fatalf("typed-nil saved exploration service error = %v", err)
 	}
 }
 

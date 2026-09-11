@@ -1360,7 +1360,7 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 			return fmt.Errorf("%s enum[%d] is required", context, idx)
 		}
 	}
-	if schemaRef.Const != nil && (math.IsNaN(*schemaRef.Const) || math.IsInf(*schemaRef.Const, 0)) || schemaRef.Minimum != nil && (math.IsNaN(*schemaRef.Minimum) || math.IsInf(*schemaRef.Minimum, 0)) || schemaRef.Maximum != nil && (math.IsNaN(*schemaRef.Maximum) || math.IsInf(*schemaRef.Maximum, 0)) {
+	if schemaRef.Minimum != nil && (math.IsNaN(*schemaRef.Minimum) || math.IsInf(*schemaRef.Minimum, 0)) || schemaRef.Maximum != nil && (math.IsNaN(*schemaRef.Maximum) || math.IsInf(*schemaRef.Maximum, 0)) {
 		return fmt.Errorf("%s numeric bounds must be finite", context)
 	}
 	if schemaRef.Minimum != nil && schemaRef.Maximum != nil && *schemaRef.Minimum > *schemaRef.Maximum {

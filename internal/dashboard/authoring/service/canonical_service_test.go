@@ -57,7 +57,6 @@ type canonicalRepository struct {
 	getCalls             int
 	getRevisionCalls     int
 	lookupOperationCalls int
-	lookupCommandCalls   int
 }
 
 func newCanonicalRepository() *canonicalRepository {
@@ -115,7 +114,6 @@ func (r *canonicalRepository) LookupCreateOperation(_ context.Context, operation
 	return value, ok, nil
 }
 func (r *canonicalRepository) LookupCommandResult(_ context.Context, _ graph.ResourceID, _ authoring.DashboardID, evidence authoring.CommandEvidence) (authoring.CommandResult, bool, error) {
-	r.lookupCommandCalls++
 	value, ok := r.commands[evidence.ID]
 	if !ok {
 		return authoring.CommandResult{}, false, nil
@@ -338,7 +336,7 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	for _, call := range authorizer.calls[callsBeforeFork:] {
 		if call.DashboardID == first.Lifecycle.ID && call.Action == authoring.AuthorizationActionView {
 			foundExactSourceAuthorization = true
-			if call.Target != service.AuthorizationTargetAuthoredDashboard || call.OwnerPrincipalID != "owner" || call.SemanticModel != "model:test" || call.Visibility != authoring.VisibilityPrivate {
+			if call.Target != service.AuthorizationTargetProjectDashboard {
 				t.Fatalf("fork source authorization = %#v", call)
 			}
 		}

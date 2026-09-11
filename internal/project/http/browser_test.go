@@ -8,15 +8,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
-	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -34,40 +33,30 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestMountedSavedExplorationCommandUsesGeneratedBrowserExecutor(t *testing.T) {
+func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 	router := chi.NewRouter()
-	executed := false
-	h := &BrowserHandler{
-		SavedExplorations: savedExplorationBrowserServiceStub{createErr: errors.New("injected browser failure")},
-		SavedExplorationCommands: SavedExplorationCommandBindings{
-			Create: analyticsgen.GenUIActionCreateSavedExploration(),
-		},
-		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
-		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "principal:test"}, true },
-		Authenticate:     func(next stdhttp.Handler) stdhttp.Handler { return next },
-		MutationMiddleware: func(next stdhttp.Handler) stdhttp.Handler {
-			return next
-		},
-		BeginSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation) (context.Context, error) {
-			return ctx, nil
-		},
-		ExecuteSavedExplorationCommand: func(ctx context.Context, _ SavedExplorationCommandInvocation, transaction func(context.Context) error) error {
-			executed = true
-			return transaction(ctx)
-		},
-	}
+	h := &BrowserHandler{Authenticate: func(next stdhttp.Handler) stdhttp.Handler { return next }}
 	h.MountAuthenticated(router)
-	body := `{"savedExplorations":{"command":{"action":"create","title":"Orders","slug":"orders","visibility":"private","spec":{"schemaVersion":1,"modelId":"model:orders","datasetId":"orders","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}}}}`
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/saved/command", strings.NewReader(body))
-	request.Header.Set("X-Request-ID", "browser-command-1")
-	request.Header.Set("X-LeapView-Operation-ID", analyticsgen.GenUIActionCreateSavedExploration().OperationID())
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != stdhttp.StatusOK || !executed {
-		t.Fatalf("mounted saved command status=%d executed=%v body=%q", response.Code, executed, response.Body.String())
+
+	var got []string
+	if err := chi.Walk(router, func(method, route string, _ stdhttp.Handler, _ ...func(stdhttp.Handler) stdhttp.Handler) error {
+		got = append(got, method+" "+route)
+		return nil
+	}); err != nil {
+		t.Fatalf("walk routes: %v", err)
 	}
-	if strings.Contains(response.Body.String(), "Saved exploration saved.") {
-		t.Fatalf("failed mounted mutation emitted success: %q", response.Body.String())
+	sort.Strings(got)
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("routes = %v, want %v", got, want)
+	}
+	for _, legacy := range []string{"/data", "/data/{asset}/{section}", "/data/search", "/workspaces", "/workspaces/{workspace}", "/admin/workspaces"} {
+		for _, route := range got {
+			if route == "GET "+legacy || route == "POST "+legacy {
+				t.Fatalf("legacy route %q was mounted", legacy)
+			}
+		}
 	}
 }
 
@@ -437,11 +426,9 @@ type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
 	err    error
-	calls  int
 }
 
 func (s *browserDataQueryStub) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
-	s.calls++
 	s.query = query
 	return s.result, s.err
 }
@@ -938,7 +925,7 @@ func TestConnectionAssetBootstrapUsesConnectionPageSignalOnCanonicalStream(t *te
 func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	const projectID = "project:test"
 	model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
-		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}},
+		"orders": {ModelName: "orders", Entities: map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
 	}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -978,8 +965,33 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	if !ok || projectsignals.ValueOrZero(semanticExplorer.Command.Mode) != "explore" || semanticExplorer.SelectedObject == nil || semanticExplorer.SelectedObject.ResourceID != "model:orders" {
 		t.Fatalf("semantic deep link = %#v", semanticExplorer)
 	}
-	if !reflect.DeepEqual([]string{semanticExplorer.Explore.Command.Spec.Dimensions[0].Field}, []string{"orders.status"}) || len(semanticExplorer.Explore.Command.Spec.Filters) != 1 || len(semanticExplorer.Explore.Command.Spec.Sort) != 1 || semanticExplorer.Explore.Command.Spec.Limit != 25 {
+	if !reflect.DeepEqual(semanticExplorer.Explore.Command.Dimensions, []string{"orders.status"}) || len(semanticExplorer.Explore.Command.Filters) != 1 || len(semanticExplorer.Explore.Command.Sort) != 1 || semanticExplorer.Explore.Command.Limit != 25 {
 		t.Fatalf("semantic deep-link state = %#v", semanticExplorer.Explore.Command)
+	}
+}
+
+func TestDataExploreCommandFromQueryUsesCanonicalDefaultsAndRejectsMalformedState(t *testing.T) {
+	canonical, err := dataExploreCommandFromQuery(url.Values{"semanticModel": {"semantic:sales"}, "dataset": {"orders"}})
+	if err != nil || canonical.Limit != dataExplorerDefaultLimit || canonical.Dimensions == nil || canonical.Metrics == nil {
+		t.Fatalf("canonical query = %#v, %v", canonical, err)
+	}
+	legacy, err := dataExploreCommandFromQuery(url.Values{"model": {"semantic:legacy"}})
+	if err != nil || legacy.SemanticModelID != nil {
+		t.Fatalf("legacy model alias was decoded: %#v, %v", legacy, err)
+	}
+
+	tests := []url.Values{
+		{"v": {"2"}},
+		{"limit": {"0"}},
+		{"limit": {"1001"}},
+		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
+		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
+		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("query %#v accepted as %#v", values, command)
+		}
 	}
 }
 
@@ -1028,31 +1040,25 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 		Columns: []dataquery.Column{{Name: "status"}, {Name: "orders"}},
 		Rows:    []dataquery.Row{{"status": "paid", "orders": int64(7)}}, SQL: "select status, count(*)", DurationMS: 12,
 	}}
-	dimensionAlias := "status_label"
-	dimensionGrain := exploration.ExplorationTimeGrainDay
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
-		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("orders"),
-			Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status", Alias: &dimensionAlias, Grain: &dimensionGrain}}, Metrics: []exploration.ExplorationMetricRef{{Field: "orders"}}, Filters: []exploration.ExplorationFilter{},
-			Sort: []exploration.ExplorationSort{{Field: "orders", Direction: "desc"}}, Limit: 100},
+		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"),
+		Dimensions: []string{"orders.status"}, Metrics: []string{"orders"}, Filters: []projectsignals.DataExploreFilterSignal{},
+		Sort: []projectsignals.DataExploreSortSignal{{Field: "orders", Direction: "desc"}}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		{ID: "orders.status", Label: "Status", Kind: "dimension", DatasetID: "orders", Compatible: true},
 		{ID: "orders", Label: "Orders", Kind: "metric", DatasetID: "orders", Compatible: true},
-	}, &semanticmodel.Model{
-		Tables:   map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ}}}},
-		Metrics:  map[string]semanticmodel.Metric{"orders": {Type: "aggregate"}},
-		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {}},
 	})
 
 	if result.Error != nil || result.RowsReturned != 1 || len(result.Rows) != 1 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(command.Spec.Dimensions) != 1 || len(command.Spec.Metrics) != 1 {
+	if len(command.Dimensions) != 1 || len(command.Metrics) != 1 {
 		t.Fatalf("normalized command = %#v", command)
 	}
 	if executor.query.Kind != dataquery.KindSemanticAggregate || executor.query.ProjectID != "project:test" || executor.query.Operation != dataquery.OperationSemanticExplore {
 		t.Fatalf("query = %#v", executor.query)
 	}
-	if executor.query.Fields[0].Alias != "status_label" || executor.query.Fields[0].Grain != "day" || executor.query.Metrics[0].Alias != "orders" {
+	if executor.query.Fields[0].Alias != "status" || executor.query.Metrics[0].Alias != "orders" {
 		t.Fatalf("query aliases = %#v / %#v", executor.query.Fields, executor.query.Metrics)
 	}
 }
@@ -1063,21 +1069,18 @@ func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
 		Rows:    []dataquery.Row{{"order_share": 0.5}}, SQL: "select order_share",
 	}}
 	command, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{
-		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("customers"),
-			Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{{Field: "order_share"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
+		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("customers"),
+		Metrics: []string{"order_share"}, Limit: 100,
 	}, []projectsignals.DataExploreFieldSignal{
 		// An empty datasetId is the projection contract for a derived/ratio
 		// metric whose dependencies span more than one physical dataset.
 		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
-	}, &semanticmodel.Model{
-		Metrics:  map[string]semanticmodel.Metric{"order_share": {Type: "aggregate"}},
-		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"customers": {}},
 	})
 
 	if result.Error != nil {
 		t.Fatalf("result error = %q", *result.Error)
 	}
-	if len(command.Spec.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
+	if len(command.Metrics) != 1 || executor.query.Kind != dataquery.KindSemanticAggregate {
 		t.Fatalf("normalized command/query = %#v / %#v", command, executor.query)
 	}
 	if executor.query.Target != "" {
@@ -1128,7 +1131,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 		if test.mode == "browse" && len(explorer.Preview.Blocks["a"].Rows) != 1 {
 			t.Fatalf("model preview = %#v", explorer.Preview)
 		}
-		if test.mode == "explore" && explorer.Explore.Command.Spec.ModelID != test.asset {
+		if test.mode == "explore" && projectsignals.ValueOrZero(explorer.Explore.Command.SemanticModelID) != test.asset {
 			t.Fatalf("semantic command = %#v", explorer.Explore.Command)
 		}
 	}

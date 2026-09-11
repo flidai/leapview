@@ -319,25 +319,11 @@ func (m columnMaskSet) matchesMetric(ref string, metric resolvedAggregateMetric)
 		}
 	}
 	for _, dependency := range aggregateMetricPhysicalFields(metric) {
-		for _, key := range physicalMaskKeys(dependency) {
-			if _, ok := m[strings.ToLower(strings.TrimSpace(key))]; ok {
-				return true
-			}
+		if _, ok := m[strings.ToLower(strings.TrimSpace(dependency))]; ok {
+			return true
 		}
 	}
 	return false
-}
-
-func physicalMaskKeys(ref string) []string {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return nil
-	}
-	keys := []string{ref}
-	if dot := strings.LastIndex(ref, "."); dot >= 0 && dot+1 < len(ref) {
-		keys = append(keys, ref[dot+1:])
-	}
-	return keys
 }
 
 func aggregateMetricPhysicalFields(metric resolvedAggregateMetric) []string {

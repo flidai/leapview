@@ -1,5 +1,4 @@
 import "@yacobolo/apigen";
-import "../exploration/main.tsp";
 import "../dashboard/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
@@ -25,86 +24,6 @@ enum RouteKind {
   data: "data",
   admin: "admin",
   login: "login",
-}
-
-/** Metadata-only saved-exploration lifecycle projection for browser lists. */
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationRevisionSignal {
-  `revisionId`: string;
-  `number`: int64;
-  `contentHash`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationListItemSignal {
-  `id`: string;
-  `title`: string;
-  `slug`: string;
-  `visibility`: "private" | "organization";
-  `status`: "active" | "archived";
-  `semanticModelId`: string;
-  `createdAt`: utcDateTime;
-  `updatedAt`: utcDateTime;
-  `archivedAt`?: utcDateTime;
-  `revision`: SavedExplorationRevisionSignal;
-}
-
-/** The selected resource is metadata-only until an explicit reopen command. */
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationCurrentSignal {
-  `id`: string;
-  `title`: string;
-  `slug`: string;
-  `visibility`: "private" | "organization";
-  `status`: "active" | "archived";
-  `semanticModelId`: string;
-  `revision`: SavedExplorationRevisionSignal;
-  `detached`: boolean;
-  `spec`?: LeapViewExploration.ExplorationSpec;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "command"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationCommandSignal {
-  `action`: "create" | "update" | "duplicate" | "archive" | "reopen";
-  /** The canonical target for update, archive, and reopen. */
-  `explorationId`?: string;
-  /** The canonical source for duplicate. */
-  `sourceExplorationId`?: string;
-  `title`?: string;
-  `slug`?: string;
-  `visibility`?: "private" | "organization";
-  `spec`?: LeapViewExploration.ExplorationSpec;
-  `expectedRevision`?: SavedExplorationRevisionSignal;
-  `expectedSourceRevision`?: SavedExplorationRevisionSignal;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationSaveStateSignal {
-  `state`: "saved" | "dirty" | "saving" | "error";
-  `message`?: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationListSignal {
-  `items`: SavedExplorationListItemSignal[];
-  `includeArchived`: boolean;
-  `selectedId`?: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["project", "saved-exploration", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "saved_explorations" })
-model SavedExplorationStateSignal {
-  `enabled`: boolean;
-  `list`: SavedExplorationListSignal;
-  `current`?: SavedExplorationCurrentSignal;
-  `command`: SavedExplorationCommandSignal;
-  `save`: SavedExplorationSaveStateSignal;
 }
 
 /**
@@ -840,9 +759,6 @@ model ChatArtifactSignal {
   `id`: string;
   `type`: string;
   `summary`?: string;
-  // Authored query_visual state for the destination Data Explorer. The
-  // destination reauthorizes this canonical spec for the active viewer.
-  `exploration`?: LeapViewExploration.ExplorationSpec;
 }
 
 model AgentReferenceKeySignal {
@@ -887,7 +803,7 @@ model AgentContextSignal {
   `pageTitle`: string;
   `modelId`: string;
   `datasetId`?: string;
-  `exploration`?: LeapViewExploration.ExplorationSpec;
+  `exploration`?: DataExploreAgentContextSignal;
   `generation`: int64;
   `filters`: DashboardFilterState;
   `referenceLimit`: int32;
@@ -1452,7 +1368,7 @@ model DashboardInteractionCommand {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model DashboardVisualizationSignal {
-  `schemaVersion`: 14;
+  `schemaVersion`: 4;
   `visualID`: string;
   `rendererID`: string;
   `specRevision`: string;
@@ -1591,48 +1507,44 @@ model DashboardStatus {
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExplorerCommand {
-  /** Explicit query lifecycle action. Omitted retains legacy execute-on-command behavior. */
-  `action`?: "configure" | "run" | "stop";
   `explore`?: DataExploreCommand;
   `mode`?: "browse" | "explore";
   `block`?: string;
   `columnWidths`?: Record<float64>;
-  /** Stable per-tab identity used to isolate overlapping explorer requests. */
-  `clientId`?: string;
   `count`: int64;
   `limit`: int64;
   `objectKey`?: string;
   `offset`: int64;
   `requestSeq`: int64;
   `resetVersion`: int64;
-  /** Stable client/run identity used to cancel an in-flight governed query. */
-  `runId`?: string;
   `sort`: DataPreviewSortSignal;
   `start`: int64;
   `visibleColumns`?: string[];
 }
 
+model DataExploreAgentContextSignal {
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `metrics`: string[];
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
+}
+
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
-  /** Explicit query lifecycle action for callers that address the nested command directly. */
-  `action`?: "configure" | "run" | "stop";
-  `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
-  `filterSuggestions`?: DataExploreFilterSuggestionsCommand;
+  `datasetId`?: string;
+  `dimensions`: string[];
+  `filters`: DataExploreFilterSignal[];
+  `limit`: int64;
+  `metrics`: string[];
+  `semanticModelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
-}
-
-/** Bounded, permission-aware value suggestion request for one semantic dimension. */
-model DataExploreFilterSuggestionsCommand {
-  `field`: LeapViewExploration.ExplorationFieldID;
-  `limit`?: int64;
-  `search`?: string;
-  /** Monotonic identity for this suggestion lane, independent of query requestSeq. */
-  @minValue(1)
-  @maxValue(9007199254740991)
-  `suggestionRequestSeq`: int64;
+  `sort`: DataExploreSortSignal[];
+  `time`?: DataExploreTimeSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1650,9 +1562,6 @@ model DataExploreDatasetSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreFieldSignal {
-  /** Stable UI explanation category; the server remains authoritative for the transition. */
-  `availability`?: "available" | "related" | "changes_grain" | "unavailable";
-  `availabilityReason`?: string;
   `compatible`: boolean;
   `compatibilityReason`?: string;
   `description`?: string;
@@ -1666,25 +1575,11 @@ model DataExploreFieldSignal {
   `type`?: string;
 }
 
-/** A distinct filter value returned by the governed semantic query path. */
-model DataExploreFilterValueSuggestionSignal {
-  `count`?: int64;
-  `label`: string;
-  `value`: LeapViewExploration.ExplorationFilterValue;
-}
-
-/** Value suggestions retain request identity and terminal state for stale-response suppression. */
-model DataExploreFilterSuggestionsSignal {
-  `error`?: string;
+model DataExploreFilterSignal {
+  `datasetId`?: string;
   `field`: string;
-  `loading`: boolean;
-  `requestSeq`: int64;
-  /** Echoes the independent suggestion request identity for stale-response filtering. */
-  `suggestionRequestSeq`: int64;
-  `stale`: boolean;
-  `truncated`: boolean;
-  `type`?: string;
-  `values`: DataExploreFilterValueSuggestionSignal[];
+  `operator`: string;
+  `values`: string[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1698,40 +1593,10 @@ model DataExploreSemanticModelSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExploreFreshnessSignal {
-  /** Stable serving snapshot supplied by the governed query boundary. */
-  `snapshotId`?: string;
-  `servingStateId`?: string;
-  `lastSuccessfulRefreshAt`?: utcDateTime;
-  `source`?: string;
-  `status`: "fresh" | "stale" | "unknown";
-}
-
-/** Exact, independently governed totals for a configured pivot. */
-model DataExplorePivotTotalSignal {
-  /** Typed row/column identity values keyed by their semantic field output. */
-  `key`: Record<unknown>;
-  /** Metric values returned by the same governed aggregate boundary. */
-  `values`: Record<unknown>;
-}
-
-/** Pivot totals are optional and are present only when explicitly requested. */
-model DataExplorePivotTotalsSignal {
-  `columns`: DataExplorePivotTotalSignal[];
-  `grand`: DataExplorePivotTotalSignal[];
-  `rows`: DataExplorePivotTotalSignal[];
-  `status`: "complete" | "incomplete" | "error";
-  `warnings`: string[];
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreResultSignal {
   `columns`: DataPreviewColumnSignal[];
   `durationMs`: int64;
   `error`?: string;
-  `freshness`?: DataExploreFreshnessSignal;
-  `pivotTotals`?: DataExplorePivotTotalsSignal;
   `plan`?: string;
   `requestSeq`: int64;
   `rows`: Record<unknown>[];
@@ -1741,36 +1606,27 @@ model DataExploreResultSignal {
   `warnings`: string[];
 }
 
-/** Backend-owned lifecycle state for one canonical ExplorationSpec execution. */
-model DataExploreStatusSignal {
-  `error`?: string;
-  `loading`: boolean;
-  `message`?: string;
-  /** Omitted while progress is unknown; never a client-estimated percentage. */
-  `progressPercent`?: float64;
-  `requestSeq`: int64;
-  `stale`: boolean;
-  `state`: "idle" | "loading" | "success" | "stale" | "error" | "cancelled";
-}
-
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
 model DataExploreSignal {
   `command`: DataExploreCommand;
-  /** Existing renderer-independent envelopes keyed by stable view ID. */
-  `views`: Record<LeapViewVisualization.VisualizationEnvelope>;
-  /** Deterministic view selected by the server for the current result. */
-  `recommendedView`: string;
-  /** Stable table view available for every successful exploration. */
-  `defaultView`: string;
   `datasets`: DataExploreDatasetSignal[];
   `fields`: DataExploreFieldSignal[];
   `semanticModels`: DataExploreSemanticModelSignal[];
   `result`: DataExploreResultSignal;
-  `status`: DataExploreStatusSignal;
-  `filterSuggestions`?: DataExploreFilterSuggestionsSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
   `selectedSemanticModel`?: DataExploreSemanticModelSignal;
+}
+
+model DataExploreSortSignal {
+  `direction`: "asc" | "desc";
+  `field`: string;
+}
+
+model DataExploreTimeSignal {
+  `alias`?: string;
+  `field`: string;
+  `grain`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1807,83 +1663,12 @@ model DataExplorerPageEnvelope {
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "dataExplorer" })
   `dataExplorer`: DataExplorerSignal;
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "dataExplorerDashboard" })
-  `dataExplorerDashboard`: DataExplorerDashboardSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
   `page`: DataExplorerPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })
   `runtime`: RouteRuntimeSignal;
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "savedExplorations" })
-  `savedExplorations`: SavedExplorationStateSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExplorerDashboardPageSignal {
-  `id`: string;
-  `title`: string;
-  `placement`: DashboardPagePlacement;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExplorerDashboardTargetSignal {
-  `id`: string;
-  `title`: string;
-  `semanticModelId`: string;
-  /** Present only after the user selects this target. */
-  `draftId`?: string;
-  /** Opaque CAS evidence; never populated by the lightweight target list. */
-  `revisionToken`?: string;
-  /** Present only after the user selects this target. */
-  `pages`?: DataExplorerDashboardPageSignal[];
-}
-
-/** A read-authorized project/YAML dashboard that requires an explicit fork before appending. */
-@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExplorerDashboardForkTargetSignal {
-  `id`: string;
-  `title`: string;
-  `forkHref`: string;
-}
-
-@apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExplorerDashboardSignal {
-  `enabled`: boolean;
-  `targets`: DataExplorerDashboardTargetSignal[];
-  /** Project/YAML targets are never appendable until the user explicitly forks one. */
-  `forkTargets`?: DataExplorerDashboardForkTargetSignal[];
-  `state`?: string;
-  `message`?: string;
-}
-
-/** Read-only target selection asks the server for the exact draft/page projection. */
-@apigen.contract(#{ kind: "ui-command", tags: #["data", "dashboard", "command"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data_dashboard" })
-model DataExplorerDashboardSelectTargetCommandSignal {
-  `dashboardId`: string;
-}
-
-/** Atomic append command. Draft identity and CAS evidence remain opaque. */
-@apigen.contract(#{ kind: "ui-command", tags: #["data", "dashboard", "command"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data_dashboard" })
-model DataExplorerDashboardAppendCommandSignal {
-  `dashboardId`: string;
-  `pageId`: string;
-  `revisionToken`: string;
-  `placementChoice`: "half" | "full";
-  `spec`: LeapViewExploration.ExplorationSpec;
-}
-
-@apigen.contract(#{ kind: "ui-envelope", tags: #["data", "dashboard", "envelope"] })
-@apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "data_dashboard" })
-model DataExplorerDashboardAppendEnvelope {
-  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "addExplorationToDashboard" })
-  `addExplorationToDashboard`: DataExplorerDashboardAppendCommandSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1950,14 +1735,10 @@ model DataPreviewSignal {
   `chunkSize`: int64;
   `columns`: DataPreviewColumnSignal[];
   `error`?: string;
-  `loading`: boolean;
   `loadingBlock`?: string;
-  /** Omitted while preview progress is unknown. */
-  `progressPercent`?: float64;
   `resetVersion`: int64;
   `rowHeight`: int64;
   `sort`: DataPreviewSortSignal;
-  `stale`: boolean;
   `sql`?: string;
   `totalRowLabel`?: string;
   `totalRows`: int64;

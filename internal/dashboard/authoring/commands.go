@@ -15,12 +15,8 @@ import (
 type AuthorizationAction string
 
 const (
-	AuthorizationActionView AuthorizationAction = "view"
-	AuthorizationActionEdit AuthorizationAction = "edit"
-	// AuthorizationActionUse is a read-side admission check for executing
-	// against a semantic model. Editing an authored dashboard does not imply
-	// permission to use its model in a new governed query.
-	AuthorizationActionUse     AuthorizationAction = "use"
+	AuthorizationActionView    AuthorizationAction = "view"
+	AuthorizationActionEdit    AuthorizationAction = "edit"
 	AuthorizationActionPublish AuthorizationAction = "publish"
 	AuthorizationActionArchive AuthorizationAction = "archive"
 
@@ -42,7 +38,7 @@ const (
 )
 
 func (a AuthorizationAction) Valid() bool {
-	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionUse || a == AuthorizationActionPublish || a == AuthorizationActionArchive
+	return a == AuthorizationActionView || a == AuthorizationActionEdit || a == AuthorizationActionPublish || a == AuthorizationActionArchive
 }
 
 func (a AuthorizationAction) Validate() error {
@@ -244,26 +240,6 @@ type AddVisualPayload struct {
 
 func (AddVisualPayload) authoringPayload() {}
 func (AddVisualPayload) RequiredAction() (AuthorizationAction, error) {
-	return AuthorizationActionEdit, nil
-}
-
-// AppendExplorationVisualPayload appends one already-converted exploration
-// visual, its exact page component, and its visual-scoped filters in one
-// reducer transaction. The payload deliberately carries canonical DTOs only;
-// exploration conversion and active semantic-model admission belong at the
-// application boundary.
-type AppendExplorationVisualPayload struct {
-	PageID        string                      `json:"pageId"`
-	VisualID      string                      `json:"visualId"`
-	ComponentID   string                      `json:"componentId"`
-	Placement     document.DashboardPlacement `json:"placement"`
-	SemanticModel string                      `json:"semanticModel"`
-	Visual        document.DashboardVisual    `json:"visual"`
-	Filters       []document.DashboardFilter  `json:"filters,omitempty"`
-}
-
-func (AppendExplorationVisualPayload) authoringPayload() {}
-func (AppendExplorationVisualPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -727,7 +703,6 @@ type Command struct {
 	MovePage                *MovePagePayload                `json:"movePage,omitempty"`
 	UpdatePageLayout        *UpdatePageLayoutPayload        `json:"updatePageLayout,omitempty"`
 	AddVisual               *AddVisualPayload               `json:"addVisual,omitempty"`
-	AppendExplorationVisual *AppendExplorationVisualPayload `json:"appendExplorationVisual,omitempty"`
 	SetPlacements           *SetPlacementsPayload           `json:"setPlacements,omitempty"`
 	AssignField             *AssignFieldPayload             `json:"assignField,omitempty"`
 	SetVisualType           *SetVisualTypePayload           `json:"setVisualType,omitempty"`
@@ -793,9 +768,6 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.AddVisual != nil {
 		payloads = append(payloads, c.AddVisual)
-	}
-	if c.AppendExplorationVisual != nil {
-		payloads = append(payloads, c.AppendExplorationVisual)
 	}
 	if c.SetPlacements != nil {
 		payloads = append(payloads, c.SetPlacements)
@@ -924,7 +896,7 @@ func (c Command) IsBuilderIntent() bool {
 	switch payload.(type) {
 	case *UpdateDashboardMetadataPayload, *UpdatePageMetadataPayload, *UpdateHeaderMetadataPayload,
 		*SetVisibilityPayload, *AddPagePayload, *RenamePagePayload, *DuplicatePagePayload, *MovePagePayload,
-		*UpdatePageLayoutPayload, *AddVisualPayload, *AppendExplorationVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
+		*UpdatePageLayoutPayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
 		*SetVisualTypePayload, *SetVisualQueryOptionsPayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
 		*AddFilterPayload, *AddSlicerPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
@@ -1110,10 +1082,6 @@ func validatePayload(payload authoringPayload) error {
 			if !value.Role.Valid() {
 				return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
 			}
-		}
-	case *AppendExplorationVisualPayload:
-		if err := validateAppendExplorationVisualPayload(*value); err != nil {
-			return err
 		}
 	case *SetPlacementsPayload:
 		if strings.TrimSpace(value.PageID) == "" {
