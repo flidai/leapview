@@ -109,16 +109,6 @@ func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 	})
 }
 
-// VerifyRunCreated completes the generated createRefreshRun policy after a
-// non-API surface has atomically queued the same refresh lifecycle.
-func (m *Module) VerifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
-	return m.verifyRunCreated(ctx, run)
-}
-
-func (m *Module) VerifyRunCancelled(ctx context.Context, run refreshrun.RunRecord) error {
-	return m.verifyRunCancelled(ctx, run)
-}
-
 func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) func(context.Context, refreshrun.JobRecord) {
 	return func(ctx context.Context, job refreshrun.JobRecord) {
 		scope, scopeErr := refreshrun.ReadScopeForIdentity(job.Identity)
