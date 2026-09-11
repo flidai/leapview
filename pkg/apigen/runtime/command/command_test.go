@@ -45,7 +45,6 @@ func TestExecutorSelectsBestEffortFromGeneratedContract(t *testing.T) {
 			transactionalCalled = true
 			return nil
 		},
-		LogAttributes: []slog.Attr{slog.String("target_id", "w-1")},
 	})
 	if err != nil {
 		t.Fatalf("best-effort failure changed command result: %v", err)
@@ -53,7 +52,7 @@ func TestExecutorSelectsBestEffortFromGeneratedContract(t *testing.T) {
 	if transactionalCalled || !guard.Completed() {
 		t.Fatalf("transactionalCalled=%v completed=%v", transactionalCalled, guard.Completed())
 	}
-	for _, value := range []string{"best-effort command audit failed", "createWidget", "widget.created", "target_id=w-1", "error=audit_recorder_failure", "error_class=generic"} {
+	for _, value := range []string{"best-effort command audit failed", "operation_id=createWidget", "operation_owner=Widgets", "audit_action=widget.created", "audit_guarantee=best-effort", "error=audit_recorder_failure", "error_class=generic"} {
 		if !strings.Contains(logs.String(), value) {
 			t.Fatalf("log %q does not contain %q", logs.String(), value)
 		}
@@ -75,18 +74,14 @@ func TestExecutorDoesNotLogBestEffortErrorDetails(t *testing.T) {
 		BestEffortAudit: func(context.Context, Contract) error {
 			return errors.New("upstream Retry-After: response-secret")
 		},
-		LogAttributes: []slog.Attr{
-			slog.String("target_id", "w-1"),
-			slog.String("reason", "caller-supplied-context"),
-		},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	logged := logs.String()
-	for _, value := range []string{"target_id=w-1", "reason=caller-supplied-context"} {
+	for _, value := range []string{"operation_id=createWidget", "operation_owner=Widgets", "audit_action=widget.created", "audit_guarantee=best-effort"} {
 		if !strings.Contains(logged, value) {
-			t.Fatalf("log %q does not contain caller attribute %q", logged, value)
+			t.Fatalf("log %q does not contain executor-owned field %q", logged, value)
 		}
 	}
 	if strings.Contains(logged, "response-secret") {

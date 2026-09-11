@@ -274,7 +274,6 @@ type Execution struct {
 	BestEffortAudit func(context.Context, Contract) error
 	Transactional   func(context.Context, Contract) error
 	LogMessage      string
-	LogAttributes   []slog.Attr
 }
 
 type Executor struct {
@@ -343,7 +342,7 @@ func (e *Executor) Execute(ctx context.Context, operationID string, execution Ex
 			if message == "" {
 				message = "best-effort command audit failed"
 			}
-			e.logger.LogAttrs(ctx, slog.LevelError, message, append(attrs, execution.LogAttributes...)...)
+			e.logger.LogAttrs(ctx, slog.LevelError, message, attrs...)
 		}
 		markCompleted(ctx, contract)
 		e.observe(ctx, contract, "succeeded")

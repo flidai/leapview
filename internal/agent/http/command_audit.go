@@ -118,12 +118,6 @@ func (h *Handler) recordCommandAudit(
 			})
 		},
 		LogMessage: "best-effort agent command audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("principal_id", strings.TrimSpace(scope.PrincipalID)),
-			slog.String("target_type", strings.TrimSpace(targetType)),
-			slog.String("target_id", strings.TrimSpace(targetID)),
-			slog.String("request_id", requestID),
-		},
 	}
 	err = executor.Execute(r.Context(), operationIDValue, execution)
 	if err != nil {

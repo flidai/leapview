@@ -67,8 +67,7 @@ func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord)
 			}
 			return errors.New("refresh initial lifecycle event is unavailable")
 		},
-		LogMessage:    "refresh persisted audit verification failed",
-		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
+		LogMessage: "refresh persisted audit verification failed",
 	})
 }
 
@@ -104,8 +103,7 @@ func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 			_, err = m.events.AppendEvent(ctx, m.refreshExecution.ResourceKind, run.ID, contract.AuditAction, []byte(encoded))
 			return err
 		},
-		LogMessage:    "refresh audit failed",
-		LogAttributes: []slog.Attr{slog.String("refresh_run_id", run.ID)},
+		LogMessage: "refresh audit failed",
 	})
 }
 

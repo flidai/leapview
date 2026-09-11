@@ -492,8 +492,7 @@ func (m *Module) recordBestEffortEvent(
 			}
 			return m.appendEncodedEvent(ctx, releaseID, contract.AuditAction, encoded)
 		},
-		LogMessage:    "release audit failed",
-		LogAttributes: []slog.Attr{slog.String("release_id", releaseID)},
+		LogMessage: "release audit failed",
 	})
 	if err != nil {
 		logger.ErrorContext(ctx, "release command contract execution failed", "operation_id", operationID, "error", err)

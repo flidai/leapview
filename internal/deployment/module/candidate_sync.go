@@ -224,10 +224,6 @@ func (m *Module) executeCandidateSourceAudit(
 			return m.recordCandidateSourceAudit(ctx, r, contract, principalID, projectID, sourceDigest, sourceAttestationDigest, sizeBytes)
 		},
 		LogMessage: logMessage,
-		LogAttributes: []slog.Attr{
-			slog.String("project_id", strings.TrimSpace(projectID)),
-			slog.String("digest", sourceDigest),
-		},
 	})
 }
 
