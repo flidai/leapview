@@ -404,7 +404,7 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 	}
 	var workflowFn func(string) (jobs.WorkflowIntent, error)
 	if !plan.ApprovalRequired {
-		workflowFn = nativePublicationActivationWorkflow(project.String(), environment, actor)
+		workflowFn = nativePublicationActivationWorkflow(project.String(), environment, actor, rollback)
 	}
 	if err := c.appendMutationEvidence(ctx, tx, publication, eventType, actor, requestDigest, eventID, auditID, workflowFn); err != nil {
 		return NativeDeliveryPublication{}, err
@@ -845,12 +845,12 @@ func (c *nativeCoordinator) appendMutationEvidence(ctx context.Context, tx deplo
 // leaf after its request transaction commits. The worker re-reads the pending
 // publication and then executes the same fenced Activate transaction used by
 // protected approval workers; no activation is performed inline with publish.
-func nativePublicationActivationWorkflow(projectID, environment, actor string) func(string) (jobs.WorkflowIntent, error) {
+func nativePublicationActivationWorkflow(projectID, environment, actor string, rollback bool) func(string) (jobs.WorkflowIntent, error) {
 	return func(publicationID string) (jobs.WorkflowIntent, error) {
 		activationID := "deployment:" + publicationID + ":activate"
 		payload, err := json.Marshal(ActivateJob{
 			Project: projectID, Deployment: publicationID, Actor: actor,
-			IdempotencyKey: activationID,
+			IdempotencyKey: activationID, Rollback: rollback,
 		})
 		if err != nil {
 			return jobs.WorkflowIntent{}, err

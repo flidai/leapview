@@ -86,6 +86,7 @@ type runtimeServices struct {
 	platformHealth                 platformHealth
 	queryAuditProvider             adminmodule.QueryAuditReaderProvider
 	dashboardPublicationReconciler dashboardPublicationActivationReconciler
+	semanticActivationCutover      func(context.Context, deploymentmodule.ActivationCutoverInput) error
 	candidateMetrics               func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
 	runtimeHostModule              *runtimehostmodule.Module
 	projectID                      projectgraph.ResourceID
@@ -269,6 +270,9 @@ type dataAssemblyInputs struct {
 	// DashboardPublicationReconciler is the pre-activation ownership guard for
 	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
+	// SemanticActivationCutover is the final FAI-649 authority fence. It is
+	// evaluated after ownership admission and before either activation commit.
+	SemanticActivationCutover func(context.Context, deploymentmodule.ActivationCutoverInput) error
 	// DashboardPersistence is the complete native PostgreSQL dashboard
 	// authority bundle.
 	DashboardPersistence *dashboardmodule.NativePersistence
@@ -463,6 +467,9 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	if runtimeConfig.DeliveryTargetReader == nil {
 		return errors.New("production runtime composition requires the canonical delivery target reader")
 	}
+	if data.SemanticActivationCutover == nil {
+		return errors.New("production runtime composition requires the semantic activation cutover fence")
+	}
 	return nil
 }
 
@@ -600,6 +607,7 @@ func buildApplicationSurfaces(
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
+	runtime.semanticActivationCutover = data.SemanticActivationCutover
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	persistence.agentPersistence = capabilities.AgentPersistence
@@ -1119,6 +1127,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					},
 				})
 			}
+		}
+		if runtime.semanticActivationCutover != nil {
+			config.Jobs.ValidateCutover = runtime.semanticActivationCutover
 		}
 		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Committer: platform.jobModule}
 		// Release linkage remains an independent job-domain input for activation

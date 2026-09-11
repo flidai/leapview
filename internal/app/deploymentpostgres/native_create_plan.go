@@ -25,6 +25,7 @@ import (
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -51,6 +52,11 @@ type NativeReleaseArtifactInspector interface {
 // approval even when an already-authorized restatement does not.
 type NativeDeliveryPolicyResolver func(deployment.DeliveryOperationKind) (runtimefactory.CandidateDeliveryPolicy, error)
 
+// SemanticActivationEvidenceResolver selects the exact protected contract and
+// control authority bound into an immutable delivery plan. A nil result is
+// valid only for candidates without protected SemanticModels.
+type SemanticActivationEvidenceResolver func(context.Context, projectartifact.SourceBundle) (*deployment.SemanticActivationEvidence, error)
+
 type nativeDeliveryEventReader interface {
 	GetDeliveryEvent(context.Context, deploymentnative.Tx, deploymentmodule.NativeDeliveryEventInput) (deploymentnative.Event, error)
 }
@@ -76,11 +82,12 @@ type NativeCreatePlanConfig struct {
 
 	// ArtifactInspector is an expressive alias retained for composition code
 	// that names the read-only phase explicitly. Artifacts takes precedence.
-	ArtifactInspector NativeReleaseArtifactInspector
-	RuntimeVersion    string
-	Policy            runtimefactory.CandidateDeliveryPolicy
-	PolicyResolver    NativeDeliveryPolicyResolver
-	Clock             func() time.Time
+	ArtifactInspector  NativeReleaseArtifactInspector
+	RuntimeVersion     string
+	Policy             runtimefactory.CandidateDeliveryPolicy
+	PolicyResolver     NativeDeliveryPolicyResolver
+	SemanticActivation SemanticActivationEvidenceResolver
+	Clock              func() time.Time
 
 	Events     deploymentmodule.NativeDeliveryEventAppender
 	Audit      deploymentmodule.NativeDeliveryAuditAppender
@@ -105,24 +112,25 @@ type NativePlanWorkflowInput struct {
 // BuildPlan is present so composition can install one bounded port today; it
 // fails closed until native physical build orchestration is wired.
 type NativeCreatePlanCoordinator struct {
-	repository      *deploymentnative.Repository
-	targetID        string
-	environment     string
-	sources         project.CandidateSourceAttestationReader
-	artifacts       NativeReleaseArtifactInspector
-	bindingEvidence deployment.CandidateConnectionEvidenceResolver
-	runtimeVersion  string
-	policy          runtimefactory.CandidateDeliveryPolicy
-	policyResolver  NativeDeliveryPolicyResolver
-	clock           func() time.Time
-	events          deploymentmodule.NativeDeliveryEventAppender
-	eventReader     nativeDeliveryEventReader
-	audit           deploymentmodule.NativeDeliveryAuditAppender
-	auditReader     nativeDeliveryAuditReader
-	workflow        deploymentmodule.NativeDeliveryWorkflowRecorder
-	operations      deploymentmodule.NativeOperationAuthority
-	operationLookup nativeOperationLookup
-	workflowFactory func(NativePlanWorkflowInput) (jobs.WorkflowIntent, error)
+	repository         *deploymentnative.Repository
+	targetID           string
+	environment        string
+	sources            project.CandidateSourceAttestationReader
+	artifacts          NativeReleaseArtifactInspector
+	bindingEvidence    deployment.CandidateConnectionEvidenceResolver
+	runtimeVersion     string
+	policy             runtimefactory.CandidateDeliveryPolicy
+	policyResolver     NativeDeliveryPolicyResolver
+	semanticActivation SemanticActivationEvidenceResolver
+	clock              func() time.Time
+	events             deploymentmodule.NativeDeliveryEventAppender
+	eventReader        nativeDeliveryEventReader
+	audit              deploymentmodule.NativeDeliveryAuditAppender
+	auditReader        nativeDeliveryAuditReader
+	workflow           deploymentmodule.NativeDeliveryWorkflowRecorder
+	operations         deploymentmodule.NativeOperationAuthority
+	operationLookup    nativeOperationLookup
+	workflowFactory    func(NativePlanWorkflowInput) (jobs.WorkflowIntent, error)
 }
 
 var _ deploymentmodule.NativeDeliveryMutationPort = (*NativeCreatePlanCoordinator)(nil)
@@ -148,6 +156,9 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	}
 	if inspector == nil {
 		return nil, errors.New("native create-plan read-only artifact inspector is required")
+	}
+	if config.SemanticActivation == nil {
+		return nil, errors.New("native create-plan semantic activation evidence resolver is required")
 	}
 	if strings.TrimSpace(config.RuntimeVersion) == "" {
 		return nil, errors.New("native create-plan runtime version is required")
@@ -177,7 +188,7 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	return &NativeCreatePlanCoordinator{
 		repository: config.Repository, targetID: config.TargetID, environment: config.Environment,
 		sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
-		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, clock: clock,
+		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, semanticActivation: config.SemanticActivation, clock: clock,
 		events: config.Events, eventReader: eventReader, audit: config.Audit, auditReader: auditReader, workflow: config.Workflow,
 		operations: config.Operations, operationLookup: operationLookup, workflowFactory: config.WorkflowFactory,
 	}, nil
@@ -286,6 +297,10 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	}
 	if err := validateNativePlanInspection(request, source, inspected, inspectID); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
+	semanticActivation, err := c.semanticActivation(ctx, inspected.Compiler.Artifact)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("resolve semantic activation evidence: %w", err)
 	}
 	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, nativeCandidateConnectionRequest(
 		inspectID, request.PrincipalID, request.TargetID, inspected,
@@ -400,6 +415,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	planRequest.Persist = true
 	planRequest.TargetID, planRequest.ProjectID, planRequest.Environment = request.TargetID, request.ProjectID.String(), request.Environment
 	planRequest.CreatedAt = now
+	planRequest.Evidence.SemanticActivation = semanticActivation
 	// BindingDigest is the exact validated provider/binding evidence selected
 	// during planning, not merely the authored connector requirement shape.
 	planRequest.Execution.BindingDigest = bindingDigest

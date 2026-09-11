@@ -71,8 +71,8 @@ func TestSemanticAccessCompilerBoundaryRemainsClosedToConsumers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compileCalls != 3 || evaluateCalls != 3 {
-		t.Fatalf("expected one declaration and calls only from planner and shared consumer: compile=%d evaluate=%d", compileCalls, evaluateCalls)
+	if compileCalls != 4 || evaluateCalls != 3 {
+		t.Fatalf("expected compiler calls only from its activation facade, planner, and shared consumer: compile=%d evaluate=%d", compileCalls, evaluateCalls)
 	}
 	if admissionCalls != 1 {
 		t.Fatalf("expected planner admission declaration only; consumer retains the same private planner policy/provider: declarations/calls=%d", admissionCalls)

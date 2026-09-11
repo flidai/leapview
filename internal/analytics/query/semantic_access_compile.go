@@ -216,6 +216,18 @@ func CompileSemanticAccessPolicy(targetInstanceID, modelID, semanticGeneration s
 	return policy, nil
 }
 
+// QualifySemanticAccessActivation is the deployment-facing, value-free
+// compiler boundary. It proves that the exact authored model and registry can
+// produce the qualified FAI-639 policy without exposing compiler internals or
+// principal evidence to activation orchestration.
+func QualifySemanticAccessActivation(targetInstanceID, modelID, semanticGeneration string, model *semanticmodel.Model, compiled *CompiledModel, registry access.SemanticAttributeRegistrySnapshot) (string, error) {
+	policy, err := CompileSemanticAccessPolicy(targetInstanceID, modelID, semanticGeneration, model, compiled, registry)
+	if err != nil {
+		return "", err
+	}
+	return policy.Digest(), nil
+}
+
 func (policy *CompiledSemanticAccessPolicy) compileGrants(authored semanticmodel.SemanticAccessPolicy, definitions map[string]access.SemanticAttributeDefinition) error {
 	for _, name := range sortedStringKeys(authored.AccessGrants) {
 		spec := authored.AccessGrants[name]

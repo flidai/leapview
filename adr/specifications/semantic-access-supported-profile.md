@@ -1,12 +1,13 @@
 # ADR-0017 supported qualification profile
 
-Status: **qualification boundary only; no production activation**.
+Status: **active for the qualified supported profile**.
 
 This document records the combinations exercised by FAI-648. It does not add
 an authorization mode, change runtime behavior, or make an unsupported
 combination available. A protected request outside this profile must continue
 to fail closed at the existing compiler, consumer, plan, cache, or audit
-boundary. FAI-649 owns activation and cutover.
+boundary. FAI-649 binds this exact profile into immutable plan and final
+pre-commit activation evidence.
 
 ## Qualified boundary
 
@@ -58,14 +59,14 @@ full cross-layer chain remain outside the qualified boundary.
 - A cache entry or coalesced result with mismatched lifecycle or policy identity
   is rejected; cache absence does not create authorization.
 - Audit persistence failure prevents protected admission or release.
-- Standalone DataPolicy removal, production profile activation, and cutover are
-  deliberately not qualified here; they remain FAI-649 work.
+- Standalone DataPolicy is absent from public authoring and rejected on new
+  activation. Historical rollback retains its original restrictions read-only;
+  see the [activation and cutover contract](semantic-access-activation-cutover.md).
 
 ## Interpretation
 
 `PASS` in the matrix means the requirement has a current production owner and
 named executable evidence for the supported profile. `PARTIAL` is not an
 allowlist entry: it records a narrower proven slice or an unsupported path that
-still lacks full qualification. `FAIL` records the two cutover-owned clauses
-that cannot pass while standalone DataPolicy remains available. VAL-11 remains
-Partial and is not promoted by FAI-648.
+still lacks full qualification. The two former cutover-owned failures are
+qualified by FAI-649. VAL-11 remains Partial and is not promoted by activation.
