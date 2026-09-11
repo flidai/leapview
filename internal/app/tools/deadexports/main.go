@@ -1,6 +1,6 @@
 // Command deadexports rejects exported Go declarations that have no repository
 // references. The corpus intentionally includes documentation, configuration,
-// generated artifacts, and non-Go source so reflection and cross-language
+// generated artifacts, and non-Go sources so reflection and cross-language
 // contracts remain visible to the reviewable allowlist.
 package main
 
@@ -333,7 +333,7 @@ func scan(root string, p policy) (report, error) {
 // Generation is a deliberate precondition of this guard. Ignored APIGen,
 // sqlc, and signal outputs contain real consumers but are not available in a
 // clean checkout. Failing closed here makes a direct invocation deterministic
-// instead of producing a different dead-export set based on workspace state.
+// instead of producing a different dead-export set based on checkout state.
 func missingGeneratedInputs(root string) []string {
 	var missing []string
 	for _, path := range generatedInputSentinels {

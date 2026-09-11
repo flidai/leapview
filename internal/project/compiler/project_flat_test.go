@@ -1114,7 +1114,7 @@ spec:
 	assertFieldOwner("semantic:operations", "order_rows", "order_rows.id")
 	project.Manifest.SemanticModels["semantic:sales"].Tables["orders"].Dimensions["id"] = semanticmodel.MetricDimension{Label: "sales-only"}
 	if got := project.Manifest.SemanticModels["semantic:operations"].Tables["order_rows"].Dimensions["id"].Label; got == "sales-only" {
-		t.Fatal("semantic model table dimensions share mutable state")
+		t.Fatal("semantic dataset dimensions share mutable state")
 	}
 	canonical := project.Manifest.Models["model:orders"].Dimensions["id"]
 	if canonical.Table != "orders_model" || canonical.Field != "orders_model.id" {
