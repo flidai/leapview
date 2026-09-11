@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { createRef, ref, type Ref } from 'lit/directives/ref.js'
-import { Columns3 } from 'lucide'
+import { ArrowDown, ArrowUp, Columns3 } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from './column-resize'
 import { lucideIcon } from './lucide-icons'
 import { virtualRowRange } from './table-window'
@@ -682,7 +682,7 @@ class WindowedTable extends LitElement {
             </div>
           ` : nothing}
         </div>
-        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
+        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
         <div class="footer">
           ${this.compact
             ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
@@ -1022,10 +1022,10 @@ function defaultColumnWidth(column: WindowedTableColumn): number {
   return 168
 }
 
-function sortMarker(sort: WindowedTableSort, column: string): string {
+function sortMarker(sort: WindowedTableSort, column: string) {
   const normalized = normalizeSort(sort)
   if (normalized.key !== column) return ''
-  return normalized.direction === 'desc' ? '↓' : '↑'
+  return lucideIcon(normalized.direction === 'desc' ? ArrowDown : ArrowUp, { size: 12, strokeWidth: 2 })
 }
 
 function renderCell(value: unknown) {

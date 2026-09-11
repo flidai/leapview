@@ -47,6 +47,26 @@ type activationCoordinatorStub struct {
 	activated bool
 }
 
+type activationMutationCoordinatorStub struct {
+	row           apiadapter.Deployment
+	activateCalls int
+}
+
+func (stub *activationMutationCoordinatorStub) Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
+	return stub.row, nil
+}
+func (stub *activationMutationCoordinatorStub) Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error) {
+	stub.activateCalls++
+	stub.row.Status = apiadapter.StatusActive
+	return stub.row, nil
+}
+func (*activationMutationCoordinatorStub) Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error) {
+	return apiadapter.Deployment{}, nil
+}
+func (*activationMutationCoordinatorStub) CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error) {
+	return apiadapter.Deployment{}, nil
+}
+
 func (stub *activationCoordinatorStub) Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
 	return stub.row, nil
 }
@@ -67,7 +87,11 @@ func TestBootstrapActivationJobRevalidatesPolicyAndSkipsApproval(t *testing.T) {
 	actor := deployment.ApprovalActor{PrincipalID: "admin", CredentialClass: deployment.CredentialClassAPIToken, CredentialID: "token_1", CredentialExpiresAt: now.Add(time.Hour)}
 	policy := deployment.BootstrapActivationPolicy{ProjectID: projectgraph.ResourceID("project_demo"), Environment: servingstate.Environment("prod"), DeploymentID: row.ID, RequestDigest: row.RequestDigest, ActorID: actor.PrincipalID, CredentialID: actor.CredentialID, CredentialExpiresAt: actor.CredentialExpiresAt, ArmedAt: now}
 	coordinator := &activationCoordinatorStub{row: row}
-	module := &Module{protected: true, jobs: JobConfig{Coordinator: coordinator}, bootstrapPolicies: bootstrapPolicyStub{policy: policy}, authorizeBootstrap: func(context.Context, deployment.BootstrapActivationPolicy) error { return nil }}
+	validated := 0
+	module := &Module{protected: true, jobs: JobConfig{Coordinator: coordinator, ValidateActivation: func(context.Context, string) error {
+		validated++
+		return nil
+	}}, bootstrapPolicies: bootstrapPolicyStub{policy: policy}, authorizeBootstrap: func(context.Context, deployment.BootstrapActivationPolicy) error { return nil }}
 	payload, err := json.Marshal(ActivateJob{Project: row.Project, Deployment: row.ID, Actor: actor.PrincipalID, Credential: actor, Bootstrap: true})
 	if err != nil {
 		t.Fatal(err)
@@ -75,15 +99,15 @@ func TestBootstrapActivationJobRevalidatesPolicyAndSkipsApproval(t *testing.T) {
 	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err != nil {
 		t.Fatal(err)
 	}
-	if !coordinator.activated {
-		t.Fatal("bootstrap activation did not activate the deployment")
+	if !coordinator.activated || validated != 1 {
+		t.Fatalf("bootstrap activation: activated=%t validation calls=%d", coordinator.activated, validated)
 	}
 	coordinator.activated = false
 	module.authorizeBootstrap = func(context.Context, deployment.BootstrapActivationPolicy) error {
 		return deployment.ErrBootstrapPolicyConflict
 	}
-	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err == nil || coordinator.activated {
-		t.Fatalf("invalidated bootstrap policy activation err=%v activated=%t", err, coordinator.activated)
+	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err == nil || coordinator.activated || validated != 1 {
+		t.Fatalf("invalidated bootstrap policy activation err=%v activated=%t validation calls=%d", err, coordinator.activated, validated)
 	}
 }
 
@@ -125,4 +149,57 @@ func TestActivationJobRequiresPostCommitReconciliation(t *testing.T) {
 	if reconciled != 2 {
 		t.Fatalf("successful replay reconciliation calls = %d, want 2", reconciled)
 	}
+}
+
+func TestActivationJobValidatesCandidateBeforeCommit(t *testing.T) {
+	row := apiadapter.Deployment{ID: "deployment_1", Project: "project_demo", Environment: "prod", GenerationID: "generation_candidate", Status: apiadapter.StatusPending}
+	payload, err := json.Marshal(ActivateJob{Project: row.Project, Deployment: row.ID, Actor: "publisher", IdempotencyKey: "activate-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("rejection leaves activation unchanged", func(t *testing.T) {
+		coordinator := &activationMutationCoordinatorStub{row: row}
+		before := coordinator.row
+		validationErr := errors.New("candidate contains control-plane publication state")
+		validated := 0
+		module := &Module{jobs: JobConfig{
+			Coordinator: coordinator,
+			ValidateActivation: func(context.Context, string) error {
+				validated++
+				return validationErr
+			},
+		}}
+		err := module.activate(t.Context(), jobs.Job{Payload: payload})
+		if !errors.Is(err, validationErr) {
+			t.Fatalf("activation validation error = %v, want %v", err, validationErr)
+		}
+		if coordinator.activateCalls != 0 || coordinator.row != before {
+			t.Fatalf("rejected candidate changed activation state: calls=%d row=%#v want %#v", coordinator.activateCalls, coordinator.row, before)
+		}
+		if validated != 1 {
+			t.Fatalf("activation validation calls = %d, want 1", validated)
+		}
+	})
+
+	t.Run("valid candidate activates", func(t *testing.T) {
+		coordinator := &activationMutationCoordinatorStub{row: row}
+		validated := 0
+		module := &Module{jobs: JobConfig{
+			Coordinator: coordinator,
+			ValidateActivation: func(_ context.Context, generationID string) error {
+				validated++
+				if generationID != row.GenerationID {
+					t.Fatalf("validated generation = %q, want %q", generationID, row.GenerationID)
+				}
+				return nil
+			},
+		}}
+		if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+		if coordinator.activateCalls != 1 || coordinator.row.Status != apiadapter.StatusActive || validated != 1 {
+			t.Fatalf("valid activation: calls=%d status=%q validation calls=%d", coordinator.activateCalls, coordinator.row.Status, validated)
+		}
+	})
 }

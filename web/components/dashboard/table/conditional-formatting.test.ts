@@ -27,7 +27,6 @@ test('table conditional formatting uses safe background tokens and redundant acc
   expect(conditionalCellAppearance({ status: 'late', revenue: 35 }, column)).toEqual({
     background: 'var(--lv-bg-danger-muted)',
     foreground: 'var(--lv-fg-default)',
-    icon: '⚠',
     iconLabel: 'warning',
   })
 })

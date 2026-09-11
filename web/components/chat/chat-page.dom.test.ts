@@ -32,6 +32,16 @@ beforeAll(async () => {
       response.end(testDocument('new', 'new'))
       return
     }
+    if (url.pathname === '/unavailable-new') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('new', 'new', false))
+      return
+    }
+    if (url.pathname === '/unavailable-list') {
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument('list', 'new', false))
+      return
+    }
     if (url.pathname.startsWith('/chats/')) {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -118,6 +128,7 @@ for (const viewport of [
 
 for (const viewport of [
   { name: 'desktop', width: 1280, height: 820, expectedSurfaceWidth: 760 },
+  { name: 'narrow desktop', width: 700, height: 820, expectedSurfaceWidth: 668 },
   { name: 'mobile', width: 390, height: 820, expectedSurfaceWidth: 366 },
 ]) {
   test(`new chat page centers the title and composer on ${viewport.name}`, async () => {
@@ -130,10 +141,15 @@ for (const viewport of [
       ))
       await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
-      const state = await page.locator('lv-chat-page').evaluate((element: any) => {
+      const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
         const root = (element.shadowRoot as ShadowRoot)
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
+        const intro = root.querySelector('.new-chat-intro') as HTMLElement
+        const description = root.querySelector('.new-chat-description') as HTMLElement
+        const hint = root.querySelector('.new-chat-context-hint') as HTMLElement
+        const starters = Array.from(root.querySelectorAll('.prompt-starter')) as HTMLButtonElement[]
+        const starterGrid = root.querySelector('.prompt-starters') as HTMLElement
         const composer = root.querySelector('lv-chat-composer') as any
         const composerRoot = composer?.shadowRoot
         const composerSurface = composerRoot?.querySelector('.composer-surface') as HTMLElement
@@ -141,10 +157,15 @@ for (const viewport of [
         const stageRect = stage.getBoundingClientRect()
         const composerRect = composer.getBoundingClientRect()
         const surfaceRect = composerSurface.getBoundingClientRect()
-        const titleStyle = getComputedStyle(title)
+        const introStyle = getComputedStyle(intro)
         const composerStyle = getComputedStyle(composer)
-        const clusterTop = titleRect.top
+        const clusterTop = intro.getBoundingClientRect().top
         const clusterBottom = composerRect.bottom
+        let submits = 0
+        composer.addEventListener('lv-chat-submit', () => submits += 1)
+        starters[0]?.click()
+        await composer.updateComplete
+        const textarea = composerRoot?.querySelector('textarea') as HTMLTextAreaElement
         return {
           title: title.textContent?.trim(),
           hasRouteHeader: Boolean(root.querySelector('header')),
@@ -155,6 +176,16 @@ for (const viewport of [
           hasNewStage: Boolean(stage),
           hasComposer: Boolean(composer),
           composerDisabled: composer?.disabled,
+          kicker: root.querySelector('.new-chat-kicker')?.textContent?.trim(),
+          description: description.textContent?.trim(),
+          contextHint: hint.textContent?.replace(/\s+/g, ' ').trim(),
+          starters: starters.map((button) => ({
+            label: button.querySelector('.prompt-starter-label')?.textContent?.trim(),
+            prompt: button.querySelector('.prompt-starter-prompt')?.textContent?.trim(),
+          })),
+          starterDraft: textarea.value,
+          starterFocused: composerRoot?.activeElement === textarea,
+          starterSubmits: submits,
           titleCenterOffset: Math.round(Math.abs((titleRect.left + titleRect.width / 2) - window.innerWidth / 2)),
           composerBottomDistance: Math.round(window.innerHeight - composerRect.bottom),
           composerBorderTopWidth: getComputedStyle(composer).borderTopWidth,
@@ -162,10 +193,13 @@ for (const viewport of [
           composerSurfaceLeft: Math.round(surfaceRect.left),
           surfaceCenterOffset: Math.round(Math.abs((surfaceRect.left + surfaceRect.width / 2) - window.innerWidth / 2)),
           clusterCenterOffset: Math.round(Math.abs((clusterTop + (clusterBottom - clusterTop) / 2) - (stageRect.top + stageRect.height / 2))),
-          titleAnimationName: titleStyle.animationName,
-          titleAnimationDuration: titleStyle.animationDuration,
+          introAnimationName: introStyle.animationName,
+          introAnimationDuration: introStyle.animationDuration,
           composerAnimationName: composerStyle.animationName,
           composerAnimationDelay: composerStyle.animationDelay,
+          stageJustifyContent: getComputedStyle(stage).justifyContent,
+          promptColumns: getComputedStyle(starterGrid).gridTemplateColumns.split(' ').length,
+          contextActionDisplay: getComputedStyle(composerRoot.querySelector('.context-button')).display,
           hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
           hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
         }
@@ -181,21 +215,34 @@ for (const viewport of [
         hasNewStage: true,
         hasComposer: true,
         composerDisabled: false,
+        kicker: 'LeapView Agent',
+        description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+        contextHint: 'Type @ to attach a dashboard, metric, model, page, or visual.',
+        starters: [
+          { label: 'Spot a change', prompt: 'What changed most in the last 30 days?' },
+          { label: 'Explain a metric', prompt: 'Explain how revenue is calculated.' },
+          { label: 'Review a dashboard', prompt: 'Summarize the Executive Sales dashboard.' },
+        ],
+        starterDraft: 'What changed most in the last 30 days?',
+        starterFocused: true,
+        starterSubmits: 0,
         titleCenterOffset: 0,
         composerBorderTopWidth: '0px',
         composerSurfaceWidth: viewport.expectedSurfaceWidth,
         composerSurfaceLeft: Math.round((viewport.width - viewport.expectedSurfaceWidth) / 2),
         surfaceCenterOffset: 0,
-        titleAnimationName: 'new-chat-enter',
-        titleAnimationDuration: '0.26s',
+        introAnimationName: 'new-chat-enter',
+        introAnimationDuration: '0.26s',
         composerAnimationName: 'new-chat-enter',
         composerAnimationDelay: '0.07s',
+        stageJustifyContent: viewport.name === 'desktop' ? 'center' : 'flex-start',
+        promptColumns: viewport.name === 'desktop' ? 3 : 1,
+        contextActionDisplay: 'none',
         hasVerticalOverflow: false,
         hasHorizontalOverflow: false,
       })
-      expect(state.clusterCenterOffset).toBeLessThanOrEqual(8)
+      if (viewport.name === 'desktop') expect(state.clusterCenterOffset).toBeLessThanOrEqual(24)
       expect(state.composerBottomDistance).toBeGreaterThan(0)
-      expect(state.composerBottomDistance).toBeLessThan(viewport.height / 2)
     } finally {
       await page.close()
     }
@@ -288,8 +335,8 @@ test('chat list page renders searchable conversation history', async () => {
       dateDistanceFromRowEnd: 12,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', text: 'Revenue check Jan 2', optionsLabel: 'More options for Revenue check' })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', text: 'Inventory status Jan 3', optionsLabel: 'More options for Inventory status' })
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', text: 'Revenue check Jan 2', optionsLabel: undefined })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', text: 'Inventory status Jan 3', optionsLabel: undefined })
 
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
@@ -323,7 +370,55 @@ test('chat list page renders searchable conversation history', async () => {
   }
 })
 
-function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active'): string {
+test('unconfigured agent uses intentional unavailable states', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/unavailable-new`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const newState = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = (element.shadowRoot as ShadowRoot)
+      const composer = root.querySelector('lv-chat-composer') as any
+      await composer.updateComplete
+      return {
+        title: root.querySelector('.new-chat-title')?.textContent?.trim(),
+        description: root.querySelector('.new-chat-description')?.textContent?.trim(),
+        starterCount: root.querySelectorAll('.prompt-starter').length,
+        startersDisabled: Array.from(root.querySelectorAll<HTMLButtonElement>('.prompt-starter')).every((button) => button.disabled),
+        composerDisabled: composer.disabled,
+        placeholder: composer.shadowRoot.querySelector('textarea')?.getAttribute('placeholder'),
+      }
+    })
+    expect(newState).toEqual({
+      title: 'Ask about your data',
+      description: 'Get clear answers grounded in the dashboards, metrics, and models you can access.',
+      starterCount: 3,
+      startersDisabled: true,
+      composerDisabled: true,
+      placeholder: 'Agent is not configured.',
+    })
+
+    await page.goto(`${baseURL}/unavailable-list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-list'))
+    const listState = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-chat-list') as any
+      await list.updateComplete
+      const root = list.shadowRoot
+      return {
+        title: root.querySelector('.empty-title')?.textContent?.trim(),
+        detail: root.querySelector('.empty-detail')?.textContent?.trim(),
+        hasSearch: Boolean(root.querySelector('.search')),
+        newChatDisabled: root.querySelector('.new-chat-link')?.hasAttribute('disabled'),
+      }
+    })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true })
+  } finally {
+    await page.close()
+  }
+})
+
+function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'active', enabled = true): string {
   const page = {
     kind: 'chat',
     view,
@@ -331,14 +426,14 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
     description: 'Ask about governed BI or make authorized dashboard changes.',
   }
   const agent = {
-    conversations: [
+    conversations: enabled ? [
       { id: 'c1', title: 'Revenue check', href: '/chats/c1', updatedAt: '2026-01-02T10:00:00Z' },
       { id: 'c2', title: 'Inventory status', href: '/chats/c2', updatedAt: '2026-01-03T10:00:00Z' },
-    ],
+    ] : [],
     activeConversationId: scenario === 'new' ? '' : 'c1',
     transcript: scenario === 'new' ? [] : [{ role: 'assistant', content: 'Ready.' }],
-    status: { enabled: true, running: false },
-    composer: { value: '', disabled: false, placeholder: 'Ask about dashboards, metrics, or models...' },
+    status: { enabled, running: false, ...(enabled ? {} : { error: 'Agent is not configured.' }) },
+    composer: { value: '', disabled: !enabled, placeholder: enabled ? 'Ask about dashboards, metrics, or models...' : 'Agent is not configured.' },
   }
   return `
     <!doctype html>

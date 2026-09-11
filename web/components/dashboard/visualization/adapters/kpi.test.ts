@@ -77,7 +77,7 @@ test('KPI state resolves comparison, relative delta, goal, range, and compact tr
   expect(state.currentText).toBe('$110')
   expect(state.comparisonText).toBe('$100')
   expect(state.deltaText).toBe('+10%')
-  expect(state.deltaCue).toBe('↑')
+  expect(state.deltaCue).toBeUndefined()
   expect(state.changeStatus).toBe('favorable')
   expect(state.goalText).toBe('$120')
   expect(state.progress).toBeCloseTo(110 / 120)

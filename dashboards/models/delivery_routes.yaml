@@ -90,7 +90,7 @@ spec:
           '0' AS point_order,
           seller_latitude AS latitude,
           seller_longitude AS longitude,
-          seller_city || ' → ' || customer_city AS route_label,
+          seller_city || ' to ' || customer_city AS route_label,
           destination_state,
           CAST(round(allocated_revenue, 2) AS DECIMAL(38,2)) AS route_revenue
         FROM located
@@ -102,7 +102,7 @@ spec:
           '1' AS point_order,
           customer_latitude AS latitude,
           customer_longitude AS longitude,
-          seller_city || ' → ' || customer_city AS route_label,
+          seller_city || ' to ' || customer_city AS route_label,
           destination_state,
           CAST(round(allocated_revenue, 2) AS DECIMAL(38,2)) AS route_revenue
         FROM located

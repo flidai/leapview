@@ -145,6 +145,13 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(brushSelectionCommands(envelope, { batch: [{ selected: [] }] })).toEqual([{
     sourceKind: 'visual', sourceId: 'delivery', interactionKind: 'point_selection', action: 'clear', toggle: true, mappings: [],
   }])
+  const inlineDataState = envelope.dataState as InlineVisualizationDataState
+  inlineDataState.datasets[0].rows = Array.from({ length: 19 }, (_, index) => [`order-${index}`, 'Consumer', index, index + 1, 1])
+  const densePoints = echartsOption(envelope, defaultRendererContext) as any
+  expect(densePoints.series[0].label.formatter({ dataIndex: 1, value: inlineDataState.datasets[0].rows[1] })).toBe('')
+  envelope.selection = [{ datum: { dataset: 'primary', dataRevision: 4, identity: { order_id: 'order-0' } }, label: 'order-0' }]
+  const selectedDensePoints = echartsOption(envelope, defaultRendererContext) as any
+  expect(selectedDensePoints.series[0].label.formatter({ dataIndex: 0, value: inlineDataState.datasets[0].rows[0] })).toBe('order-0')
 })
 
 test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves rows and tooltips', () => {
@@ -395,6 +402,7 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
   ])
   expect(option.series[0].areaStyle).toEqual({})
   expect(option.yAxis).toHaveLength(2)
+  expect(option.yAxis[1].axisLabel.hideOverlap).toBe(true)
   expect(option.yAxis[0].splitNumber).toBe(4)
   expect(option.yAxis[1].splitNumber).toBe(4)
   expect(option.yAxis[0].splitLine.show).not.toBe(false)
@@ -405,6 +413,13 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
     defaultRendererContext.colors.data[1],
   ])
   expect(option.grid.bottom).toBe(44)
+
+  const scaled = structuredClone(envelope) as any
+  scaled.spec.presentation.labelPolicy.density = 'always'
+  scaled.spec.datasets[0].fields[1].format = { kind: 'currency', currency: 'BRL' }
+  scaled.dataState.datasets[0].rows = [['Jan', 10_000_000, 20], ['Feb', 12_000_000, 16]]
+  const scaledOption = echartsOption(scaled, defaultRendererContext) as any
+  expect(scaledOption.series[1].label.formatter({ value: ['Jan', 10_000_000, 20] })).toBe('20')
 
   const visibleSecondaryGrid = structuredClone(envelope) as any
   visibleSecondaryGrid.spec.axes = [{
@@ -828,6 +843,12 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   ])
   expect(waterfall.series[1].itemStyle.color({ value: ['Gain', 12, 0] })).toBe(defaultRendererContext.colors.success)
   expect(waterfall.series[1].itemStyle.color({ value: ['Loss', -5, 12] })).toBe(defaultRendererContext.colors.danger)
+  const denseWaterfall = cartesianFixture('waterfall', ['label', 'start', 'revenue']) as any
+  denseWaterfall.dataState.datasets[0].rows = [['Jan', '0', '10'], ['Feb', '10', '5']]
+  const denseWaterfallOption = echartsOption(denseWaterfall, defaultRendererContext) as any
+  expect(denseWaterfallOption.series[0].encode.y).toBe('start')
+  expect(denseWaterfallOption.series[1].encode.y).toBe('revenue')
+  expect(denseWaterfallOption.series[1].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
   const heatmapEnvelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
   heatmapEnvelope.spec.presentation.displayUnits = 'none'
   heatmapEnvelope.spec.presentation.dataZoom = true
@@ -852,6 +873,9 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(heatmap.series[0].label.formatter({ value: ['B', 'R1', 1] })).toBe('1')
   expect(heatmap.series[0].label.formatter({ value: ['C', 'R1', 1234] })).toBe('1,234')
   expect(heatmap.tooltip.formatter({ value: ['C', 'R1', 1234] })).toBe('label: C<br>row: R1<br>value: 1234')
+  heatmapEnvelope.spec.presentation.labelPolicy.density = 'always'
+  const alwaysHeatmap = echartsOption(heatmapEnvelope, defaultRendererContext) as any
+  expect(alwaysHeatmap.series[0].labelLayout({ dataIndex: 0, rect: { width: 30, height: 20 } })).toEqual({ hideOverlap: true, width: 24, height: 14 })
   expect(heatmap.dataZoom).toEqual([
     { id: 'dataZoom:heatmap:inside', type: 'inside', xAxisIndex: 0, filterMode: 'filter', startValue: 'A', endValue: 'B' },
     { id: 'dataZoom:heatmap:slider', type: 'slider', xAxisIndex: 0, filterMode: 'filter', startValue: 'A', endValue: 'B', bottom: 64, height: 14, showDetail: false, brushSelect: false },
@@ -954,6 +978,17 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(incompleteOption.graphic[0].style.text).toBe('No complete distribution data')
 })
 
+test('ECharts suppresses crowded automatic Cartesian labels but respects explicit density', () => {
+  const cartesian = cartesianFixture('bar') as any
+  cartesian.spec.presentation.labelPolicy.density = 'automatic'
+  cartesian.dataState.datasets[0].rows = Array.from({ length: 25 }, (_, index) => [`category-${index}`, index + 1])
+  expect((echartsOption(cartesian, defaultRendererContext) as any).series[0].label.show).toBe(false)
+  cartesian.spec.presentation.labelPolicy.density = 'always'
+  const series = (echartsOption(cartesian, defaultRendererContext) as any).series[0]
+  expect(series.label.show).toBe(true)
+  expect(series.labelLayout).toMatchObject({ hideOverlap: true })
+})
+
 test('ECharts hides both cartesian axes when formatting disables axes', () => {
   const envelope = cartesianFixture('column') as any
   envelope.spec.presentation.axisVisible = false
@@ -971,7 +1006,8 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(funnel.series[0]).toMatchObject({ id: 'series:primary:funnel', type: 'funnel', funnelAlign: 'left', sort: 'ascending', orient: 'vertical', left: '6%', right: '44%' })
 
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
-  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
+  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, lineStyle: { curveness: 0.3 }, emphasis: { focus: 'adjacency' } })
+  expect(graph.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true, moveOverlap: 'shiftY' })
   expect(graph.series[0]).not.toHaveProperty('force')
   expect(graph.series[0].links[0]).toMatchObject({ source: 'string:A', target: 'string:B', __lv_dataset: 'primary', __lv_row_index: 0 })
   const layeredGraphEnvelope = networkFixture('graph') as any
@@ -988,11 +1024,16 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   const sankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
   expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
-  expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
+  expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 56, overflow: 'truncate', fontSize: 11 } })
   expect(sankey.series[0].links).toEqual([{ source: 'source:string:Same', target: 'target:string:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
   expect(sankey.series[0].data).toEqual([{ name: 'source:string:Same', displayName: 'Same' }, { name: 'target:string:Same', displayName: 'Same' }])
   expect(sankey.series[0].label.formatter({ data: sankey.series[0].data[0] })).toBe('Same')
-  expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same → Same: 4')
+  expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same to Same: 4')
+  const verticalSankeyEnvelope = structuredClone(sankeyEnvelope) as any
+  verticalSankeyEnvelope.spec.presentation.orientation = 'vertical'
+  const verticalSankey = echartsOption(verticalSankeyEnvelope, defaultRendererContext) as any
+  expect(verticalSankey.series[0].bottom).toBe('18%')
+  expect(verticalSankey.series[0].data[1].label).toMatchObject({ position: 'bottom', rotate: 45, align: 'left' })
 
   delete sankeyEnvelope.spec.presentation.nodeGap
   delete sankeyEnvelope.spec.presentation.curveness
@@ -1025,7 +1066,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
         textBorderColor: defaultRendererContext.colors.surface,
         textBorderWidth: 2,
       })
-      expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
+      expect(option.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
     } else {
       expect(option.series[0]).toMatchObject({ breadcrumb: { show: true }, leafDepth: 2 })
       expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })

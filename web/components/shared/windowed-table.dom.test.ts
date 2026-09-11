@@ -74,7 +74,7 @@ test('mobile windowed tables expose horizontal scrolling and a visible swipe hin
     })
     expect(state).toEqual({
       role: 'region', label: 'Scrollable Customers table', tabIndex: '0',
-      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block', hintVisible: true,
+      hint: 'Swipe horizontally to see more columns', hintDisplay: 'block', hintVisible: true,
     })
   } finally {
     await page.close()

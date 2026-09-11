@@ -59,7 +59,6 @@ test('HTML KPI formatting resolves semantic backgrounds, readable text, and redu
     background: defaultRendererContext.colors.danger,
     foreground: defaultRendererContext.colors.surface,
     valueColor: defaultRendererContext.colors.surface,
-    icon: '↓',
     iconLabel: 'decreasing',
   })
 })
@@ -89,11 +88,11 @@ test('HTML KPI conditional value formatting preserves null, first-match, default
   } as VisualizationEnvelope
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, danger: '#ff7b72', attention: '#d29922', success: '#56d364' } }
 
-  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ icon: '⚠', iconLabel: 'warning' })
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ iconLabel: 'warning' })
   ;(envelope.dataState as InlineVisualizationDataState).datasets[0]!.rows = [[90]]
-  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.attention, icon: '●', iconLabel: 'circle' })
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.attention, iconLabel: 'circle' })
   ;(envelope.dataState as InlineVisualizationDataState).datasets[0]!.rows = [[-1]]
-  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.danger, icon: '↓', iconLabel: 'decreasing' })
+  expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.danger, iconLabel: 'decreasing' })
 })
 
 test('HTML KPI layout requirements come only from explicitly configured features', () => {

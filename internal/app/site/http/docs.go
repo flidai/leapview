@@ -443,14 +443,11 @@ func siteDocsPaginationCard(document *siteDocument, direction string) g.Node {
 	if document == nil {
 		return nil
 	}
-	label, rel, arrow := "Next", "next", "→"
+	label, rel := "Next", "next"
 	if direction == "previous" {
-		label, rel, arrow = "Previous", "prev", "←"
+		label, rel = "Previous", "prev"
 	}
-	directionNodes := []g.Node{g.Text(label), h.Span(h.Class("site-docs-pagination-arrow"), g.Attr("aria-hidden", "true"), g.Text(arrow))}
-	if direction == "previous" {
-		directionNodes[0], directionNodes[1] = directionNodes[1], directionNodes[0]
-	}
+	directionNodes := []g.Node{g.Text(label)}
 	return h.A(
 		h.Class("site-docs-pagination-card site-docs-pagination-"+direction),
 		h.Href("/docs/"+document.slug),

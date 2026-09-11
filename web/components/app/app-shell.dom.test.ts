@@ -709,6 +709,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
         })(),
         navVisibility: getComputedStyle(nav).visibility,
         navInert: nav.inert,
+        sidebarContentInert: (root.querySelector('.sidebar-content') as HTMLElement).inert,
       }
     })
 
@@ -722,6 +723,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(state.menuPosition).toEqual({ left: 8, top: 8 })
     expect(state.navVisibility).toBe('hidden')
     expect(state.navInert).toBe(true)
+    expect(state.sidebarContentInert).toBe(false)
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as TestDomElement
@@ -743,7 +745,6 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
       const backdrop = root.querySelector('.mobile-backdrop') as HTMLButtonElement
       const drawerHeader = root.querySelector('.mobile-drawer-header') as HTMLElement
-      const drawer = root.querySelector('aside') as HTMLElement
       const visible = (target: Element) => {
         const box = target.getBoundingClientRect()
         const style = getComputedStyle(target)
@@ -751,12 +752,14 @@ test('mobile navigation opens in an accessible drawer', async () => {
       }
       const mobileSettings = root.querySelector('.mobile-footer .user-card') as HTMLAnchorElement | null
       return {
+        hostOpen: sidebar.hasAttribute('data-mobile-open'),
+        hostZIndex: getComputedStyle(sidebar).zIndex,
         drawerOpen: root.querySelector('aside')?.hasAttribute('data-mobile-open'),
         expanded: menuButton.getAttribute('aria-expanded'),
         navVisibility: getComputedStyle(nav).visibility,
         navInert: nav.inert,
         backdropVisibility: getComputedStyle(backdrop).visibility,
-        drawerBackground: getComputedStyle(drawer).backgroundColor,
+        backdropPointerEvents: getComputedStyle(backdrop).pointerEvents,
         navBackground: getComputedStyle(nav).backgroundColor,
         headerBorderBottomWidth: getComputedStyle(drawerHeader).borderBottomWidth,
         navBoxShadow: getComputedStyle(nav).boxShadow,
@@ -771,12 +774,15 @@ test('mobile navigation opens in an accessible drawer', async () => {
       }
     })
 
+    expect(openState.hostOpen).toBe(true)
+    expect(openState.hostZIndex).not.toBe('auto')
     expect(openState.drawerOpen).toBe(true)
     expect(openState.expanded).toBe('true')
     expect(openState.navVisibility).toBe('visible')
     expect(openState.navInert).toBe(false)
     expect(openState.backdropVisibility).toBe('visible')
-    expect(openState.navBackground).toBe(openState.drawerBackground)
+    expect(openState.backdropPointerEvents).toBe('auto')
+    expect(openState.navBackground).not.toBe('rgba(0, 0, 0, 0)')
     expect(openState.headerBorderBottomWidth).not.toBe('0px')
     expect(openState.navBoxShadow).not.toBe('none')
     expect(openState.closeControlCount).toBe(1)
@@ -787,8 +793,9 @@ test('mobile navigation opens in an accessible drawer', async () => {
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as TestDomElement
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      ;((sidebar.shadowRoot as ShadowRoot).querySelector('.mobile-backdrop') as HTMLElement).click()
       await sidebar.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
     })
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
@@ -802,14 +809,23 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const root = (sidebar.shadowRoot as ShadowRoot)
       const nav = root.querySelector('nav') as HTMLElement
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
+      const main = element.shadowRoot.querySelector('main') as HTMLElement
       return {
+        hostOpen: sidebar.hasAttribute('data-mobile-open'),
         expanded: menuButton.getAttribute('aria-expanded'),
         navInert: nav.inert,
+        sidebarWidth: Math.round(sidebar.getBoundingClientRect().width),
+        mainX: Math.round(main.getBoundingClientRect().x),
+        focusRestored: root.activeElement === menuButton,
       }
     })
 
+    expect(closedState.hostOpen).toBe(false)
     expect(closedState.expanded).toBe('false')
     expect(closedState.navInert).toBe(true)
+    expect(closedState.sidebarWidth).toBe(44)
+    expect(closedState.mainX).toBe(44)
+    expect(closedState.focusRestored).toBe(true)
   } finally {
     await page.close()
   }

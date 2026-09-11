@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronsDown, ChevronsUp } from 'lucide'
+import { ChevronDown, ChevronRight, ChevronsDown, ChevronsUp } from 'lucide'
 import { parse as parseYAML } from 'yaml'
 import { lucideIcon } from './lucide-icons'
 import './code-block'
@@ -308,7 +308,7 @@ class ConfigViewer extends LitElement {
     const row = branch
       ? html`
         <button class="row" type="button" style=${`padding-left:${depth * 15 + 6}px`} aria-expanded=${open} @click=${() => this.toggle(path)}>
-          <span class="chevron">${open ? '⌄' : '›'}</span>
+          <span class="chevron">${lucideIcon(open ? ChevronDown : ChevronRight, { size: 13, strokeWidth: 2 })}</span>
           <span class="key" data-kind=${Array.isArray(value) ? 'array' : 'object'}>${displayKey(key, path)}</span>
           <span class="count">${Array.isArray(value) ? `[${entries(value).length}]` : `{${entries(value).length}}`}</span>
         </button>
@@ -399,7 +399,7 @@ function valueMarkup(value: ConfigValue): TemplateResult {
   if (typeof value === 'boolean') return html`<span class="boolean">${String(value)}</span>`
   if (typeof value === 'number') return html`<span class="number">${value}</span>`
   if (typeof value === 'string') {
-    return html`<span class="string" title=${value}>${value.replaceAll('\n', ' ↵ ')}</span>`
+    return html`<span class="string" title=${value}>${value.replaceAll('\n', ' / ')}</span>`
   }
   return html`<span>${String(value)}</span>`
 }

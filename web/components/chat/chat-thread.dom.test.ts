@@ -125,6 +125,36 @@ test('chat thread uses the surrounding app surface background', async () => {
   await page.close()
 })
 
+test('chat thread distinguishes unavailable, empty, and working states', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = []
+    thread.status = { enabled: false, running: false, error: 'Agent is not configured.' }
+    await thread.updateComplete
+  })
+
+  const unavailable = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    title: element.shadowRoot.querySelector('.empty-title')?.textContent?.trim(),
+    detail: element.shadowRoot.querySelector('.empty-detail')?.textContent?.trim(),
+    hasAlert: Boolean(element.shadowRoot.querySelector('.alert')),
+  }))
+  expect(unavailable).toEqual({ title: 'Agent unavailable', detail: 'Agent is not configured.', hasAlert: false })
+
+  await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+    thread.status = { enabled: true, running: true }
+    await thread.updateComplete
+  })
+  const working = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    text: element.shadowRoot.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
+    hasEmpty: Boolean(element.shadowRoot.querySelector('.empty-state')),
+  }))
+  expect(working).toEqual({ text: 'Working', hasEmpty: false })
+  await page.close()
+})
+
 test('chat thread preserves plain user message text without template whitespace', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
@@ -199,8 +229,8 @@ test('chat thread renders turn-scoped references inside the user message bubble'
     referenceHref: '/dashboards/executive-sales/pages/overview',
     referenceInsideBubble: true,
     referenceText: 'Revenue by month',
-    tooltip: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
-    accessibleName: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
+    tooltip: 'Revenue by month · Sales / Executive Sales / Overview · Visual',
+    accessibleName: 'Revenue by month · Sales / Executive Sales / Overview · Visual',
     hasVisibleMetadata: false,
     iconClass: 'reference-icon-visual',
     iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',

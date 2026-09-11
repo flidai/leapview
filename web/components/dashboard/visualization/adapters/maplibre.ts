@@ -154,7 +154,7 @@ export class MapLibreHandle implements RendererHandle {
     this.legend.setAttribute('aria-label', 'Map value filters')
     this.legend.dataset.mapLegend = ''
     this.legend.hidden = true
-    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:154px;max-width:220px;padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary)'
+    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:154px;max-width:min(220px,calc(100% - 20px));padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary)'
     this.legendStyle = document.createElement('style')
     this.legendStyle.textContent = `[data-map-value-range]{display:grid;gap:2px;min-width:150px}.lv-map-range-values{display:flex;justify-content:space-between;padding:0 2px;color:var(--lv-fg-default,#1f2328);font-weight:var(--base-text-weight-medium);font-variant-numeric:tabular-nums}.lv-map-range-track{position:relative;height:22px}.lv-map-range-rail,.lv-map-range-fill{position:absolute;top:7px;right:2px;left:2px;height:8px;border-radius:999px}.lv-map-range-rail{background:var(--lv-line-default,#d0d7de)}.lv-map-range-fill{right:auto;background:var(--lv-map-range-gradient);pointer-events:none}.lv-map-range-input{position:absolute;inset:0;width:100%;height:22px;margin:0;appearance:none;-webkit-appearance:none;background:transparent;outline:none;pointer-events:none}.lv-map-range-input::-webkit-slider-runnable-track{height:8px;background:transparent}.lv-map-range-input::-webkit-slider-thumb{width:10px;height:22px;margin-top:-7px;border:2px solid var(--lv-bg-panel,#fff);border-radius:5px;background:var(--lv-accent-emphasis,#0969da);box-shadow:0 0 0 1px var(--lv-line-accent,#0969da);appearance:none;-webkit-appearance:none;pointer-events:auto;cursor:ew-resize}.lv-map-range-input::-moz-range-track{height:8px;background:transparent}.lv-map-range-input::-moz-range-thumb{width:8px;height:18px;border:2px solid var(--lv-bg-panel,#fff);border-radius:5px;background:var(--lv-accent-emphasis,#0969da);box-shadow:0 0 0 1px var(--lv-line-accent,#0969da);pointer-events:auto;cursor:ew-resize}.lv-map-range-input:focus-visible::-webkit-slider-thumb{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:2px}.lv-map-range-input:focus-visible::-moz-range-thumb{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:2px}`
     this.accessibleTable = document.createElement('details')
@@ -836,7 +836,7 @@ export class MapLibreHandle implements RendererHandle {
     } else {
       summary.textContent = `View map data (${data.rows.length}${data.totalRows > data.rows.length ? ` of ${data.totalRows}` : ''} rows)`
     }
-    summary.style.cssText = 'padding:6px 8px;background:var(--lv-bg-panel,#fff);cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:nowrap'
+    summary.style.cssText = 'padding:6px 8px;background:var(--lv-bg-panel,#fff);cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:normal;overflow-wrap:anywhere;line-height:1.35'
     const table = document.createElement('table')
     table.style.cssText = 'border-collapse:collapse;min-width:100%;background:var(--lv-bg-panel,#fff)'
     const caption = document.createElement('caption')

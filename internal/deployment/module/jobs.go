@@ -37,11 +37,14 @@ type DeploymentCoordinator interface {
 }
 
 // JobConfig contains deployment-owned workflow ports. Authorization is a
-// consumer-defined port; schedule reconciliation is an explicit downstream
-// notification rather than repository reach-through.
+// consumer-defined port. ValidateActivation is the final deterministic
+// admission check before either activation coordinator can commit; schedule
+// reconciliation remains an explicit downstream notification rather than
+// repository reach-through.
 type JobConfig struct {
 	Coordinator         DeploymentCoordinator
 	Authorize           func(context.Context, string, string, string) error
+	ValidateActivation  func(context.Context, string) error
 	Reconcile           func(context.Context) error
 	ReconcileActivation func(context.Context, apiadapter.Deployment) error
 	Events              jobs.EventAppender
@@ -107,6 +110,11 @@ func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) 
 	activator, ok := m.jobs.Coordinator.(approvedPublicationActivator)
 	if !ok {
 		return fmt.Errorf("native approval activation coordinator is unavailable")
+	}
+	if m.jobs.ValidateActivation != nil {
+		if err := m.jobs.ValidateActivation(ctx, payload.GenerationID); err != nil {
+			return err
+		}
 	}
 	row, err := activator.ActivateApprovedPublication(ctx, payload.PublicationID, payload.PublicationActorID, payload.IdempotencyKey)
 	if err != nil {
@@ -222,6 +230,12 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	if !payload.Bootstrap && m.jobs.Authorize != nil {
 		if err := m.jobs.Authorize(ctx, payload.Actor, pending.Environment, pending.GenerationID); err != nil {
+			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
+			return err
+		}
+	}
+	if m.jobs.ValidateActivation != nil {
+		if err := m.jobs.ValidateActivation(ctx, pending.GenerationID); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 			return err
 		}
