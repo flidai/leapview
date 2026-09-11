@@ -269,6 +269,34 @@ func TestAssetVersionsStateDiscoversHistoryWhenCurrentHashIsMissing(t *testing.T
 	}
 }
 
+func TestAssetOverviewLoadsActiveVersionHistory(t *testing.T) {
+	h := &BrowserHandler{Environment: "dev", AssetVersions: browserAssetVersionsStub{versions: []servingstate.AssetVersion{
+		{ServingStateID: "state:current", ContentHash: "sha256:current"},
+		{ServingStateID: "state:old", ContentHash: "sha256:old"},
+	}}}
+	state, err := h.assetVersionsState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "model:sales", Type: string(projectview.AssetTypeModel), ContentHash: "sha256:current"}, "details")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Versions) != 2 {
+		t.Fatalf("asset overview versions = %#v, want active version history", state.Versions)
+	}
+}
+
+func TestLegacyPipelineReadModelAcceptsEmptyDefinition(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "pipeline:daily", Type: "pipeline", Key: "daily"}
+	definition := projectmanifest.ResourceManifest{
+		RefreshPipelines: map[string]refreshschedule.Definition{asset.ID: {}},
+	}
+	enriched, err := projectAssetReadModelFromDefinition(asset, definition, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.ID != asset.ID || enriched.Type != asset.Type || enriched.Key != asset.Key {
+		t.Fatalf("enriched pipeline = %#v, want original valid empty pipeline", enriched)
+	}
+}
+
 func TestAssetRefreshStateMapsPipelinePresentation(t *testing.T) {
 	finished := "2026-08-20T11:00:00Z"
 	next := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)

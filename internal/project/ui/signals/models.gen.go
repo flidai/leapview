@@ -83,6 +83,22 @@ type AssetLineageNodeSignal struct {
 	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty" yaml:"visibleUpstreamCount,omitempty"`
 }
 
+type AssetOverviewLinkSignal struct {
+	Href  string `json:"href" yaml:"href"`
+	Label string `json:"label" yaml:"label"`
+	Type  string `json:"type" yaml:"type"`
+}
+
+type AssetOverviewSignal struct {
+	ActiveVersion        *int64                    `json:"activeVersion,omitempty" yaml:"activeVersion,omitempty"`
+	DownstreamAssets     []AssetOverviewLinkSignal `json:"downstreamAssets" yaml:"downstreamAssets"`
+	Owner                *string                   `json:"owner,omitempty" yaml:"owner,omitempty"`
+	Pipelines            []AssetOverviewLinkSignal `json:"pipelines" yaml:"pipelines"`
+	Tags                 *[]string                 `json:"tags,omitempty" yaml:"tags,omitempty"`
+	UpstreamAssets       []AssetOverviewLinkSignal `json:"upstreamAssets" yaml:"upstreamAssets"`
+	UpstreamDatasetCount *int64                    `json:"upstreamDatasetCount,omitempty" yaml:"upstreamDatasetCount,omitempty"`
+}
+
 type AssetVersionDrawerSignal struct {
 	Open      bool   `json:"open" yaml:"open"`
 	VersionID string `json:"versionId" yaml:"versionId"`
@@ -1378,6 +1394,7 @@ type ResourceAssetDefinitionSignal struct {
 }
 
 type ResourceAssetDetailsSignal struct {
+	AssetOverview      *AssetOverviewSignal          `json:"assetOverview,omitempty" yaml:"assetOverview,omitempty"`
 	Overview           []DefinitionFactSignal        `json:"overview" yaml:"overview"`
 	Sections           []ResourceDetailSectionSignal `json:"sections" yaml:"sections"`
 	SemanticModelGraph *SemanticModelGraphSignal     `json:"semanticModelGraph,omitempty" yaml:"semanticModelGraph,omitempty"`

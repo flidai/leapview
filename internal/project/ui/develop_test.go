@@ -19,7 +19,7 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGraph(t *testing.T) {
+func TestSemanticModelDetailProjectionRendersDatasetsDimensionsMetricsRelationshipsAndGraph(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
 		Tables: map[string]semanticmodel.Table{
@@ -42,6 +42,14 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		Metrics: map[string]semanticmodel.Metric{
 			"order_count": {Dataset: "orders", Aggregation: "count_distinct", Label: "Orders", Input: &semanticmodel.MetricInput{Field: "orders.order_id"}},
 		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"customer": {
+				Label: "Customer", Datatype: semanticmodel.DataTypeString,
+				Bindings: map[string]semanticmodel.DimensionBinding{
+					"orders": {Field: "customers.customer_id", Path: []string{"orders_customer"}},
+				},
+			},
+		},
 		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
 			"orders": {Model: "orders"}, "customers": {Model: "customers"},
 		},
@@ -61,12 +69,20 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales",
 		Payload: projectview.SemanticModelAssetPayload(model, compiled),
 	}
-	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
-	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
-	if len(details.Sections) != 3 {
-		t.Fatalf("detail sections = %d, want datasets/metrics/relationships", len(details.Sections))
+	asset.Payload["metadata"] = map[string]any{"owner": "Finance", "tags": []string{"finance", "governed"}}
+	pipeline := projectview.DevelopAssetView{ID: "pipeline:sales-refresh", Type: "pipeline", Key: "sales-refresh", Title: "Sales refresh"}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:executive-sales", Type: string(projectview.AssetTypeDashboard), Key: "executive-sales", Title: "Executive Sales"}
+	assets := []projectview.DevelopAssetView{asset, pipeline, dashboard}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: pipeline.ID, ToAssetID: asset.ID, Type: "refreshes"},
+		{FromAssetID: asset.ID, ToAssetID: dashboard.ID, Type: "powers"},
 	}
-	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
+	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
+	details := projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, AssetRefreshState{}, AssetVersionsState{Versions: make([]AssetVersionState, 9)})
+	if len(details.Sections) != 4 {
+		t.Fatalf("detail sections = %d, want datasets/dimensions/metrics/relationships", len(details.Sections))
+	}
+	for _, want := range []string{"Datasets (2)", "Dimensions (1)", "Metrics (1)", "Relationships (1)"} {
 		found := false
 		for _, section := range details.Sections {
 			if section.Title == want {
@@ -80,6 +96,19 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	}
 	if details.SemanticModelGraph == nil || len(details.SemanticModelGraph.Nodes) != 2 || len(details.SemanticModelGraph.Edges) != 1 {
 		t.Fatalf("semantic graph = %#v, want two nodes and one edge", details.SemanticModelGraph)
+	}
+	overview := details.AssetOverview
+	if overview == nil || uisignals.ValueOrZero(overview.Owner) != "Finance" || !slices.Equal(uisignals.ValueOrZero(overview.Tags), []string{"finance", "governed"}) {
+		t.Fatalf("semantic overview metadata = %#v, want governed Finance metadata", overview)
+	}
+	if overview.ActiveVersion == nil || *overview.ActiveVersion != 9 || overview.UpstreamDatasetCount == nil || *overview.UpstreamDatasetCount != 2 {
+		t.Fatalf("semantic overview state = %#v, want version 9 and two datasets", overview)
+	}
+	if len(overview.Pipelines) != 1 || overview.Pipelines[0].Label != "Sales refresh" || overview.Pipelines[0].Href != "/pipelines/pipeline:sales-refresh/details" {
+		t.Fatalf("semantic overview pipelines = %#v", overview.Pipelines)
+	}
+	if len(overview.DownstreamAssets) != 1 || overview.DownstreamAssets[0].Label != "Executive Sales" || overview.DownstreamAssets[0].Href != "/dashboards/dashboard:executive-sales/details" {
+		t.Fatalf("semantic overview downstream = %#v", overview.DownstreamAssets)
 	}
 	var ordersNode *uisignals.SemanticModelGraphNodeSignal
 	for index := range details.SemanticModelGraph.Nodes {
@@ -117,13 +146,21 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	if aggregation := metricRow["aggregation"].(recordTableBadge).Label; aggregation != "count_distinct" {
 		t.Fatalf("metric aggregation = %#v, want count_distinct", aggregation)
 	}
+	dimensionTable := semanticDimensionsTable(asset.Payload)
+	if len(dimensionTable.Rows) != 1 {
+		t.Fatalf("dimension rows = %#v, want one row", dimensionTable.Rows)
+	}
+	dimensionRow := dimensionTable.Rows[0]
+	if dimensionRow["name"] != "customer" || dimensionRow["datasets"] != "orders" || dimensionRow["bindings"] != "customers.customer_id" {
+		t.Fatalf("dimension row = %#v, want semantic dimension bindings", dimensionRow)
+	}
 
 	bootstrap := ProjectAssetBootstrapSignalsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{})
 	encoded, err := json.Marshal(bootstrap)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Datasets (2)", "Metrics (1)", "Relationships (1)"} {
+	for _, want := range []string{"Datasets (2)", "Dimensions (1)", "Metrics (1)", "Relationships (1)"} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap JSON = %s, missing %q", encoded, want)
 		}
@@ -135,6 +172,50 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	dom := rendered.String()
 	if !strings.Contains(dom, "<lv-project-asset-page") || !strings.Contains(dom, "/static/semantic-model-graph.js") || !strings.Contains(dom, `create-dashboard-href="/dashboards/new?semanticModel=semantic%3Asales"`) {
 		t.Fatalf("semantic-model detail DOM missing route root or graph asset: %s", dom)
+	}
+	definitionPage := projectAssetPageSignalWithRefreshAndVersions(project, asset, []projectview.DevelopAssetView{asset}, nil, "definition", assetLineageModel{}, AssetRefreshState{}, AssetVersionsState{})
+	if definitionPage.Details == nil || definitionPage.Definition == nil {
+		t.Fatalf("semantic model definition page = %#v, want model details and authored source", definitionPage)
+	}
+	wantTabs := map[string]string{"details": "Overview", "definition": "Model", "data": "Explore"}
+	for _, tab := range definitionPage.Tabs {
+		if want, ok := wantTabs[tab.ID]; ok && tab.Label != want {
+			t.Fatalf("semantic model tab %q label = %q, want %q", tab.ID, tab.Label, want)
+		}
+	}
+}
+
+func TestSharedAssetOverviewCoversEveryTopLevelAssetType(t *testing.T) {
+	connection := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Title: "Warehouse"}
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders", Payload: map[string]any{"Connection": "warehouse"}}
+	model := projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders model", Payload: map[string]any{"Sources": []string{"orders"}}}
+	semantic := projectview.DevelopAssetView{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales", Payload: map[string]any{"Datasets": map[string]any{"orders": map[string]any{}}}}
+	dashboard := projectview.DevelopAssetView{ID: "dashboard:executive", Type: string(projectview.AssetTypeDashboard), Key: "executive", Title: "Executive", Payload: map[string]any{"SemanticModel": "sales"}}
+	pipeline := projectview.DevelopAssetView{ID: "pipeline:sales", Type: "pipeline", Key: "sales", Title: "Sales refresh", Payload: map[string]any{"SemanticModel": "sales"}}
+	assets := []projectview.DevelopAssetView{connection, source, model, semantic, dashboard, pipeline}
+	edges := []projectview.DevelopEdgeView{
+		{FromAssetID: source.ID, ToAssetID: connection.ID, Type: "uses_connection"},
+		{FromAssetID: model.ID, ToAssetID: source.ID, Type: "reads_source"},
+		{FromAssetID: semantic.ID, ToAssetID: model.ID, Type: "uses_model"},
+		{FromAssetID: dashboard.ID, ToAssetID: semantic.ID, Type: "uses_semantic_model"},
+	}
+	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
+	for _, asset := range assets {
+		details := projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, AssetRefreshState{}, AssetVersionsState{})
+		if details.AssetOverview == nil {
+			t.Fatalf("%s overview is nil", asset.Type)
+		}
+	}
+	sourceOverview := projectAssetDetailsSignalWithRefreshAndVersions(project, source, assets, edges, AssetRefreshState{}, AssetVersionsState{}).AssetOverview
+	if len(sourceOverview.UpstreamAssets) != 1 || sourceOverview.UpstreamAssets[0].Label != "Warehouse" {
+		t.Fatalf("source upstream = %#v, want Warehouse", sourceOverview.UpstreamAssets)
+	}
+	if len(sourceOverview.DownstreamAssets) != 1 || sourceOverview.DownstreamAssets[0].Label != "Orders model" {
+		t.Fatalf("source downstream = %#v, want Orders model", sourceOverview.DownstreamAssets)
+	}
+	pipelineOverview := projectAssetDetailsSignalWithRefreshAndVersions(project, pipeline, assets, edges, AssetRefreshState{}, AssetVersionsState{}).AssetOverview
+	if len(pipelineOverview.UpstreamAssets) != 1 || pipelineOverview.UpstreamAssets[0].Label != "Sales" {
+		t.Fatalf("pipeline upstream = %#v, want Sales semantic model", pipelineOverview.UpstreamAssets)
 	}
 }
 
@@ -406,8 +487,11 @@ func TestAuthoredAssetsExposeDefinitionTabWithStableSectionHref(t *testing.T) {
 		{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Payload: map[string]any{"Configuration": "kind: Pipeline\n"}},
 	} {
 		page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "definition", assetLineageModel{})
-		if page.ActiveSection != "definition" || page.Definition == nil {
-			t.Fatalf("%s page = %#v, want active definition payload", asset.Type, page)
+		if page.ActiveSection != "definition" || page.Definition == nil || page.Details == nil {
+			t.Fatalf("%s page = %#v, want authored source and structured definition payloads", asset.Type, page)
+		}
+		if len(page.Tabs) == 0 || page.Tabs[0].ID != "details" || page.Tabs[0].Label != "Overview" {
+			t.Fatalf("%s tabs = %#v, want Overview as the stable first tab", asset.Type, page.Tabs)
 		}
 		found := false
 		for _, tab := range page.Tabs {
@@ -428,8 +512,11 @@ func TestAuthoredAssetsExposeDefinitionTabWithStableSectionHref(t *testing.T) {
 	}
 	connection := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Payload: map[string]any{"Configuration": "kind: Connection\n"}}
 	page := connectionAssetPageSignal(projectview.DevelopView{ID: "project:test"}, connection, []projectview.DevelopAssetView{connection}, nil, "definition", assetLineageModel{})
-	if page.ActiveSection != "definition" || page.Definition == nil {
-		t.Fatalf("connection page = %#v, want active redacted definition payload", page)
+	if page.ActiveSection != "definition" || page.Definition == nil || page.Details == nil {
+		t.Fatalf("connection page = %#v, want active redacted source and structured definition payloads", page)
+	}
+	if len(page.Tabs) == 0 || page.Tabs[0].Label != "Overview" {
+		t.Fatalf("connection tabs = %#v, want Overview as the stable first tab", page.Tabs)
 	}
 	if len(page.Tabs) < 2 || page.Tabs[1].ID != "definition" || !page.Tabs[1].Active || !strings.HasSuffix(page.Tabs[1].Href, "/definition") {
 		t.Fatalf("connection tabs = %#v, want active stable definition tab", page.Tabs)
@@ -495,7 +582,7 @@ func TestDashboardDetailOwnsAppearanceSignalAndTypedCommand(t *testing.T) {
 	}
 }
 
-func TestDashboardDetailUsesCompiledDefinitionAndShowsPublications(t *testing.T) {
+func TestDashboardDetailUsesCompiledDefinitionWithoutTargetOwnedPublications(t *testing.T) {
 	asset := projectview.DevelopAssetView{
 		ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Title: "Sales",
 		Payload: map[string]any{
@@ -510,7 +597,7 @@ func TestDashboardDetailUsesCompiledDefinitionAndShowsPublications(t *testing.T)
 	if got := factValue(details.Overview, "Semantic model"); got != "semantic:sales" {
 		t.Fatalf("semantic model fact = %q, want semantic:sales", got)
 	}
-	for _, want := range []string{"Pages (1)", "Filters (1)", "Visuals (1)", "Publications (1)"} {
+	for _, want := range []string{"Pages (1)", "Filters (1)", "Visuals (1)"} {
 		found := false
 		for _, section := range details.Sections {
 			if section.Title == want {
@@ -522,9 +609,8 @@ func TestDashboardDetailUsesCompiledDefinitionAndShowsPublications(t *testing.T)
 			t.Fatalf("dashboard sections = %#v, missing %q", details.Sections, want)
 		}
 	}
-	publicationTable := details.Sections[3].Table
-	if len(publicationTable.Rows) != 1 || publicationTable.Rows[0]["publication"] != "publication:website" || publicationTable.Rows[0]["default_page"] != "overview" {
-		t.Fatalf("publication rows = %#v, want configured publication", publicationTable.Rows)
+	if len(details.Sections) != 3 {
+		t.Fatalf("dashboard sections = %#v, want only authored structure; publications are target-owned", details.Sections)
 	}
 	pagesTable := details.Sections[0].Table
 	if pagesTable.Rows[0]["pageHref"] != nil || pagesTable.Columns[0].Kind != nil || pagesTable.Columns[0].HrefKey != nil {

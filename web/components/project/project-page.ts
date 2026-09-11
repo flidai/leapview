@@ -22,6 +22,8 @@ import type {
   ResourceDetailSectionSignal,
   ResourcePageSignal,
   ResourceTabSignal,
+  AssetOverviewLinkSignal,
+  AssetOverviewSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { assetPresentation } from '../shared/asset-presentation'
@@ -104,6 +106,16 @@ type AssetVersionDrawerRow = Record<string, unknown> & {
   previousVersion?: string
   changes?: string
   changesSummary?: string
+}
+
+type SemanticModelView = 'diagram' | 'datasets' | 'dimensions' | 'metrics' | 'relationships' | 'source'
+
+type AssetDefinitionView = {
+  id: string
+  label: string
+  count?: number
+  kind: 'section' | 'settings' | 'source'
+  section?: ResourceDetailSectionSignal
 }
 
 class LeapViewProjectPage extends DatastarLit(LitElement) {
@@ -230,6 +242,12 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-dashboard-href' }) createDashboardHref = ''
+  @state() private semanticModelView: SemanticModelView = 'diagram'
+  @state() private semanticObjectQuery = ''
+  @state() private assetDefinitionView = ''
+  @state() private assetDefinitionQuery = ''
+  private semanticModelPageKey = ''
+  private assetDefinitionPageKey = ''
   private modelFieldDrawerPageKey = ''
   private pushedModelFieldDrawerEntry = false
   private refreshRunDrawerPageKey = ''
@@ -246,19 +264,38 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     window.addEventListener('popstate', this.syncModelFieldDrawerFromLocation)
     window.addEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
     window.addEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
+    window.addEventListener('popstate', this.syncSemanticModelViewFromLocation)
+    window.addEventListener('popstate', this.syncAssetDefinitionViewFromLocation)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('popstate', this.syncModelFieldDrawerFromLocation)
     window.removeEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
     window.removeEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
+    window.removeEventListener('popstate', this.syncSemanticModelViewFromLocation)
+    window.removeEventListener('popstate', this.syncAssetDefinitionViewFromLocation)
     super.disconnectedCallback()
   }
 
   updated(): void {
     checkSignalContract('project asset page', this.page, { title: 'required', breadcrumbs: 'required', tabs: 'required' })
     const page = this.page
-    const drawerPageKey = page?.asset.type === 'model' && page.activeSection === 'details'
+    const semanticModelPageKey = page?.asset.type === 'semantic_model' && page.activeSection === 'definition' ? page.asset.id : ''
+    if (semanticModelPageKey && semanticModelPageKey !== this.semanticModelPageKey) {
+      this.semanticModelPageKey = semanticModelPageKey
+      this.semanticModelView = semanticModelViewFromLocation(true, semanticModelPageKey)
+      rememberSemanticModelView(semanticModelPageKey, this.semanticModelView)
+      this.semanticObjectQuery = ''
+    }
+    const assetDefinitionPageKey = page?.asset.type !== 'semantic_model' && page?.activeSection === 'definition'
+      ? page.asset.id
+      : ''
+    if (page && assetDefinitionPageKey && assetDefinitionPageKey !== this.assetDefinitionPageKey) {
+      this.assetDefinitionPageKey = assetDefinitionPageKey
+      this.assetDefinitionView = assetDefinitionViewFromLocation(assetDefinitionViews(page))
+      this.assetDefinitionQuery = ''
+    }
+    const drawerPageKey = page?.asset.type === 'model' && page.activeSection === 'definition'
       ? page.asset.detailHref
       : ''
     if (drawerPageKey && drawerPageKey !== this.modelFieldDrawerPageKey) {
@@ -483,7 +520,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private selectedModelField(page: ResourceAssetPageSignal): ModelFieldDrawerRow | null {
-    if (page.asset.type !== 'model' || page.activeSection !== 'details') return null
+    if (page.asset.type !== 'model' || page.activeSection !== 'definition') return null
     const drawer = this.modelFieldDrawer
     const fieldKey = drawer.fieldKey.trim()
     if (!drawer.open || !fieldKey) return null
@@ -678,7 +715,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs)}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'details' && page.details?.semanticModelGraph ? 'section-body graph-details-body' : 'section-body'}>
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.asset.type === 'semantic_model' && (page.activeSection === 'details' || page.activeSection === 'definition') ? 'section-body semantic-model-body' : 'section-body'}>
             ${this.renderSection(page)}
           </div>
         </div>
@@ -737,26 +774,192 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderDetails(page: ResourceAssetPageSignal) {
+    const details = page.details
+    const isSemanticModel = page.asset.type === 'semantic_model'
+    const modelHref = page.tabs.find((tab) => tab.id === 'definition')?.href ?? '#'
+    const refreshHref = page.tabs.find((tab) => tab.id === 'refreshes')?.href ?? '#'
+    const versionsHref = page.tabs.find((tab) => tab.id === 'versions')?.href ?? '#'
+    const lineageHref = page.tabs.find((tab) => tab.id === 'lineage')?.href ?? '#'
     return html`
-      <section class="details" id="details" aria-label="Asset details">
-        ${page.details?.semanticModelGraph ? renderSemanticModelGraph(page.details.semanticModelGraph, page) : nothing}
-        <div class="details-content">
-		  ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
-          ${renderFacts('Overview', page.details?.overview ?? [], true)}
-          ${(page.details?.sections ?? []).map(renderDetailSection)}
+      <section class="details semantic-model-details-page" id="details" aria-label="Asset details">
+        <div class="details-content semantic-model-overview">
+          ${renderAssetOverview(details?.overview ?? [], details?.assetOverview, refreshHref, versionsHref)}
+          ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
+          ${renderAssetContents(details?.sections ?? [], page.asset.type, modelHref)}
+          ${renderAssetImpact(details?.assetOverview, lineageHref, isSemanticModel)}
         </div>
       </section>
     `
   }
 
   private renderDefinition(page: ResourceAssetPageSignal) {
+    if (page.asset.type === 'semantic_model' && page.details?.semanticModelGraph) {
+      return this.renderSemanticModelView(page)
+    }
+    return this.renderStructuredDefinition(page)
+  }
+
+  private selectAssetDefinitionView(view: string): void {
+    if (view === this.assetDefinitionView && new URL(window.location.href).searchParams.get('view') === view) return
+    this.assetDefinitionView = view
+    this.assetDefinitionQuery = ''
+    updateURLSearchParameter('view', view, 'push')
+  }
+
+  private syncAssetDefinitionViewFromLocation = (): void => {
+    const page = this.page
+    if (!page || page.asset.type === 'semantic_model' || page.activeSection !== 'definition') return
+    this.assetDefinitionView = assetDefinitionViewFromLocation(assetDefinitionViews(page))
+    this.assetDefinitionQuery = ''
+  }
+
+  private renderStructuredDefinition(page: ResourceAssetPageSignal) {
+    const views = assetDefinitionViews(page)
+    const selected = views.find((view) => view.id === this.assetDefinitionView) ?? views[0]
+    const table = filterRecordTable(selected?.section?.table, this.assetDefinitionQuery)
+    return html`
+      <section class="semantic-model-view asset-definition-view" id="definition" aria-label="Definition">
+        <header class="semantic-model-toolbar">
+          <h2>Definition</h2>
+        </header>
+        <div class="semantic-model-layout">
+          <nav class="semantic-model-navigation" aria-label="Definition views">
+            <span class="semantic-model-navigation-label">Structure</span>
+            ${views.filter((view) => view.kind !== 'source').map((view) => renderAssetDefinitionNavigationItem(
+              view,
+              selected?.id ?? '',
+              (id) => this.selectAssetDefinitionView(id),
+            ))}
+            <span class="semantic-model-navigation-separator" aria-hidden="true"></span>
+            ${views.filter((view) => view.kind === 'source').map((view) => renderAssetDefinitionNavigationItem(
+              view,
+              selected?.id ?? '',
+              (id) => this.selectAssetDefinitionView(id),
+            ))}
+          </nav>
+          <div class="semantic-model-content">
+            ${selected?.kind === 'source'
+              ? this.renderDefinitionSource(page, true)
+              : selected?.kind === 'settings'
+                  ? html`<div class="semantic-object-list">${renderFacts('Settings', definitionSettingsFacts(page.details?.overview ?? []), false)}</div>`
+                  : selected?.section
+                    ? html`
+                      <div class="semantic-object-list">
+                        <div class="semantic-object-list-header">
+                          <div>
+                            <h2>${semanticSectionName(selected.section.title)}</h2>
+                            <p>${detailSectionCount(selected.section)} objects</p>
+                          </div>
+                          ${selected.section.table?.rows?.length
+                            ? html`
+                              <label class="semantic-object-search-wrap">
+                                <span class="visually-hidden">Search ${semanticSectionName(selected.section.title).toLowerCase()}</span>
+                                ${lucideIcon(Search, { size: 16 })}
+                                <input
+                                  class="semantic-object-search"
+                                  type="search"
+                                  placeholder="Search ${semanticSectionName(selected.section.title).toLowerCase()}…"
+                                  .value=${this.assetDefinitionQuery}
+                                  @input=${(event: Event) => { this.assetDefinitionQuery = (event.currentTarget as HTMLInputElement).value }}
+                                />
+                              </label>
+                            `
+                            : nothing}
+                        </div>
+                        ${selected.section.table?.columns?.length
+                          ? html`<lv-record-table .table=${table ?? null}></lv-record-table>`
+                          : renderDetailSection(selected.section)}
+                      </div>
+                    `
+                    : html`<div class="empty">No structured definition is available.</div>`}
+          </div>
+        </div>
+      </section>
+    `
+  }
+
+  private selectSemanticModelView(view: SemanticModelView): void {
+    if (view === this.semanticModelView && new URL(window.location.href).searchParams.get('view') === view) return
+    this.semanticModelView = view
+    this.semanticObjectQuery = ''
+    updateURLSearchParameter('view', view, 'push')
+    rememberSemanticModelView(this.semanticModelPageKey, view)
+  }
+
+  private syncSemanticModelViewFromLocation = (): void => {
+    const page = this.page
+    if (page?.asset.type !== 'semantic_model' || page.activeSection !== 'definition') return
+    this.semanticModelView = semanticModelViewFromLocation(false, page.asset.id)
+    rememberSemanticModelView(page.asset.id, this.semanticModelView)
+    this.semanticObjectQuery = ''
+  }
+
+  private renderSemanticModelView(page: ResourceAssetPageSignal) {
+    const sections = page.details?.sections ?? []
+    const selectedSection = sections.find((section) => semanticSectionSlug(section.title) === this.semanticModelView)
+    const table = filterRecordTable(selectedSection?.table, this.semanticObjectQuery)
+    return html`
+      <section class="semantic-model-view" id="definition" aria-label="Model">
+        <header class="semantic-model-toolbar">
+          <h2>Model</h2>
+        </header>
+        <div class="semantic-model-layout">
+          <nav class="semantic-model-navigation" aria-label="Model views">
+            ${renderSemanticModelNavigationItem('diagram', 'Diagram', undefined, this.semanticModelView, (view) => this.selectSemanticModelView(view))}
+            <span class="semantic-model-navigation-label">Objects</span>
+            ${sections.map((section) => renderSemanticModelNavigationItem(
+              semanticSectionSlug(section.title),
+              semanticSectionName(section.title),
+              section.table?.rows?.length ?? 0,
+              this.semanticModelView,
+              (view) => this.selectSemanticModelView(view),
+            ))}
+            <span class="semantic-model-navigation-separator" aria-hidden="true"></span>
+            ${renderSemanticModelNavigationItem('source', 'Source', undefined, this.semanticModelView, (view) => this.selectSemanticModelView(view))}
+          </nav>
+          <div class="semantic-model-content">
+            ${this.semanticModelView === 'diagram'
+              ? renderSemanticModelGraph(page.details!.semanticModelGraph!, page)
+              : this.semanticModelView === 'source'
+                ? this.renderDefinitionSource(page, true)
+                : selectedSection
+                  ? html`
+                    <div class="semantic-object-list">
+                      <div class="semantic-object-list-header">
+                        <div>
+                          <h2>${semanticSectionName(selectedSection.title)}</h2>
+                          <p>${selectedSection.table?.rows?.length ?? 0} objects</p>
+                        </div>
+                        <label class="semantic-object-search-wrap">
+                          <span class="visually-hidden">Search ${semanticSectionName(selectedSection.title).toLowerCase()}</span>
+                          ${lucideIcon(Search, { size: 16 })}
+                          <input
+                            class="semantic-object-search"
+                            type="search"
+                            placeholder="Search ${semanticSectionName(selectedSection.title).toLowerCase()}…"
+                            .value=${this.semanticObjectQuery}
+                            @input=${(event: Event) => { this.semanticObjectQuery = (event.currentTarget as HTMLInputElement).value }}
+                          />
+                        </label>
+                      </div>
+                      <lv-record-table .table=${table ?? null}></lv-record-table>
+                    </div>
+                  `
+                  : html`<div class="empty">This model view is unavailable.</div>`}
+          </div>
+        </div>
+      </section>
+    `
+  }
+
+  private renderDefinitionSource(page: ResourceAssetPageSignal, embedded = false) {
     const sections = page.definition?.sections ?? []
     const configuration = sections.find((section) => section.lang === 'yaml' || section.lang === 'json' || section.title.toLowerCase() === 'configuration')
     const transform = sections.find((section) => section.lang === 'sql' || section.title.toLowerCase() === 'sql' || section.title.toLowerCase() === 'transform')
     const otherSections = sections.filter((section) => section !== configuration && section !== transform)
     const fallbackSections = otherSections.length > 0 ? otherSections : configuration?.code ? [] : sections
     return html`
-      <section class="details definition" id="definition" aria-label="Asset definition">
+      <section class=${embedded ? 'details definition semantic-model-source' : 'details definition'} id=${embedded ? 'model-source' : 'definition'} aria-label="Asset definition">
         <div class="details-content">
           ${configuration?.code
             ? html`<section class="detail-section configuration-section" aria-label="Configuration">
@@ -904,16 +1107,17 @@ function renderTabs(tabs: ResourceTabSignal[], label = 'Asset sections') {
 }
 
 function renderDetailSection(section: ResourceDetailSectionSignal) {
+  const id = detailSectionID(section.title)
   if (section.code) {
     return html`
-      <section class="detail-section" aria-label=${section.title}>
+      <section class="detail-section" id=${id} aria-label=${section.title}>
         <h2>${section.title}</h2>
         <lv-code-block language=${section.lang || 'text'} .code=${section.code}></lv-code-block>
       </section>
     `
   }
-  if (section.table?.columns?.length) return renderRecordTableSection(section.title, section.table)
-  return renderFacts(section.title, section.facts ?? [], false)
+  if (section.table?.columns?.length) return renderRecordTableSection(section.title, section.table, id)
+  return renderFacts(section.title, section.facts ?? [], false, id)
 }
 
 function renderSemanticModelGraph(graph: NonNullable<NonNullable<ResourceAssetPageSignal['details']>['semanticModelGraph']>, page: ResourceAssetPageSignal) {
@@ -924,10 +1128,402 @@ function renderSemanticModelGraph(graph: NonNullable<NonNullable<ResourceAssetPa
   `
 }
 
-function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boolean) {
+function semanticSectionName(title: string): string {
+  return title.replace(/\s*\(\d+\)\s*$/, '').trim()
+}
+
+function semanticSectionSlug(title: string): SemanticModelView {
+  const value = semanticSectionName(title).toLowerCase()
+  return isSemanticModelView(value) ? value : 'datasets'
+}
+
+function assetDefinitionSlug(title: string): string {
+  return semanticSectionName(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function assetDefinitionViews(page: ResourceAssetPageSignal): AssetDefinitionView[] {
+  const views: AssetDefinitionView[] = []
+  for (const section of page.details?.sections ?? []) {
+    if (semanticSectionName(section.title).toLowerCase() === 'publications') continue
+    views.push({
+      id: assetDefinitionSlug(section.title),
+      label: semanticSectionName(section.title),
+      count: detailSectionCount(section),
+      kind: 'section',
+      section,
+    })
+  }
+  if (page.asset.type === 'connection' || page.asset.type === 'refresh_pipeline' || page.asset.type === 'pipeline') {
+    views.push({ id: 'settings', label: 'Settings', kind: 'settings' })
+  }
+  views.push({ id: 'source', label: 'Source', kind: 'source' })
+  return views
+}
+
+function assetDefinitionViewFromLocation(views: AssetDefinitionView[]): string {
+  const requested = new URL(window.location.href).searchParams.get('view')
+  if (requested && views.some((view) => view.id === requested)) return requested
+  return views[0]?.id ?? 'source'
+}
+
+function renderAssetDefinitionNavigationItem(
+  view: AssetDefinitionView,
+  activeView: string,
+  onSelect: (view: string) => void,
+) {
+  return html`
+    <button
+      type="button"
+      class="semantic-model-nav-item"
+      data-definition-view=${view.id}
+      data-active=${String(activeView === view.id)}
+      aria-pressed=${String(activeView === view.id)}
+      @click=${() => onSelect(view.id)}
+    >
+      <span>${view.label}</span>
+      ${view.count === undefined ? nothing : html`<strong>${view.count}</strong>`}
+    </button>
+  `
+}
+
+function definitionSettingsFacts(facts: DefinitionFactSignal[]): DefinitionFactSignal[] {
+  const overviewOnly = new Set([
+    'Type', 'Key', 'Description', 'Refresh status', 'Last refreshed', 'Refresh guidance',
+    'Next run', 'Current data version', 'Serving state', 'Rows', 'Physical size',
+    'Data files', 'DuckLake snapshot', 'Schema status', 'Schema observed at',
+  ])
+  return facts.filter((fact) => !overviewOnly.has(fact.label))
+}
+
+function isSemanticModelView(value: string | null): value is SemanticModelView {
+  return value === 'diagram'
+    || value === 'datasets'
+    || value === 'dimensions'
+    || value === 'metrics'
+    || value === 'relationships'
+    || value === 'source'
+}
+
+function semanticModelViewStorageKey(assetID: string): string {
+  return `leapview:semantic-model:${assetID}:view`
+}
+
+function semanticModelViewFromLocation(useStoredFallback: boolean, assetID: string): SemanticModelView {
+  const requested = new URL(window.location.href).searchParams.get('view')
+  if (isSemanticModelView(requested)) return requested
+  if (useStoredFallback) {
+    try {
+      const stored = window.localStorage.getItem(semanticModelViewStorageKey(assetID))
+      if (isSemanticModelView(stored)) return stored
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+  }
+  return 'diagram'
+}
+
+function rememberSemanticModelView(assetID: string, view: SemanticModelView): void {
+  if (!assetID) return
+  try {
+    window.localStorage.setItem(semanticModelViewStorageKey(assetID), view)
+  } catch {
+    // Navigation still works when persistent browser storage is unavailable.
+  }
+}
+
+function renderSemanticModelNavigationItem(
+  view: SemanticModelView,
+  label: string,
+  count: number | undefined,
+  activeView: SemanticModelView,
+  onSelect: (view: SemanticModelView) => void,
+) {
+  return html`
+    <button
+      type="button"
+      class="semantic-model-nav-item"
+      data-model-view=${view}
+      data-active=${String(activeView === view)}
+      aria-pressed=${String(activeView === view)}
+      @click=${() => onSelect(view)}
+    >
+      <span>${label}</span>
+      ${count === undefined ? nothing : html`<strong>${count}</strong>`}
+    </button>
+  `
+}
+
+function semanticModelViewHref(modelHref: string, view: SemanticModelView): string {
+  const separator = modelHref.includes('?') ? '&' : '?'
+  return `${modelHref}${separator}view=${encodeURIComponent(view)}`
+}
+
+function assetDefinitionViewHref(definitionHref: string, view: string): string {
+  const separator = definitionHref.includes('?') ? '&' : '?'
+  return `${definitionHref}${separator}view=${encodeURIComponent(view)}`
+}
+
+function overviewFact(facts: DefinitionFactSignal[], label: string): DefinitionFactSignal | undefined {
+  return facts.find((fact) => fact.label === label && fact.value?.trim())
+}
+
+function semanticRefreshTone(status: string): 'success' | 'warning' | 'danger' | 'muted' {
+  switch (status.trim().toLowerCase()) {
+    case 'succeeded':
+    case 'success':
+    case 'available':
+      return 'success'
+    case 'warning':
+    case 'caution':
+      return 'warning'
+    case 'failed':
+    case 'failure':
+    case 'unavailable':
+      return 'danger'
+    default:
+      return 'muted'
+  }
+}
+
+function semanticRefreshLabel(status: string): string {
+  const normalized = status.trim().replace(/[_-]+/g, ' ')
+  if (!normalized) return 'Unknown'
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1)
+}
+
+function semanticRefreshDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function semanticRelativeDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const difference = date.getTime() - Date.now()
+  const absolute = Math.abs(difference)
+  if (absolute < 45_000) return 'just now'
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['year', 365 * 24 * 60 * 60 * 1000],
+    ['month', 30 * 24 * 60 * 60 * 1000],
+    ['day', 24 * 60 * 60 * 1000],
+    ['hour', 60 * 60 * 1000],
+    ['minute', 60 * 1000],
+  ]
+  const [unit, milliseconds] = units.find(([, threshold]) => absolute >= threshold) ?? units[units.length - 1]
+  return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(Math.round(difference / milliseconds), unit)
+}
+
+function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? singular : plural}`
+}
+
+function renderAssetOverview(
+  facts: DefinitionFactSignal[],
+  overview: AssetOverviewSignal | undefined,
+  refreshHref: string,
+  versionsHref: string,
+) {
+  const key = overviewFact(facts, 'Key')
+  const description = overviewFact(facts, 'Description')
+  const refreshStatus = overviewFact(facts, 'Refresh status')
+  const lastRefreshed = overviewFact(facts, 'Last refreshed')
+  const refreshGuidance = overviewFact(facts, 'Refresh guidance')
+  const owner = overview?.owner ?? overviewFact(facts, 'Owner')?.value
+  const tags = overview?.tags?.length
+    ? overview.tags
+    : (overviewFact(facts, 'Tags')?.value ?? '').split(',').map((tag) => tag.trim()).filter(Boolean)
+  const reservedLabels = new Set(['Type', 'Key', 'Description', 'Owner', 'Tags', 'Refresh status', 'Last refreshed', 'Refresh guidance'])
+  const operationalFacts = facts.filter((fact) => fact.value?.trim() && !reservedLabels.has(fact.label))
+  const status = refreshStatus?.value ?? ''
+  return html`
+    <div class="semantic-overview-panels">
+      <section class="semantic-overview-panel semantic-overview-about" aria-label="About">
+        <h2>About</h2>
+        <p class="semantic-overview-description">${description?.value ?? 'No description has been provided.'}</p>
+        ${key ? html`
+          <dl class="semantic-overview-properties">
+            <div class="semantic-overview-key">
+              <dt>Key</dt>
+              <dd><code>${key.value}</code></dd>
+            </div>
+            ${owner ? html`
+              <div class="semantic-overview-owner">
+                <dt>Owner</dt>
+                <dd>${owner}</dd>
+              </div>
+            ` : nothing}
+            ${tags.length ? html`
+              <div class="semantic-overview-tags">
+                <dt>Tags</dt>
+                <dd>${tags.map((tag) => html`<span class="semantic-overview-tag">${tag}</span>`)}</dd>
+              </div>
+            ` : nothing}
+          </dl>
+        ` : nothing}
+      </section>
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Operational state">
+        <h2>Operational state</h2>
+        <dl class="semantic-overview-properties">
+          ${refreshStatus ? html`
+            <div class="semantic-overview-refresh-status">
+              <dt>Refresh status</dt>
+              <dd data-tone=${semanticRefreshTone(status)}>
+                <span class="semantic-overview-status-dot" aria-hidden="true"></span>
+                <strong>${semanticRefreshLabel(status)}</strong>
+              </dd>
+            </div>
+          ` : nothing}
+          ${overview?.pipelines.length ? html`
+            <div class="semantic-overview-pipeline-row">
+              <dt>Pipeline</dt>
+              <dd>
+                <a class="semantic-overview-pipeline" href=${overview.pipelines[0].href}>${overview.pipelines[0].label}</a>
+                ${overview.pipelines.length > 1 ? html`<span class="semantic-overview-more">+${overview.pipelines.length - 1} more</span>` : nothing}
+              </dd>
+            </div>
+          ` : nothing}
+          ${lastRefreshed ? html`
+            <div class="semantic-overview-last-refreshed">
+              <dt>Last refreshed</dt>
+              <dd><time datetime=${lastRefreshed.value} title=${semanticRefreshDate(lastRefreshed.value)}>${semanticRelativeDate(lastRefreshed.value)}</time></dd>
+            </div>
+          ` : nothing}
+          ${overview?.activeVersion !== undefined ? html`
+            <div class="semantic-overview-version">
+              <dt>Version</dt>
+              <dd>${overview.activeVersion}</dd>
+            </div>
+          ` : nothing}
+          ${operationalFacts.map((fact) => html`
+            <div class=${fact.label.toLowerCase().includes('status') ? 'semantic-overview-generic-status' : ''}>
+              <dt>${fact.label}</dt>
+              <dd>${fact.code ? html`<code>${fact.value}</code>` : fact.value}</dd>
+            </div>
+          `)}
+        </dl>
+        ${refreshGuidance ? html`<p class="semantic-overview-guidance">${refreshGuidance.value}</p>` : nothing}
+        <div class="semantic-overview-actions">
+          ${refreshHref === '#' ? nothing : html`<a class="semantic-overview-refresh-link" href=${refreshHref}>Refresh history</a>`}
+          ${versionsHref === '#' || overview?.activeVersion === undefined ? nothing : html`<a class="semantic-overview-version-link" href=${versionsHref}>View version</a>`}
+        </div>
+      </section>
+    </div>
+  `
+}
+
+function renderAssetContents(sections: ResourceDetailSectionSignal[], assetType: string, modelHref: string) {
+  if (!sections.length) return nothing
+  const isSemanticModel = assetType === 'semantic_model'
+  const title = isSemanticModel ? 'Model contents' : `${assetTypeLabelForOverview(assetType)} contents`
+  return html`
+    <section class="semantic-model-summary" aria-label="Asset contents">
+      <div class="semantic-model-summary-heading">
+        <div>
+          <h2>${title}</h2>
+          <p>${assetContentsDescription(assetType)}</p>
+        </div>
+      </div>
+      <div class="semantic-summary-cards">
+        ${sections.map((section) => html`
+          <a
+            class=${`semantic-summary-card ${isSemanticModel ? 'semantic-overview-model-link' : 'asset-overview-content-link'}`}
+            href=${isSemanticModel ? semanticModelViewHref(modelHref, semanticSectionSlug(section.title)) : assetDefinitionViewHref(modelHref, assetDefinitionSlug(section.title))}
+          >
+            <span>${semanticSectionName(section.title)}</span>
+            <strong>${detailSectionCount(section)}</strong>
+          </a>
+        `)}
+      </div>
+    </section>
+  `
+}
+
+function assetTypeLabelForOverview(assetType: string): string {
+  return assetType.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ')
+}
+
+function assetContentsDescription(assetType: string): string {
+  switch (assetType) {
+    case 'source': return 'Review the discovered fields available from this source.'
+    case 'model': return 'Review the governed entities and fields in this model.'
+    case 'semantic_model': return 'Browse the governed objects and relationships in this semantic model.'
+    case 'dashboard': return 'Review the pages, filters, and visuals in this dashboard.'
+    case 'connection': return 'Review the sources that use this connection.'
+    default: return 'Review the configured contents of this asset.'
+  }
+}
+
+function detailSectionCount(section: ResourceDetailSectionSignal): number {
+  const match = section.title.match(/\((\d+)\)\s*$/)
+  return match ? Number(match[1]) : section.table?.rows?.length ?? 0
+}
+
+function detailSectionID(title: string): string {
+  return `detail-section-${assetDefinitionSlug(title)}`
+}
+
+function groupedAssetCounts(assets: AssetOverviewLinkSignal[]): string[] {
+  const counts = new Map<string, number>()
+  for (const asset of assets) counts.set(asset.type, (counts.get(asset.type) ?? 0) + 1)
+  return Array.from(counts.entries()).map(([type, count]) => countLabel(count, type.toLowerCase()))
+}
+
+function renderImpactAssetLinks(assets: AssetOverviewLinkSignal[], className: string) {
+  if (!assets.length) return nothing
+  const visible = assets.slice(0, 3)
+  return html`
+    <ul class="semantic-overview-downstream-assets">
+      ${visible.map((asset) => html`<li><a class=${className} href=${asset.href}>${asset.label}</a></li>`)}
+    </ul>
+    ${assets.length > visible.length ? html`<span class="semantic-overview-more">+${assets.length - visible.length} more</span>` : nothing}
+  `
+}
+
+function renderAssetImpact(overview: AssetOverviewSignal | undefined, lineageHref: string, isSemanticModel: boolean) {
+  if (!overview) return nothing
+  const upstreamFacts = isSemanticModel && overview.upstreamDatasetCount !== undefined
+    ? [countLabel(overview.upstreamDatasetCount, 'governed dataset'), countLabel(overview.pipelines.length, 'refresh pipeline')]
+    : groupedAssetCounts(overview.upstreamAssets)
+  const downstreamFacts = groupedAssetCounts(overview.downstreamAssets)
+  return html`
+    <section class="semantic-overview-impact-grid" aria-label="Lineage summary">
+      <article class="semantic-overview-impact semantic-overview-upstream">
+        <h2>Upstream</h2>
+        ${upstreamFacts.length
+          ? upstreamFacts.map((fact) => html`<p class="semantic-overview-impact-fact">${fact}</p>`)
+          : html`<p class="semantic-overview-empty-impact">No upstream dependencies.</p>`}
+        ${isSemanticModel ? nothing : renderImpactAssetLinks(overview.upstreamAssets, 'semantic-overview-upstream-asset')}
+        ${lineageHref === '#' ? nothing : html`<a class="semantic-overview-lineage-link" href=${lineageHref}>View lineage</a>`}
+      </article>
+      <article class="semantic-overview-impact semantic-overview-downstream">
+        <h2>Downstream impact</h2>
+        ${downstreamFacts.length
+          ? downstreamFacts.map((fact) => html`<p class="semantic-overview-impact-fact">${fact}</p>`)
+          : html`<p class="semantic-overview-empty-impact">No downstream assets.</p>`}
+        ${renderImpactAssetLinks(overview.downstreamAssets, 'semantic-overview-downstream-asset')}
+        ${lineageHref === '#' ? nothing : html`<a class="semantic-overview-downstream-link" href=${lineageHref}>View downstream lineage</a>`}
+      </article>
+    </section>
+  `
+}
+
+function filterRecordTable(table: RecordTableSignal | undefined, query: string): RecordTableSignal | undefined {
+  if (!table || !query.trim()) return table
+  const normalized = query.trim().toLowerCase()
+  return {
+    ...table,
+    rows: table.rows.filter((row) => JSON.stringify(row).toLowerCase().includes(normalized)),
+  }
+}
+
+function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boolean, id = '') {
   const filtered = facts.filter((fact) => fact.value?.trim())
   return html`
-    <section class="detail-section" aria-label=${title}>
+    <section class="detail-section" id=${id || nothing} aria-label=${title}>
       <h2>${title}</h2>
       ${filtered.length
         ? html`
@@ -955,9 +1551,9 @@ function fieldFact(label: string, value: string, wide = false, code = false): De
   return { label, value, ...(wide ? { wide: true } : {}), ...(code ? { code: true } : {}) }
 }
 
-function renderRecordTableSection(title: string, table?: RecordTableSignal) {
+function renderRecordTableSection(title: string, table?: RecordTableSignal, id = '') {
   return html`
-    <section class="detail-section" aria-label=${title}>
+    <section class="detail-section" id=${id || nothing} aria-label=${title}>
       <h2>${title}</h2>
       <lv-record-table .table=${table ?? null}></lv-record-table>
     </section>
@@ -1476,7 +2072,8 @@ const projectStyles = css`
     height: 100%;
   }
 
-  .graph-details-body {
+  .graph-details-body,
+  .semantic-model-body {
     padding: 0;
   }
 
@@ -1489,6 +2086,382 @@ const projectStyles = css`
   }
 
   .details-content {
+    padding: var(--base-size-16);
+  }
+
+  .semantic-model-details-page {
+    gap: 0;
+  }
+
+  .semantic-model-overview {
+    border-bottom: var(--lv-border-muted);
+  }
+
+  .semantic-overview-panels {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--base-size-12);
+  }
+
+  .semantic-overview-panel {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--base-size-12);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
+    padding: var(--base-size-16);
+  }
+
+  .semantic-overview-description {
+    max-width: 52rem;
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body);
+  }
+
+  .semantic-overview-properties {
+    display: grid;
+    gap: var(--base-size-12);
+    margin: 0;
+  }
+
+  .semantic-overview-properties div {
+    display: grid;
+    min-width: 0;
+    gap: var(--base-size-4);
+  }
+
+  .semantic-overview-properties dt {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .semantic-overview-properties dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-overview-properties code {
+    font: var(--lv-type-code-inline);
+  }
+
+  .semantic-overview-tags dd,
+  .semantic-overview-pipeline-row dd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .semantic-overview-tag {
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-full);
+    background: var(--lv-bg-panel-muted);
+    padding: 1px var(--base-size-8);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .semantic-overview-refresh-status dd {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .semantic-overview-status-dot {
+    width: var(--base-size-8);
+    height: var(--base-size-8);
+    flex: 0 0 auto;
+    border-radius: var(--lv-radius-full);
+    background: var(--lv-fg-muted);
+  }
+
+  .semantic-overview-refresh-status dd[data-tone='success'] .semantic-overview-status-dot {
+    background: var(--lv-fg-success);
+  }
+
+  .semantic-overview-refresh-status dd[data-tone='warning'] .semantic-overview-status-dot {
+    background: var(--lv-fg-warning);
+  }
+
+  .semantic-overview-refresh-status dd[data-tone='danger'] .semantic-overview-status-dot {
+    background: var(--lv-fg-danger);
+  }
+
+  .semantic-overview-guidance {
+    color: var(--lv-fg-danger);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-overview-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--base-size-12);
+  }
+
+  .semantic-overview-refresh-link,
+  .semantic-overview-version-link,
+  .semantic-overview-pipeline,
+  .semantic-overview-lineage-link,
+  .semantic-overview-downstream-link,
+  .semantic-overview-upstream-asset,
+  .semantic-overview-downstream-asset {
+    width: fit-content;
+    color: var(--lv-fg-accent);
+    font: var(--lv-type-body-compact);
+    text-decoration: none;
+  }
+
+  .semantic-overview-refresh-link:hover,
+  .semantic-overview-version-link:hover,
+  .semantic-overview-pipeline:hover,
+  .semantic-overview-lineage-link:hover,
+  .semantic-overview-downstream-link:hover,
+  .semantic-overview-upstream-asset:hover,
+  .semantic-overview-downstream-asset:hover {
+    text-decoration: underline;
+  }
+
+  .semantic-overview-more,
+  .semantic-overview-empty-impact {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-model-summary {
+    display: grid;
+    gap: var(--base-size-12);
+    border-top: var(--lv-border-muted);
+    padding-top: var(--base-size-16);
+  }
+
+  .semantic-model-summary-heading,
+  .semantic-object-list-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--base-size-16);
+  }
+
+  .semantic-model-summary-heading > div,
+  .semantic-object-list-header > div {
+    display: grid;
+    min-width: 0;
+    gap: var(--base-size-4);
+  }
+
+  .semantic-model-summary-heading p,
+  .semantic-object-list-header p {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-model-summary-heading a {
+    color: var(--lv-fg-accent);
+    font: var(--lv-type-body-compact);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .semantic-model-summary-heading a:hover {
+    text-decoration: underline;
+  }
+
+  .semantic-summary-cards {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--base-size-12);
+  }
+
+  .semantic-summary-card {
+    display: grid;
+    min-width: 0;
+    gap: var(--base-size-8);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
+    color: var(--lv-fg-default);
+    padding: var(--base-size-12);
+    text-decoration: none;
+  }
+
+  .semantic-summary-card:hover,
+  .semantic-summary-card:focus-visible {
+    border-color: var(--lv-line-accent, var(--lv-accent));
+    background: var(--lv-bg-control-hover);
+    outline: 0;
+  }
+
+  .semantic-summary-card span {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .semantic-summary-card strong {
+    font: var(--lv-type-section-title);
+  }
+
+  .semantic-overview-impact-grid {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--base-size-12);
+    border-top: var(--lv-border-muted);
+    padding-top: var(--base-size-16);
+  }
+
+  .semantic-overview-impact {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--base-size-8);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
+    padding: var(--base-size-16);
+  }
+
+  .semantic-overview-impact-fact {
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body);
+  }
+
+  .semantic-overview-downstream-assets {
+    display: grid;
+    gap: var(--base-size-4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .semantic-model-view {
+    display: grid;
+    min-height: 0;
+    background: var(--lv-bg-panel);
+  }
+
+  .semantic-model-toolbar {
+    display: flex;
+    min-width: 0;
+    min-height: var(--control-xlarge-size);
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--base-size-16);
+    border-bottom: var(--lv-border-muted);
+    padding: var(--base-size-8) var(--base-size-16);
+  }
+
+  .semantic-model-layout {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: 13rem minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .semantic-model-navigation {
+    display: grid;
+    align-content: start;
+    gap: var(--base-size-4);
+    border-right: var(--lv-border-muted);
+    padding: var(--base-size-12);
+  }
+
+  .semantic-model-navigation-label {
+    padding: var(--base-size-12) var(--lv-space-control) var(--base-size-4);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .semantic-model-navigation-separator {
+    border-top: var(--lv-border-muted);
+    margin: var(--base-size-4) 0;
+  }
+
+  .semantic-model-nav-item {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--base-size-8);
+    border: 0;
+    border-radius: var(--lv-radius-default);
+    background: transparent;
+    color: var(--lv-fg-muted);
+    cursor: pointer;
+    padding: var(--base-size-8) var(--lv-space-control);
+    text-align: left;
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-model-nav-item[data-active='true'] {
+    background: var(--lv-bg-control-hover);
+    color: var(--lv-fg-default);
+    font-weight: var(--base-text-weight-medium);
+  }
+
+  .semantic-model-nav-item strong {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+  }
+
+  .semantic-model-nav-item:hover,
+  .semantic-model-nav-item:focus-visible {
+    color: var(--lv-fg-default);
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .semantic-model-content {
+    min-width: 0;
+  }
+
+  .semantic-object-list {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--base-size-12);
+    padding: var(--base-size-16);
+  }
+
+  .semantic-object-search-wrap {
+    position: relative;
+    display: flex;
+    width: min(22rem, 40%);
+    min-width: 12rem;
+    align-items: center;
+  }
+
+  .semantic-object-search-wrap svg {
+    position: absolute;
+    left: var(--base-size-8);
+    color: var(--lv-fg-muted);
+    pointer-events: none;
+  }
+
+  .semantic-object-search {
+    width: 100%;
+    height: var(--control-medium-size);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    outline: 0;
+    background: var(--lv-bg-app);
+    color: var(--lv-fg-default);
+    padding: 0 var(--base-size-8) 0 var(--base-size-32);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-object-search:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .semantic-model-source .details-content {
     padding: var(--base-size-16);
   }
 
@@ -1621,7 +2594,6 @@ const projectStyles = css`
   .facts span:first-child {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
-    text-transform: uppercase;
   }
 
   .facts p,
@@ -1720,6 +2692,45 @@ const projectStyles = css`
 
     .graph-details-body {
       overflow: visible;
+    }
+
+    .semantic-summary-cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .semantic-overview-panels,
+    .semantic-overview-impact-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .semantic-model-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .semantic-model-navigation {
+      display: flex;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: var(--lv-border-muted);
+    }
+
+    .semantic-model-navigation-label,
+    .semantic-model-navigation-separator {
+      display: none;
+    }
+
+    .semantic-model-nav-item {
+      width: auto;
+      flex: 0 0 auto;
+    }
+
+    .semantic-object-list-header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .semantic-object-search-wrap {
+      width: 100%;
     }
 
     .semantic-model-graph {

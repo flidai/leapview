@@ -5,6 +5,8 @@ metadata:
   name: finance
   displayName: CFO Finance Model
   description: Governed CFO fact constellation with conformed finance dimensions and decision-ready metrics.
+  owner: Finance
+  tags: [finance, governed]
 spec:
   datasets:
     financial_performance:

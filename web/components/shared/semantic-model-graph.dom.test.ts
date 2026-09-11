@@ -129,9 +129,9 @@ for (const viewport of [
       expect(Number(state.grainFontWeight)).toBeGreaterThanOrEqual(600)
       expect(state.grainMarkerText).toBe('G')
       expect(state.grainMarkerTitle).toBe('Grain field for order')
-      expect(state.entityTitles).toContain('Entities: order (primary) [order_id]; customer (foreign) [customer_id]')
-      expect(state.hasBadgeElement).toBe(true)
-      expect(state.badges).toEqual(['dataset', '2 metrics', 'grain: order', '2 entities', 'grain: customer', '1 entity'])
+      expect(state.entityTitles).toEqual([])
+      expect(state.hasBadgeElement).toBe(false)
+      expect(state.badges).toEqual([])
       expect(state.joinRowBackground).not.toBe('')
       expect(state.joinRowBoxShadow).toContain('inset')
       expect(state.hasTypeIcon).toBe(true)
@@ -178,7 +178,7 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     if (!afterSelect) throw new Error('orders node has no bounding box after selection')
     const persisted = await page.evaluate(() => {
       const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '')
-      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v3:'))
+      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v4:'))
       return {
         keyFound: Boolean(key),
         value: key ? localStorage.getItem(key) ?? '' : '',
@@ -191,8 +191,114 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     expect(persisted.value).toContain('orders')
 
     await page.locator('lv-semantic-model-graph .semantic-model-reset-button').click()
-    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v3:')).length)
+    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v4:')).length)
     expect(remaining).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model graph starts undimmed and clears an intentional selection from the canvas', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const current = element.graph
+      element.graph = {
+        ...current,
+        nodes: [
+          ...current.nodes,
+          {
+            id: 'inventory',
+            title: 'inventory',
+            badges: ['dataset'],
+            fields: [{ name: 'sku', label: 'SKU', type: 'VARCHAR' }],
+          },
+        ],
+      }
+    })
+    await page.waitForFunction(() => document.querySelectorAll('lv-semantic-model-graph .react-flow__node').length === 3)
+
+    expect(await graph.locator('.semantic-model-node-selected').count()).toBe(0)
+    expect(await graph.locator('.semantic-model-node-dimmed').count()).toBe(0)
+    expect(await graph.locator('.semantic-model-clear-button').count()).toBe(0)
+    const fieldsControl = graph.locator('.semantic-model-fields-control')
+    const relatedFieldsButton = fieldsControl.getByRole('button', { name: 'Related' })
+    const allFieldsButton = fieldsControl.getByRole('button', { name: 'All' })
+    expect(await fieldsControl.locator('.semantic-model-fields-label').textContent()).toBe('Fields:')
+    expect(await relatedFieldsButton.getAttribute('aria-pressed')).toBe('true')
+    expect(await allFieldsButton.getAttribute('aria-pressed')).toBe('false')
+    expect(await graph.locator('.semantic-model-hidden-fields').allTextContents()).toContain('+1 more fields')
+
+    await allFieldsButton.click()
+    expect(await relatedFieldsButton.getAttribute('aria-pressed')).toBe('false')
+    expect(await allFieldsButton.getAttribute('aria-pressed')).toBe('true')
+    expect(await graph.locator('.semantic-model-hidden-fields').count()).toBe(0)
+
+    await relatedFieldsButton.click()
+    expect(await relatedFieldsButton.getAttribute('aria-pressed')).toBe('true')
+    expect(await allFieldsButton.getAttribute('aria-pressed')).toBe('false')
+
+    const relationship = graph.locator('.semantic-model-relationship-path')
+    await relationship.hover()
+    expect((await graph.locator('.semantic-model-relationship-inspector').textContent())?.replace(/\s+/g, ' ')).toContain('orders.customer_id → customers.customer_id')
+    expect(await graph.locator('.semantic-model-relationship-inspector').textContent()).toContain('Many to one · Direction: orders → customers')
+    expect(await graph.locator('.semantic-model-field-highlighted').count()).toBe(2)
+    expect(await graph.locator('.react-flow__node').filter({ hasText: 'inventory' }).locator('.semantic-model-node-dimmed').count()).toBe(0)
+
+    await relationship.click()
+    await page.mouse.move(0, 0)
+    expect(await graph.locator('.semantic-model-relationship-inspector').count()).toBe(1)
+    await graph.locator('.semantic-model-graph-layout').press('Escape')
+    expect(await graph.locator('.semantic-model-relationship-inspector').count()).toBe(0)
+    expect(await graph.locator('.semantic-model-field-highlighted').count()).toBe(0)
+
+    await graph.locator('.react-flow__node').filter({ hasText: 'orders' }).click()
+    expect(await graph.locator('.semantic-model-node-selected').count()).toBe(1)
+    expect(await graph.locator('.react-flow__node').filter({ hasText: 'inventory' }).locator('.semantic-model-node-dimmed').count()).toBe(1)
+
+    await graph.locator('.react-flow__renderer').dispatchEvent('click')
+    expect(await graph.locator('.semantic-model-node-selected').count()).toBe(0)
+    expect(await graph.locator('.semantic-model-node-dimmed').count()).toBe(0)
+
+    await graph.locator('.react-flow__node').filter({ hasText: 'orders' }).click()
+    await graph.locator('.semantic-model-node-selected').press('Escape')
+    expect(await graph.locator('.semantic-model-node-selected').count()).toBe(0)
+
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model graph height-balances a large rank across columns', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lv-semantic-model-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    await graph.evaluate((element: HTMLElement & { graph: any }) => {
+      const template = element.graph.nodes[1]
+      element.graph = {
+        datasets: [],
+        edges: [],
+        nodes: Array.from({ length: 9 }, (_, index) => ({
+          ...template,
+          id: `dimension-${index}`,
+          title: `dimension-${index}`,
+        })),
+      }
+    })
+    await page.waitForFunction(() => document.querySelectorAll('lv-semantic-model-graph .react-flow__node').length === 9)
+
+    const positions = await graph.locator('.react-flow__node').evaluateAll((nodes) => nodes.map((node) => {
+      const transform = (node as HTMLElement).style.transform
+      const match = transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\)/)
+      return { x: Number(match?.[1]), y: Number(match?.[2]) }
+    }))
+    expect(new Set(positions.map(({ x }) => x)).size).toBeGreaterThan(1)
+    expect(new Set(positions.map(({ y }) => y)).size).toBeLessThan(9)
   } finally {
     await page.close()
   }

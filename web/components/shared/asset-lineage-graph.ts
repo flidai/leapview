@@ -57,7 +57,7 @@ type LineagePathState = {
 }
 
 type LineageNodeData = LineageNode & {
-  pathState: 'selected' | 'upstream' | 'downstream' | 'unrelated'
+  pathState: 'neutral' | 'selected' | 'upstream' | 'downstream' | 'unrelated'
   onSelect: (id: string) => void
 }
 
@@ -71,6 +71,7 @@ class AssetLineageGraph extends LitElement {
   private root?: Root
   private mount?: HTMLDivElement
   private selectedNodeID?: string
+  private selectionCleared = false
 
   createRenderRoot(): HTMLElement {
     return this
@@ -85,7 +86,10 @@ class AssetLineageGraph extends LitElement {
   }
 
   updated(changed: Map<string, unknown>): void {
-    if (changed.has('graph')) this.renderFlow()
+    if (changed.has('graph')) {
+      this.selectionCleared = false
+      this.renderFlow()
+    }
   }
 
   disconnectedCallback(): void {
@@ -106,19 +110,40 @@ class AssetLineageGraph extends LitElement {
     if (!this.root) return
     const graph = this.resolvedGraph
     const layout = createLineageLayout(graph.nodes)
-    const selectedNode = selectedLineageNode(graph.nodes, this.selectedNodeID)
+    const selectedNode = this.selectionCleared ? undefined : selectedLineageNode(graph.nodes, this.selectedNodeID)
     this.selectedNodeID = selectedNode?.id
     const pathState = createPathState(graph, this.selectedNodeID)
+    const clearSelection = () => {
+      if (!this.selectedNodeID && this.selectionCleared) return
+      this.selectedNodeID = undefined
+      this.selectionCleared = true
+      this.renderFlow()
+    }
     this.root.render(
       React.createElement(
         'div',
-        { className: 'asset-lineage-layout' },
+        {
+          className: 'asset-lineage-layout',
+          tabIndex: 0,
+          onClick: (event: React.MouseEvent<HTMLDivElement>) => {
+            const target = event.target
+            if (!(target instanceof Element)) return
+            if (target.closest('.react-flow__node, button')) return
+            clearSelection()
+          },
+          onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+            if (event.key !== 'Escape') return
+            event.preventDefault()
+            clearSelection()
+          },
+        },
         React.createElement(
           'div',
           { className: 'asset-lineage-flow', 'aria-label': 'Asset lineage graph' },
           React.createElement(ReactFlow, {
             nodes: graph.nodes.map((node) => toFlowNode(node, layout, pathState, (id) => {
               this.selectedNodeID = id
+              this.selectionCleared = false
               this.renderFlow()
             })),
             edges: graph.edges.map((edge) => toFlowEdge(edge, pathState)),
@@ -133,6 +158,7 @@ class AssetLineageGraph extends LitElement {
             panOnDrag: true,
             zoomOnScroll: false,
             preventScrolling: false,
+            onPaneClick: clearSelection,
             children: [
               React.createElement(Background, { key: 'background', gap: 18, size: 1 }),
               React.createElement(Controls, { key: 'controls', showInteractive: false }),
@@ -165,6 +191,7 @@ const assetLineageGraphStyles = `
   lv-asset-lineage-graph .asset-lineage-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    outline: 0;
   }
 
   lv-asset-lineage-graph .asset-lineage-flow {
@@ -494,8 +521,9 @@ function walkLineagePath(
   }
 }
 
-function nodePathState(id: string, pathState: LineagePathState): 'selected' | 'upstream' | 'downstream' | 'unrelated' {
-  if (!pathState.selectedID || id === pathState.selectedID) return 'selected'
+function nodePathState(id: string, pathState: LineagePathState): 'neutral' | 'selected' | 'upstream' | 'downstream' | 'unrelated' {
+  if (!pathState.selectedID) return 'neutral'
+  if (id === pathState.selectedID) return 'selected'
   if (pathState.upstream.has(id)) return 'upstream'
   if (pathState.downstream.has(id)) return 'downstream'
   return 'unrelated'

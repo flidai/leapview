@@ -16,6 +16,7 @@ var errAssetNotFound = errors.New("project asset not found")
 // document, stream bootstrap, and post-command refresh paths.
 func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID projectgraph.ResourceID, assets []projectview.DevelopAssetView) (projectui.PipelineMonitorState, error) {
 	pipelines := projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "")
+	pipelines = append(pipelines, projectview.FilterProjectLandingAssets(assets, "pipeline", "")...)
 	pipelines, err := h.projectAssetReadModels(r.Context(), pipelines)
 	if err != nil {
 		return projectui.PipelineMonitorState{}, err
@@ -79,7 +80,7 @@ func (h *BrowserHandler) assetPageState(r *http.Request, projectID projectgraph.
 			refresh = projectui.AssetRefreshState{Unavailable: true}
 		}
 	}
-	if asset.Type == string(projectview.AssetTypeRefreshPipeline) {
+	if asset.Type == string(projectview.AssetTypeRefreshPipeline) || asset.Type == "pipeline" {
 		refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
 	}
 	refresh.CSRFToken = h.csrf(r)
