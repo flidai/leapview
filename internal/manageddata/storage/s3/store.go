@@ -39,9 +39,12 @@ type PartPresigner interface {
 }
 
 type Config struct {
-	Bucket     string
-	Prefix     string
-	SignExpiry time.Duration
+	Bucket              string
+	Prefix              string
+	SignExpiry          time.Duration
+	ObservationProfile  *storage.ProviderProfileIdentity
+	ObservationRecorder storage.ProviderVersionObservationRecorder
+	Clock               func() time.Time
 }
 
 type Store struct {
@@ -50,6 +53,9 @@ type Store struct {
 	bucket     string
 	prefix     string
 	signExpiry time.Duration
+	profile    *storage.ProviderProfileIdentity
+	recorder   storage.ProviderVersionObservationRecorder
+	clock      func() time.Time
 }
 
 func New(client Client, presigner PartPresigner, config Config) (*Store, error) {
@@ -71,7 +77,25 @@ func New(client Client, presigner PartPresigner, config Config) (*Store, error) 
 	if expiry < time.Minute || expiry > 24*time.Hour {
 		return nil, fmt.Errorf("%w: S3 part signing expiry must be between one minute and 24 hours", storage.ErrInvalid)
 	}
-	return &Store{client: client, presigner: presigner, bucket: bucket, prefix: prefix, signExpiry: expiry}, nil
+	var profile *storage.ProviderProfileIdentity
+	if config.ObservationProfile != nil {
+		copy := *config.ObservationProfile
+		if err := storage.ValidateProviderProfileIdentity(copy); err != nil {
+			return nil, err
+		}
+		if copy.Bucket != bucket || copy.Namespace != prefix {
+			return nil, fmt.Errorf("%w: observation profile does not match S3 store namespace", storage.ErrProviderVersion)
+		}
+		profile = &copy
+	}
+	clock := config.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	if config.ObservationRecorder != nil && profile == nil {
+		return nil, fmt.Errorf("%w: observation recorder requires a trusted observation profile", storage.ErrProviderVersion)
+	}
+	return &Store{client: client, presigner: presigner, bucket: bucket, prefix: prefix, signExpiry: expiry, profile: profile, recorder: config.ObservationRecorder, clock: clock}, nil
 }
 
 func (s *Store) Put(ctx context.Context, expected storage.Blob, content io.Reader) (storage.Blob, error) {
@@ -81,8 +105,13 @@ func (s *Store) Put(ctx context.Context, expected storage.Blob, content io.Reade
 	if content == nil {
 		return storage.Blob{}, fmt.Errorf("%w: blob content is required", storage.ErrInvalid)
 	}
+	if expected.ProviderVersion != nil {
+		// A retry carrying a provider write observation must resolve its exact
+		// immutable version before consulting mutable latest-object state.
+		return s.resolveObservedBlob(ctx, expected)
+	}
 	if existing, err := s.verify(ctx, expected); err == nil {
-		return existing, nil
+		return s.resolveExistingObservation(ctx, expected, existing)
 	} else if !errors.Is(err, storage.ErrNotFound) {
 		return storage.Blob{}, err
 	}
@@ -91,7 +120,7 @@ func (s *Store) Put(ctx context.Context, expected storage.Blob, content io.Reade
 		return storage.Blob{}, err
 	}
 	key := s.blobKey(expected.SHA256)
-	_, err = s.client.PutObject(ctx, &awss3.PutObjectInput{
+	result, err := s.client.PutObject(ctx, &awss3.PutObjectInput{
 		Bucket:         pointer(s.bucket),
 		Key:            pointer(key),
 		Body:           content,
@@ -102,11 +131,23 @@ func (s *Store) Put(ctx context.Context, expected storage.Blob, content io.Reade
 	})
 	if err != nil {
 		if isCode(err, "PreconditionFailed", "ConditionalRequestConflict") {
-			return s.verify(ctx, expected)
+			existing, verifyErr := s.verify(ctx, expected)
+			if verifyErr != nil {
+				return storage.Blob{}, verifyErr
+			}
+			return s.resolveExistingObservation(ctx, expected, existing)
 		}
 		return storage.Blob{}, sanitizeError(ctx, "put S3 blob", err)
 	}
-	return s.verify(ctx, expected)
+	versionID, capturedAt, err := s.captureWriteVersion(resultVersion(result), "put")
+	if err != nil {
+		return storage.Blob{}, err
+	}
+	verified, err := s.verifyVersion(ctx, expected, key, versionID)
+	if err != nil {
+		return storage.Blob{}, err
+	}
+	return s.withObservation(ctx, verified, key, versionID, capturedAt)
 }
 
 func (s *Store) Stat(ctx context.Context, digest string) (storage.Blob, error) {
@@ -315,6 +356,9 @@ func (s *Store) CompleteMultipart(ctx context.Context, upload storage.MultipartU
 	expected := storage.Blob{SHA256: upload.SHA256, Size: upload.Size}
 	if existing, err := s.verify(ctx, expected); err == nil {
 		_ = s.AbortMultipart(ctx, upload)
+		if s.profile != nil {
+			return storage.Blob{}, fmt.Errorf("%w: existing multipart object has no authoritative completion response", storage.ErrProviderVersion)
+		}
 		return existing, nil
 	} else if !errors.Is(err, storage.ErrNotFound) {
 		return storage.Blob{}, err
@@ -326,7 +370,7 @@ func (s *Store) CompleteMultipart(ctx context.Context, upload storage.MultipartU
 	if err != nil {
 		return storage.Blob{}, err
 	}
-	_, err = s.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
+	result, err := s.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
 		Bucket:          pointer(s.bucket),
 		Key:             pointer(upload.Key),
 		UploadId:        pointer(upload.UploadID),
@@ -336,16 +380,26 @@ func (s *Store) CompleteMultipart(ctx context.Context, upload storage.MultipartU
 	if err != nil {
 		if isCode(err, "PreconditionFailed", "ConditionalRequestConflict") {
 			_ = s.AbortMultipart(ctx, upload)
+			if s.profile != nil {
+				return storage.Blob{}, fmt.Errorf("%w: conflicting multipart completion has no authoritative response", storage.ErrProviderVersion)
+			}
 			return s.verify(ctx, expected)
 		}
 		if isCode(err, "NoSuchUpload") {
+			if s.profile != nil {
+				return storage.Blob{}, fmt.Errorf("%w: unresolved multipart completion has no authoritative response", storage.ErrProviderVersion)
+			}
 			return s.verify(ctx, expected)
 		}
 		return storage.Blob{}, sanitizeError(ctx, "complete S3 multipart upload", err)
 	}
-	blob, verifyErr := s.verify(ctx, expected)
+	versionID, capturedAt, captureErr := s.captureWriteVersion(completedResultVersion(result), "multipart completion")
+	if captureErr != nil {
+		return storage.Blob{}, captureErr
+	}
+	blob, verifyErr := s.verifyVersion(ctx, expected, upload.Key, versionID)
 	if verifyErr == nil {
-		return blob, nil
+		return s.withObservation(ctx, blob, upload.Key, versionID, capturedAt)
 	}
 	if deleteErr := s.DeleteBlobs(ctx, []string{expected.SHA256}); deleteErr != nil {
 		return storage.Blob{}, deleteErr
@@ -373,9 +427,23 @@ func (s *Store) AbortMultipart(ctx context.Context, upload storage.MultipartUplo
 
 func (s *Store) verify(ctx context.Context, expected storage.Blob) (storage.Blob, error) {
 	key := s.blobKey(expected.SHA256)
-	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)})
+	return s.verifyVersion(ctx, expected, key, "")
+}
+
+func (s *Store) verifyVersion(ctx context.Context, expected storage.Blob, key, versionID string) (storage.Blob, error) {
+	headInput := &awss3.HeadObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)}
+	if versionID != "" {
+		headInput.VersionId = pointer(versionID)
+	}
+	head, err := s.client.HeadObject(ctx, headInput)
 	if err != nil {
 		return storage.Blob{}, sanitizeError(ctx, "head S3 blob", err)
+	}
+	if head == nil {
+		return storage.Blob{}, fmt.Errorf("%w: S3 blob metadata is missing", storage.ErrIntegrity)
+	}
+	if versionID != "" && (head.VersionId == nil || *head.VersionId != versionID) {
+		return storage.Blob{}, fmt.Errorf("%w: S3 blob version does not match write response", storage.ErrIntegrity)
 	}
 	if head.ContentLength == nil {
 		return storage.Blob{}, fmt.Errorf("%w: S3 blob has no content length", storage.ErrIntegrity)
@@ -386,9 +454,20 @@ func (s *Store) verify(ctx context.Context, expected storage.Blob) (storage.Blob
 	if digest := head.Metadata["sha256"]; digest != "" && digest != expected.SHA256 {
 		return storage.Blob{}, fmt.Errorf("%w: S3 blob metadata does not match", storage.ErrIntegrity)
 	}
-	result, err := s.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)})
+	getInput := &awss3.GetObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)}
+	if versionID != "" {
+		getInput.VersionId = pointer(versionID)
+	}
+	result, err := s.client.GetObject(ctx, getInput)
 	if err != nil {
 		return storage.Blob{}, sanitizeError(ctx, "stream S3 blob for verification", err)
+	}
+	if result == nil || result.Body == nil {
+		return storage.Blob{}, fmt.Errorf("%w: S3 blob body is missing", storage.ErrIntegrity)
+	}
+	if versionID != "" && (result.VersionId == nil || *result.VersionId != versionID) {
+		_ = result.Body.Close()
+		return storage.Blob{}, fmt.Errorf("%w: S3 streamed blob version does not match write response", storage.ErrIntegrity)
 	}
 	hash := sha256.New()
 	written, copyErr := io.Copy(hash, &contextReader{ctx: ctx, reader: result.Body})
@@ -404,6 +483,121 @@ func (s *Store) verify(ctx context.Context, expected storage.Blob) (storage.Blob
 		return storage.Blob{}, fmt.Errorf("%w: S3 blob does not match its content address", storage.ErrIntegrity)
 	}
 	return storage.Blob{SHA256: digest, Size: written, URI: s.blobURI(key)}, nil
+}
+
+// VerifyExact replays one durable write-time observation through this store's
+// trusted S3 client and profile. It always supplies the captured VersionID to
+// both provider calls and verifies the returned version, size, and SHA-256
+// bytes. The observation cannot select credentials, endpoint, or bucket.
+func (s *Store) VerifyExact(ctx context.Context, observation storage.ProviderVersionObservation) error {
+	if s == nil || s.profile == nil {
+		return fmt.Errorf("%w: exact provider verification requires a trusted profile", storage.ErrProviderVersion)
+	}
+	if err := storage.ValidateProviderVersionObservation(observation); err != nil {
+		return err
+	}
+	if observation.Profile != *s.profile || observation.Profile.Bucket != s.bucket || observation.Profile.Namespace != s.prefix {
+		return fmt.Errorf("%w: provider observation does not match trusted S3 profile", storage.ErrObservationConflict)
+	}
+	if observation.ObjectKey != s.blobKey(observation.SHA256) {
+		return fmt.Errorf("%w: provider observation key does not match its content identity", storage.ErrObservationConflict)
+	}
+	_, err := s.verifyVersion(ctx, storage.Blob{SHA256: observation.SHA256, Size: observation.Size}, observation.ObjectKey, observation.VersionID)
+	return err
+}
+
+func (s *Store) captureWriteVersion(versionID, operation string) (string, time.Time, error) {
+	if strings.EqualFold(versionID, "null") || strings.EqualFold(versionID, "latest") {
+		versionID = ""
+	}
+	if s.profile != nil && versionID == "" {
+		return "", time.Time{}, fmt.Errorf("%w: S3 %s response omitted exact VersionID", storage.ErrProviderVersion, operation)
+	}
+	if versionID == "" {
+		return "", time.Time{}, nil
+	}
+	if s.profile != nil {
+		if err := storage.ValidateProviderVersionID(versionID); err != nil {
+			return "", time.Time{}, err
+		}
+	}
+	return versionID, s.clock().UTC().Truncate(time.Microsecond), nil
+}
+
+func (s *Store) withObservation(ctx context.Context, blob storage.Blob, key, versionID string, capturedAt time.Time) (storage.Blob, error) {
+	if s.profile == nil {
+		return blob, nil
+	}
+	observation := storage.ProviderVersionObservation{
+		Profile: *s.profile, ObjectKey: key, VersionID: versionID,
+		SHA256: blob.SHA256, Size: blob.Size, CapturedAt: capturedAt,
+	}
+	if err := storage.ValidateProviderVersionObservation(observation); err != nil {
+		return storage.Blob{}, err
+	}
+	blob.ProviderVersion = &observation
+	return s.persistObservation(ctx, blob)
+}
+
+func (s *Store) resolveExistingObservation(ctx context.Context, expected, existing storage.Blob) (storage.Blob, error) {
+	if s.profile == nil {
+		return existing, nil
+	}
+	if expected.ProviderVersion == nil {
+		return storage.Blob{}, fmt.Errorf("%w: existing object has no previously captured write response", storage.ErrProviderVersion)
+	}
+	return s.resolveObservedBlob(ctx, expected)
+}
+
+func (s *Store) resolveObservedBlob(ctx context.Context, expected storage.Blob) (storage.Blob, error) {
+	if s.profile == nil {
+		return storage.Blob{}, fmt.Errorf("%w: provider version observation requires a trusted profile", storage.ErrProviderVersion)
+	}
+	observation := *expected.ProviderVersion
+	if err := storage.ValidateProviderVersionObservation(observation); err != nil {
+		return storage.Blob{}, err
+	}
+	if observation.Profile.Bucket != s.bucket || observation.Profile.Namespace != s.prefix ||
+		observation.Profile != *s.profile ||
+		observation.ObjectKey != s.blobKey(expected.SHA256) || observation.SHA256 != expected.SHA256 || observation.Size != expected.Size {
+		return storage.Blob{}, fmt.Errorf("%w: previous write observation does not match object", storage.ErrObservationConflict)
+	}
+	verified, err := s.verifyVersion(ctx, expected, observation.ObjectKey, observation.VersionID)
+	if err != nil {
+		return storage.Blob{}, err
+	}
+	verified.ProviderVersion = &observation
+	return s.persistObservation(ctx, verified)
+}
+
+func (s *Store) persistObservation(ctx context.Context, blob storage.Blob) (storage.Blob, error) {
+	if s.recorder == nil || blob.ProviderVersion == nil {
+		return blob, nil
+	}
+	stored, err := s.recorder.RecordProviderVersionObservation(ctx, *blob.ProviderVersion)
+	if err != nil {
+		// The exact provider fact is returned with the error so an orchestrator
+		// can retry the same observation without a mutable latest-object lookup.
+		return blob, fmt.Errorf("persist provider-version observation: %w", err)
+	}
+	if stored != *blob.ProviderVersion {
+		return blob, fmt.Errorf("%w: durable recorder returned different provider metadata", storage.ErrObservationConflict)
+	}
+	return blob, nil
+}
+
+func resultVersion(result *awss3.PutObjectOutput) string {
+	if result == nil || result.VersionId == nil {
+		return ""
+	}
+	return *result.VersionId
+}
+
+func completedResultVersion(result *awss3.CompleteMultipartUploadOutput) string {
+	if result == nil || result.VersionId == nil {
+		return ""
+	}
+	return *result.VersionId
 }
 
 func (s *Store) validateMultipart(upload storage.MultipartUpload) error {

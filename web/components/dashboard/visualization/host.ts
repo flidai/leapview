@@ -1,4 +1,4 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, html } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import validateGeneratedEnvelope from '../../../generated/visualization/validate'
@@ -12,12 +12,33 @@ import { adapterObservation } from './telemetry'
 import { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, displayValue, supportsHostDataActions, visualizationChangeAnnouncement } from './accessibility'
 import { clearInteractionCommand } from './interaction-command'
 import { resolveVisualizationMetadata } from './metadata'
+import { visualizationHostStyles } from './host-styles'
 
 export { accessibleDataStatus, accessibleStatus, accessibleVisualizationData, supportsHostDataActions, type AccessibleVisualizationData, type AccessibleVisualizationColumn } from './accessibility'
 
+/** Start mounting within 600 CSS pixels above or below the viewport. */
+export const visualizationNearViewportRootMargin = '600px 0px'
+
 export class VisualizationHost extends LitElement {
-  @property({ attribute: false }) envelope?: VisualizationEnvelope
+  private envelopeValue?: VisualizationEnvelope
+  @property({ attribute: false })
+  get envelope(): VisualizationEnvelope | undefined { return this.envelopeValue }
+  set envelope(value: VisualizationEnvelope | undefined) {
+    const previous = this.envelopeValue
+    // Keep the shell and actions on the same valid revision as the renderer,
+    // both before and after a deferred host mounts. Spec revisions are opaque
+    // identities (and may legitimately revert); data revisions order one spec.
+    // Eager hosts retain their existing validation/error boundary.
+    if (this.deferMount && !this.authoring) {
+      if (value && !isAcceptedEnvelope(value)) return
+      if (value && previous && previous.specRevision === value.specRevision && value.dataRevision < previous.dataRevision) return
+    }
+    if (Object.is(previous, value)) return
+    this.envelopeValue = value
+    this.requestUpdate('envelope', previous)
+  }
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ type: Boolean, attribute: 'defer-mount', reflect: true }) deferMount = false
   @property({ type: Boolean, reflect: true }) authoring = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
@@ -31,328 +52,65 @@ export class VisualizationHost extends LitElement {
   private presentedRendererID = ''
   private contextListenersConnected = false
   private reducedMotionMedia?: MediaQueryList
+  private mountObserver?: IntersectionObserver
+  private mountRequested = false
+  private pendingApply?: Promise<void>
+  private applyQueued = false
+  private mountEpoch = 0
 
-  static styles = [visualActionStyles, css`
-    :host, .surface { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; }
-    :host {
-      --lv-visual-inverse-scale: var(--report-canvas-inverse-scale, calc(1 / var(--builder-canvas-scale, 1)));
-      --lv-visual-action-target: calc(max(24px, var(--lv-button-height-xs, var(--control-xsmall-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
-      --lv-visual-menu-target: calc(max(24px, var(--lv-button-height-sm, var(--control-small-size, var(--base-size-24)))) * var(--lv-visual-inverse-scale));
-      color: var(--lv-fg-default);
-      background: var(--lv-chart-surface);
-      font-family: var(--fontStack-system);
-    }
-    .surface { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
-    .surface.headerless { grid-template-rows: minmax(0, 1fr); }
-    .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
-    .renderer { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
-    /* Map data is a secondary, space-intensive disclosure. Keep compact map
-       cards focused on the map and expose the disclosure in visual focus mode. */
-    :host(:not([slot='focus-visual'])) [data-map-data-table] { display: none !important; }
-    .lv-kpi-card {
-      position: relative;
-      display: grid;
-      align-content: center;
-      box-sizing: border-box;
-      width: 100%;
-      height: 100%;
-      min-height: 0;
-      gap: var(--base-size-4);
-      padding: var(--base-size-12) var(--base-size-16);
-      overflow: hidden;
-      background: var(--lv-chart-surface);
-      container-type: inline-size;
-    }
-    .lv-visualization-label {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-      text-transform: uppercase;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .lv-visualization-kpi {
-      display: block;
-      overflow: hidden;
-      color: var(--lv-fg-default);
-      font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-display-size));
-      font-weight: var(--base-text-weight-semibold);
-      line-height: 1.1;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .lv-visualization-note {
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body-compact);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .lv-visualization-note.lv-kpi-highlight {
-      display: -webkit-box;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
-      white-space: normal;
-    }
-    .lv-kpi-comparison {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--base-size-4) var(--base-size-8);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body-compact);
-    }
-    .lv-kpi-delta {
-      font-weight: var(--base-text-weight-semibold);
-    }
-    .lv-kpi-delta[data-status='favorable'] { color: var(--lv-fg-success); }
-    .lv-kpi-delta[data-status='unfavorable'] { color: var(--lv-fg-danger); }
-    .lv-kpi-delta[data-status='unavailable'] { color: var(--lv-fg-muted); }
-    .lv-kpi-goal, .lv-kpi-status {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-    .lv-kpi-status[data-tone='success'] { color: var(--lv-fg-success); }
-    .lv-kpi-status[data-tone='warning'] { color: var(--lv-fg-warning); }
-    .lv-kpi-status[data-tone='danger'] { color: var(--lv-fg-danger); }
-    .lv-kpi-progress {
-      position: relative;
-      isolation: isolate;
-      box-sizing: border-box;
-      width: 100%;
-      height: var(--base-size-8);
-      overflow: hidden;
-      border: var(--lv-border-width) solid var(--lv-line-default);
-      background: var(--lv-bg-panel-muted);
-    }
-    .lv-kpi-progress-progress { border-radius: var(--lv-radius-full); }
-    .lv-kpi-progress-bullet {
-      height: var(--base-size-12);
-    }
-    .lv-kpi-bullet-range {
-      position: absolute;
-      z-index: 0;
-      inset-block: 0;
-      background: var(--lv-bg-panel-muted);
-    }
-    .lv-kpi-bullet-range[data-tone='ink'] { background: var(--lv-data-1-muted); }
-    .lv-kpi-bullet-range[data-tone='success'] {
-      background: color-mix(in srgb, var(--lv-fg-success) 28%, var(--lv-chart-surface));
-    }
-    .lv-kpi-bullet-range[data-tone='warning'] {
-      background: color-mix(in srgb, var(--lv-fg-warning) 28%, var(--lv-chart-surface));
-    }
-    .lv-kpi-bullet-range[data-tone='danger'] {
-      background: color-mix(in srgb, var(--lv-fg-danger) 28%, var(--lv-chart-surface));
-    }
-    .lv-kpi-bullet-target {
-      position: absolute;
-      z-index: 2;
-      inset-block: calc(-1 * var(--lv-border-width));
-      width: var(--lv-border-width-focus);
-      transform: translateX(-50%);
-      background: var(--lv-fg-default);
-    }
-    .lv-kpi-progress-fill {
-      position: relative;
-      z-index: 1;
-      display: block;
-      height: 100%;
-      background: var(--lv-data-1);
-    }
-    .lv-kpi-progress-bullet .lv-kpi-progress-fill {
-      inset-block-start: 25%;
-      height: 50%;
-    }
-    .lv-kpi-sparkline {
-      width: 100%;
-      height: var(--base-size-24);
-      overflow: visible;
-    }
-    .lv-kpi-sparkline path {
-      fill: none;
-      stroke: var(--lv-data-1);
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: var(--lv-border-width-focus);
-      vector-effect: non-scaling-stroke;
-    }
-    .lv-kpi-card[data-mode='bullet'], .lv-kpi-card[data-mode='progress'] {
-      align-content: center;
-      gap: var(--base-size-4);
-    }
-    .lv-kpi-card[data-layout='stacked'] {
-      gap: var(--base-size-4);
-      padding: var(--base-size-8) var(--base-size-12);
-    }
-    .lv-kpi-card[data-layout='stacked'] .lv-visualization-kpi {
-      font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-title-size-medium));
-      line-height: var(--base-text-lineHeight-tight);
-    }
-    .lv-kpi-card[data-layout='stacked'] .lv-kpi-comparison {
-      display: grid;
-      gap: var(--base-size-2);
-    }
-    .lv-kpi-card[data-layout-fit='too-small'] {
-      outline: var(--lv-border-width-focus) solid var(--lv-fg-danger);
-      outline-offset: calc(-1 * var(--lv-border-width-focus));
-    }
-    .initial-loading {
-      position: absolute;
-      inset: 0;
-      z-index: var(--zIndex-sticky);
-      display: grid;
-      align-content: center;
-      justify-items: center;
-      gap: var(--base-size-8);
-      background: var(--lv-chart-surface);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body);
-    }
-    .toolbar {
-      position: relative;
-      z-index: var(--zIndex-sticky);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-      min-height: calc(var(--control-small-size) + var(--base-size-6));
-      border-bottom: var(--lv-border-default);
-      background: var(--lv-chart-surface);
-      padding: var(--base-size-6) var(--base-size-8) var(--base-size-4) var(--control-small-paddingInline-normal);
-      box-sizing: border-box;
-    }
-    .toolbar-title { flex: 1 1 auto; min-width: 0; }
-    .headerless-actions {
-      position: absolute;
-      inset: var(--base-size-6) var(--base-size-8) auto auto;
-      z-index: var(--zIndex-sticky);
-    }
-    .headerless-actions[data-table-actions] {
-      /* The table owns its persistent Focus and More controls. Place the
-         transient Ask action immediately before them without reserving room
-         in the table toolbar when Ask is hidden. */
-      inset-inline-end: calc(
-        var(--base-size-8, 8px)
-        + var(--lv-button-height, var(--control-medium-size, 32px))
-        + var(--base-size-4, 4px)
-        + var(--lv-button-height, var(--control-medium-size, 32px))
-        + var(--borderWidth-default, 1px)
-        + var(--borderWidth-default, 1px)
-        + var(--base-size-4, 4px)
-      );
-    }
-    h2 {
-      min-width: 0;
-      margin: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-compact);
-      font-weight: var(--base-text-weight-semibold);
-      letter-spacing: 0;
-    }
-    .toolbar-subtitle {
-      margin: var(--base-size-2) 0 0;
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .visual-options { position: relative; }
-    .visual-options summary {
-      display: grid;
-      width: var(--lv-visual-action-target);
-      min-width: var(--lv-visual-action-target);
-      height: var(--lv-visual-action-target);
-      min-height: var(--lv-visual-action-target);
-      place-items: center;
-      border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
-      border-radius: var(--lv-radius-tight);
-      background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
-      color: var(--lv-button-invisible-icon-rest, var(--lv-icon-muted, var(--lv-fg-muted)));
-      cursor: pointer;
-      list-style: none;
-    }
-    .visual-options summary::-webkit-details-marker { display: none; }
-    .visual-options summary svg { width: var(--base-size-16); height: var(--base-size-16); }
-    .visual-options summary:hover,
-    .visual-options summary:focus-visible,
-    .visual-options[open] summary {
-      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
-      color: var(--lv-icon-default, var(--lv-fg-default));
-      outline: var(--focus-outline, var(--lv-border-default));
-      outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
-      outline-offset: var(--focus-outline-offset, var(--base-size-2));
-    }
-    .visual-options .menu {
-      position: absolute;
-      top: calc(100% + var(--base-size-4));
-      right: 0;
-      z-index: var(--zIndex-dropdown);
-      display: grid;
-      width: min(220px, calc(100vw - var(--base-size-24)));
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-overlay);
-      box-shadow: var(--shadow-floating-small);
-      padding: var(--base-size-4);
-    }
-    .visual-options .menu button {
-      display: flex;
-      align-items: center;
-      gap: var(--base-size-8);
-      min-width: var(--lv-visual-menu-target);
-      min-height: var(--lv-visual-menu-target);
-      border: var(--borderWidth-default, var(--lv-border-width)) solid transparent;
-      border-radius: var(--lv-radius-tight);
-      background: transparent;
-      color: var(--lv-fg-default);
-      cursor: pointer;
-      padding: 0 var(--lv-button-padding-inline-xs, var(--control-xsmall-paddingInline-normal));
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-      text-align: left;
-    }
-    .visual-options .menu button:hover,
-    .visual-options .menu button:focus-visible {
-      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
-      outline: var(--focus-outline, var(--lv-border-default));
-      outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
-      outline-offset: var(--focus-outline-offset, var(--base-size-2));
-    }
-    .visual-options .menu svg { flex: 0 0 auto; width: var(--base-size-16); height: var(--base-size-16); }
-    .visual-options .menu button:disabled { cursor: default; opacity: var(--opacity-disabled); }
-    .announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-    .error { position: absolute; inset: 0; display: grid; place-items: center; color: var(--lv-fg-danger); padding: 1rem; text-align: center; background: var(--lv-bg-panel); }
-    .fallback { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-
-    @media (max-width: 480px) {
-      .toolbar { gap: var(--base-size-4); padding-inline: var(--base-size-8); }
-      .toolbar-subtitle { display: none; }
-      .visual-options .menu { position: fixed; top: var(--base-size-48); right: var(--base-size-8); }
-    }
-  `]
+  static styles = [visualActionStyles, visualizationHostStyles]
 
   protected firstUpdated(): void {
-    this.connectContextListeners()
-    this.ensureController()
+    this.setupMountLifecycle()
   }
 
   connectedCallback(): void {
     super.connectedCallback()
     const generation = ++this.connectionGeneration
-    if (!this.hasUpdated || this.controller) return
+    if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
       if (generation === this.connectionGeneration && this.isConnected) {
-        this.connectContextListeners()
-        this.ensureController()
+        this.setupMountLifecycle()
       }
     })
+  }
+
+  private setupMountLifecycle(): void {
+    if (!this.rendererContainer) return
+    if (this.controller || this.mountObserver) return
+    if (this.mountRequested || !this.deferMount || this.authoring) {
+      this.requestMount()
+      return
+    }
+    if (typeof IntersectionObserver !== 'function') {
+      this.requestMount()
+      return
+    }
+    let observer: IntersectionObserver | undefined
+    try {
+      observer = new IntersectionObserver((entries) => {
+        if (!this.isConnected || this.mountObserver !== observer || this.mountRequested) return
+        if (entries.some((entry) => entry.isIntersecting)) this.requestMount()
+      }, {
+        rootMargin: visualizationNearViewportRootMargin,
+        scrollMargin: visualizationNearViewportRootMargin,
+      })
+      // rootMargin does not expand clipping by nested scroll containers.
+      // Browsers without IntersectionObserver.scrollMargin cannot preserve the
+      // dashboard prefetch contract, so keep their existing eager behavior.
+      const supportsScrollMargin = typeof (observer as unknown as { scrollMargin?: unknown }).scrollMargin === 'string'
+      if (this.closest('lv-report-canvas') && !supportsScrollMargin) {
+        observer.disconnect()
+        this.requestMount()
+        return
+      }
+      this.mountObserver = observer
+      observer.observe(this.rendererContainer)
+    } catch {
+      if (this.mountObserver === observer) this.mountObserver = undefined
+      try { observer?.disconnect() } catch { /* best-effort cleanup */ }
+      this.requestMount()
+    }
   }
 
   private ensureController(): void {
@@ -363,17 +121,25 @@ export class VisualizationHost extends LitElement {
       (value): value is VisualizationEnvelope => validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value),
       (detail) => this.dispatchEvent(new CustomEvent('lv-visualization-observation', { bubbles: true, composed: true, detail })),
     )
-    this.resizeObserver = new ResizeObserver(([entry]) => {
-      if (!entry) return
-      this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
-    })
-    this.resizeObserver.observe(this.rendererContainer)
-    void this.applyEnvelope()
+    this.connectContextListeners()
+    if (typeof ResizeObserver !== 'function') return
+    try {
+      this.resizeObserver = new ResizeObserver(([entry]) => {
+        if (!entry) return
+        this.controller?.resize(entry.contentRect.width, entry.contentRect.height, window.devicePixelRatio || 1)
+      })
+      this.resizeObserver.observe(this.rendererContainer)
+    } catch {
+      try { this.resizeObserver?.disconnect() } catch { /* best-effort cleanup */ }
+      this.resizeObserver = undefined
+    }
   }
 
   protected updated(changed: Map<PropertyKey, unknown>): void {
-    if (changed.has('envelope')) {
-      void this.applyEnvelope()
+    if (changed.has('envelope') && this.mountRequested) this.scheduleApply()
+    if ((changed.has('deferMount') || changed.has('authoring')) && !this.mountRequested) {
+      if (!this.deferMount || this.authoring) this.requestMount()
+      else if (!this.mountObserver) this.setupMountLifecycle()
     }
   }
 
@@ -385,17 +151,45 @@ export class VisualizationHost extends LitElement {
     // state; a host that stays detached is still disposed in the same microtask.
     queueMicrotask(() => {
       if (generation !== this.connectionGeneration || this.isConnected) return
-      this.resizeObserver?.disconnect()
+      this.mountEpoch++
+      try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+      this.mountObserver = undefined
+      try { this.resizeObserver?.disconnect() } catch { /* best-effort cleanup */ }
       this.resizeObserver = undefined
       this.disconnectContextListeners()
+      this.applyGeneration++
+      this.pendingApply = undefined
+      this.applyQueued = false
       this.controller?.dispose()
       this.controller = undefined
+      this.mountRequested = false
       this.presented = false
       this.presentedRendererID = ''
+      this.applying = false
     })
   }
 
-  async snapshot(): Promise<Blob> { return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted')) }
+  async ensureMounted(): Promise<void> {
+    if (!this.isConnected) throw new Error('visualization is detached')
+    const epoch = this.mountEpoch
+    this.mountRequested = true
+    try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+    this.mountObserver = undefined
+    await this.updateComplete
+    if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
+    this.ensureController()
+    this.scheduleApply()
+    await this.waitForApply()
+    if (!this.isConnected || this.mountEpoch !== epoch) throw new Error('visualization mount superseded')
+    if (!this.envelope) throw new Error('visualization has no envelope')
+    if (this.error) throw new Error(this.error)
+  }
+
+  async snapshot(): Promise<Blob> {
+    await this.ensureMounted()
+    await this.waitForApply()
+    return this.controller?.snapshot() ?? Promise.reject(new Error('visualization is not mounted'))
+  }
 
   protected render() {
     const statusError = this.envelope?.status.kind === 'error' ? this.envelope.status.message ?? 'Visualization error' : ''
@@ -436,32 +230,83 @@ export class VisualizationHost extends LitElement {
     </div>`
   }
 
+  private hasTableActions(): boolean {
+    const kind = this.envelope?.spec.kind
+    return kind === 'table' || kind === 'matrix' || kind === 'pivot'
+  }
+
+  private requestMount(): void {
+    this.mountRequested = true
+    try { this.mountObserver?.disconnect() } catch { /* best-effort cleanup */ }
+    this.mountObserver = undefined
+    // Eager callers retain the original firstUpdated timing. The explicit
+    // ensureMounted path below still waits for Lit to settle before observing
+    // the result, while event callbacks can start the renderer immediately.
+    if (this.rendererContainer) {
+      this.ensureController()
+      this.scheduleApply()
+      return
+    }
+    void this.ensureMounted().catch(() => {})
+  }
+
+  private scheduleApply(): void {
+    if (!this.mountRequested || !this.envelope || !this.controller) return
+    if (this.pendingApply) {
+      this.applyQueued = true
+      return
+    }
+    const pending = this.applyEnvelope()
+    this.pendingApply = pending
+    void pending.then(
+      () => {
+        if (this.pendingApply !== pending) return
+        this.pendingApply = undefined
+        if (this.applyQueued) {
+          this.applyQueued = false
+          this.scheduleApply()
+        }
+      },
+      () => {
+        if (this.pendingApply !== pending) return
+        this.pendingApply = undefined
+        if (this.applyQueued) {
+          this.applyQueued = false
+          this.scheduleApply()
+        }
+      },
+    )
+  }
+
+  private async waitForApply(): Promise<void> {
+    while (this.pendingApply) {
+      const pending = this.pendingApply
+      await pending
+    }
+  }
+
   private async applyEnvelope(): Promise<void> {
-    if (!this.envelope || !this.controller) return
+    const envelope = this.envelope
+    if (!envelope || !this.controller) return
     const previous = this.controller.envelope
-    if (this.presentedRendererID !== this.envelope.rendererID) {
-      this.presentedRendererID = this.envelope.rendererID
+    if (this.presentedRendererID !== envelope.rendererID) {
+      this.presentedRendererID = envelope.rendererID
       this.presented = false
     }
     const generation = ++this.applyGeneration
     this.applying = true
     try {
-      await this.controller.apply(this.envelope, this.rendererContext())
-      if (generation === this.applyGeneration) {
+      await this.controller.apply(envelope, this.rendererContext())
+      if (generation === this.applyGeneration && envelope === this.envelope) {
         this.error = ''
         this.presented = true
-        this.announcement = visualizationChangeAnnouncement(previous, this.envelope)
+        this.announcement = visualizationChangeAnnouncement(previous, envelope)
       }
     } catch (error) {
-      if (generation === this.applyGeneration) this.error = error instanceof Error ? error.message : String(error)
+      if (generation === this.applyGeneration && envelope === this.envelope) this.error = error instanceof Error ? error.message : String(error)
     } finally {
-      if (generation === this.applyGeneration) this.applying = false
+      if (generation === this.applyGeneration && envelope === this.envelope) this.applying = false
     }
-  }
-
-  private hasTableActions(): boolean {
-    const kind = this.envelope?.spec.kind
-    return kind === 'table' || kind === 'matrix' || kind === 'pivot'
   }
 
   private sharedHeader(): 'chart' | 'map' | 'visualization' | undefined {
@@ -484,6 +329,7 @@ export class VisualizationHost extends LitElement {
       rows: [],
       selection: envelope.selection.map((entry) => entry.label ?? Object.values(entry.datum.identity).join(' · ')),
     }
+    this.requestMount()
     this.openFocus(detail)
   }
 
@@ -564,7 +410,7 @@ export class VisualizationHost extends LitElement {
     this.reducedMotionMedia = undefined
   }
 
-  private readonly handleRendererContextChange = (): void => { void this.applyEnvelope() }
+  private readonly handleRendererContextChange = (): void => { this.scheduleApply() }
 
   private rendererContext(): RendererContext {
     const target = this.rendererContainer
@@ -608,3 +454,7 @@ export class VisualizationHost extends LitElement {
 if (!customElements.get('lv-visualization-host')) customElements.define('lv-visualization-host', VisualizationHost)
 
 declare global { interface HTMLElementTagNameMap { 'lv-visualization-host': VisualizationHost } }
+
+function isAcceptedEnvelope(value: unknown): value is VisualizationEnvelope {
+  return validateGeneratedEnvelope(value) && validateEnvelopeBoundary(value)
+}

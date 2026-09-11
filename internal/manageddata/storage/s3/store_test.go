@@ -57,6 +57,255 @@ func TestStoreUsesContentAddressedKeyAndStableURI(t *testing.T) {
 	}
 }
 
+func TestStoreCapturesAuthoritativePutResponseVersion(t *testing.T) {
+	client := newFakeClient()
+	capturedAt := time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC)
+	store := newObservedStore(t, client, capturedAt)
+	body := []byte("versioned content")
+	expected := blobFor(body)
+	stored, err := store.Put(t.Context(), expected, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := stored.ProviderVersion
+	if observation == nil {
+		t.Fatal("Put() returned no provider-version observation")
+	}
+	if observation.VersionID != client.lastPutVersion || observation.ObjectKey != client.lastPutKey || observation.SHA256 != expected.SHA256 || observation.Size != expected.Size || observation.CapturedAt != capturedAt {
+		t.Fatalf("provider observation = %#v", observation)
+	}
+	if client.lastHeadVersion != client.lastPutVersion || client.lastGetVersion != client.lastPutVersion {
+		t.Fatalf("verification versions: head=%q get=%q write=%q", client.lastHeadVersion, client.lastGetVersion, client.lastPutVersion)
+	}
+	retried, err := store.Put(t.Context(), stored, bytes.NewReader(body))
+	if err != nil || retried.ProviderVersion == nil || *retried.ProviderVersion != *stored.ProviderVersion {
+		t.Fatalf("exact observed retry = %#v, %v", retried.ProviderVersion, err)
+	}
+	if _, err := store.Put(t.Context(), expected, bytes.NewReader(body)); !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("retry without prior observation error = %v", err)
+	}
+}
+
+func TestStoreVerifyExactRejectsProfileSubstitutionBeforeProviderIO(t *testing.T) {
+	client := newFakeClient()
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	body := []byte("versioned content")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.headVersions, client.getVersions = nil, nil
+	observation := *stored.ProviderVersion
+	observation.Profile.AccountIdentity = "substituted-account"
+	if err := store.VerifyExact(t.Context(), observation); !errors.Is(err, storage.ErrObservationConflict) {
+		t.Fatalf("profile substitution error = %v, want observation conflict", err)
+	}
+	if len(client.headVersions) != 0 || len(client.getVersions) != 0 {
+		t.Fatalf("profile substitution contacted provider: head=%v get=%v", client.headVersions, client.getVersions)
+	}
+}
+
+func TestStorePersistsVerifiedWriteObservation(t *testing.T) {
+	client := newFakeClient()
+	recorder := &providerObservationRecorder{}
+	capturedAt := time.Date(2026, 9, 10, 9, 30, 0, 123000, time.UTC)
+	store := newObservedStoreWithRecorder(t, client, capturedAt, recorder)
+	body := []byte("durable observation")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ProviderVersion == nil || len(recorder.observations) != 1 || recorder.observations[0] != *stored.ProviderVersion {
+		t.Fatalf("durable observations = %#v, stored=%#v", recorder.observations, stored.ProviderVersion)
+	}
+	if _, err := store.Put(t.Context(), stored, bytes.NewReader(body)); err != nil {
+		t.Fatalf("durable exact retry: %v", err)
+	}
+	if len(recorder.observations) != 2 || recorder.observations[1] != recorder.observations[0] {
+		t.Fatalf("durable retry observations = %#v", recorder.observations)
+	}
+}
+
+func TestStorePersistenceFailureReturnsExactObservationForRetry(t *testing.T) {
+	client := newFakeClient()
+	recorder := &providerObservationRecorder{err: errors.New("database unavailable")}
+	store := newObservedStoreWithRecorder(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC), recorder)
+	body := []byte("provider succeeds before database")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err == nil || stored.ProviderVersion == nil {
+		t.Fatalf("persistence failure = %#v, %v", stored, err)
+	}
+	if stored.ProviderVersion.VersionID != client.lastPutVersion {
+		t.Fatalf("failed handoff lost write VersionID: %#v", stored.ProviderVersion)
+	}
+	recorder.err = nil
+	retried, err := store.Put(t.Context(), stored, bytes.NewReader(body))
+	if err != nil || retried.ProviderVersion == nil || *retried.ProviderVersion != *stored.ProviderVersion {
+		t.Fatalf("persistence repair retry = %#v, %v", retried, err)
+	}
+}
+
+func TestStoreRejectsRecorderWithoutTrustedProfile(t *testing.T) {
+	_, err := manageds3.New(newFakeClient(), &fakePresigner{}, manageds3.Config{
+		Bucket: "private-data", Prefix: "managed", ObservationRecorder: &providerObservationRecorder{},
+	})
+	if !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("recorder without profile error = %v", err)
+	}
+}
+
+func TestStoreRequiresWriteResponseVersionWhenCaptureEnabled(t *testing.T) {
+	client := newFakeClient()
+	client.omitPutVersion = true
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	body := []byte("unversioned response")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if !errors.Is(err, storage.ErrProviderVersion) || stored.ProviderVersion != nil {
+		t.Fatalf("Put() = %#v, %v", stored, err)
+	}
+	if _, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body)); !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("existing unobserved retry error = %v", err)
+	}
+}
+
+func TestStoreFailedPutProducesNoObservation(t *testing.T) {
+	client := newFakeClient()
+	client.putFailure = errors.New("provider write failed")
+	recorder := &providerObservationRecorder{}
+	store := newObservedStoreWithRecorder(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC), recorder)
+	body := []byte("failed write")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if !errors.Is(err, storage.ErrBackend) || stored.ProviderVersion != nil {
+		t.Fatalf("Put() = %#v, %v", stored, err)
+	}
+	if len(recorder.observations) != 0 {
+		t.Fatalf("failed provider write persisted observations: %#v", recorder.observations)
+	}
+}
+
+func TestStoreRejectsSubstitutedPutResponseVersion(t *testing.T) {
+	client := newFakeClient()
+	client.putOutputVersion = "substituted-version"
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	body := []byte("substituted version")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err == nil || stored.ProviderVersion != nil {
+		t.Fatalf("Put() = %#v, %v", stored, err)
+	}
+}
+
+func TestStorePreservesUnversionedBehaviorWithoutObservationProfile(t *testing.T) {
+	client := newFakeClient()
+	client.omitPutVersion = true
+	store := newStore(t, client, &fakePresigner{})
+	body := []byte("legacy unversioned store")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err != nil || stored.ProviderVersion != nil {
+		t.Fatalf("Put() = %#v, %v", stored, err)
+	}
+}
+
+func TestLegacyStoreRejectsSuppliedProviderVersionBeforeS3Calls(t *testing.T) {
+	client := newFakeClient()
+	store := newStore(t, client, &fakePresigner{})
+	body := []byte("legacy provider version")
+	expected := blobFor(body)
+	expected.ProviderVersion = &storage.ProviderVersionObservation{VersionID: "provider-version-1"}
+
+	stored, err := store.Put(t.Context(), expected, bytes.NewReader(body))
+	if !errors.Is(err, storage.ErrProviderVersion) || stored.ProviderVersion != nil {
+		t.Fatalf("Put() = %#v, %v", stored, err)
+	}
+	if len(client.headVersions) != 0 || len(client.getVersions) != 0 || client.putCalls != 0 {
+		t.Fatalf("legacy store contacted S3 for untrusted observation: head=%v get=%v puts=%d", client.headVersions, client.getVersions, client.putCalls)
+	}
+}
+
+func TestStoreRejectsObservationProfileOutsideConfiguredNamespace(t *testing.T) {
+	client := newFakeClient()
+	profile := storage.ProviderProfileIdentity{
+		ProfileID: "managed-source-profile", Implementation: "s3", AccountIdentity: "qualification",
+		Endpoint: "https://s3.example.test", Region: "test-region-1", Bucket: "other-bucket", Namespace: "managed",
+	}
+	_, err := manageds3.New(client, &fakePresigner{}, manageds3.Config{Bucket: "private-data", Prefix: "managed", ObservationProfile: &profile})
+	if !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("New() error = %v", err)
+	}
+}
+
+func TestStorePutUsesHistoricalObservationAfterCurrentReplacement(t *testing.T) {
+	client := newFakeClient()
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	firstBody := []byte("managed object V1")
+	first, err := store.Put(t.Context(), blobFor(firstBody), bytes.NewReader(firstBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key := first.ProviderVersion.ObjectKey
+	replacementBody := []byte("managed object V2")
+	if _, err := client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: testPointer("private-data"), Key: &key, Body: bytes.NewReader(replacementBody)}); err != nil {
+		t.Fatal(err)
+	}
+	client.headVersions, client.getVersions = nil, nil
+	putsBeforeRetry, versionsBeforeRetry := client.putCalls, client.nextVersion
+
+	retried, err := store.Put(t.Context(), first, bytes.NewReader(firstBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ProviderVersion == nil || *retried.ProviderVersion != *first.ProviderVersion {
+		t.Fatalf("historical observation changed: got=%#v want=%#v", retried.ProviderVersion, first.ProviderVersion)
+	}
+	if client.putCalls != putsBeforeRetry || client.nextVersion != versionsBeforeRetry {
+		t.Fatalf("historical retry issued a new PUT/version: puts=%d/%d versions=%d/%d", client.putCalls, putsBeforeRetry, client.nextVersion, versionsBeforeRetry)
+	}
+	if client.lastHeadVersion != first.ProviderVersion.VersionID || client.lastGetVersion != first.ProviderVersion.VersionID {
+		t.Fatalf("historical retry versions: head=%q get=%q want=%q", client.lastHeadVersion, client.lastGetVersion, first.ProviderVersion.VersionID)
+	}
+	if len(client.headVersions) == 0 || client.headVersions[0] != first.ProviderVersion.VersionID || len(client.getVersions) == 0 || client.getVersions[0] != first.ProviderVersion.VersionID {
+		t.Fatalf("historical retry did not start with exact version: head=%v get=%v", client.headVersions, client.getVersions)
+	}
+}
+
+func TestStorePutUsesHistoricalObservationAfterDeleteMarker(t *testing.T) {
+	client := newFakeClient()
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	body := []byte("managed object V1")
+	first, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := first.ProviderVersion.ObjectKey
+	// An unversioned delete in a versioned bucket creates a delete marker: the
+	// fake removes mutable latest state while retaining historical versions.
+	if _, err := client.DeleteObjects(t.Context(), &awss3.DeleteObjectsInput{
+		Bucket: testPointer("private-data"),
+		Delete: &types.Delete{Objects: []types.ObjectIdentifier{{Key: &key}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	client.headVersions, client.getVersions = nil, nil
+	putsBeforeRetry, versionsBeforeRetry := client.putCalls, client.nextVersion
+
+	retried, err := store.Put(t.Context(), first, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retried.ProviderVersion == nil || *retried.ProviderVersion != *first.ProviderVersion {
+		t.Fatalf("historical observation changed: got=%#v want=%#v", retried.ProviderVersion, first.ProviderVersion)
+	}
+	if client.putCalls != putsBeforeRetry || client.nextVersion != versionsBeforeRetry {
+		t.Fatalf("historical retry issued a new PUT/version: puts=%d/%d versions=%d/%d", client.putCalls, putsBeforeRetry, client.nextVersion, versionsBeforeRetry)
+	}
+	if client.lastHeadVersion != first.ProviderVersion.VersionID || client.lastGetVersion != first.ProviderVersion.VersionID {
+		t.Fatalf("historical retry versions: head=%q get=%q want=%q", client.lastHeadVersion, client.lastGetVersion, first.ProviderVersion.VersionID)
+	}
+	if len(client.headVersions) == 0 || client.headVersions[0] != first.ProviderVersion.VersionID || len(client.getVersions) == 0 || client.getVersions[0] != first.ProviderVersion.VersionID {
+		t.Fatalf("historical retry did not start with exact version: head=%v get=%v", client.headVersions, client.getVersions)
+	}
+}
+
 func TestBlobInventoryPaginatesAndDeletesInOneBatch(t *testing.T) {
 	client := newFakeClient()
 	client.listPageSize = 1
@@ -153,6 +402,48 @@ func TestMultipartCreateSignCompleteAndAbort(t *testing.T) {
 	}
 }
 
+func TestMultipartCompletionCapturesAuthoritativeResponseVersion(t *testing.T) {
+	client := newFakeClient()
+	capturedAt := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	store := newObservedStore(t, client, capturedAt)
+	body := []byte("multipart observed body")
+	expected := blobFor(body)
+	upload, err := store.CreateMultipart(t.Context(), expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.setMultipartBody(upload.UploadID, body)
+	completed, err := store.CompleteMultipart(t.Context(), upload, []storage.CompletedMultipartPart{{Number: 1, ETag: "etag-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.ProviderVersion == nil || completed.ProviderVersion.VersionID != client.lastMultipartVersion {
+		t.Fatalf("multipart provider observation = %#v", completed.ProviderVersion)
+	}
+	if client.lastHeadVersion != client.lastMultipartVersion || client.lastGetVersion != client.lastMultipartVersion {
+		t.Fatalf("multipart verification versions: head=%q get=%q write=%q", client.lastHeadVersion, client.lastGetVersion, client.lastMultipartVersion)
+	}
+}
+
+func TestMultipartCompletionRequiresWriteResponseVersionWhenCaptureEnabled(t *testing.T) {
+	client := newFakeClient()
+	client.omitMultipartVersion = true
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC))
+	body := []byte("multipart without version")
+	upload, err := store.CreateMultipart(t.Context(), blobFor(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.setMultipartBody(upload.UploadID, body)
+	completed, err := store.CompleteMultipart(t.Context(), upload, []storage.CompletedMultipartPart{{Number: 1, ETag: "etag-1"}})
+	if !errors.Is(err, storage.ErrProviderVersion) || completed.ProviderVersion != nil {
+		t.Fatalf("CompleteMultipart() = %#v, %v", completed, err)
+	}
+	if _, err := store.CompleteMultipart(t.Context(), upload, []storage.CompletedMultipartPart{{Number: 1, ETag: "etag-1"}}); !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("unobserved multipart retry error = %v", err)
+	}
+}
+
 func TestMultipartCompletionDeletesContentThatFailsStreamVerification(t *testing.T) {
 	client := newFakeClient()
 	store := newStore(t, client, &fakePresigner{})
@@ -219,9 +510,43 @@ func newStore(t *testing.T, client *fakeClient, presigner *fakePresigner) *manag
 	return store
 }
 
+func newObservedStore(t *testing.T, client *fakeClient, capturedAt time.Time) *manageds3.Store {
+	return newObservedStoreWithRecorder(t, client, capturedAt, nil)
+}
+
+func newObservedStoreWithRecorder(t *testing.T, client *fakeClient, capturedAt time.Time, recorder storage.ProviderVersionObservationRecorder) *manageds3.Store {
+	t.Helper()
+	profile := storage.ProviderProfileIdentity{
+		ProfileID: "managed-source-profile", Implementation: "s3", AccountIdentity: "qualification",
+		Endpoint: "https://s3.example.test", Region: "test-region-1", Bucket: "private-data", Namespace: "managed",
+	}
+	store, err := manageds3.New(client, &fakePresigner{}, manageds3.Config{
+		Bucket: "private-data", Prefix: "/managed/", ObservationProfile: &profile,
+		ObservationRecorder: recorder, Clock: func() time.Time { return capturedAt },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+type providerObservationRecorder struct {
+	observations []storage.ProviderVersionObservation
+	err          error
+}
+
+func (r *providerObservationRecorder) RecordProviderVersionObservation(_ context.Context, observation storage.ProviderVersionObservation) (storage.ProviderVersionObservation, error) {
+	if r.err != nil {
+		return storage.ProviderVersionObservation{}, r.err
+	}
+	r.observations = append(r.observations, observation)
+	return observation, nil
+}
+
 type fakeClient struct {
 	mu                    sync.Mutex
 	objects               map[string]fakeObject
+	versions              map[string]map[string]fakeObject
 	multipart             map[string]fakeMultipart
 	nextUpload            int
 	failure               error
@@ -232,12 +557,25 @@ type fakeClient struct {
 	multipartListPageSize int
 	multipartListCalls    int
 	deleteBatches         [][]string
+	putFailure            error
+	omitPutVersion        bool
+	putOutputVersion      string
+	omitMultipartVersion  bool
+	lastPutVersion        string
+	lastMultipartVersion  string
+	lastHeadVersion       string
+	lastGetVersion        string
+	headVersions          []string
+	getVersions           []string
+	nextVersion           int
+	putCalls              int
 }
 
 type fakeObject struct {
 	body     []byte
 	metadata map[string]string
 	modified time.Time
+	version  string
 }
 
 type fakeMultipart struct {
@@ -247,7 +585,7 @@ type fakeMultipart struct {
 }
 
 func newFakeClient() *fakeClient {
-	return &fakeClient{objects: map[string]fakeObject{}, multipart: map[string]fakeMultipart{}}
+	return &fakeClient{objects: map[string]fakeObject{}, versions: map[string]map[string]fakeObject{}, multipart: map[string]fakeMultipart{}}
 }
 
 func (c *fakeClient) PutObject(_ context.Context, input *awss3.PutObjectInput, _ ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {
@@ -256,7 +594,11 @@ func (c *fakeClient) PutObject(_ context.Context, input *awss3.PutObjectInput, _
 	if c.failure != nil {
 		return nil, c.failure
 	}
+	if c.putFailure != nil {
+		return nil, c.putFailure
+	}
 	key := dereference(input.Key)
+	c.putCalls++
 	c.lastPutKey = key
 	c.lastPutIfNoneMatch = dereference(input.IfNoneMatch)
 	if _, exists := c.objects[key]; exists && dereference(input.IfNoneMatch) == "*" {
@@ -273,8 +615,21 @@ func (c *fakeClient) PutObject(_ context.Context, input *awss3.PutObjectInput, _
 	if input.ChecksumSHA256 != nil && *input.ChecksumSHA256 != base64.StdEncoding.EncodeToString(sum[:]) {
 		return nil, fakeAPIError{code: "BadDigest"}
 	}
-	c.objects[key] = fakeObject{body: append([]byte(nil), body...), metadata: clone(input.Metadata), modified: time.Now().UTC()}
-	return &awss3.PutObjectOutput{}, nil
+	version := c.newVersion()
+	c.lastPutVersion = version
+	object := fakeObject{body: append([]byte(nil), body...), metadata: clone(input.Metadata), modified: time.Now().UTC(), version: version}
+	c.objects[key] = object
+	if c.versions[key] == nil {
+		c.versions[key] = make(map[string]fakeObject)
+	}
+	c.versions[key][version] = object
+	if c.omitPutVersion {
+		return &awss3.PutObjectOutput{}, nil
+	}
+	if c.putOutputVersion != "" {
+		return &awss3.PutObjectOutput{VersionId: &c.putOutputVersion}, nil
+	}
+	return &awss3.PutObjectOutput{VersionId: &version}, nil
 }
 
 func (c *fakeClient) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
@@ -283,12 +638,24 @@ func (c *fakeClient) HeadObject(_ context.Context, input *awss3.HeadObjectInput,
 	if c.failure != nil {
 		return nil, c.failure
 	}
-	object, exists := c.objects[dereference(input.Key)]
-	if !exists {
-		return nil, fakeAPIError{code: "NotFound"}
+	key := dereference(input.Key)
+	c.lastHeadVersion = dereference(input.VersionId)
+	c.headVersions = append(c.headVersions, c.lastHeadVersion)
+	var object fakeObject
+	var exists bool
+	if c.lastHeadVersion != "" {
+		object, exists = c.versions[key][c.lastHeadVersion]
+		if !exists {
+			return nil, fakeAPIError{code: "NoSuchVersion"}
+		}
+	} else {
+		object, exists = c.objects[key]
+		if !exists {
+			return nil, fakeAPIError{code: "NotFound"}
+		}
 	}
 	length := int64(len(object.body))
-	return &awss3.HeadObjectOutput{ContentLength: &length, Metadata: clone(object.metadata)}, nil
+	return &awss3.HeadObjectOutput{ContentLength: &length, Metadata: clone(object.metadata), VersionId: &object.version}, nil
 }
 
 func (c *fakeClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
@@ -297,11 +664,24 @@ func (c *fakeClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _
 	if c.failure != nil {
 		return nil, c.failure
 	}
-	object, exists := c.objects[dereference(input.Key)]
-	if !exists {
-		return nil, fakeAPIError{code: "NoSuchKey"}
+	key := dereference(input.Key)
+	c.lastGetVersion = dereference(input.VersionId)
+	c.getVersions = append(c.getVersions, c.lastGetVersion)
+	var object fakeObject
+	var exists bool
+	if c.lastGetVersion != "" {
+		object, exists = c.versions[key][c.lastGetVersion]
+		if !exists {
+			return nil, fakeAPIError{code: "NoSuchVersion"}
+		}
+	} else {
+		object, exists = c.objects[key]
+		if !exists {
+			return nil, fakeAPIError{code: "NoSuchKey"}
+		}
 	}
-	return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(object.body))}, nil
+	length := int64(len(object.body))
+	return &awss3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(object.body)), ContentLength: &length, VersionId: &object.version}, nil
 }
 
 func (c *fakeClient) ListObjectsV2(_ context.Context, input *awss3.ListObjectsV2Input, _ ...func(*awss3.Options)) (*awss3.ListObjectsV2Output, error) {
@@ -426,9 +806,24 @@ func (c *fakeClient) CompleteMultipartUpload(_ context.Context, input *awss3.Com
 	if _, exists := c.objects[upload.key]; exists && dereference(input.IfNoneMatch) == "*" {
 		return nil, fakeAPIError{code: "PreconditionFailed"}
 	}
-	c.objects[upload.key] = fakeObject{body: append([]byte(nil), upload.body...), metadata: clone(upload.metadata), modified: time.Now().UTC()}
+	version := c.newVersion()
+	c.lastMultipartVersion = version
+	object := fakeObject{body: append([]byte(nil), upload.body...), metadata: clone(upload.metadata), modified: time.Now().UTC(), version: version}
+	c.objects[upload.key] = object
+	if c.versions[upload.key] == nil {
+		c.versions[upload.key] = make(map[string]fakeObject)
+	}
+	c.versions[upload.key][version] = object
 	delete(c.multipart, id)
-	return &awss3.CompleteMultipartUploadOutput{}, nil
+	if c.omitMultipartVersion {
+		return &awss3.CompleteMultipartUploadOutput{}, nil
+	}
+	return &awss3.CompleteMultipartUploadOutput{VersionId: &version}, nil
+}
+
+func (c *fakeClient) newVersion() string {
+	c.nextVersion++
+	return fmt.Sprintf("provider-version-%d", c.nextVersion)
 }
 
 func (c *fakeClient) AbortMultipartUpload(_ context.Context, input *awss3.AbortMultipartUploadInput, _ ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error) {

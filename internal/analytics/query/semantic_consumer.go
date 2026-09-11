@@ -11,6 +11,8 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/query/planir"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // SemanticAccessConsumerConfig binds a query consumer to one complete serving
@@ -26,6 +28,15 @@ type SemanticAccessConsumerConfig struct {
 	Generation  string
 	PrincipalID string
 	Authority   func() (SemanticAccessAttributeSnapshot, SemanticAccessAuthority, error)
+	// PublicationPolicy is detached FAI-622 publication evidence for this
+	// exact semantic model. Protected execution remains available without it,
+	// but shared result reuse fails closed until activation supplies the exact
+	// immutable publication selected for the serving generation.
+	PublicationPolicy resultidentity.PublicationPolicyIdentity
+	// Observer is optional for library consumers. Production protected
+	// composition installs it so every discovery/authorization/plan boundary
+	// can fail closed when canonical audit persistence fails.
+	Observer SemanticAccessObserver
 }
 
 // SemanticAccessResolutionSnapshot projects one coherent Access-owned
@@ -129,13 +140,17 @@ type semanticAccessPlanAdmission struct {
 // discovery boundary. Its admitted graph map is intentionally private and
 // process-local; it is not a durable capability or serialized plan field.
 type SemanticAccessConsumer struct {
-	planner        *Planner
-	config         SemanticAccessConsumerConfig
-	policy         *CompiledSemanticAccessPolicy
-	decisionDigest string
-	protected      bool
-	admissions     map[*planir.Graph]semanticAccessPlanAdmission
-	mu             sync.RWMutex
+	planner             *Planner
+	config              SemanticAccessConsumerConfig
+	policy              *CompiledSemanticAccessPolicy
+	decisionDigest      string
+	protected           bool
+	admissions          map[*planir.Graph]semanticAccessPlanAdmission
+	auditPolicyDigest   string
+	auditDecisionDigest string
+	auditActorID        string
+	auditEvidenceJSON   []byte
+	mu                  sync.RWMutex
 }
 
 // ModelRequiresSemanticAccess reports whether authored source contains a
@@ -186,6 +201,16 @@ func NewSemanticAccessConsumer(planner *Planner, config SemanticAccessConsumerCo
 	if config.Authority == nil {
 		return nil, fmt.Errorf("protected semantic model requires semantic access authority")
 	}
+	if config.PublicationPolicy != (resultidentity.PublicationPolicyIdentity{}) {
+		if err := config.PublicationPolicy.Validate(); err != nil {
+			return nil, fmt.Errorf("semantic access publication policy: %w", err)
+		}
+		if config.PublicationPolicy.Candidate.ResourceKind != string(projectgraph.KindSemanticModel) ||
+			config.PublicationPolicy.Candidate.InstanceID != config.InstanceID ||
+			config.PublicationPolicy.Candidate.AuthoredID != config.ModelID {
+			return nil, fmt.Errorf("semantic access publication policy does not match consumer")
+		}
+	}
 	snapshot, authority, err := config.Authority()
 	if err != nil {
 		return nil, fmt.Errorf("semantic access authority: %w", err)
@@ -200,13 +225,19 @@ func NewSemanticAccessConsumer(planner *Planner, config SemanticAccessConsumerCo
 	if decision.PrincipalID != config.PrincipalID || decision.InstanceID != config.InstanceID {
 		return nil, fmt.Errorf("semantic access authority identity does not match consumer")
 	}
+	evidence, err := semanticAccessAuditEvidence(decision)
+	if err != nil {
+		return nil, err
+	}
 	consumer.policy = policy
 	consumer.decisionDigest = decision.IdentityDigest
+	consumer.setSemanticAccessAuditDecision(policy, decision, evidence)
 	requestPlanner := *planner
 	requestPlanner.semanticAccessPolicy = policy
 	requestPlanner.semanticAccessProvider = config.Authority
 	requestPlanner.semanticAccessExpectedDecisionDigest = decision.IdentityDigest
 	requestPlanner.semanticAccessAdmissionHook = consumer.captureAdmission
+	requestPlanner.semanticAccessErrorHook = consumer.observeSemanticAccessPlanFailure
 	consumer.planner = &requestPlanner
 	return consumer, nil
 }
@@ -278,27 +309,29 @@ func (consumer *SemanticAccessConsumer) ModelID() string {
 	return consumer.config.ModelID
 }
 
-// Assets returns a stable, detached, authorization-filtered asset projection.
-func (consumer *SemanticAccessConsumer) Assets() ([]SemanticAccessAsset, error) {
+// assets returns a stable, detached, authorization-filtered asset projection.
+func (consumer *SemanticAccessConsumer) assets() ([]SemanticAccessAsset, []SemanticAccessTarget, error) {
 	if consumer == nil || consumer.planner == nil || consumer.planner.compiled == nil {
-		return nil, fmt.Errorf("semantic access consumer is required")
+		return nil, nil, fmt.Errorf("semantic access consumer is required")
 	}
 	policy, decision, registry, err := consumer.authority()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	identity := consumer.policyIdentity(policy)
 	ownership := semanticAccessOwnership(policy, registry)
 	filterDatasets := semanticAccessFilterDatasetSet(policy)
 	assets := make([]SemanticAccessAsset, 0)
+	denied := make([]SemanticAccessTarget, 0)
 	compiled := consumer.planner.compiled
 
 	for _, dataset := range compiled.DatasetNames() {
 		allowed, err := consumer.allowedDataset(policy, decision, dataset)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !allowed {
+			denied = append(denied, SemanticAccessTarget{Dataset: dataset})
 			continue
 		}
 		spec, _ := policy.Dataset(dataset)
@@ -316,9 +349,10 @@ func (consumer *SemanticAccessConsumer) Assets() ([]SemanticAccessAsset, error) 
 			}
 			allowed, err := consumer.allowedDimension(policy, decision, dimension, dataset)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if !allowed {
+				denied = append(denied, SemanticAccessTarget{Dataset: dataset, Dimension: dimension})
 				continue
 			}
 			member, _ := policy.Dimension(dimension, dataset)
@@ -338,9 +372,10 @@ func (consumer *SemanticAccessConsumer) Assets() ([]SemanticAccessAsset, error) 
 		}
 		allowed, err := consumer.allowedMetric(policy, decision, metric)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if !allowed {
+			denied = append(denied, SemanticAccessTarget{Metric: metric})
 			continue
 		}
 		member, _ := policy.Metric(metric)
@@ -352,18 +387,14 @@ func (consumer *SemanticAccessConsumer) Assets() ([]SemanticAccessAsset, error) 
 		appendSemanticAccessOwnership(&asset, semanticAccessFilterOwnership(policy, member.Datasets, registry))
 		assets = append(assets, asset)
 	}
-	return assets, nil
+	return assets, denied, nil
 }
 
-// Authorize applies the same typed FAI-639 decision used by discovery and
-// planner admission. Malformed combinations and unknown state fail closed.
-func (consumer *SemanticAccessConsumer) Authorize(target SemanticAccessTarget) error {
+// authorizeTarget applies the same typed FAI-639 decision used by discovery
+// and planner admission. Malformed combinations and unknown state fail closed.
+func (consumer *SemanticAccessConsumer) authorizeTarget(target SemanticAccessTarget) error {
 	if consumer == nil || consumer.planner == nil || consumer.planner.compiled == nil {
 		return fmt.Errorf("semantic access consumer is required")
-	}
-	target, err := canonicalSemanticAccessTarget(target)
-	if err != nil {
-		return err
 	}
 	policy, decision, _, err := consumer.authority()
 	if err != nil {
@@ -505,6 +536,11 @@ func (consumer *SemanticAccessConsumer) authority() (*CompiledSemanticAccessPoli
 	if consumer.decisionDigest != "" && decision.IdentityDigest != consumer.decisionDigest {
 		return nil, nil, access.SemanticAttributeRegistrySnapshot{}, fmt.Errorf("semantic access authority decision is stale or inconsistent")
 	}
+	evidence, err := semanticAccessAuditEvidence(decision)
+	if err != nil {
+		return nil, nil, access.SemanticAttributeRegistrySnapshot{}, err
+	}
+	consumer.setSemanticAccessAuditDecision(policy, decision, evidence)
 	return policy, decision, current.Registry, nil
 }
 
@@ -691,11 +727,22 @@ func semanticConsumerContainsString(values []string, target string) bool {
 // preventing copies or a second consumer from satisfying validation.
 func (consumer *SemanticAccessConsumer) captureAdmission(graph *planir.Graph, admission semanticAccessAdmission) error {
 	if graph == nil {
-		return fmt.Errorf("semantic access plan graph is nil")
+		err := fmt.Errorf("semantic access plan graph is nil")
+		if auditErr := consumer.observeSemanticAccessFailure(SemanticAccessAuditPlanAdmission, SemanticAccessTarget{}, err); auditErr != nil {
+			return auditErr
+		}
+		return err
 	}
 	canonical, err := graph.Canonical()
 	if err != nil {
-		return fmt.Errorf("canonicalize admitted semantic plan: %w", err)
+		wrapped := fmt.Errorf("canonicalize admitted semantic plan: %w", err)
+		if auditErr := consumer.observeSemanticAccess(SemanticAccessAuditObservation{Operation: SemanticAccessAuditPlanAdmission, Target: semanticAccessPlanTarget(graph), Datasets: semanticAccessPlanDatasets(graph), Allowed: false, Reason: semanticAccessAuditReason(wrapped)}); auditErr != nil {
+			return auditErr
+		}
+		return wrapped
+	}
+	if err := consumer.observeSemanticAccess(SemanticAccessAuditObservation{Operation: SemanticAccessAuditPlanAdmission, Target: semanticAccessPlanTarget(graph), Datasets: semanticAccessPlanDatasets(graph), Allowed: true, PolicyDigest: admission.PolicyDigest, DecisionDigest: admission.DecisionDigest}); err != nil {
+		return err
 	}
 	consumer.mu.Lock()
 	consumer.admissions[graph] = semanticAccessPlanAdmission{canonical: append([]byte(nil), canonical...), policyDigest: admission.PolicyDigest, decisionDigest: admission.DecisionDigest}
@@ -703,9 +750,9 @@ func (consumer *SemanticAccessConsumer) captureAdmission(graph *planir.Graph, ad
 	return nil
 }
 
-// ValidatePlan proves origin, unchanged graph identity, current authority,
+// validatePlan proves origin, unchanged graph identity, current authority,
 // and exact renderer SQL/arguments/columns immediately before execution.
-func (consumer *SemanticAccessConsumer) ValidatePlan(plan Plan) error {
+func (consumer *SemanticAccessConsumer) validatePlan(plan Plan) error {
 	if consumer == nil || consumer.planner == nil {
 		return fmt.Errorf("semantic access consumer is required")
 	}

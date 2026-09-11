@@ -72,6 +72,7 @@ try {
               : (envelope.dataState?.datasets?.[0]?.rows?.length ?? 0) > 0
           })
         })
+        await page.locator('lv-dashboard-page').evaluate((dashboard: any) => dashboard.ensureVisualizationsMounted())
         await page.waitForTimeout(250)
         await page.addStyleTag({ content: 'datastar-inspector { display: none !important; }' })
         await page.evaluate(() => {
