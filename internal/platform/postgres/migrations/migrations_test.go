@@ -52,7 +52,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 }
 
 func TestTargetAuthorizationPolicyMigrationIsAdditiveAndImmutable(t *testing.T) {
-	contents, err := fs.ReadFile(MigrationFS(), "010_target_authorization_policy.sql")
+	contents, err := fs.ReadFile(MigrationFS(), "009_target_authorization_policy.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
