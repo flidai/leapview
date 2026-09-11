@@ -185,13 +185,6 @@ func (m *Module) OAuthResource() mcpoauth.ResourceServer {
 	return m.oauthResource
 }
 
-func (m *Module) OAuthService() *mcpoauth.Service {
-	if m == nil {
-		return nil
-	}
-	return m.oauth
-}
-
 func (m *Module) repositoryValue() access.Repository {
 	if m == nil || m.repository == nil {
 		return nil

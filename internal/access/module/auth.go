@@ -938,38 +938,12 @@ func derivedSecret(secret, purpose string) []byte {
 	return sum[:]
 }
 
-func (a *Auth) mcpOAuthSecret() []byte {
-	if a == nil {
-		return nil
-	}
-	sum := sha256.Sum256(append([]byte("leapview:mcp-oauth:"), a.stateKey...))
-	return sum[:]
-}
-
-func (a *Auth) MCPOAuthSecret() []byte { return a.mcpOAuthSecret() }
-
 func randomAuthValue() (string, error) {
 	var b [32]byte
 	if _, err := io.ReadFull(authRandomReader, b[:]); err != nil {
 		return "", fmt.Errorf("read secure random bytes: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
-}
-
-func setAuthRandomReaderForTest(reader io.Reader) func() {
-	previous := authRandomReader
-	authRandomReader = reader
-	return func() {
-		authRandomReader = previous
-	}
-}
-
-func setAuthNowForTest(now time.Time) func() {
-	previous := authNow
-	authNow = func() time.Time { return now }
-	return func() {
-		authNow = previous
-	}
 }
 
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
@@ -1001,10 +975,6 @@ func LocalDeveloperPrincipal() Principal {
 }
 
 func BearerToken(r *http.Request) string { return bearerToken(r) }
-
-func WriteAuthError(w http.ResponseWriter, r *http.Request, err error, status int) {
-	writeAuthError(w, r, err, status)
-}
 
 func WriteBearerChallenge(w http.ResponseWriter, r *http.Request) { writeBearerChallenge(w, r) }
 
@@ -1062,16 +1032,8 @@ func (a *Auth) MustChangeLocalPassword(r *http.Request, principalID string) bool
 	return a.mustChangeLocalPassword(r, principalID, nil)
 }
 
-func (a *Auth) SessionCookie(token string, expires time.Time) *http.Cookie {
-	return a.sessionCookie(token, expires)
-}
-
 func (a *Auth) OIDCStateCookie(state, nonce string) *http.Cookie {
 	return a.oidcStateCookie(state, nonce)
-}
-
-func (a *Auth) DecodeOIDCState(value string) (string, string, error) {
-	return a.decodeOIDCState(value)
 }
 
 func (a *Auth) AuthReturnCookie(target string) *http.Cookie { return a.authReturnCookie(target) }
@@ -1088,13 +1050,7 @@ func (a *Auth) ConfigureOIDCTestClients(clients map[string]OIDCClient) {
 type OIDCClient = oidcClient
 
 const AuthReturnCookieName = authReturnCookieName
-const CSRFCookieName = csrfCookieName
-const OIDCStateCookieName = oidcStateCookieName
 
 func (a *Auth) LocalAuthEnabled() bool { return a != nil && a.localAuth }
 
 func (a *Auth) SSOConfigured() bool { return a != nil && a.configured }
-
-func SetAuthRandomReaderForTest(reader io.Reader) func() { return setAuthRandomReaderForTest(reader) }
-
-func SetAuthNowForTest(now time.Time) func() { return setAuthNowForTest(now) }
