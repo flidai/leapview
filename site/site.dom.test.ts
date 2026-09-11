@@ -2413,7 +2413,7 @@ test('visual showcase renders every supported visual type', async () => {
     expect(tables.titles).toContain('Orders')
     expect(tables.aggregateValues.some((value) => value === '—' || value === '-')).toBe(false)
     expect(tables.aggregateValues).toContain('0')
-    expect(tables.aggregateValues).toContain('R$0.00')
+    expect(tables.aggregateValues).toContain('$0.00')
     const tableLayout = await page.locator('lv-site-visual-showcase').evaluate((element) => {
       const root = element.shadowRoot
       const chartGrid = root?.querySelector('.chart-grid')?.getBoundingClientRect()

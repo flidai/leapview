@@ -202,13 +202,13 @@ export const visualizationHostStyles = css`
        transient Ask action immediately before them without reserving room
        in the table toolbar when Ask is hidden. */
     inset-inline-end: calc(
-      var(--base-size-8, 8px)
-      + var(--lv-button-height, var(--control-medium-size, 32px))
-      + var(--base-size-4, 4px)
-      + var(--lv-button-height, var(--control-medium-size, 32px))
-      + var(--borderWidth-default, 1px)
-      + var(--borderWidth-default, 1px)
-      + var(--base-size-4, 4px)
+      var(--base-size-8)
+      + var(--lv-button-height, var(--control-medium-size))
+      + var(--base-size-4)
+      + var(--lv-button-height, var(--control-medium-size))
+      + var(--borderWidth-default, var(--lv-border-width))
+      + var(--borderWidth-default, var(--lv-border-width))
+      + var(--base-size-4)
     );
   }
   h2 {

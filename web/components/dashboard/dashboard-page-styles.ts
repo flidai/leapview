@@ -206,8 +206,8 @@ export const dashboardPageInteractionStyles = css`
 		.ask-visual {
 			display: inline-flex;
 			flex: 0 0 auto;
-			width: var(--lv-visual-ask-action-width, 3.5rem);
-			min-width: var(--lv-visual-ask-action-width, 3.5rem);
+			width: calc(var(--lv-button-height, var(--control-medium-size)) + var(--base-size-24));
+			min-width: calc(var(--lv-button-height, var(--control-medium-size)) + var(--base-size-24));
 			height: var(--lv-button-height-xs, var(--control-xsmall-size));
 			min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
 			align-items: center;
