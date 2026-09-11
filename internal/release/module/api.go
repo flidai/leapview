@@ -12,6 +12,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectapi "github.com/flidai/leapview/internal/project/api"
@@ -258,7 +259,7 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	if m.auditIntentConfigured {
 		projectID := identity.ProjectID
 		releaseID := release.IDFor(projectID, idempotencyKey)
-		requestID, correlationID := releaseAuditRequestIdentity(r)
+		requestID, correlationID := platformhttp.AuditRequestIdentity(r)
 		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
 			OperationID: string(releasegen.GenOperationCreateRelease), ProjectID: projectID, ReleaseID: releaseID,
 			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,
@@ -302,21 +303,6 @@ func (m *Module) completeCommand(ctx context.Context, operationID string) error 
 	return executor.Execute(ctx, operationID, apigencommand.Execution{
 		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
 	})
-}
-
-func releaseAuditRequestIdentity(r *http.Request) (string, string) {
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if requestID == "" {
-		requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
-	}
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID == "" {
-		correlationID = strings.TrimSpace(r.Header.Get("X-Correlation-Id"))
-	}
-	if correlationID == "" {
-		correlationID = requestID
-	}
-	return requestID, correlationID
 }
 
 func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
@@ -383,7 +369,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 			m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), projectErr)
 			return
 		}
-		requestID, correlationID := releaseAuditRequestIdentity(r)
+		requestID, correlationID := platformhttp.AuditRequestIdentity(r)
 		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
 			OperationID: string(releasegen.GenOperationFinalizeRelease), ProjectID: projectID, ReleaseID: releaseID,
 			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,

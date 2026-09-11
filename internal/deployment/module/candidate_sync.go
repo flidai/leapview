@@ -20,6 +20,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/digest"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -299,11 +300,7 @@ func (m *Module) recordCandidateSourceAudit(
 	if err != nil {
 		return fmt.Errorf("encode candidate source audit metadata: %w", err)
 	}
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID == "" {
-		correlationID = requestID
-	}
+	requestID, correlationID := platformhttp.AuditRequestIdentity(r)
 	return auditSink(ctx, CandidateSourceAuditEvent{
 		PrincipalID: principalID, ProjectID: parsedProjectID,
 		Digest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest,
@@ -338,11 +335,7 @@ func (m *Module) recordCandidateSourcePlanAudit(ctx context.Context, r *http.Req
 	if auditSink == nil {
 		auditSink = m.candidateSourceBlobAudit
 	}
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID == "" {
-		correlationID = requestID
-	}
+	requestID, correlationID := platformhttp.AuditRequestIdentity(r)
 	return auditSink(ctx, CandidateSourceAuditEvent{PrincipalID: principalID, ProjectID: parsedProjectID, Digest: sourceDigest, Action: contract.AuditAction, Capability: capability, Status: "success", RequestID: requestID, CorrelationID: correlationID, MetadataJSON: metadata})
 }
 

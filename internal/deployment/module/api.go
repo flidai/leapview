@@ -75,21 +75,6 @@ type APIConfig struct {
 	AuditedCommitter AuditedWorkflowCommitter
 }
 
-func deploymentAuditRequestIdentity(r *http.Request) (string, string) {
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if requestID == "" {
-		requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
-	}
-	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	if correlationID == "" {
-		correlationID = strings.TrimSpace(r.Header.Get("X-Correlation-Id"))
-	}
-	if correlationID == "" {
-		correlationID = requestID
-	}
-	return requestID, correlationID
-}
-
 func publishEvidence(
 	targetRelease release.Release,
 	instanceID,

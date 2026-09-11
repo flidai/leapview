@@ -11,6 +11,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
@@ -42,13 +43,13 @@ func (h *Handler) withAuditIntent(r *stdhttp.Request, operationID agentgen.GenCo
 	if h == nil || h.options.BuildAuditIntent == nil {
 		return r, nil
 	}
-	requestID := firstNonEmptyHeader(r, "Idempotency-Key", "X-Request-Id", "X-Request-ID")
-	correlationID := firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "Idempotency-Key", "X-Request-Id", "X-Request-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
 	surface := "api"
-	switch strings.ToLower(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
+	switch strings.ToLower(platformhttp.FirstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
 	case "cli":
 		surface = "cli"
 	case "ui":
@@ -78,13 +79,13 @@ func (h *Handler) recordCommandAudit(
 	if h == nil {
 		return
 	}
-	requestID := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
-	correlationID := firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
 	surface := "api"
-	switch strings.ToLower(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
+	switch strings.ToLower(platformhttp.FirstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
 	case "cli":
 		surface = "cli"
 	case "ui":
@@ -140,7 +141,7 @@ func (h *Handler) recordLegacyCommandAudit(r *stdhttp.Request, operationID agent
 // one. The operation-specific idempotency key is derived from this identity
 // by beginUICommandInvocation.
 func uiRequestIdentity(r *stdhttp.Request, input string) string {
-	if value := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID"); value != "" && !httpmiddleware.RequestIDWasGenerated(r) {
+	if value := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID"); value != "" && !httpmiddleware.RequestIDWasGenerated(r) {
 		return value
 	}
 	clientID := "default"
@@ -170,7 +171,7 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 		}
 		r.Header.Set("X-LeapView-Invocation-Surface", string(apigencommand.SurfaceUI))
 	}
-	idempotencyKey := firstNonEmptyHeader(r, "Idempotency-Key")
+	idempotencyKey := platformhttp.FirstNonEmptyHeader(r, "Idempotency-Key")
 	if idempotencyKey == "" {
 		idempotencyKey = "ui:" + operationID + ":" + identity
 	}
@@ -183,11 +184,11 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 			return r.Context(), err
 		}
 	}
-	correlationID := firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	switch operationID {
 	case updateAgentConfigOperation.APIGenOperationID():
 		ctx, _, err := agentgen.BeginGenUpdateAgentConfigCommand(r.Context(), agentgen.GenUpdateAgentConfigCommandInvocation{
-			Surface: apigencommand.SurfaceUI, ConcurrencyToken: firstNonEmptyHeader(r, "If-Match"),
+			Surface: apigencommand.SurfaceUI, ConcurrencyToken: platformhttp.FirstNonEmptyHeader(r, "If-Match"),
 			RequestID: identity, CorrelationID: correlationID,
 		})
 		return ctx, err
@@ -219,16 +220,4 @@ func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Bindin
 	default:
 		return uicommand.Binding{}
 	}
-}
-
-func firstNonEmptyHeader(r *stdhttp.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
 }

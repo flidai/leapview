@@ -11,6 +11,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
+	httpplatform "github.com/flidai/leapview/internal/platform/http"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	"github.com/flidai/leapview/internal/platform/http/pagination"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
@@ -36,18 +37,6 @@ type Handler struct {
 }
 
 var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
-
-func firstHeader(r *nethttp.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
-}
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
@@ -177,9 +166,9 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 			// Non-generated direct callers may not have a typed idempotency
 			// header; retain their explicit request identity without rereading
 			// the generated Idempotency-Key header.
-			requestID = firstHeader(r, "X-Request-Id", "X-Request-ID")
+			requestID = httpplatform.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
 		}
-		correlationID := firstHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+		correlationID := httpplatform.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 		if correlationID == "" {
 			correlationID = requestID
 		}

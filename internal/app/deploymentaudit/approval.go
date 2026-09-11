@@ -13,7 +13,7 @@ var _ depauth.ApprovalAuditAppender = (*Adapter)(nil)
 // AppendApprovalAudit records approval evidence in Access' immutable audit
 // table through the caller-owned delivery transaction.
 func (a *Adapter) AppendApprovalAudit(ctx context.Context, tx depauth.Tx, input depauth.ApprovalAudit) error {
-	if a == nil || a.audit == nil || tx == nil {
+	if a == nil || !a.authority.Configured() || tx == nil {
 		return fmt.Errorf("%w: approval audit adapter is not configured", depauth.ErrInvalid)
 	}
 	payload, err := depauth.ApprovalEvidencePayload(input.Action, input.Request, input.Decision, input.Evidence)
@@ -42,7 +42,7 @@ func (a *Adapter) AppendApprovalAudit(ctx context.Context, tx depauth.Tx, input 
 		AggregateKey:  "delivery:approval:" + input.Request.RequestID, AggregateSequence: sequence,
 		MetadataJSON: string(payload),
 	}
-	_, err = a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err = a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		return normalize(err, "append approval")
 	}

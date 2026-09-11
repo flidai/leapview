@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/google/uuid"
 )
@@ -78,7 +79,7 @@ func (intent AuditIntent) Canonicalize() (AuditIntent, error) {
 	if !optionalCanonicalAuditIntentLiteral(intent.ActorID, 255) {
 		return AuditIntent{}, fmt.Errorf("audit intent actor id is not canonical")
 	}
-	if intent.RequestDigest != "" && !canonicalAuditIntentDigest(intent.RequestDigest) {
+	if intent.RequestDigest != "" && platformdigest.ValidateSHA256Identity(intent.RequestDigest) != nil {
 		return AuditIntent{}, fmt.Errorf("audit intent request digest is not canonical")
 	}
 	for name, value := range map[string]string{
@@ -270,18 +271,6 @@ func canonicalAuditIntentUUID(value string) bool {
 	}
 	parsed, err := uuid.Parse(value)
 	return err == nil && parsed.String() == strings.ToLower(value)
-}
-
-func canonicalAuditIntentDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, char := range value[len("sha256:"):] {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
-			return false
-		}
-	}
-	return true
 }
 
 func optionalCanonicalAuditIntentLiteral(value string, limit int) bool {
