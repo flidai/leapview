@@ -236,12 +236,6 @@ func NewApprovalAuthority(repository *Repository, options ApprovalAuthorityOptio
 	return newLowLevelApprovalAuthority(repository, options)
 }
 
-// NewProductionApprovalAuthority is retained as an explicit composition
-// alias for callers that prefer the production intent in the name.
-func NewProductionApprovalAuthority(repository *Repository, options ApprovalAuthorityOptions) (*ApprovalAuthority, error) {
-	return NewApprovalAuthority(repository, options)
-}
-
 // Interfaces supplied by composition may hold typed nil pointers/functions.
 // Treat those as absent so a fail-closed authority cannot panic while writing
 // an approval mutation.
@@ -511,13 +505,6 @@ func (a *ApprovalAuthority) Effective(ctx context.Context, requestID string) (Ap
 		return ApprovalRequest{}, err
 	}
 	return effectiveApproval(ctx, db, requestID)
-}
-
-func (a *ApprovalAuthority) EffectiveTx(ctx context.Context, tx Tx, requestID string) (ApprovalRequest, error) {
-	if tx == nil {
-		return ApprovalRequest{}, ErrInvalid
-	}
-	return effectiveApproval(ctx, tx, requestID)
 }
 
 func effectiveApproval(ctx context.Context, db DBTX, requestID string) (ApprovalRequest, error) {

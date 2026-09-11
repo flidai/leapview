@@ -1049,9 +1049,6 @@ func (r *Repository) Target(ctx context.Context, id string) (DeliveryTarget, err
 	}
 	return loadTarget(ctx, db, id)
 }
-func (r *Repository) LoadTarget(ctx context.Context, id string) (DeliveryTarget, error) {
-	return r.Target(ctx, id)
-}
 
 // OperatorSnapshot returns the bounded native operator projection for one
 // target. Detail tables owned by other authorities (retention roots, query
@@ -1605,26 +1602,6 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 	return BuildAttemptSuccessorResult{Predecessor: predecessor, SuccessorLease: successorLease, Successor: successor, ResolutionEvidence: append(json.RawMessage(nil), resolution...)}, nil
 }
 
-// BuildAttemptSuccessorTx returns the immutable successor edge, if one was
-// admitted for predecessorAttemptID.
-func (r *Repository) BuildAttemptSuccessorTx(ctx context.Context, tx Tx, predecessorAttemptID string) (BuildAttemptSuccessorLink, error) {
-	if tx == nil {
-		return BuildAttemptSuccessorLink{}, ErrInvalid
-	}
-	id, err := uuidID(predecessorAttemptID, "predecessor attempt id", false)
-	if err != nil {
-		return BuildAttemptSuccessorLink{}, err
-	}
-	row, err := depdb.New(tx).GetBuildAttemptSuccessor(ctx, dbUUID(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return BuildAttemptSuccessorLink{}, ErrNotFound
-	}
-	if err != nil {
-		return BuildAttemptSuccessorLink{}, err
-	}
-	return BuildAttemptSuccessorLink{PredecessorAttemptID: row.PredecessorAttemptID, SuccessorAttemptID: row.SuccessorAttemptID, ResolutionEvidence: append(json.RawMessage(nil), row.ResolutionEvidence...), CreatedAt: dbTime(row.CreatedAt)}, nil
-}
-
 // AcquireLeaseAndBeginBuildAttemptTx atomically acquires a target writer
 // lease and records the corresponding build attempt through a caller-owned
 // PostgreSQL transaction.  The attempt inherits the durable lease fencing
@@ -2032,17 +2009,6 @@ func (r *Repository) BuildArtifactBinding(ctx context.Context, attemptID string)
 		return BuildArtifactBinding{}, err
 	}
 	return loadBuildArtifactBinding(ctx, db, attemptID)
-}
-
-func (r *Repository) BuildArtifactBindingTx(ctx context.Context, tx Tx, attemptID string) (BuildArtifactBinding, error) {
-	if tx == nil {
-		return BuildArtifactBinding{}, ErrInvalid
-	}
-	attemptID, err := uuidID(attemptID, "attempt id", false)
-	if err != nil {
-		return BuildArtifactBinding{}, err
-	}
-	return loadBuildArtifactBinding(ctx, tx, attemptID)
 }
 
 func (r *Repository) LoadBuildArtifactBinding(ctx context.Context, attemptID string) (BuildArtifactBinding, error) {
@@ -3928,10 +3894,6 @@ func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetI
 	}
 	return nil
 }
-
-// DeliveryResultError is a tiny helper used to keep stale-fence branches
-// explicit while preserving the ordinary ActivationResult return shape.
-func DeliveryResultError(err error) (ActivationResult, error) { return ActivationResult{}, err }
 
 func (r *Repository) retireCandidateRootForActivation(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
 	row, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(p.CandidateID))

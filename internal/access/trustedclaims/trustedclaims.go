@@ -29,20 +29,12 @@ const (
 	SourceServiceToken SourceKind = "service_token"
 )
 
-const (
-	SourceKindSAML         = SourceSAML
-	SourceKindOIDC         = SourceOIDC
-	SourceKindEmbed        = SourceEmbed
-	SourceKindServiceToken = SourceServiceToken
-)
-
 // Short aliases make the source vocabulary convenient without introducing a
 // second set of wire values.
 const (
-	SAML         = SourceSAML
-	OIDC         = SourceOIDC
-	Embed        = SourceEmbed
-	ServiceToken = SourceServiceToken
+	SAML  = SourceSAML
+	OIDC  = SourceOIDC
+	Embed = SourceEmbed
 )
 
 // Valid reports whether kind is one of the four supported cryptographic
