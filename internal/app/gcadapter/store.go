@@ -70,7 +70,21 @@ func NewPoolStore(ctx context.Context, contract *ducklake.PoolContract, config S
 			}
 		})
 		prefix := strings.Trim(strings.Trim(parsed.Path, "/")+"/"+strings.Trim(contract.Pool.Identity.StorageNamespace, "/"), "/")
-		return gcstore.NewS3(client, parsed.Host, prefix)
+		providerKey := ""
+		if keyRef := strings.TrimSpace(contract.Pool.Identity.EncryptionKeyRef); keyRef != "" {
+			if config.ResolveEncryptionKey == nil {
+				return nil, fmt.Errorf("target-owned S3 encryption-key resolver is required for admitted key reference")
+			}
+			providerKey, err = config.ResolveEncryptionKey(ctx, keyRef)
+			if err != nil {
+				return nil, fmt.Errorf("resolve target-owned S3 encryption key: %w", err)
+			}
+			providerKey = strings.TrimSpace(providerKey)
+			if providerKey == "" {
+				return nil, fmt.Errorf("target-owned S3 encryption-key resolver returned an empty provider key")
+			}
+		}
+		return gcstore.NewS3WithEncryption(client, parsed.Host, prefix, providerKey)
 	default:
 		return nil, fmt.Errorf("unsupported physical-pool storage implementation %q", implementation)
 	}

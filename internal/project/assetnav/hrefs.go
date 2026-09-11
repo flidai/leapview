@@ -7,13 +7,6 @@ import (
 	"github.com/flidai/leapview/internal/project"
 )
 
-func ConnectionsHref(query string) string {
-	if query = strings.TrimSpace(query); query == "" {
-		return "/connections"
-	}
-	return "/connections?q=" + url.QueryEscape(query)
-}
-
 func ProjectAssetSectionHref(assetID, section string) string {
 	return "/sources/" + url.PathEscape(assetID) + "/" + url.PathEscape(section)
 }

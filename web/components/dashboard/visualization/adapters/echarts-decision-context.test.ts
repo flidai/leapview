@@ -453,6 +453,6 @@ function cartesianFixture(): VisualizationEnvelope {
       presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: false, step: true, symbolSize: 12, labelPosition: 'top', orientation: 'vertical' },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [['A', 1]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }

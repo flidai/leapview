@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/manageddata"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/flidai/leapview/internal/recoveryset/successor"
 	"golang.org/x/text/unicode/norm"
@@ -64,7 +65,6 @@ func (f ClockFunc) Now() time.Time { return f() }
 
 // TrustedClock is an explicit name for the same injected clock boundary.
 type TrustedClock = Clock
-type TrustedClockFunc = ClockFunc
 
 // TrustGeneration identifies the authoritative policy snapshot. A capture
 // worker may present an assignment, but it cannot make that assignment
@@ -294,20 +294,8 @@ func canonicalUUID(value string) bool {
 	return true
 }
 
-func canonicalDigest(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, r := range value[len("sha256:"):] {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
-			return false
-		}
-	}
-	return true
-}
-
 func validateGeneration(generation TrustGeneration) error {
-	if !canonicalUUID(generation.IncarnationID) || generation.Revision <= 0 || !canonicalDigest(generation.PolicyDigest) {
+	if !canonicalUUID(generation.IncarnationID) || generation.Revision <= 0 || platformdigest.ValidateSHA256Identity(generation.PolicyDigest) != nil {
 		return fmt.Errorf("%w: trust generation is malformed", ErrInvalid)
 	}
 	return nil
@@ -345,7 +333,11 @@ func (s *Service) resolve(ctx context.Context, request Request) (TrustPolicy, er
 }
 
 func (s *Service) trustedNow(deadline time.Time) (time.Time, error) {
-	now := s.clock.Now()
+	// Persist only the canonical UTC microsecond representation. Trusted
+	// clocks are ordinary time sources and may return local time or carry
+	// sub-microsecond precision; normalizing here keeps the persistence
+	// boundary independent of the clock implementation.
+	now := s.clock.Now().UTC().Truncate(time.Microsecond)
 	if !canonicalCaptureTime(now) {
 		return time.Time{}, fmt.Errorf("%w: trusted verification clock must use a UTC microsecond timestamp", ErrInvalid)
 	}
@@ -412,7 +404,7 @@ func validateScope(scope successor.ExpectedScope) error {
 	// pre-authorize the source-anchor digest because that digest includes the
 	// restore point and WAL position created by the capture transaction. The
 	// service binds that value after capture and before signing.
-	if !canonicalUUID(scope.SetID) || scope.SourceFrontierAnchorDigest != "" || !canonicalDigest(scope.ManagedClosureDigest) || scope.Revisions == nil {
+	if !canonicalUUID(scope.SetID) || scope.SourceFrontierAnchorDigest != "" || platformdigest.ValidateSHA256Identity(scope.ManagedClosureDigest) != nil || scope.Revisions == nil {
 		return fmt.Errorf("%w: expected scope is malformed or incomplete", ErrInvalid)
 	}
 	closure, err := successor.ClosureDigest(scope.Revisions)

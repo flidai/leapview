@@ -18,26 +18,26 @@ export async function verifyBuilderZoomActionTargets(page: Page, baseURL: string
     document.documentElement.style.setProperty('--lv-button-height-xs', '20px')
     document.documentElement.style.setProperty('--control-small-size', '20px')
     document.documentElement.style.setProperty('--lv-button-height-sm', '20px')
-    const root = element.shadowRoot
+    const root = (element.shadowRoot as ShadowRoot)
     const canvas = root.querySelector('.canvas') as HTMLElement
-    const host = root.querySelector('.visual-preview lv-visualization-host') as any
+    const host = root.querySelector('.visual-preview lv-visualization-host') as HTMLElement
     const measure = async (scale: number, reportInverseScale?: string) => {
       element.canvasZoom = scale
       element.syncCanvasViewport(element.selectedPage(element.builder))
       if (reportInverseScale === undefined) host.style.removeProperty('--report-canvas-inverse-scale')
       else host.style.setProperty('--report-canvas-inverse-scale', reportInverseScale)
       await new Promise((resolve) => requestAnimationFrame(resolve))
-      const options = host.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const options = (host.shadowRoot as ShadowRoot).querySelector('.visual-options') as HTMLDetailsElement
       options.open = true
       await new Promise((resolve) => requestAnimationFrame(resolve))
       const rect = (selector: string) => {
-        const bounds = (host.shadowRoot.querySelector(selector) as HTMLElement).getBoundingClientRect()
+        const bounds = ((host.shadowRoot as ShadowRoot).querySelector(selector) as HTMLElement).getBoundingClientRect()
         return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }
       }
       return {
         scale: canvas.style.getPropertyValue('--builder-canvas-scale'),
         actions: [rect('[data-visualization-expand]'), rect('.visual-options summary')],
-        menu: Array.from(host.shadowRoot.querySelectorAll('.visual-options .menu button')).map((button) => {
+        menu: Array.from((host.shadowRoot as ShadowRoot).querySelectorAll('.visual-options .menu button')).map((button) => {
           const bounds = (button as HTMLElement).getBoundingClientRect()
           return { width: bounds.width, height: bounds.height }
         }),

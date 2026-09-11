@@ -305,15 +305,6 @@ func (manager *PoolManager) withAudit(
 			return manager.audit.RecordCredentialRotation(context.WithoutCancel(ctx), event)
 		},
 		LogMessage: "best-effort credential rotation audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("operation", string(request.Operation)),
-			slog.String("outcome", string(outcome)),
-			slog.String("project_id", binding.Scope.ProjectID.String()),
-			slog.String("principal", strings.TrimSpace(request.Actor)),
-			slog.String("binding_id", binding.ID.String()),
-			slog.String("target_id", binding.TargetID.String()),
-			slog.String("reason", reason),
-		},
 	})
 	return errors.Join(result, err)
 }

@@ -33,7 +33,6 @@ type NavigationCommand struct {
 // Browser command contracts are owned by the visualization IR. These aliases
 // keep dashboard orchestration readable without creating a second wire model.
 type VisualizationWindowRequest = visualizationir.VisualizationWindowRequest
-type SpatialBounds = visualizationir.VisualizationSpatialBounds
 
 type Catalog = catalog.Catalog
 type CatalogProject = catalog.Project
@@ -817,17 +816,6 @@ type TabularVisual struct {
 	Table
 	ID   string `json:"id"`
 	Type string `json:"type"`
-}
-
-func NewTabularVisual(id string, table Table) TabularVisual {
-	visualType := "table"
-	switch table.Kind {
-	case "matrix_table":
-		visualType = "matrix"
-	case "pivot_table":
-		visualType = "pivot"
-	}
-	return TabularVisual{Table: table, ID: id, Type: visualType}
 }
 
 type TableCardinality struct {

@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     fencing_epoch bigint NOT NULL CHECK (fencing_epoch > 0),
     request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
-    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('running','committed','aborted','indeterminate','fenced')),
+    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('running','committed','aborted','indeterminate')),
     namespace text NOT NULL CHECK (namespace = btrim(namespace) AND octet_length(namespace) BETWEEN 1 AND 512),
     lease_expires_at timestamptz NOT NULL,
     session_identity text NOT NULL CHECK (session_identity = btrim(session_identity) AND octet_length(session_identity) BETWEEN 1 AND 512),
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     CHECK ((state = 'running' AND finished_at IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL)),
     CHECK ((state = 'running' AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NULL)
         OR (state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL AND termination_evidence IS NULL)
-        OR (state IN ('aborted','indeterminate','fenced') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
+        OR (state IN ('aborted','indeterminate') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
     UNIQUE (attempt_id, candidate_id),
     UNIQUE (attempt_id, physical_pool_id, catalog_id),
     FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)
@@ -1142,6 +1142,46 @@ $$;
 -- lease admission takes a FOR SHARE lock on the same root, so retirement's
 -- FOR UPDATE lock closes the race in which a reader could be admitted after
 -- the root has been selected for retirement.
+-- Managed-data roots use the same generation identity but remain owned by
+-- managed_data. This SECURITY DEFINER bridge keeps their lifecycle atomic with
+-- the authoritative delivery root transition; it never creates or resurrects
+-- a managed-data root.
+CREATE OR REPLACE FUNCTION delivery.sync_managed_data_generation_root(
+    p_generation_id uuid,
+    p_state text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+BEGIN
+    IF p_generation_id IS NULL OR p_state NOT IN ('retiring', 'expired') THEN
+        RAISE EXCEPTION 'managed-data generation-root lifecycle input is invalid';
+    END IF;
+    -- The delivery capability is also testable as an independent schema. In
+    -- the production control baseline managed_data is present; an absent
+    -- capability is a no-op rather than a cross-schema bootstrap failure.
+    IF to_regclass('managed_data.retention_root') IS NULL THEN
+        RETURN;
+    END IF;
+    IF p_state = 'retiring' THEN
+        UPDATE managed_data.retention_root
+           SET state = 'retiring', updated_at = clock_timestamp()
+         WHERE evidence->>'generation_id' = p_generation_id::text
+           AND evidence->>'kind' = 'serving-generation'
+           AND state = 'live';
+    ELSE
+        UPDATE managed_data.retention_root
+           SET state = 'expired', updated_at = clock_timestamp()
+         WHERE evidence->>'generation_id' = p_generation_id::text
+           AND evidence->>'kind' = 'serving-generation'
+           AND state = 'retiring';
+    END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION delivery.sync_managed_data_generation_root(uuid, text) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION delivery.retire_retention_root(p_root_id uuid)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -1217,6 +1257,9 @@ BEGIN
     -- Replaying retirement is a successful no-op after the same evidence
     -- checks above. Terminal roots cannot be moved backwards or re-retired.
     IF root_state = 'retiring' THEN
+        IF root_kind = 'generation' THEN
+            PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'retiring');
+        END IF;
         RETURN true;
     ELSIF root_state <> 'live' THEN
         RETURN false;
@@ -1224,6 +1267,9 @@ BEGIN
     UPDATE delivery.delivery_retention_root
        SET state = 'retiring', retired_at = clock_timestamp()
      WHERE root_id = p_root_id AND state = 'live';
+    IF root_kind = 'generation' THEN
+        PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'retiring');
+    END IF;
     RETURN FOUND;
 END;
 $$;
@@ -1242,6 +1288,7 @@ DECLARE
     root_retired_at timestamptz;
     root_expires_at timestamptz;
     root_generation_id uuid;
+    root_kind text;
     root_target_id text;
     root_candidate_id uuid;
     root_snapshot_seal_id uuid;
@@ -1254,15 +1301,18 @@ BEGIN
     -- Lock the root before inspecting reader leases.  Reader admission takes
     -- a share lock on this row, therefore a concurrent admission either wins
     -- before this lock (and is observed below) or is rejected after retirement.
-    SELECT state, retired_at, expires_at, target_id, candidate_id, generation_id, snapshot_seal_id
-      INTO root_state, root_retired_at, root_expires_at, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id
-      FROM delivery.delivery_retention_root
-     WHERE root_id = p_root_id
+    SELECT r.state, r.retired_at, r.expires_at, r.target_id, r.candidate_id, r.generation_id, r.snapshot_seal_id, r.root_kind
+      INTO root_state, root_retired_at, root_expires_at, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id, root_kind
+      FROM delivery.delivery_retention_root AS r
+     WHERE r.root_id = p_root_id
      FOR UPDATE;
     IF NOT FOUND THEN
         RETURN false;
     END IF;
     IF root_state = 'expired' THEN
+        IF root_kind = 'generation' THEN
+            PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'expired');
+        END IF;
         RETURN true;
     END IF;
     IF root_state <> 'retiring' OR root_retired_at IS NULL THEN
@@ -1327,6 +1377,9 @@ BEGIN
     UPDATE delivery.delivery_retention_root
        SET state = 'expired', expired_at = clock_timestamp()
      WHERE root_id = p_root_id AND state = 'retiring';
+    IF root_kind = 'generation' THEN
+        PERFORM delivery.sync_managed_data_generation_root(root_generation_id, 'expired');
+    END IF;
     RETURN FOUND;
 END;
 $$;

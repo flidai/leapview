@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -138,7 +138,6 @@ const (
 	AttemptCommitted     BuildAttemptState = "committed"
 	AttemptAborted       BuildAttemptState = "aborted"
 	AttemptIndeterminate BuildAttemptState = "indeterminate"
-	AttemptFenced        BuildAttemptState = "fenced"
 )
 
 type DeliveryBuildAttempt struct {
@@ -740,16 +739,7 @@ func requireDB(r *Repository) (DBTX, error) {
 }
 
 func nativeDBConfigured(db DBTX) bool {
-	if db == nil {
-		return false
-	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 func uuidID(value, label string, generate bool) (string, error) {
@@ -1048,9 +1038,6 @@ func (r *Repository) Target(ctx context.Context, id string) (DeliveryTarget, err
 		return DeliveryTarget{}, err
 	}
 	return loadTarget(ctx, db, id)
-}
-func (r *Repository) LoadTarget(ctx context.Context, id string) (DeliveryTarget, error) {
-	return r.Target(ctx, id)
 }
 
 // OperatorSnapshot returns the bounded native operator projection for one
@@ -1509,7 +1496,7 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 	if predecessor.OwnerID != in.Predecessor.OwnerID || predecessor.FencingEpoch != in.Predecessor.FencingEpoch {
 		return BuildAttemptSuccessorResult{}, ErrStaleFence
 	}
-	if predecessor.State == AttemptCommitted || predecessor.State == AttemptAborted || predecessor.State == AttemptFenced {
+	if predecessor.State == AttemptCommitted || predecessor.State == AttemptAborted {
 		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: predecessor attempt is %s", ErrConflict, predecessor.State)
 	}
 	if predecessor.CandidateID == "" || predecessor.PlanID == "" || predecessor.PhysicalPoolID == "" {
@@ -1603,26 +1590,6 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor link identity differs", ErrConflict)
 	}
 	return BuildAttemptSuccessorResult{Predecessor: predecessor, SuccessorLease: successorLease, Successor: successor, ResolutionEvidence: append(json.RawMessage(nil), resolution...)}, nil
-}
-
-// BuildAttemptSuccessorTx returns the immutable successor edge, if one was
-// admitted for predecessorAttemptID.
-func (r *Repository) BuildAttemptSuccessorTx(ctx context.Context, tx Tx, predecessorAttemptID string) (BuildAttemptSuccessorLink, error) {
-	if tx == nil {
-		return BuildAttemptSuccessorLink{}, ErrInvalid
-	}
-	id, err := uuidID(predecessorAttemptID, "predecessor attempt id", false)
-	if err != nil {
-		return BuildAttemptSuccessorLink{}, err
-	}
-	row, err := depdb.New(tx).GetBuildAttemptSuccessor(ctx, dbUUID(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return BuildAttemptSuccessorLink{}, ErrNotFound
-	}
-	if err != nil {
-		return BuildAttemptSuccessorLink{}, err
-	}
-	return BuildAttemptSuccessorLink{PredecessorAttemptID: row.PredecessorAttemptID, SuccessorAttemptID: row.SuccessorAttemptID, ResolutionEvidence: append(json.RawMessage(nil), row.ResolutionEvidence...), CreatedAt: dbTime(row.CreatedAt)}, nil
 }
 
 // AcquireLeaseAndBeginBuildAttemptTx atomically acquires a target writer
@@ -2032,17 +1999,6 @@ func (r *Repository) BuildArtifactBinding(ctx context.Context, attemptID string)
 		return BuildArtifactBinding{}, err
 	}
 	return loadBuildArtifactBinding(ctx, db, attemptID)
-}
-
-func (r *Repository) BuildArtifactBindingTx(ctx context.Context, tx Tx, attemptID string) (BuildArtifactBinding, error) {
-	if tx == nil {
-		return BuildArtifactBinding{}, ErrInvalid
-	}
-	attemptID, err := uuidID(attemptID, "attempt id", false)
-	if err != nil {
-		return BuildArtifactBinding{}, err
-	}
-	return loadBuildArtifactBinding(ctx, tx, attemptID)
 }
 
 func (r *Repository) LoadBuildArtifactBinding(ctx context.Context, attemptID string) (BuildArtifactBinding, error) {
@@ -3928,10 +3884,6 @@ func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetI
 	}
 	return nil
 }
-
-// DeliveryResultError is a tiny helper used to keep stale-fence branches
-// explicit while preserving the ordinary ActivationResult return shape.
-func DeliveryResultError(err error) (ActivationResult, error) { return ActivationResult{}, err }
 
 func (r *Repository) retireCandidateRootForActivation(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
 	row, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(p.CandidateID))

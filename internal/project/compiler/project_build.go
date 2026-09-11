@@ -1,11 +1,14 @@
 package compiler
 
 import (
+	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/modelsql"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -72,11 +75,16 @@ func buildResourceManifest(project sourceAssembly) (manifest.ResourceManifest, e
 		semanticModelNames = append(semanticModelNames, name)
 	}
 	sort.Strings(semanticModelNames)
-	for _, name := range semanticModelNames {
-		spec := project.SemanticModels[name]
-		id := project.SemanticModelIDs[name]
-		if id == "" {
-			return manifest.ResourceManifest{}, fmt.Errorf("semantic model %q has no stable id", name)
+	var (
+		sourceAliases           map[string]string
+		translatedRuntimeTables map[string]semanticmodel.Table
+		runtimeSources          map[string]semanticmodel.Source
+	)
+	if len(semanticModelNames) > 0 {
+		var err error
+		sourceAliases, _, err = sourceAliasesForAssembly(project)
+		if err != nil {
+			return manifest.ResourceManifest{}, err
 		}
 		runtimeTables := copyTables(project.Models)
 		for tableName, table := range runtimeTables {
@@ -84,16 +92,23 @@ func buildResourceManifest(project sourceAssembly) (manifest.ResourceManifest, e
 			table.SourceDependencies = authoredNamesByID(table.SourceDependencies, project.SourceIDs)
 			runtimeTables[tableName] = table
 		}
-		sourceAliases, _, err := sourceAliasesForAssembly(project)
-		if err != nil {
-			return manifest.ResourceManifest{}, err
-		}
-		runtimeSources := make(map[string]semanticmodel.Source, len(project.Sources))
+		runtimeSources = make(map[string]semanticmodel.Source, len(project.Sources))
 		for sourceName, source := range project.Sources {
 			alias := sourceAliases[sourceName]
 			runtimeSources[alias] = source
 		}
-		model := &semanticmodel.Model{Name: name, Title: name, AIContext: project.SemanticModelAIContexts[name], Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedTablesForRuntime(runtimeTables, sourceAliases)}
+		translatedRuntimeTables, err = translatedTablesForRuntime(runtimeTables, sourceAliases)
+		if err != nil {
+			return manifest.ResourceManifest{}, err
+		}
+	}
+	for _, name := range semanticModelNames {
+		spec := project.SemanticModels[name]
+		id := project.SemanticModelIDs[name]
+		if id == "" {
+			return manifest.ResourceManifest{}, fmt.Errorf("semantic model %q has no stable id", name)
+		}
+		model := &semanticmodel.Model{Name: name, Title: name, AIContext: project.SemanticModelAIContexts[name], Connections: copyConnections(project.Connections), Sources: runtimeSources, Tables: translatedRuntimeTables}
 		authoredSpec := spec
 		if err := applySemanticModelSpec(model, authoredSpec); err != nil {
 			return manifest.ResourceManifest{}, resourceError(project.SemanticModelPaths[name], id, "spec", "%s", err)
@@ -148,11 +163,6 @@ func canonicalRef(project sourceAssembly, kind, ref string) string {
 	if id := project.ResourceIDs[kind+":"+ref]; id != "" {
 		return id
 	}
-	if kind == "semantic_model" {
-		if id := project.ResourceIDs["semantic_model:"+ref]; id != "" {
-			return id
-		}
-	}
 	return ref
 }
 func canonicalRefs(project sourceAssembly, kind string, refs []string) []string {
@@ -179,9 +189,10 @@ func authoredNamesByID(refs []string, ids map[string]string) []string {
 	return out
 }
 
-func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases map[string]string) map[string]semanticmodel.Table {
-	out := make(map[string]semanticmodel.Table, len(in))
+func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases map[string]string) (map[string]semanticmodel.Table, error) {
+	out := copyTables(in)
 	for name, table := range in {
+		table = out[name]
 		if alias, ok := sourceAliases[table.Execution.Source]; ok {
 			table.Execution.Source = alias
 		}
@@ -190,18 +201,38 @@ func translatedTablesForRuntime(in map[string]semanticmodel.Table, sourceAliases
 				table.SourceDependencies[index] = alias
 			}
 		}
-		table.Execution.SQL = rewriteSourceSQLForRuntime(table.Execution.SQL, sourceAliases)
+		var err error
+		table.Execution.SQL, err = rewriteSourceSQLForRuntime(table.Execution.SQL, sourceAliases)
+		if err != nil {
+			return nil, fmt.Errorf("Model %q SQL runtime rewrite: %w", name, err)
+		}
 		out[name] = table
 	}
-	return out
+	return out, nil
 }
 
-func rewriteSourceSQLForRuntime(sql string, sourceAliases map[string]string) string {
-	for global, local := range sourceAliases {
-		sql = strings.ReplaceAll(sql, `source."`+global+`"`, "source."+local)
-		sql = strings.ReplaceAll(sql, "source."+global, "source."+local)
+func rewriteSourceSQLForRuntime(sql string, sourceAliases map[string]string) (string, error) {
+	if strings.TrimSpace(sql) == "" {
+		return sql, nil
 	}
-	return sql
+	analysis, err := modelsql.Analyze(context.Background(), sql)
+	if err != nil {
+		// Dependency validation runs immediately after this lowering pass and
+		// carries the authored model identity into its diagnostic. Preserve
+		// invalid SQL unchanged so that pass remains the reporting boundary.
+		return sql, nil
+	}
+	replacements := make(map[string]string, len(analysis.SourceRefs))
+	for _, source := range analysis.SourceRefs {
+		alias, ok := sourceAliases[source]
+		if !ok {
+			// Leave unknown sources untouched so the dependency pass can report
+			// the governed source error with its model identity.
+			return sql, nil
+		}
+		replacements[source] = "source." + alias
+	}
+	return modelsql.RewriteSources(sql, analysis, replacements, false)
 }
 
 func localSourceName(sourceID string) string {
@@ -293,6 +324,10 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 		if !ok {
 			return fmt.Errorf("SemanticModel %q dataset %q references unknown Model %q", model.Name, datasetName, dataset.Model)
 		}
+		// The shared runtime table projection is immutable. Clone only the
+		// selected table before the semantic model owns and normalizes it;
+		// ValidateAuthored fills dimensions/columns and derives dependencies.
+		table = copyTables(map[string]semanticmodel.Table{dataset.Model: table})[dataset.Model]
 		table.ModelName = dataset.Model
 		tables[datasetName] = table
 	}
@@ -388,15 +423,7 @@ func semanticRelationshipEndpointUnique(tables map[string]semanticmodel.Table, d
 }
 
 func sameOrderedFields(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func semanticRelationshipEndpointTuple(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, []string, error) {
@@ -556,13 +583,5 @@ func sortedSetKeys(values map[string]struct{}) []string {
 }
 
 func sameStringList(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }

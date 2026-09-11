@@ -117,7 +117,7 @@ test('chat thread uses the surrounding app surface background', async () => {
   await page.waitForFunction(() => customElements.get('lv-chat-thread'))
 
   const background = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const thread = element.shadowRoot.querySelector('.thread') as HTMLElement
+    const thread = (element.shadowRoot as ShadowRoot).querySelector('.thread') as HTMLElement
     return getComputedStyle(thread).backgroundColor
   })
 
@@ -170,7 +170,7 @@ test('chat thread preserves plain user message text without template whitespace'
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const bubble = element.shadowRoot.querySelector('.message.user .bubble.plain') as HTMLElement
+    const bubble = (element.shadowRoot as ShadowRoot).querySelector('.message.user .bubble.plain') as HTMLElement
     const rect = bubble.getBoundingClientRect()
     return {
       text: bubble.textContent,
@@ -209,7 +209,7 @@ test('chat thread renders turn-scoped references inside the user message bubble'
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const bubble = element.shadowRoot.querySelector('.message.user .bubble')
+    const bubble = (element.shadowRoot as ShadowRoot).querySelector('.message.user .bubble') as HTMLElement
     const reference = bubble.querySelector('.turn-reference') as HTMLAnchorElement
     return {
       bubbleText: bubble.textContent.replace(/\s+/g, ' ').trim(),
@@ -263,7 +263,7 @@ test('chat thread uses the shared visual identity and color for references', asy
   })
 
   const icons = await page.locator('lv-chat-thread').evaluate((element: any) => (
-    Array.from(element.shadowRoot.querySelectorAll('.turn-reference-icon svg'))
+    Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.turn-reference-icon svg'))
       .map((icon: any) => ({ className: icon.getAttribute('class'), color: icon.style.color }))
   ))
   expect(icons).toEqual([
@@ -386,20 +386,20 @@ test('chat thread renders tool details with compact json and toon code blocks', 
       },
     ]
     await thread.updateComplete
-    for (const trigger of Array.from(thread.shadowRoot.querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
+    for (const trigger of Array.from((thread.shadowRoot as ShadowRoot).querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
       trigger.click()
     }
     await thread.updateComplete
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const blocks = Array.from(element.shadowRoot.querySelectorAll('lv-code-block')) as any[]
+    const blocks = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-code-block')) as any[]
     return {
       blockCount: blocks.length,
       languages: blocks.map((block) => block.language),
       compact: blocks.map((block) => block.compact),
-      text: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
-      hasRawPre: Boolean(element.shadowRoot.querySelector('.tool-detail-block > pre')),
+      text: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
+      hasRawPre: Boolean((element.shadowRoot as ShadowRoot).querySelector('.tool-detail-block > pre')),
     }
   })
 
@@ -427,13 +427,13 @@ test('chat thread keeps in-flight tool details open as the result arrives', asyn
       inputFormat: 'json',
     }]
     await thread.updateComplete
-    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    ;(thread.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.tool-trigger')!.click()
     await thread.updateComplete
   })
 
   const running = await page.locator('lv-chat-thread').evaluate((element: any) => ({
-    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+    expanded: (element.shadowRoot as ShadowRoot).querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
   }))
   expect(running.expanded).toBe('true')
   expect(running.details).toContain('catalog_list')
@@ -448,8 +448,8 @@ test('chat thread keeps in-flight tool details open as the result arrives', asyn
     await thread.updateComplete
   })
   const complete = await page.locator('lv-chat-thread').evaluate((element: any) => ({
-    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+    expanded: (element.shadowRoot as ShadowRoot).querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
   }))
   expect(complete.expanded).toBe('true')
   expect(complete.details).toContain('dashboard:sales')
@@ -471,16 +471,16 @@ test('chat thread renders tool arguments directly and exported yaml as code', as
       resultFormat: 'yaml',
     }]
     await thread.updateComplete
-    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    ;(thread.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.tool-trigger')!.click()
     await thread.updateComplete
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const blocks = Array.from(element.shadowRoot.querySelectorAll('lv-code-block')) as any[]
+    const blocks = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-code-block')) as any[]
     return {
       languages: blocks.map((block) => block.language),
       values: blocks.map((block) => block.code),
-      labels: Array.from(element.shadowRoot.querySelectorAll('.tool-detail-label')).map((label: any) => label.textContent),
+      labels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.tool-detail-label')).map((label) => label.textContent),
     }
   })
   expect(state.languages).toEqual(['json', 'yaml'])
@@ -514,15 +514,15 @@ test('chat thread renders assistant markdown through shared markdown view', asyn
   })
 
   const state = await page.locator('lv-chat-thread').evaluate(async (element: any) => {
-    const markdownView = element.shadowRoot.querySelector('lv-markdown-view') as any
+    const markdownView = (element.shadowRoot as ShadowRoot).querySelector('lv-markdown-view') as any
     await markdownView.updateComplete
     return {
       hasMarkdownView: Boolean(markdownView),
       value: markdownView.value,
-      h1Text: markdownView.shadowRoot.querySelector('h1')?.textContent,
-      hasStrong: Boolean(markdownView.shadowRoot.querySelector('strong')),
-      hasCode: Boolean(markdownView.shadowRoot.querySelector('code')),
-      hasList: Boolean(markdownView.shadowRoot.querySelector('ul')),
+      h1Text: (markdownView.shadowRoot as ShadowRoot).querySelector('h1')?.textContent,
+      hasStrong: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('strong')),
+      hasCode: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('code')),
+      hasList: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('ul')),
     }
   })
 
@@ -578,8 +578,8 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
   const artifact = page.locator('lv-chat-thread').locator('lv-visual-artifact[artifact-id="legacy_chart_1"]')
   await artifact.waitFor()
   const state = await artifact.evaluate((element) => ({
-    hasChart: Boolean(element.shadowRoot?.querySelector('lv-echart')),
-    text: element.shadowRoot?.textContent?.trim(),
+    hasChart: Boolean((element.shadowRoot as ShadowRoot)?.querySelector('lv-echart')),
+    text: (element.shadowRoot as ShadowRoot)?.textContent?.trim(),
   }))
   expect(state.hasChart).toBe(false)
   expect(state.text).toBe('Artifact data is unavailable.')

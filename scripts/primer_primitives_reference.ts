@@ -52,7 +52,9 @@ async function renderReference(reference: PrimerPrimitiveReference): Promise<str
 function referenceGroups(sources: PrimerPrimitiveSource[]): PrimerPrimitiveReference[] {
   const byRelativeSource = new Map(sources.map(source => [source.relativeSource.split(path.sep).join("/"), source]));
   const source = (relativeSource: string) => byRelativeSource.get(relativeSource);
-  const pick = (relativeSources: string[]) => relativeSources.map(relativeSource => source(relativeSource)).filter(Boolean);
+  const pick = (relativeSources: string[]) => relativeSources
+    .map(relativeSource => source(relativeSource))
+    .filter((item): item is PrimerPrimitiveSource => item !== undefined);
 
   return [
     {

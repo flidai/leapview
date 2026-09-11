@@ -445,6 +445,33 @@ model AdminDirectoryListSignal {
 @apigen.contract(#{ kind: "ui-envelope", tags: #["admin", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "admin" })
 model AdminPageEnvelope {
+  // These optional roots are populated only by the active admin surface.
+  // Their declarations keep the stream contract complete without requiring
+  // inactive branches to manufacture placeholder payloads.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAccess", `x-leapview-signal-owner`: "server" })
+  `adminAccess`?: AccessAdministrationSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAgentCommand", `x-leapview-signal-owner`: "server" })
+  `adminAgentCommand`?: AdminAgentCommandSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAuditLog", `x-leapview-signal-owner`: "server" })
+  `adminAuditLog`?: AuditLogSignal;
+  // The settings surface retains this consumer-only root for contract
+  // compatibility; there is no producer anywhere in the canonical app.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminProjects", `x-leapview-signal-owner`: "consumer-only" })
+  `adminProjects`?: ProjectRegistrySignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryDetail", `x-leapview-signal-owner`: "server" })
+  `adminQueryDetail`?: AdminQueryDetailSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryHistory", `x-leapview-signal-owner`: "server" })
+  `adminQueryHistory`?: AdminQueryHistorySignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminServiceAccounts", `x-leapview-signal-owner`: "server" })
+  `adminServiceAccounts`?: ServiceAccountsSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "personalSettings", `x-leapview-signal-owner`: "server" })
+  `personalSettings`?: PersonalSettingsSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "productSettings", `x-leapview-signal-owner`: "server" })
+  `productSettings`?: ProductSettingsSignal;
+  // Datastar owns this indicator in the browser; the server never publishes
+  // it as a signal patch.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentTurnPending", `x-leapview-signal-owner`: "browser" })
+  `agentTurnPending`?: boolean;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
@@ -453,6 +480,12 @@ model AdminPageEnvelope {
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminAgentCommandSignal {
+  `systemPrompt`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })

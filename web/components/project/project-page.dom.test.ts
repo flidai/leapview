@@ -4,6 +4,14 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 
+type ProjectTableElement = TestDomElement & {
+  table?: {
+    columns?: Array<{ header: string }>
+    rows?: Array<{ version?: unknown; content_hash?: unknown; name?: { description?: string }; key?: string; actions?: unknown[] }>
+    rowAction?: string
+  }
+}
+
 let server: Server
 let baseURL = ''
 let browser: Browser
@@ -54,12 +62,12 @@ test('project asset list renders current resource signals and filter event', asy
       await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-project-asset-filter', (event: CustomEvent) => { detail = event.detail }, { once: true })
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const input = root.querySelector('input[type="search"]') as HTMLInputElement
       input.value = 'orders'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await element.updateComplete
-      const table = root.querySelector('lv-record-table') as any
+      const table = root.querySelector('lv-record-table') as ProjectTableElement
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
         searchLabel: input.getAttribute('aria-label'),
@@ -73,9 +81,10 @@ test('project asset list renders current resource signals and filter event', asy
     expect(state.searchLabel).toBe('Search project assets')
     expect(state.rows).toBe(1)
     expect(state.columns).toEqual(['Name', 'Type', 'Identifier'])
-    expect(state.firstRow.name.description).toBe('Raw orders.')
-    expect(state.firstRow.key).toBe('source:orders')
-    expect(state.firstRow.actions).toEqual([])
+    const firstRow = state.firstRow!
+    expect(firstRow.name?.description).toBe('Raw orders.')
+    expect(firstRow.key).toBe('source:orders')
+    expect(firstRow.actions).toEqual([])
     expect(state.detail).toEqual({ type: 'source', query: 'orders' })
   } finally {
     await page.close()
@@ -90,11 +99,11 @@ test('fixed project areas keep canonical asset links', async () => {
       await page.waitForFunction(() => customElements.get('lv-project-page'))
       const links = await page.locator('lv-project-page').evaluate(async (element: any) => {
         await element.updateComplete
-        const table = element.shadowRoot?.querySelector('lv-record-table') as any
+        const table = (element.shadowRoot as ShadowRoot)?.querySelector('lv-record-table') as ProjectTableElement
         await table?.updateComplete
         return {
-          links: Array.from(table?.querySelectorAll('a') ?? []).map((link: HTMLAnchorElement) => link.getAttribute('href')),
-          filters: element.shadowRoot?.querySelectorAll('select').length ?? 0,
+          links: Array.from(table?.querySelectorAll<HTMLAnchorElement>('a') ?? []).map((link) => link.getAttribute('href')),
+          filters: (element.shadowRoot as ShadowRoot)?.querySelectorAll('select').length ?? 0,
         }
       })
       expect(links.links).toContain(expectedHref)
@@ -112,8 +121,8 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const icon = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
-      const glyph = element.shadowRoot?.querySelector('h1 .asset-glyph') as HTMLElement | null
+      const root = (element.shadowRoot as ShadowRoot)!
+      const glyph = (element.shadowRoot as ShadowRoot)?.querySelector('h1 .asset-glyph') as HTMLElement | null
       const parent = root.querySelector('.breadcrumb-header nav a') as HTMLElement
       const title = root.querySelector('.breadcrumb-header h1') as HTMLElement
       const parentBox = parent.getBoundingClientRect()
@@ -155,7 +164,7 @@ test('semantic model offers a permission-gated dashboard creation entry', async 
     const action = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       element.setAttribute('create-dashboard-href', '/dashboards/new?semanticModel=semantic%3Aorders')
       await element.updateComplete
-      const link = element.shadowRoot.querySelector('.actions .action-link') as HTMLAnchorElement
+      const link = (element.shadowRoot as ShadowRoot).querySelector('.actions .action-link') as HTMLAnchorElement
       return { label: link?.textContent?.trim(), href: link?.getAttribute('href'), hasIcon: Boolean(link?.querySelector('svg')) }
     })
     expect(action).toEqual({ label: 'Create dashboard', href: '/dashboards/new?semanticModel=semantic%3Aorders', hasIcon: true })
@@ -171,7 +180,7 @@ test('asset data section embeds the shared explorer without a duplicate route he
     await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-data-explorer'))
     const data = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const explorer = element.shadowRoot?.querySelector('lv-data-explorer') as any
+      const explorer = (element.shadowRoot as ShadowRoot)?.querySelector('lv-data-explorer') as any
       await explorer?.updateComplete
       const preview = explorer?.shadowRoot?.querySelector('lv-data-preview-table') as any
       await preview?.updateComplete
@@ -214,7 +223,7 @@ test('connections list and asset detail render without workspace terminology', a
     await page.waitForFunction(() => customElements.get('lv-connections-page'))
     const connections = await page.locator('lv-connections-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       return { title: root.querySelector('h1')?.textContent?.trim(), rows: root.querySelectorAll('tbody tr').length, text: root.textContent }
     })
     expect(connections.title).toBe('Connections')
@@ -225,7 +234,7 @@ test('connections list and asset detail render without workspace terminology', a
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const detail = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       return { title: root.querySelector('h1')?.textContent?.trim(), tabs: Array.from(root.querySelectorAll('.tabs a')).map((tab: Element) => tab.textContent?.trim()), text: root.textContent }
     })
     expect(detail.title).toBe('orders')
@@ -236,7 +245,7 @@ test('connections list and asset detail render without workspace terminology', a
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const connection = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       return {
         hasCatalogShell: Boolean(root.querySelector('.asset-page.connection-asset-page')),
         hasStandaloneEntityShell: Boolean(root.querySelector('.detail-surface')),
@@ -266,7 +275,7 @@ test('asset Definition tab renders an outline and highlighted Transform SQL', as
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const viewer = root.querySelector('lv-config-viewer') as any
       await viewer?.updateComplete
       return {
@@ -275,7 +284,7 @@ test('asset Definition tab renders an outline and highlighted Transform SQL', as
         configuration: viewer?.configuration,
         sqlRows: viewer?.shadowRoot?.querySelectorAll('.sql-row').length ?? 0,
         transformSections: root.querySelectorAll('.transform-section').length,
-        sqlCode: (viewer?.shadowRoot?.querySelector('.sql-row lv-code-block') as any)?.code,
+        sqlCode: (viewer?.shadowRoot?.querySelector('.sql-row lv-code-block')!)?.code,
       }
     })
     expect(definition.activeTab).toBe('Definition')
@@ -296,8 +305,8 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
     await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-drawer'))
     const refresh = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
-      const runTable = root.querySelector('lv-record-table') as any
+      const root = (element.shadowRoot as ShadowRoot)!
+      const runTable = root.querySelector('lv-record-table') as ProjectTableElement
       await runTable?.updateComplete
       runTable?.querySelector<HTMLElement>('tbody tr.record-row')?.click()
       return {
@@ -322,7 +331,7 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
     await page.waitForFunction(() => new URL(location.href).searchParams.get('refresh') === 'run:model:orders')
     const drawer = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const detail = root.querySelector('lv-drawer') as any
       await detail?.updateComplete
       return {
@@ -347,7 +356,7 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
     await page.waitForFunction(() => !new URL(location.href).searchParams.has('refresh'))
     const afterBack = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return { signal: element.signals.refreshRunDrawer, drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')) }
+      return { signal: element.signals.refreshRunDrawer, drawer: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')) }
     })
     expect(afterBack).toEqual({ signal: { open: false, runId: '' }, drawer: false })
 
@@ -355,7 +364,7 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
     await page.waitForFunction(() => Boolean((document.querySelector('lv-project-asset-page') as any)?.signals?.refreshRunDrawer?.open))
     expect(await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return element.shadowRoot!.querySelector('.refresh-run-drawer-title h1')?.textContent?.trim()
+      return (element.shadowRoot as ShadowRoot)!.querySelector('.refresh-run-drawer-title h1')?.textContent?.trim()
     })).toBe('Refresh run')
   } finally {
     await page.close()
@@ -369,8 +378,8 @@ test('semantic model exposes the same Refreshes history surface', async () => {
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
-      const table = root.querySelector('lv-record-table') as any
+      const root = (element.shadowRoot as ShadowRoot)!
+      const table = root.querySelector('lv-record-table') as ProjectTableElement
       await table?.updateComplete
       return {
         activeTab: root.querySelector('.tabs a.active')?.textContent?.trim(),
@@ -392,7 +401,7 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
     await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-drawer'))
     const tableState = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const table = element.shadowRoot!.querySelector('lv-record-table') as any
+      const table = (element.shadowRoot as ShadowRoot)!.querySelector('lv-record-table') as ProjectTableElement
       await table?.updateComplete
       const additions = table?.querySelector('.record-diff-additions') as HTMLElement | null
       const deletions = table?.querySelector('.record-diff-deletions') as HTMLElement | null
@@ -401,7 +410,7 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
         columns: table?.table?.columns?.map((column: any) => column.header),
         versions: table?.table?.rows?.map((row: any) => ({ version: row.version, contentHash: row.content_hash })),
         rowAction: table?.table?.rowAction,
-        drawerBeforeSignal: Boolean(element.shadowRoot!.querySelector('lv-drawer')),
+        drawerBeforeSignal: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')),
         diff: [additions?.textContent, deletions?.textContent],
         diffColors: [additions ? getComputedStyle(additions).color : '', deletions ? getComputedStyle(deletions).color : ''],
       }
@@ -419,7 +428,7 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
       element.style.setProperty('--base-size-12', '12px')
       element.style.setProperty('--base-size-16', '16px')
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const detail = root.querySelector('lv-drawer') as any
       await detail?.updateComplete
       return {
@@ -462,14 +471,14 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
     await page.waitForFunction(() => !new URL(location.href).searchParams.has('version'))
     expect(await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return { signal: element.signals.assetVersionDrawer, drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')) }
+      return { signal: element.signals.assetVersionDrawer, drawer: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')) }
     })).toEqual({ signal: { open: false, versionId: '' }, drawer: false })
 
     await page.goto(`${baseURL}/?root=model-versions&version=state:previous`)
     await page.waitForFunction(() => Boolean((document.querySelector('lv-project-asset-page') as any)?.signals?.assetVersionDrawer?.open))
     expect(await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       return {
         title: root.querySelector('.version-drawer-title h1')?.textContent?.trim(),
         firstVersion: root.querySelector('.version-changes .empty')?.textContent?.trim(),
@@ -488,13 +497,13 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
     await page.locator('lv-project-asset-page').evaluate((element: HTMLElement) => { element.dataset.instance = 'original' })
     const before = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const table = Array.from(element.shadowRoot!.querySelectorAll('lv-record-table'))
-        .find((candidate: any) => candidate.table?.rowAction === 'open-model-field') as any
+      const table = Array.from((element.shadowRoot as ShadowRoot)!.querySelectorAll('lv-record-table'))
+        .find((candidate) => (candidate as ProjectTableElement).table?.rowAction === 'open-model-field') as ProjectTableElement | undefined
       await table?.updateComplete
       table?.querySelector<HTMLElement>('tbody tr.record-row')?.click()
       return {
         columns: table?.table?.columns?.map((column: any) => column.header),
-        drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')),
+        drawer: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')),
       }
     })
     expect(before.columns).toEqual(['Field', 'Type', 'Description', 'Status'])
@@ -502,7 +511,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
     await page.waitForFunction(() => new URL(location.href).searchParams.get('field') === 'customer_id')
     const desktop = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const drawer = root.querySelector('lv-drawer') as any
       await drawer?.updateComplete
       return {
@@ -515,7 +524,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
           title: section.querySelector('h2')?.textContent?.trim(),
           text: section.textContent?.replace(/\s+/g, ' ').trim(),
         })),
-        width: Math.round(drawer.shadowRoot?.querySelector('.drawer')?.getBoundingClientRect().width ?? 0),
+        width: Math.round((drawer.shadowRoot as ShadowRoot)?.querySelector('.drawer')?.getBoundingClientRect().width ?? 0),
       }
     })
     expect(desktop.samePage).toBe('original')
@@ -539,7 +548,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
       return {
         samePage: element.dataset.instance,
         signal: element.signals.modelFieldDrawer,
-        drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')),
+        drawer: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')),
       }
     })
     expect(afterBack).toEqual({ samePage: 'original', signal: { open: false, fieldKey: '' }, drawer: false })
@@ -548,14 +557,14 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
     await page.waitForFunction(() => new URL(location.href).searchParams.get('field') === 'customer_id')
     await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const drawer = element.shadowRoot!.querySelector('lv-drawer') as any
+      const drawer = (element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer') as TestDomElement
       await drawer?.updateComplete
       drawer?.shadowRoot?.querySelector<HTMLButtonElement>('button.close')?.click()
     })
     await page.waitForFunction(() => !new URL(location.href).searchParams.has('field'))
     const afterClose = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return { signal: element.signals.modelFieldDrawer, drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')) }
+      return { signal: element.signals.modelFieldDrawer, drawer: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')) }
     })
     expect(afterClose).toEqual({ signal: { open: false, fieldKey: '' }, drawer: false })
 
@@ -565,7 +574,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
       await element.updateComplete
       return {
         signal: element.signals.modelFieldDrawer,
-        title: element.shadowRoot!.querySelector('.field-drawer-title h1')?.textContent?.trim(),
+        title: (element.shadowRoot as ShadowRoot)!.querySelector('.field-drawer-title h1')?.textContent?.trim(),
       }
     })
     expect(deepLink).toEqual({ signal: { open: true, fieldKey: 'customer_id' }, title: 'customer_id' })
@@ -573,7 +582,7 @@ test('model field rows open a signal-driven responsive drawer and synchronize br
     await page.setViewportSize({ width: 390, height: 760 })
     const mobileWidth = await page.locator('lv-project-asset-page lv-drawer').evaluate(async (drawer: any) => {
       await drawer.updateComplete
-      return Math.round(drawer.shadowRoot?.querySelector('.drawer')?.getBoundingClientRect().width ?? 0)
+      return Math.round((drawer.shadowRoot as ShadowRoot)?.querySelector('.drawer')?.getBoundingClientRect().width ?? 0)
     })
     expect(mobileWidth).toBe(390)
   } finally {
@@ -588,7 +597,7 @@ test('unavailable pipeline shows guidance without an unrelated connections actio
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const run = root.querySelector('button[aria-label*="Run now unavailable"]') as HTMLButtonElement | null
       return {
         runDisabled: run?.disabled,
@@ -613,9 +622,9 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
     const host = page.locator('lv-project-asset-page')
     const initial = await host.evaluate(async (element: any) => {
       await element.updateComplete
-	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  const editor = (element.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-appearance-editor') as TestDomElement
 	  await editor.updateComplete
-	  const root = editor.shadowRoot!
+	  const root = (editor.shadowRoot as ShadowRoot)!
       return {
         current: root.querySelector('.dashboard-appearance-current')?.textContent?.trim(),
         editor: Boolean(root.querySelector('lv-dashboard-icon-picker')),
@@ -627,19 +636,19 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
 
     const detail = await host.evaluate(async (element: any) => {
       const selected = new Promise<unknown>((resolve) => element.addEventListener('lv-dashboard-appearance-change', (event: Event) => resolve((event as CustomEvent).detail), { once: true }))
-	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
-	  editor.shadowRoot!.querySelector<HTMLButtonElement>('.dashboard-appearance-edit')!.click()
+	  const editor = (element.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-appearance-editor') as TestDomElement
+	  (editor.shadowRoot as ShadowRoot)!.querySelector<HTMLButtonElement>('.dashboard-appearance-edit')!.click()
 	  await editor.updateComplete
-	  const picker = editor.shadowRoot!.querySelector('lv-dashboard-icon-picker') as any
+	  const picker = (editor.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-icon-picker') as TestDomElement
       await picker.updateComplete
-      picker.shadowRoot!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
+      ;(picker.shadowRoot as ShadowRoot)!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
       return selected
     })
     expect(detail).toEqual({ icon: 'chart-no-axes-combined', color: 'orange' })
     const optimistic = await host.evaluate(async (element: any) => {
-	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  const editor = (element.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-appearance-editor') as TestDomElement
 	  await editor.updateComplete
-	  const root = editor.shadowRoot!
+	  const root = (editor.shadowRoot as ShadowRoot)!
       return {
         previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
         status: root.querySelector('[role="status"]')?.textContent?.trim(),
@@ -649,9 +658,9 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
     expect(optimistic.status).toBe('Saving appearance…')
     const failed = await host.evaluate(async (element: any) => {
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
-	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  const editor = (element.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-appearance-editor') as TestDomElement
 	  await editor.updateComplete
-	  const root = editor.shadowRoot!
+	  const root = (editor.shadowRoot as ShadowRoot)!
       return {
         previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
         error: root.querySelector('[role="alert"]')?.textContent?.trim(),
@@ -674,10 +683,10 @@ test('pipeline detail run action emits canonical pipeline command detail', async
       let command: unknown = null
       let documentCommand: unknown = null
       element.addEventListener('lv-run-refresh-pipeline', (event: CustomEvent) => { command = event.detail }, { once: true })
-      document.addEventListener('lv-run-refresh-pipeline', (event: CustomEvent) => { documentCommand = event.detail }, { once: true })
-      const button = element.shadowRoot?.querySelector('button[aria-label="Run now"]') as HTMLButtonElement | null
+      document.addEventListener('lv-run-refresh-pipeline', (event: Event) => { documentCommand = (event as CustomEvent).detail }, { once: true })
+      const button = (element.shadowRoot as ShadowRoot)?.querySelector('button[aria-label="Run now"]') as HTMLButtonElement | null
       button?.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }))
-      return { command, documentCommand, button: Boolean(button), disabled: button?.disabled, labels: Array.from(element.shadowRoot?.querySelectorAll('button') ?? []).map((candidate: any) => candidate.getAttribute('aria-label')) }
+      return { command, documentCommand, button: Boolean(button), disabled: button?.disabled, labels: Array.from((element.shadowRoot as ShadowRoot)?.querySelectorAll('button') ?? []).map((candidate) => candidate.getAttribute('aria-label')) }
     })
     expect(detail).toEqual({ command: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, documentCommand: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, button: true, disabled: false, labels: ['Run now'] })
   } finally {
@@ -699,7 +708,7 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await element.updateComplete
-      const feedback = element.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const feedback = (element.shadowRoot as ShadowRoot)?.querySelector('[role="alert"]') as HTMLElement | null
       const retry = feedback?.querySelector('button') as HTMLButtonElement | null
       return {
         message: feedback?.textContent?.trim(),
@@ -726,14 +735,14 @@ test('connection terminal command failure keeps the drawer state and offers relo
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const admin = element.shadowRoot?.querySelector('lv-connection-administration') as any
+      const admin = (element.shadowRoot as ShadowRoot)?.querySelector('lv-connection-administration') as any
       await admin?.updateComplete
-      const configure = Array.from(admin.shadowRoot?.querySelectorAll('button') ?? []).find((button: any) => button.textContent?.trim() === 'Configure') as HTMLButtonElement | undefined
+      const configure = Array.from((admin.shadowRoot as ShadowRoot)?.querySelectorAll('button') ?? []).find((button: any) => button.textContent?.trim() === 'Configure') as HTMLButtonElement | undefined
       configure?.click()
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await admin?.updateComplete
-      const drawerOpenAfterClick = Boolean(admin.shadowRoot?.querySelector('lv-drawer'))
-      const form = admin.shadowRoot?.querySelector('form') as HTMLFormElement | null
+      const drawerOpenAfterClick = Boolean((admin.shadowRoot as ShadowRoot)?.querySelector('lv-drawer'))
+      const form = (admin.shadowRoot as ShadowRoot)?.querySelector('form') as HTMLFormElement | null
       form?.requestSubmit()
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
@@ -742,9 +751,9 @@ test('connection terminal command failure keeps the drawer state and offers relo
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await admin?.updateComplete
-      const alert = admin.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const alert = (admin.shadowRoot as ShadowRoot)?.querySelector('[role="alert"]') as HTMLElement | null
       const retry = alert?.querySelector('button') as HTMLButtonElement | null
-      const drawerOpenBeforeRetry = Boolean(admin.shadowRoot?.querySelector('lv-drawer'))
+      const drawerOpenBeforeRetry = Boolean((admin.shadowRoot as ShadowRoot)?.querySelector('lv-drawer'))
       return {
         message: alert?.textContent?.trim(),
         failureKind: admin.terminalFailure?.kind,

@@ -10,12 +10,6 @@ type PageInfo struct {
 
 type PublicationStatus string
 
-const (
-	PublicationStatusActive       PublicationStatus = "active"
-	PublicationStatusSuspended    PublicationStatus = "suspended"
-	PublicationStatusUnconfigured PublicationStatus = "unconfigured"
-)
-
 type PublicationResponse struct {
 	ActiveServingStateID *string           `json:"activeServingStateId,omitempty"`
 	AllowedOrigins       []string          `json:"allowedOrigins"`
@@ -123,11 +117,6 @@ type DashboardComponentResponse struct {
 	Height      float64                      `json:"height,omitempty"`
 	VisualID    string                       `json:"visualId,omitempty"`
 	FilterID    string                       `json:"filterId,omitempty"`
-}
-
-type DashboardComponentListResponse struct {
-	Items []DashboardComponentResponse `json:"items"`
-	Page  PageInfo                     `json:"page"`
 }
 
 type DashboardPageResponse struct {

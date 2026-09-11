@@ -78,15 +78,6 @@ func ToolNames(operations []APIGenOperation) []string {
 	return names
 }
 
-func IsKnownTool(operations []APIGenOperation, name string) bool {
-	for _, tool := range ToolNames(operations) {
-		if tool == name {
-			return true
-		}
-	}
-	return false
-}
-
 func operationAllowed(contract OperationContract, tool agenttool.Contract) bool {
 	if tool.Effect != agenttool.EffectRead || contract.Manual {
 		return false

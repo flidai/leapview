@@ -678,7 +678,7 @@ func TestMinIOIntegrationOwnsItsContainerLifecycle(t *testing.T) {
 		`github.com/testcontainers/testcontainers-go/modules/minio`,
 		`testcontainers.CleanupContainer(t, minioContainer)`,
 		`testcontainers.WithLogger(log.TestLogger(t))`,
-		`minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`,
+		`quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`,
 	} {
 		if !strings.Contains(testText, want) {
 			t.Errorf("MinIO integration test must own container lifecycle: missing %q", want)
@@ -688,7 +688,7 @@ func TestMinIOIntegrationOwnsItsContainerLifecycle(t *testing.T) {
 		"LEAPVIEW_TEST_MINIO_ENDPOINT",
 		"Start MinIO source integration service",
 		"docker run --detach --name leapview-minio",
-		"minio/minio@sha256:",
+		"quay.io/minio/minio@sha256:",
 	} {
 		if strings.Contains(string(workflow), forbidden) {
 			t.Errorf("CI workflow must not own MinIO integration lifecycle: found %q", forbidden)
@@ -2517,7 +2517,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/schemadocgen",
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
-		"FROM oven/bun:1.4.2@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
@@ -2724,7 +2724,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
-		"FROM oven/bun:1.4.2@sha256:",
+		"FROM oven/bun:1.3.14@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",

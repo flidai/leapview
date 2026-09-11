@@ -221,25 +221,6 @@ func bootstrapOperationAllowed(operationID string) bool {
 	}
 }
 
-// deliveryRoleAllows is the only project-wide escape hatch in delivery
-// authorization. Explicit project role bindings are target-owned policy; a
-// direct resource grant must still match every affected graph resource.
-func deliveryRoleAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
-	for _, binding := range snapshot.RoleBindings() {
-		for _, subject := range subjects {
-			if binding.Subject != subject {
-				continue
-			}
-			for _, captured := range binding.Capabilities {
-				if captured == capability {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 // deliveryProjectAllows evaluates project-scoped administrative authority on
 // the exact project root. Unlike the role-only fallback used for graph-wide
 // resource operations, approval decisions intentionally accept either an
@@ -334,7 +315,7 @@ func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subj
 	if resource.Kind() != projectgraph.KindProjectNamespace || access.SupportsCapability(resource.Kind(), capability) {
 		return false, false
 	}
-	return true, deliveryRoleAllows(snapshot, subjects, capability)
+	return true, accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability)
 }
 
 func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {

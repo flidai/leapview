@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 )
 
 // Initialize performs bootstrap through the native PostgreSQL access
@@ -147,42 +147,15 @@ func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 }
 
 func nilAccessPool(pool AccessPool) bool {
-	if pool == nil {
-		return true
-	}
-	rv := reflect.ValueOf(pool)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(pool)
 }
 
 func nilAccessInitializer(initializer AccessInitializer) bool {
-	if initializer == nil {
-		return true
-	}
-	rv := reflect.ValueOf(initializer)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(initializer)
 }
 
 func nilBootstrap(bootstrap Bootstrap) bool {
-	if bootstrap == nil {
-		return true
-	}
-	rv := reflect.ValueOf(bootstrap)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(bootstrap)
 }
 
 func accessFingerprintKey(cfg config.Config) ([]byte, error) {

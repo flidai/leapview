@@ -29,7 +29,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const historicalProviderImage = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+const historicalProviderImage = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 
 // This is a provider experiment, not an alternate recovery-admission validator.
 // This validates historical managed-object retrieval. It does not prove successful physical disaster recovery.

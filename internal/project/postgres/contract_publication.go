@@ -184,11 +184,6 @@ func (r *Repository) ContractPublicationTx(ctx context.Context, tx Tx, instanceI
 	return publication, nil
 }
 
-// ReadContractPublicationTx is the descriptive alias used by read paths.
-func (r *Repository) ReadContractPublicationTx(ctx context.Context, tx Tx, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind, version string) (contractpublication.ContractPublication, error) {
-	return r.ContractPublicationTx(ctx, tx, instanceID, authoredID, kind, version)
-}
-
 // ReplayContractPublicationTx is the explicit exact-replay alias.
 func (r *Repository) ReplayContractPublicationTx(ctx context.Context, tx Tx, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind, version string) (contractpublication.ContractPublication, error) {
 	return r.ContractPublicationTx(ctx, tx, instanceID, authoredID, kind, version)

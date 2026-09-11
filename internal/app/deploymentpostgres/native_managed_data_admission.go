@@ -2,6 +2,9 @@ package deploymentpostgres
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -60,10 +63,52 @@ func (a *nativeManagedDataBindingAdmission) AdmitServingStateBindingsTx(ctx cont
 	// Binder's hook is intentionally reused here: it validates every content
 	// digest against a ready revision and installs an empty binding marker when
 	// revisions is empty, which keeps runtime resolution deterministic.
-	return binder.AfterArtifactValidation(ctx, servingstate.State{
+	if err := binder.AfterArtifactValidation(ctx, servingstate.State{
 		ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID,
 		Environment: servingstate.Environment(identity.Environment),
-	}, servingstate.Validation{ProjectID: identity.ProjectID, ManagedDataRevisions: revisions})
+	}, servingstate.Validation{ProjectID: identity.ProjectID, ManagedDataRevisions: revisions}); err != nil {
+		return err
+	}
+
+	// Each admitted generation gets an independent root for every resolved
+	// revision. This keeps the root lifecycle generation-scoped: retiring one
+	// generation cannot release bytes still needed by another generation, and
+	// retries remain exact replays of immutable binding evidence.
+	bindings, err := a.repository.WithTx(pgxTx).ListServingStateBindings(ctx, identity)
+	if err != nil {
+		return fmt.Errorf("%w: list admitted managed-data bindings: %v", deploymentnative.ErrInvalid, err)
+	}
+	for _, binding := range bindings {
+		evidence, err := json.Marshal(struct {
+			Kind         string `json:"kind"`
+			GenerationID string `json:"generation_id"`
+			CollectionID string `json:"collection_id"`
+		}{
+			Kind:         "serving-generation",
+			GenerationID: identity.GenerationID,
+			CollectionID: binding.CollectionID.String(),
+		})
+		if err != nil {
+			return fmt.Errorf("%w: encode managed-data retention evidence: %v", deploymentnative.ErrInvalid, err)
+		}
+		if _, err := a.repository.RecordRetentionRootTx(ctx, pgxTx, manageddatapostgres.RetentionRoot{
+			RootID:      nativeManagedDataRetentionRootID(identity, binding.CollectionID.String()),
+			ProjectID:   identity.ProjectID.String(),
+			Environment: identity.Environment,
+			RevisionID:  binding.RevisionID.String(),
+			State:       "live",
+			Evidence:    evidence,
+		}); err != nil {
+			return fmt.Errorf("%w: record managed-data retention root: %v", deploymentnative.ErrInvalid, err)
+		}
+	}
+	return nil
+}
+
+func nativeManagedDataRetentionRootID(identity projectgraph.ServingIdentity, collectionID string) string {
+	payload := identity.ProjectID.String() + "\x00" + identity.Environment + "\x00" + identity.GenerationID + "\x00" + collectionID
+	digest := sha256.Sum256([]byte(payload))
+	return "managed-data-generation:" + hex.EncodeToString(digest[:])
 }
 
 // normalizeNativeManagedDataPins enforces the canonical identity contract

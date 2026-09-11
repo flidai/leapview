@@ -403,16 +403,6 @@ func EqualContractPublicationContent(left, right ContractPublication) bool {
 		bytes.Equal(left.CanonicalBytes, right.CanonicalBytes) && equalJSON(left.Validation, right.Validation)
 }
 
-// EqualPublication is an ergonomic alias for exact content equality.
-func EqualPublication(left, right ContractPublication) bool {
-	return EqualContractPublicationContent(left, right)
-}
-
-// EqualContractPublication is an alias for exact replay/content equality.
-func EqualContractPublication(left, right ContractPublication) bool {
-	return EqualContractPublicationContent(left, right)
-}
-
 func validPublicationKind(kind projectgraph.Kind) bool {
 	return kind == projectgraph.KindSource || kind == projectgraph.KindModel || kind == projectgraph.KindSemanticModel
 }

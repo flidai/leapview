@@ -17,18 +17,6 @@ import (
 	h "maragu.dev/gomponents/html"
 )
 
-func ProjectAssetPage(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAssetPageWithRefresh(catalog, project, asset, assets, edges, activeSection, roleLabel, AssetRefreshState{}, chromeOptions...)
-}
-
-func ProjectAssetPageWithRefresh(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAssetPageWithRefreshAndVersions(catalog, project, asset, assets, edges, activeSection, roleLabel, refresh, AssetVersionsState{}, chromeOptions...)
-}
-
-func ProjectAssetPageWithRefreshAndVersions(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, "", chromeOptions...)
-}
-
 func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
 	return ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, refresh, versions, csrfToken, "", chromeOptions...)
 }
@@ -72,10 +60,6 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(ca
 	return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), extras, activeSection, chromeOptions)
 }
 
-func ProjectAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
-	return ProjectAssetBootstrapSignalsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, chromeOptions...)
-}
-
 func ProjectAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
@@ -106,10 +90,6 @@ func attachDashboardAppearance(page *uisignals.ResourceAssetPageSignal, projectC
 	page.DashboardAppearance = &uisignals.DashboardAppearanceSignal{Icon: appearance.Icon, Color: appearance.Color, Revision: revision}
 }
 
-func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, versions AssetVersionsState) map[string]any {
-	return ConnectionAssetBootstrapSignalsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
-}
-
 func ConnectionAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
 	return ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, chromeOptions...)
 }
@@ -122,14 +102,6 @@ func ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog cat
 	patch := projectRouteBootstrapSignals(catalog, "connections", roleLabel, page, uisignals.RouteKindConnectionAsset, nil, chromeOptions)
 	patch["connectionAdmin"] = emptyConnectionAdministrationSignal(administration.Status)
 	return patch
-}
-
-func ConnectionAssetPageWithVersions(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, versions AssetVersionsState) g.Node {
-	return ConnectionAssetPageWithVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
-}
-
-func ConnectionAssetPageWithVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
-	return ConnectionAssetPageWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, ConnectionCommandBindings{}, "", chromeOptions)
 }
 
 func ConnectionAssetPageWithAdministrationForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, administration ConnectionAdministrationView, commands ConnectionCommandBindings, csrfToken string, chromeOptions []webpage.Provider) g.Node {
@@ -164,27 +136,6 @@ func projectAssetRouteDocument(asset projectview.DevelopAssetView, catalog catal
 		)
 	}
 	return projectRouteDocumentWithBodyExtras(asset.Title, catalog, active, roleLabel, page, routeKind, routeRoot, extras, bodyExtras, chromeOptions, extraHead...)
-}
-
-func ConnectionAssetPage(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string) g.Node {
-	activeSection = normalizeProjectAssetSection(activeSection)
-	lineage := assetLineage(project.ID, asset, assets, edges)
-	page := connectionAssetPageSignal(project, asset, assets, edges, activeSection, lineage)
-	extraHead := []g.Node{}
-	if activeSection == "lineage" {
-		extraHead = append(extraHead,
-			h.Link(h.Rel("stylesheet"), h.Href(projectStaticAssetURL(nil, "/static/asset-lineage-graph.css"))),
-			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(nil, "/static/asset-lineage-graph.js"))),
-		)
-	}
-	return projectRouteDocument(asset.Title, catalog, "connections", roleLabel, page, uisignals.RouteKindConnectionAsset,
-		g.El("lv-project-asset-page",
-			g.Attr("slot", "page"),
-		),
-		projectDocumentExtras{},
-		nil,
-		extraHead...,
-	)
 }
 
 func projectStaticAssetURL(providers []webpage.Provider, path string) string {

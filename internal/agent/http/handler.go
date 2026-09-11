@@ -24,6 +24,7 @@ import (
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	"github.com/flidai/leapview/internal/agent/ui"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
+	"github.com/flidai/leapview/internal/platform/http/pagination"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -305,55 +306,6 @@ func (h *Handler) GetRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	writeJSON(w, stdhttp.StatusOK, agentRunDTO(run, scope))
-}
-
-func (h *Handler) CreateTurn(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	service, scope, ok := h.agentRequest(w, r)
-	if !ok {
-		return
-	}
-	scope, err := h.bindRunScope(r.Context(), scope)
-	if err != nil {
-		status := stdhttp.StatusServiceUnavailable
-		if kind, classified := apigenfailure.KindOf(err); classified && kind == "forbidden" {
-			status = stdhttp.StatusForbidden
-		}
-		writeJSONError(w, err, status)
-		return
-	}
-	var input api.AgentTurnRequest
-	if err := decodeAgentJSON(r, &input); err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(input.Input) == "" {
-		writeJSONError(w, fmt.Errorf("input is required"), stdhttp.StatusBadRequest)
-		return
-	}
-	result, err := service.Prompt(r.Context(), agent.PromptInput{
-		Scope:          scope,
-		ConversationID: chi.URLParam(r, "conversation"),
-		Input:          input.Input,
-		CorrelationID:  input.CorrelationID,
-	})
-	if err != nil {
-		status := stdhttp.StatusInternalServerError
-		if errors.Is(err, agent.ErrDisabled) {
-			status = stdhttp.StatusServiceUnavailable
-		} else if agent.IsBusy(err) {
-			status = stdhttp.StatusConflict
-		} else if errors.Is(err, sql.ErrNoRows) {
-			status = stdhttp.StatusNotFound
-		}
-		writeJSONError(w, err, status)
-		return
-	}
-	writeJSON(w, stdhttp.StatusOK, api.AgentTurnResponse{
-		ConversationID: result.ConversationID,
-		RunID:          result.RunID,
-		StopReason:     string(result.StopReason),
-		Content:        result.Content,
-	})
 }
 
 // CreateRun starts an agent prompt and returns the persisted run before model
@@ -677,16 +629,6 @@ func agentAcceptsEventStream(value string) bool {
 
 func agentRunTerminal(status string) bool {
 	return status == agent.RunStatusCompleted || status == agent.RunStatusFailed || status == agent.RunStatusCanceled
-}
-
-func (h *Handler) GetAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	details, err := h.AdminDetails(r.Context())
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, details)
 }
 
 func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -1059,20 +1001,7 @@ func apiLimitForRequest(w stdhttp.ResponseWriter, r *stdhttp.Request) (int, bool
 }
 
 func parseAPILimit(value string) (int, error) {
-	if value == "" {
-		return defaultAPILimit, nil
-	}
-	var limit int
-	if _, err := fmt.Sscanf(value, "%d", &limit); err != nil {
-		return 0, fmt.Errorf("limit must be an integer")
-	}
-	if limit < 1 {
-		return 0, fmt.Errorf("limit must be at least 1")
-	}
-	if limit > maxAPILimit {
-		return 0, fmt.Errorf("limit must not exceed 200")
-	}
-	return limit, nil
+	return pagination.ParseLimit(value, pagination.LimitPolicy{Default: defaultAPILimit, Maximum: maxAPILimit})
 }
 
 func statusForNotFound(err error) int {

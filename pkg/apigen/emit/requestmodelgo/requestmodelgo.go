@@ -25,12 +25,6 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 	return emitAliasModels(doc, opts)
 }
 
-// EmitWithResponseRoots renders APIGen-owned request and safe response schema
-// aliases using IR-declared response schemas.
-func EmitWithResponseRoots(doc ir.Document, opts Options) ([]byte, error) {
-	return emitAliasModels(doc, opts)
-}
-
 func emitAliasModels(doc ir.Document, opts Options) ([]byte, error) {
 	imports := contractimport.Bindings(opts.ContractImports)
 	if err := imports.Validate(doc); err != nil {

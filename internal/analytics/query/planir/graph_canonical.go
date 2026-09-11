@@ -199,12 +199,13 @@ func canonicalData(node Node) (json.RawMessage, error) {
 		}
 		sort.Slice(metrics, func(i, j int) bool { return metrics[i].Name < metrics[j].Name })
 		value = struct {
-			Input       string         `json:"input"`
-			GroupBy     []string       `json:"group_by,omitempty"`
-			TimeBuckets []TimeBucket   `json:"time_buckets,omitempty"`
-			Spatial     *SpatialBucket `json:"spatial,omitempty"`
-			Metrics     []MetricSpec   `json:"metrics"`
-		}{n.Input, append([]string(nil), n.GroupBy...), append([]TimeBucket(nil), n.TimeBuckets...), n.Spatial, metrics}
+			Input          string         `json:"input"`
+			GroupBy        []string       `json:"group_by,omitempty"`
+			GroupByAliases []string       `json:"group_by_aliases,omitempty"`
+			TimeBuckets    []TimeBucket   `json:"time_buckets,omitempty"`
+			Spatial        *SpatialBucket `json:"spatial,omitempty"`
+			Metrics        []MetricSpec   `json:"metrics"`
+		}{n.Input, append([]string(nil), n.GroupBy...), append([]string(nil), n.GroupByAliases...), append([]TimeBucket(nil), n.TimeBuckets...), n.Spatial, metrics}
 	case StitchAggregates:
 		value = struct {
 			Inputs []string `json:"inputs"`

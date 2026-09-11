@@ -252,6 +252,7 @@ tasks:
       - desktop:deps
     dir: desktop
     cmds:
+      - bun run typecheck:tests
       - bun run test
       - bun run build
 
@@ -331,6 +332,7 @@ tasks:
       - bun run test:app-shell
       - bun run typecheck:app
       - bun run typecheck:contracts
+      - bun run typecheck:tests
       - bun run test:production-assets
       - bun run test:movielens-performance-harness
       - bun run test:viewport-qualification-harness
@@ -433,6 +435,13 @@ tasks:
     desc: Validate owned and time-bounded engineering exceptions
     cmds:
       - go run ./internal/app/tools/exceptionquality
+
+  deadexports:check:
+    desc: Reject exported Go declarations without repository references
+    deps:
+      - generate
+    cmds:
+      - go run ./internal/app/tools/deadexports --root {{.ROOT_DIR | quote}} --allowlist {{.ROOT_DIR}}/.quality/dead-exports.json
 
   quality:trends:report:
     desc: Report structural complexity and ownership-change concentration
@@ -1420,6 +1429,13 @@ tasks:
       - task: db:check
       - task: apigen:test
       - task: test:go:prepared
+      # Keep the documented local contract aligned with the quality checks
+      # enforced by the hosted package lane without invoking that lane twice.
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - task: quality:critical:coverage
+      - task: deadexports:check
 
   odcs:oracle:
     desc: Validate ODCS 3.1 golden exports with the pinned independent CI-only CLI
@@ -1437,6 +1453,7 @@ tasks:
       - task: quality:exceptions:check
       - task: quality:trends:report
       - task: quality:critical:coverage
+      - task: deadexports:check
       - task: test:go:packages
 
   ci:lane:quality:
@@ -1445,6 +1462,7 @@ tasks:
       - task: quality:budget:check
       - task: quality:exceptions:check
       - task: quality:trends:report
+      - task: deadexports:check
       - go test ./internal/platform/architecture -count=1
 
   ci:lane:go:apigen:

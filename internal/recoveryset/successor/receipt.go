@@ -53,11 +53,7 @@ type AuthorityRegistry struct {
 	Keys            []AuthorityKey `json:"keys"`
 }
 
-// Compatibility aliases keep the role names used by capture integrations
-// explicit without creating another wire format.
-type CaptureReceiptCore = ReceiptCore
 type Receipt = SignedReceipt
-type AuthorityKeyRegistry = AuthorityRegistry
 
 func (c ReceiptCore) Validate() error {
 	if c.CoreVersion != ReceiptCoreVersion {

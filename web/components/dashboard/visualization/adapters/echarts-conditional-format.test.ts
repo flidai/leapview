@@ -17,7 +17,7 @@ test('ECharts keeps point conditional cues visible for null, first-match, and de
         { id: 'score', role: 'metric', dataType: 'decimal', nullable: true, label: 'Score' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Health points', description: 'Health points' }, interactions: [],
-      x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
+      identity: [{ dataset: 'primary', field: 'label' }], x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
       label: { dataset: 'primary', field: 'label' }, tooltip: [{ dataset: 'primary', field: 'score' }], colorScale: { kind: 'quantitative' },
       presentation: { legend: 'bottom', labelPolicy: { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, overplot: 'opacity', opacity: 0.55, largeMode: 'automatic', largeThreshold: 1000, brush: [] },
       conditionalFormatting: [{
@@ -33,7 +33,7 @@ test('ECharts keeps point conditional cues visible for null, first-match, and de
       }],
     },
     dataState: { kind: 'inline', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, columns: ['label', 'x', 'y', 'score'], rows: [['Missing', 1, 1, null], ['High', 2, 2, 90], ['Low', 3, 3, -1]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922', danger: '#ff7b72', success: '#56d364', muted: '#8b949e' } }
   const series = (echartsOption(envelope, dark) as any).series[0]

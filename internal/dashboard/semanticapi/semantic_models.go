@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	nethttp "net/http"
 	"sort"
@@ -37,7 +38,9 @@ func (h Handler) ListSemanticModels(w nethttp.ResponseWriter, r *nethttp.Request
 		if allowed {
 			scoped := r.Context()
 			consumer, consumerOK := (*semanticquery.SemanticAccessConsumer)(nil), false
-			if _, hasProvider := any(metrics).(semanticContextConsumerProvider); hasProvider {
+			if _, hasProvider := any(metrics).(interface {
+				SemanticConsumer(context.Context, string) (*semanticquery.SemanticAccessConsumer, error)
+			}); hasProvider {
 				var consumerErr error
 				scoped, consumerErr = semanticConsumerForRequest(scoped, metrics, row.ID)
 				if consumerErr != nil {

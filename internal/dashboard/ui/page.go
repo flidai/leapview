@@ -101,10 +101,6 @@ func PageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, DashboardAuthoringAction{}, providers...)
 }
 
-func PageWithRouteScopeAndAgentCommands(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, DashboardAuthoringAction{}, providers...)
-}
-
 func PageWithRouteScopeAndAgentCommandsAndAuthoring(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, action DashboardAuthoringAction, providers ...webpage.Provider) g.Node {
 	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, action, providers...)
 }

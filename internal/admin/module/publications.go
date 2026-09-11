@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/google/uuid"
@@ -81,7 +82,7 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
 		return err
 	}
-	requestID := firstAdminPublicationHeader(r, "X-Request-Id", "X-Request-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
 	if requestID == "" {
 		generated, err := uuid.NewV7()
 		if err != nil {
@@ -90,11 +91,11 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		requestID = generated.String()
 		r.Header.Set("X-Request-ID", requestID)
 	}
-	correlationID := firstAdminPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
-	idempotencyKey := firstAdminPublicationHeader(r, "Idempotency-Key")
+	idempotencyKey := platformhttp.FirstNonEmptyHeader(r, "Idempotency-Key")
 	if idempotencyKey == "" {
 		return fmt.Errorf("%w: missing Idempotency-Key", publication.ErrConflict)
 	}
@@ -119,18 +120,6 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 
 func adminPublicationRevisionMatches(r *http.Request, expected int64) bool {
 	return r != nil && expected > 0 && strings.TrimSpace(r.Header.Get("If-Match")) == fmt.Sprintf("\"%d\"", expected)
-}
-
-func firstAdminPublicationHeader(r *http.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool, error) {

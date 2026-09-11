@@ -13,13 +13,6 @@ import (
 	"github.com/pmezard/go-difflib/difflib"
 )
 
-func ProjectAssetRefreshSignals(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState, activeSection string) map[string]any {
-	lineage := assetLineage(project.ID, asset, assets, edges)
-	return map[string]any{
-		"page": projectAssetPageSignalWithRefresh(project, asset, assets, edges, activeSection, lineage, refresh),
-	}
-}
-
 func assetRefreshSignal(refresh AssetRefreshState) uisignals.ResourceAssetRefreshSignal {
 	status := assetRefreshStatus(refresh)
 	return uisignals.ResourceAssetRefreshSignal{

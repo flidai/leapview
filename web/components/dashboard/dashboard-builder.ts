@@ -33,6 +33,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
+import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
@@ -44,16 +45,6 @@ import '../app/dashboard-icon-picker'
 import '../chat/chat-drawer'
 import { agentIcon } from '../chat/agent-icon'
 import './visual-modal'
-
-const emptyStatus: DashboardStatus = {
-  loading: false,
-  error: '',
-  generation: 0,
-  lastUpdated: '',
-  refreshId: '',
-  setupRequired: false,
-  progressPercent: 100,
-}
 
 type BuilderVisualType = string
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
@@ -2995,7 +2986,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   get status(): DashboardStatus {
-    return this.signal<DashboardStatus>('status', emptyStatus)
+    return this.signal<DashboardStatus>('status', emptyDashboardStatus())
   }
 
   get builderVisuals(): Record<string, VisualizationEnvelope> {

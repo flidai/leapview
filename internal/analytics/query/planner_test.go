@@ -45,6 +45,23 @@ func TestPlannerRejectsUnsupportedPerDimensionGrain(t *testing.T) {
 	}
 }
 
+func TestPlannerAllowsRepeatedDimensionSourceAtDistinctGrainsAndRejectsDuplicateAliases(t *testing.T) {
+	planner := mustNewCompiledPlanner(t, testModel())
+	plan, err := planner.Plan(Request{Dimensions: []Field{
+		{Field: "activity_date", Alias: "day", Grain: "day"},
+		{Field: "activity_date", Alias: "month", Grain: "month"},
+	}, Metrics: []Field{{Field: "order_count"}}})
+	if err != nil {
+		t.Fatalf("Plan() repeated source error = %v", err)
+	}
+	if strings.Count(plan.SQL, "DATE_TRUNC('day'") < 2 || strings.Count(plan.SQL, "DATE_TRUNC('month'") < 2 || !strings.Contains(plan.SQL, `AS "day"`) || !strings.Contains(plan.SQL, `AS "month"`) {
+		t.Fatalf("Plan() did not preserve independent bucket identities: %s", plan.SQL)
+	}
+	if _, err := planner.Plan(Request{Dimensions: []Field{{Field: "activity_date", Alias: "period"}, {Field: "customer_state", Alias: "period"}}, Metrics: []Field{{Field: "order_count"}}}); err == nil || !strings.Contains(err.Error(), `duplicate dimension alias "period"`) {
+		t.Fatalf("Plan() duplicate alias error = %v", err)
+	}
+}
+
 func TestPlannerScalarMultiDatasetAggregatesDatasetsIndependently(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{Metrics: []Field{
 		{Field: "revenue", Alias: "revenue"},
@@ -131,7 +148,7 @@ func TestPlannerGroupedMultiDatasetUsesFullOuterStitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(explain, "[AggregateMetrics]") != 2 || !strings.Contains(explain, "[StitchAggregates]") || !strings.Contains(explain, "keys=[customer_state]") {
+	if strings.Count(explain, "[AggregateMetrics]") != 2 || !strings.Contains(explain, "[StitchAggregates]") || !strings.Contains(explain, "keys=[state]") {
 		t.Fatalf("grouped multi-root PlanIR:\n%s", explain)
 	}
 	if strings.Join(plan.StitchDimensions, ",") != "customer_state" {

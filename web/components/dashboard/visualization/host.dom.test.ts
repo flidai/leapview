@@ -49,13 +49,6 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('test server did not bind')
   baseURL = `http://127.0.0.1:${address.port}`
   browser = await chromium.launch()
-  browser.on('page', (page) => {
-    page.on('pageerror', (error) => console.error('host fixture page error:', error.message))
-    page.on('response', (response) => {
-      if (response.status() >= 400) console.error('host fixture HTTP error:', response.status(), response.url())
-    })
-    page.on('requestfailed', (request) => console.error('host fixture request failed:', request.url(), request.failure()?.errorText))
-  })
 })
 
 afterAll(async () => {
@@ -73,7 +66,7 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
         readonly scrollMargin: string
         constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
           this.scrollMargin = (options as IntersectionObserverInit & { scrollMargin?: string })?.scrollMargin ?? ''
-          this.record = { callback, disconnected: false, root: options?.root ?? null, rootMargin: options?.rootMargin ?? '', scrollMargin: this.scrollMargin }
+          this.record = { callback, disconnected: false, root: options?.root instanceof Element ? options.root : null, rootMargin: options?.rootMargin ?? '', scrollMargin: this.scrollMargin }
           observers.push(this.record)
         }
         observe(target: Element): void { this.record.target = target }
@@ -101,8 +94,8 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       await deferred.updateComplete
 
       const observers = (window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element; disconnected: boolean; root: Element | null; rootMargin: string; scrollMargin: string }>
-      const record = observers.find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
-      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const record = observers.find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
+      const before = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
 
       const latest = JSON.parse(JSON.stringify(deferred.envelope))
       latest.dataRevision = 2
@@ -125,26 +118,28 @@ test('deferred hosts retain the latest valid envelope and mount once on eligibil
       deferred.envelope = invalid
       await deferred.updateComplete
 
-      record.callback([{ isIntersecting: false, target: record.target }], {} as IntersectionObserver)
+      const target = record.target!
+      const observerEntry = (isIntersecting: boolean): IntersectionObserverEntry => ({ isIntersecting, target } as IntersectionObserverEntry)
+      record.callback([observerEntry(false)], {} as IntersectionObserver)
       window.dispatchEvent(new Event('beforeprint'))
       await Promise.resolve()
-      const beforeEligibility = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
-      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      const beforeEligibility = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
+      record.callback([observerEntry(true)], {} as IntersectionObserver)
       const deadline = Date.now() + 2_000
-      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+      while (((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
       const controllerBefore = (deferred as any).controller
-      const mounted = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const mounted = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
       const mountedRevision = (deferred as any).controller?.envelope?.dataRevision
       const snapshotText = await (await deferred.snapshot()).text()
-      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      record.callback([observerEntry(true)], {} as IntersectionObserver)
       await deferred.ensureMounted()
       const controllerAfter = (deferred as any).controller
 
       deferred.remove()
       await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
-      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      record.callback([observerEntry(true)], {} as IntersectionObserver)
       await Promise.resolve()
       return {
         before,
@@ -213,14 +208,14 @@ test('mounted deferred hosts retain current renderer, shell, and actions after s
       await host.updateComplete
       await host.ensureMounted()
       let action: any
-      host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail })
-      host.shadowRoot.querySelector('.visual-options summary').click()
-      host.shadowRoot.querySelector('.visual-options button').click()
+      host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail });
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.visual-options summary')!.click();
+      (host.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.visual-options button')!.click()
       const state = {
         signalRevision: host.envelope.dataRevision,
         rendererRevision: host.controller.envelope.dataRevision,
-        alert: host.shadowRoot.querySelector('[role="alert"]')?.textContent ?? '',
-        fallback: host.shadowRoot.querySelector('#visualization-fallback').textContent,
+        alert: (host.shadowRoot as ShadowRoot).querySelector('[role="alert"]')?.textContent ?? '',
+        fallback: (host.shadowRoot as ShadowRoot).querySelector<HTMLElement>('#visualization-fallback')!.textContent,
         actionRows: JSON.stringify(action?.rows),
       }
       host.remove()
@@ -317,10 +312,10 @@ test('snapshot explicitly mounts a deferred host without an intersection callbac
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(deferred)
       await deferred.updateComplete
-      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
-      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
+      const before = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
       const snapshotText = await (await deferred.snapshot()).text()
-      return { before, mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0, snapshotText, disconnected: record.disconnected }
+      return { before, mounted: (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0, snapshotText, disconnected: record.disconnected }
     })
     expect(state.before).toBe(0)
     expect(state.mounted).toBeGreaterThan(0)
@@ -357,23 +352,24 @@ test('eligibility before data waits for the later valid envelope', async () => {
       deferred.deferMount = true
       document.body.append(deferred)
       await deferred.updateComplete
-      const record = ((window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
-      record.callback([{ isIntersecting: true, target: record.target }], {} as IntersectionObserver)
+      const record = ((window as any).__lvIntersectionObservers as Array<{ callback: IntersectionObserverCallback; target?: Element }>).find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
+      const observerEntry = (isIntersecting: boolean): IntersectionObserverEntry => ({ isIntersecting, target: record.target! } as IntersectionObserverEntry)
+      record.callback([observerEntry(true)], {} as IntersectionObserver)
       await Promise.resolve()
-      const beforeEnvelope = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const beforeEnvelope = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
       const ensureBeforeEnvelope = await deferred.ensureMounted().then(() => 'resolved', (error: unknown) => error instanceof Error ? error.message : String(error))
       const snapshotBeforeEnvelope = await deferred.snapshot().then(() => 'resolved', (error: unknown) => error instanceof Error ? error.message : String(error))
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       await deferred.updateComplete
       const deadline = Date.now() + 2_000
-      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+      while (((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
       return {
         beforeEnvelope,
         ensureBeforeEnvelope,
         snapshotBeforeEnvelope,
-        mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0,
+        mounted: (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0,
         revision: deferred.envelope?.dataRevision,
       }
     })
@@ -406,12 +402,12 @@ test('eager invalid and unknown-renderer envelopes remain visible errors', async
       unknown.envelope = unknownEnvelope
       document.body.append(unknown)
       const deadline = Date.now() + 2_000
-      while ((!invalid.shadowRoot.querySelector('[role="alert"]') || !unknown.shadowRoot.querySelector('[role="alert"]')) && Date.now() < deadline) {
+      while ((!(invalid.shadowRoot as ShadowRoot).querySelector('[role="alert"]') || !(unknown.shadowRoot as ShadowRoot).querySelector('[role="alert"]')) && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
       return {
-        invalid: invalid.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
-        unknown: unknown.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+        invalid: (invalid.shadowRoot as ShadowRoot).querySelector('[role="alert"]')?.textContent?.trim(),
+        unknown: (unknown.shadowRoot as ShadowRoot).querySelector('[role="alert"]')?.textContent?.trim(),
       }
     })
     expect(errors.invalid).toContain('invalid visualization envelope')
@@ -478,7 +474,7 @@ test('pending renderer loads reject stale mount promises after detach and reatta
         transient: await race.transientMount,
         transientControllerRetained: race.transient.controller === race.transientController,
         fresh: await race.fresh,
-        mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0,
+        mounted: (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0,
         controller: Boolean(deferred.controller),
       }
     })
@@ -521,8 +517,8 @@ test('existing and authoring hosts stay eager by default, including with no inte
       await authoring.updateComplete
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
       return {
-        defaultMounted: (source.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
-        authoringMounted: (authoring.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        defaultMounted: ((source.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        authoringMounted: ((authoring.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         observerCount: ((window as any).__lvIntersectionObservers as unknown[]).length,
       }
     })
@@ -559,15 +555,15 @@ test('a deferred host can be switched back to eager mounting without leaking its
       deferred.envelope = JSON.parse(JSON.stringify(source.envelope))
       document.body.append(deferred)
       await deferred.updateComplete
-      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === deferred.shadowRoot.querySelector('.renderer'))!
-      const before = deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0
+      const record = ((window as any).__lvIntersectionObservers as Array<{ target?: Element; disconnected: boolean }>).find((candidate) => candidate.target === (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')) as any
+      const before = (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0
       deferred.deferMount = false
       await deferred.updateComplete
       const deadline = Date.now() + 2_000
-      while ((deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
+      while (((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) === 0 && Date.now() < deadline) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
       }
-      return { before, mounted: deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0, disconnected: record.disconnected }
+      return { before, mounted: (deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0, disconnected: record.disconnected }
     })
     expect(state.before).toBe(0)
     expect(state.mounted).toBeGreaterThan(0)
@@ -604,7 +600,7 @@ test('dashboard hosts fall back to eager mounting when nested scroll margins are
       await deferred.updateComplete
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
       return {
-        mounted: (deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0,
+        mounted: ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0,
         disconnected: (window as any).__lvIntersectionObservers[0]?.disconnected,
       }
     })
@@ -641,7 +637,7 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
         document.body.append(deferred)
         await deferred.updateComplete
         await new Promise<void>((resolve) => setTimeout(resolve, 0))
-        return (deferred.shadowRoot.querySelector('.renderer')?.childElementCount ?? 0) > 0
+        return ((deferred.shadowRoot as ShadowRoot).querySelector('.renderer')?.childElementCount ?? 0) > 0
       })
       expect(mounted).toBe(true)
     } finally {

@@ -2,22 +2,19 @@ package http
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	nethttp "net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/dashboard/api"
-	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
+	"github.com/flidai/leapview/internal/platform/http/pagination"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/workload"
 )
@@ -124,43 +121,17 @@ func pageSliceForRequest[T any](w nethttp.ResponseWriter, r *nethttp.Request, it
 	return append(make([]T, 0, end-start), items[start:end]...), nextCursor, true
 }
 
-type listKeysetCursor struct {
-	Key      string `json:"key"`
-	Scope    string `json:"scope"`
-	Snapshot string `json:"snapshot,omitempty"`
-	Expires  int64  `json:"expires"`
-}
-
 func listPageItemKey(value any) string {
-	payload, _ := json.Marshal(value)
-	digest := sha256.Sum256(payload)
-	return hex.EncodeToString(digest[:])
+	return pagination.PageItemKey(value)
 }
 
 func encodeListKeysetCursor(key, scope, snapshot string) string {
-	payload, _ := json.Marshal(listKeysetCursor{Key: key, Scope: scope, Snapshot: snapshot, Expires: time.Now().Add(indexCursorLifetime).Unix()})
-	return cursorsigning.Sign("q2", payload)
+	token, _ := pagination.EncodeKeyset(pagination.QueryKeysetDomain, pagination.KeysetCursor{Key: key, Scope: scope, Snapshot: snapshot, Expires: time.Now().Add(indexCursorLifetime).Unix()})
+	return token
 }
 
 func decodeListKeysetCursor(token, scope, snapshot string) (string, error) {
-	if token == "" {
-		return "", nil
-	}
-	if !strings.HasPrefix(token, "q2.") {
-		return "", fmt.Errorf("invalid page token")
-	}
-	payload, err := cursorsigning.Verify("q2", token)
-	if err != nil {
-		return "", fmt.Errorf("invalid page token")
-	}
-	var cursor listKeysetCursor
-	if json.Unmarshal(payload, &cursor) != nil || cursor.Key == "" || cursor.Expires < time.Now().Unix() || cursor.Scope != scope {
-		return "", fmt.Errorf("invalid page token")
-	}
-	if cursor.Snapshot != snapshot {
-		return "", errCursorSnapshotUnavailable
-	}
-	return cursor.Key, nil
+	return pagination.DecodeKeyset(pagination.QueryKeysetDomain, token, scope, snapshot, time.Now())
 }
 
 const (
@@ -180,20 +151,7 @@ func apiLimitForRequest(w nethttp.ResponseWriter, r *nethttp.Request) (int, bool
 }
 
 func parseAPILimit(value string) (int, error) {
-	if value == "" {
-		return defaultAPILimit, nil
-	}
-	var limit int
-	if _, err := fmt.Sscanf(value, "%d", &limit); err != nil {
-		return 0, fmt.Errorf("limit must be an integer")
-	}
-	if limit < 1 {
-		return 0, fmt.Errorf("limit must be at least 1")
-	}
-	if limit > maxAPILimit {
-		return 0, fmt.Errorf("limit must not exceed %d", maxAPILimit)
-	}
-	return limit, nil
+	return pagination.ParseLimit(value, pagination.LimitPolicy{Default: defaultAPILimit, Maximum: maxAPILimit})
 }
 
 func apiCursorOffsetForRequest(w nethttp.ResponseWriter, r *nethttp.Request, scopes ...string) (int, bool) {
@@ -207,38 +165,13 @@ func apiCursorOffsetForRequest(w nethttp.ResponseWriter, r *nethttp.Request, sco
 
 const indexCursorLifetime = 15 * time.Minute
 
-type indexCursor struct {
-	Offset   int    `json:"offset"`
-	Scope    string `json:"scope"`
-	Snapshot string `json:"snapshot,omitempty"`
-	Expires  int64  `json:"expires"`
-}
+type indexCursor = pagination.IndexCursor
 
-var errCursorSnapshotUnavailable = errors.New("cursor serving snapshot is unavailable")
+var errCursorSnapshotUnavailable = pagination.ErrSnapshotMismatch
 
 func decodeIndexCursor(token string, scopes ...string) (int, error) {
-	if token == "" {
-		return 0, nil
-	}
-	if !strings.HasPrefix(token, "q1.") {
-		return 0, fmt.Errorf("invalid page token")
-	}
-	payload, err := cursorsigning.Verify("q1", token)
-	if err != nil {
-		return 0, fmt.Errorf("invalid page token")
-	}
-	var cursor indexCursor
-	if json.Unmarshal(payload, &cursor) != nil || cursor.Offset < 0 || cursor.Expires < time.Now().Unix() {
-		return 0, fmt.Errorf("invalid page token")
-	}
 	expectedScope, expectedSnapshot := cursorScopeParts(scopes...)
-	if cursor.Snapshot != expectedSnapshot {
-		return 0, errCursorSnapshotUnavailable
-	}
-	if cursor.Scope != expectedScope {
-		return 0, fmt.Errorf("invalid page token")
-	}
-	return cursor.Offset, nil
+	return pagination.DecodeIndex(pagination.QueryIndexDomain, token, expectedScope, expectedSnapshot, time.Now())
 }
 
 func encodeIndexCursor(offset int, scopes ...string) string {
@@ -247,19 +180,12 @@ func encodeIndexCursor(offset int, scopes ...string) string {
 }
 
 func encodeIndexCursorValue(cursor indexCursor) string {
-	payload, _ := json.Marshal(cursor)
-	return cursorsigning.Sign("q1", payload)
+	token, _ := pagination.EncodeIndex(pagination.QueryIndexDomain, pagination.IndexCursor(cursor))
+	return token
 }
 
 func cursorScopeParts(scopes ...string) (string, string) {
-	if len(scopes) == 0 || strings.TrimSpace(scopes[0]) == "" {
-		return "list", ""
-	}
-	snapshot := ""
-	if len(scopes) > 1 {
-		snapshot = scopes[1]
-	}
-	return scopes[0], snapshot
+	return pagination.ScopeParts(scopes...)
 }
 
 func statusForCursorError(err error) int {
@@ -280,11 +206,7 @@ func semanticPreviewCursorScope(r *nethttp.Request, input api.SemanticPreviewReq
 }
 
 func requestCursorScope(r *nethttp.Request, payload any) string {
-	query := r.URL.Query()
-	query.Del("pageToken")
-	body, _ := json.Marshal(payload)
-	digest := sha256.Sum256([]byte(r.Method + "\n" + r.URL.Path + "\n" + query.Encode() + "\n" + string(body)))
-	return hex.EncodeToString(digest[:])
+	return pagination.RequestScope(r, payload)
 }
 
 func writeJSON(w nethttp.ResponseWriter, status int, value any) {

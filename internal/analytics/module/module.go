@@ -90,13 +90,6 @@ func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.P
 	return &Module{environment: environment, cache: cache}
 }
 
-// NewQueryAuditSurface constructs the analytics-owned control-plane adapter
-// without opening the analytical runtime. It is useful to compose API-only
-// surfaces and focused tests.
-func NewQueryAuditSurface(repository queryaudit.Store) *Module {
-	return &Module{queryAudit: repository}
-}
-
 type QueryAuditSurface struct {
 	repository queryaudit.Store
 }
@@ -424,13 +417,6 @@ func buildCredentialResolver(config Config) (analyticsduckdb.CredentialResolver,
 	}
 }
 
-func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
-	if m == nil || m.environment == nil {
-		return nil
-	}
-	return &duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
-}
-
 // ProjectMaterializerForEnvironment builds the governed project materializer
 // against one explicitly supplied DuckLake environment. The caller owns the
 // environment's lifetime; this method never falls back to the module's
@@ -449,35 +435,11 @@ func (m *Module) ProjectMaterializerForEnvironment(environment *analyticsducklak
 	return &duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
 }
 
-func (m *Module) AdminResources() Resources {
-	if m == nil || m.environment == nil {
-		return nil
-	}
-	return m.environment
-}
-
 func (m *Module) Collector() prometheus.Collector {
 	if m == nil {
 		return NewCollector(nil, nil)
 	}
 	return NewCollector(m.environment, m.cache)
-}
-
-func NewProjectMaterializer(environment *analyticsducklake.Environment) analyticsmaterialization.Executor {
-	return NewProjectMaterializerWithCredentials(environment, analyticsduckdb.NonSecretCredentialResolver{})
-}
-
-func NewProjectMaterializerWithCredentials(
-	environment *analyticsducklake.Environment,
-	credentials analyticsduckdb.CredentialResolver,
-) analyticsmaterialization.Executor {
-	if environment == nil {
-		return nil
-	}
-	if credentials == nil {
-		credentials = analyticsduckdb.NonSecretCredentialResolver{}
-	}
-	return &duckDBProjectMaterializer{environment: environment, credentials: credentials}
 }
 
 func (m *Module) QueryAuditReader() queryaudit.Reader {

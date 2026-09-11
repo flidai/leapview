@@ -1,7 +1,9 @@
 import { afterEach, expect, test } from 'bun:test'
-import { DatastarLit, setDatastarLitRuntimeForTests } from './datastar-lit'
+import type { ReactiveElement } from 'lit'
+import { DatastarLit, setDatastarLitRuntimeForTests, type DatastarLitHost } from './datastar-lit'
 
 type Dispose = () => void
+type ReactiveElementConstructor = new () => ReactiveElement
 
 class FakeElement {
   isUpdatePending = true
@@ -18,11 +20,14 @@ class FakeElement {
 
   performUpdate(): void {
     this.isUpdatePending = false
-    this.rendered.push((this as FakeElement & { render(): unknown }).render())
+    this.rendered.push((this as unknown as FakeElement & { render(): unknown }).render())
   }
 }
 
-class TestElement extends DatastarLit(FakeElement as never) {
+type TestElementSurface = FakeElement & DatastarLitHost
+const TestElementBase = DatastarLit(FakeElement as unknown as ReactiveElementConstructor) as unknown as new () => TestElementSurface
+
+class TestElement extends TestElementBase {
   render(): unknown {
     return {
       title: this.signal('dashboard.title', 'Untitled'),
@@ -81,10 +86,10 @@ test('DatastarLit tracks signal root additions during cold hydration', () => {
       rootReads++
       return state
     },
-    getPath(path: string) {
+    getPath<T = unknown>(path: string): T | undefined {
       return path.split('.').reduce<unknown>((value, key) => {
         return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
-      }, state)
+      }, state) as T | undefined
     },
     effect(fn: () => void) {
       effects.push(fn)
@@ -120,10 +125,10 @@ test('DatastarLit disconnect disposes the render effect', () => {
   const disposers: Dispose[] = []
   setDatastarLitRuntimeForTests({
     root: { dashboard: { title: 'Orders' } },
-    getPath(path) {
+    getPath<T = unknown>(path: string): T | undefined {
       return path.split('.').reduce<unknown>((value, key) => {
         return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
-      }, this.root)
+      }, this.root) as T | undefined
     },
     effect(fn) {
       fn()
@@ -147,10 +152,10 @@ test('DatastarLit disconnect disposes the render effect', () => {
 function fakeRuntime(state: Record<string, unknown>, effects: Array<() => void> = []) {
   return {
     root: state,
-    getPath(path: string) {
+    getPath<T = unknown>(path: string): T | undefined {
       return path.split('.').reduce<unknown>((value, key) => {
         return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
-      }, state)
+      }, state) as T | undefined
     },
     effect(fn: () => void) {
       effects.push(fn)

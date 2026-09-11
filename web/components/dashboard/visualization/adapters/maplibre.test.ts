@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test'
 
-import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationGeographicLayer, VisualizationMapStyleAsset } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import { hasMixedSpatialPrecision } from '../../../../../scripts/spatial_precision_summary'
 import { aggregateExpansionCamera, applyBasemapTheme, applyDataLabelTheme, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, dataLabelLayerID, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapDataLabelColors, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setMapStyleAndWait, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPointLabelFilter, tiledPrecisionLayerFamily, tiledPrecisionLayerIDs, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
@@ -51,13 +52,13 @@ test('MapLibre map styles rewrite only pinned same-origin PMTiles and assets', a
   const style = new TextEncoder().encode(JSON.stringify({ version: 8, sources: { base: { type: 'vector', url: 'pmtiles://__LEAPVIEW_ARCHIVE__' } }, layers: [] }))
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', style))
   const styleDigest = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('')
-  const asset = {
+  const asset: VisualizationMapStyleAsset = {
     id: 'streets', styleUrl: `/map-assets/leapview-streets/styles/${styleDigest}/style.json`, styleDigest: `sha256:${styleDigest}`,
     archiveUrl: `/map-assets/leapview-streets/archives/${'a'.repeat(64)}/basemap.pmtiles`, archiveDigest: `sha256:${'a'.repeat(64)}`, glyphsUrl: `/map-assets/leapview-streets/assets/${'b'.repeat(40)}/glyphs/{fontstack}/{range}.pbf`, spriteUrl: `/map-assets/leapview-streets/assets/${'b'.repeat(40)}/sprites/leapview`,
     source: 'OSM', license: 'ODbL', attribution: 'OSM', minimumZoom: 0, maximumZoom: 6, bounds: [-180, -85, 180, 85], labelAnchor: 'labels',
-  } as const
+  }
   const previous = globalThis.fetch
-  globalThis.fetch = (async () => new Response(style)) as typeof fetch
+  globalThis.fetch = Object.assign(async () => new Response(style), { preconnect: () => {} })
   try {
     const loaded = await loadMapStyleAsset(asset, 'https://dash.example/dashboards/maps')
     expect((loaded.sources.base as { url?: string }).url).toBe(`pmtiles://https://dash.example/map-assets/leapview-streets/archives/${'a'.repeat(64)}/basemap.pmtiles`)
@@ -72,10 +73,11 @@ test('MapLibre prevents permanent WebGL loss, repaints after restoration, and re
   let resized = 0
   let repainted = 0
   const observations: string[] = []
-  const dispose = installWebGLRecovery(canvas, {
-    resize: () => { resized++ },
-    triggerRepaint: () => { repainted++ },
-  }, (stage) => observations.push(stage))
+  type RecoveryMap = Parameters<typeof installWebGLRecovery>[1]
+  const recoveryMap = {} as RecoveryMap
+  recoveryMap.resize = () => { resized++; return recoveryMap as unknown as MapLibreMap }
+  recoveryMap.triggerRepaint = () => { repainted++ }
+  const dispose = installWebGLRecovery(canvas, recoveryMap, (stage) => observations.push(stage))
 
   const lost = new Event('webglcontextlost', { cancelable: true })
   canvas.dispatchEvent(lost)
@@ -161,7 +163,7 @@ test('MapLibre keeps its frame hidden and inaccessible until the final fitted fr
     style: { visibility: '' },
     setAttribute: (name: string, value: string) => attributes.set(name, value),
     removeAttribute: (name: string) => attributes.delete(name),
-  }
+  } as unknown as Parameters<typeof setRendererFramePresented>[0]
 
   setRendererFramePresented(frame, false)
   expect(frame.style.visibility).toBe('hidden')
@@ -187,7 +189,7 @@ test('MapLibre point, heat, and density layers use typed in-memory coordinates w
     dataRevision: 9,
     dataState: { kind: 'inline', datasets: [{ id: 'primary', columns: ['lat', 'lon', 'value'], rows: [[55.67, 12.56, 3], ['invalid', 12, 9], [91, 12, 4], [20, 181, 5]] }] },
     selection: [{ datum: { dataset: 'primary', dataRevision: 9, identity: { lat: 55.67, lon: 12.56 } }, label: 'Copenhagen' }],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const geometry = coordinateGeometry(envelope, layer)
   expect(geometry.features).toHaveLength(1)
   expect(geometry.features[0]?.geometry).toEqual({ type: 'Point', coordinates: [12.56, 55.67] })
@@ -252,7 +254,7 @@ test('MapLibre blank hits clear only the selection owned by that map', () => {
   const selected = {
     ...envelope,
     selection: [{ datum: { dataset: 'primary', dataRevision: 4, identity: { state: 'SP' } }, label: 'SP' }],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   expect(mapInteractionCommand(selected, [], ['lv-states'])).toEqual({
     sourceKind: 'visual', sourceId: 'state-map', interactionKind: 'point_selection', action: 'clear', toggle: false, mappings: [],
   })
@@ -263,7 +265,11 @@ test('MapLibre selection-only refreshes update existing sources without rebuildi
   const layer = envelope.spec.kind === 'geographic' ? envelope.spec.layers[0]! : undefined
   const geometry = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [] }, properties: { id: 'SP' } }] } as FeatureCollection
   const updates: FeatureCollection[] = []
-  const result = updateSelectionSources(envelope, [{ spec: layer!, sourceID: 'lv-states', geometry }], (sourceID) => sourceID === 'lv-states' ? { setData: (data) => updates.push(data as FeatureCollection) } : undefined)
+  type SelectionSource = NonNullable<ReturnType<Parameters<typeof updateSelectionSources>[2]>>
+  const getSource: Parameters<typeof updateSelectionSources>[2] = (sourceID) => sourceID === 'lv-states'
+    ? { setData: async (data: Parameters<SelectionSource['setData']>[0]) => { updates.push(data as FeatureCollection) } }
+    : undefined
+  const result = updateSelectionSources(envelope, [{ spec: layer!, sourceID: 'lv-states', geometry }], getSource)
   expect(result.updated).toBe(1)
   expect(result.collections).toEqual(updates)
   expect(updates).toHaveLength(1)
@@ -319,7 +325,7 @@ test('MapLibre categorical scales assign deterministic colors by category', () =
   const envelope = {
     ...selectableEnvelope(),
     dataState: { kind: 'inline', datasets: [{ id: 'primary', columns: ['lat', 'lon', 'category'], rows: [[1, 1, 'B'], [2, 2, 'A'], [3, 3, 'B']] }] },
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const decorated = applyFeatureScales(coordinateGeometry(envelope, layer), layer)
   const colors = decorated.features.map((feature) => feature.properties?.__lv_color)
   expect(colors[0]).toBe(colors[2])
@@ -492,7 +498,7 @@ test('MapLibre exposes selection controls for inline and tile-backed maps', () =
   expect(mapSelectionControlAvailable(tiled)).toBe(true)
   expect(mapPointerOptions(tiled).interactive).toBe(true)
 
-  const inline = { ...tiled, dataState: { kind: 'inline', rows: [] } } as VisualizationEnvelope
+  const inline = { ...tiled, dataState: { kind: 'inline', rows: [] } } as unknown as VisualizationEnvelope
   expect(mapSelectionControlAvailable(inline)).toBe(true)
 })
 
@@ -525,8 +531,8 @@ test('MapLibre hides both tiled precision families during replacement and restor
   const visibility = new Map<string, string>()
   const map = {
     getLayer: (id: string) => ({ id }),
-    setLayoutProperty: (id: string, property: string, value: string) => visibility.set(`${id}:${property}`, value),
-  }
+    setLayoutProperty: (id: string, property: string, value: string) => { visibility.set(`${id}:${property}`, value) },
+  } as unknown as Parameters<typeof applyTiledPrecisionLayerVisibility>[0]
   const raw = ['raw-point', 'raw-label']
   const aggregate = ['aggregate-point', 'aggregate-count']
   const replacement = tiledSourceLifecycle(tiledSourceTransition(previous, next), true)
@@ -558,7 +564,7 @@ test('MapLibre refreshes tiled paint domains when governed metadata replaces the
     ...exact,
     status: { kind: 'loading' },
     dataState: { ...exact.dataState, aggregateDomains: [], rawDomains: [], rawMinimumZoom: 5 },
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const loadingPaint = tiledLayerPaintUpdates(loading, 'lv-map-tiles')[0]?.paint
   const exactPaint = tiledLayerPaintUpdates(exact, 'lv-map-tiles')[0]?.paint
@@ -661,16 +667,16 @@ test('MapLibre selection maps reserve clicks for data interaction instead of mov
 	const exploratory = {
 		...interactive,
 		spec: { ...interactive.spec, interactions: [], spatialInteractions: [], presentation: { ...interactive.spec.presentation, roam: true } },
-	} as VisualizationEnvelope
+	} as unknown as VisualizationEnvelope
 	expect(mapClickCanRefineCamera(exploratory)).toBe(true)
 	expect(mapClickCanRefineCamera({
 		...exploratory,
 		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, roam: false } },
-	} as VisualizationEnvelope)).toBe(false)
+	} as unknown as VisualizationEnvelope)).toBe(false)
 	expect(mapClickCanRefineCamera({
 		...exploratory,
-		spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, camera: { ...exploratory.spec.presentation.camera, mode: 'fixed', center: [0, 0], zoom: 2 } } },
-	} as VisualizationEnvelope)).toBe(false)
+    spec: { ...exploratory.spec, presentation: { ...exploratory.spec.presentation, camera: { mode: 'fixed', center: [0, 0], zoom: 2 } } },
+	} as unknown as VisualizationEnvelope)).toBe(false)
 })
 
 test('MapLibre tiled accessibility deduplicates visible raw and aggregate features', () => {
@@ -753,7 +759,7 @@ test('MapLibre marks tile-backed picker options from canonical selection state',
   const envelope = {
     ...base,
     selection: [{ datum: { dataset: 'primary', dataRevision: base.dataRevision, identity: { order_id: 'o1' } }, label: 'o1' }],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const raw = { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: 'o1' } }
   expect(mapInteractionOptions(envelope, [raw], ['lv-orders'])[0]?.selected).toBe(true)
 })
@@ -783,7 +789,7 @@ test('MapLibre distinguishes visible tiled options that share a display label', 
   const withCityLabels = {
     ...envelope,
     spec: { ...envelope.spec, interactions: [{ ...interaction, mappings: interaction.mappings.map((mapping) => ({ ...mapping, label: { dataset: 'primary', field: 'city' } })) }] },
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const features = [
     { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: '15100', city: 'penapolis' } },
     { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: '15101', city: 'penapolis' } },
@@ -807,7 +813,7 @@ test('MapLibre paths group and deterministically order valid coordinates', () =>
   const path = {
     id: 'route', kind: 'path', latitude: { dataset: 'primary', field: 'lat' }, longitude: { dataset: 'primary', field: 'lon' }, path: { dataset: 'primary', field: 'state' }, order: { dataset: 'primary', field: 'value' }, value: { dataset: 'primary', field: 'value' }, tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 }, color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#0969da', width: 3, opacity: 1 }, line: { width: 3 }, opacity: .8,
   } as VisualizationGeographicLayer
-  const withCoordinates = { ...envelope, dataState: { ...envelope.dataState, datasets: [{ ...(envelope.dataState as any).datasets[0], columns: ['state', 'value', 'lat', 'lon'], rows: [['SP', 2, -20, -40], ['SP', 1, -21, -41], ['RJ', 1, null, -42]] }] } } as VisualizationEnvelope
+  const withCoordinates = { ...envelope, dataState: { ...envelope.dataState, datasets: [{ ...(envelope.dataState as any).datasets[0], columns: ['state', 'value', 'lat', 'lon'], rows: [['SP', 2, -20, -40], ['SP', 1, -21, -41], ['RJ', 1, null, -42]] }] } } as unknown as VisualizationEnvelope
   const result = pathGeometry(withCoordinates, path as Extract<VisualizationGeographicLayer, { kind: 'path' }>)
   expect(result.features).toHaveLength(1)
   expect(result.features[0]?.id).toBe(0)
@@ -1039,7 +1045,7 @@ function tiledPointEnvelope(): VisualizationEnvelope {
       tileURL: '/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt', minimumZoom: 0, maximumZoom: 18, rawMinimumZoom: 10, featureCap: 5000, maximumTileBytes: 524288,
     },
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function selectableEnvelope(): VisualizationEnvelope {
@@ -1062,5 +1068,5 @@ function selectableEnvelope(): VisualizationEnvelope {
       id: 'primary', specRevision: 'sha256:test', dataRevision: 4, generation: 1, columns: ['state', 'value', 'customer_secret'], rows: [['SP', 10, 'governed-a'], ['RJ', 20, 'governed-b']], completeness: 'complete',
     }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }

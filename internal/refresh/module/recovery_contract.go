@@ -1,10 +1,6 @@
 package module
 
-import (
-	"context"
-
-	refreshrecovery "github.com/flidai/leapview/internal/refresh/recovery"
-)
+import refreshrecovery "github.com/flidai/leapview/internal/refresh/recovery"
 
 const (
 	StatusPending   = refreshrecovery.StatusPending
@@ -27,7 +23,6 @@ var (
 )
 
 type EnqueueInput = refreshrecovery.EnqueueInput
-type RecoveryDefinition = refreshrecovery.Definition
 type Fence = refreshrecovery.Fence
 type EvidenceReference = refreshrecovery.EvidenceReference
 type Result = refreshrecovery.Result
@@ -41,25 +36,6 @@ type StatusSnapshot = refreshrecovery.StatusSnapshot
 type Metric = refreshrecovery.Metric
 type RecoveryRepository = refreshrecovery.Repository
 type RecoveryLifecycle = refreshrecovery.Lifecycle
-type RecoveryDefinitionProvider = refreshrecovery.DefinitionProvider
-type RecoveryScenarioAdapter = refreshrecovery.ScenarioAdapter
-type RecoveryScenarioAdapterFunc = refreshrecovery.ScenarioAdapterFunc
-
-const (
-	RecoveryPhaseRestore   = refreshrecovery.PhaseRestore
-	RecoveryPhaseReadiness = refreshrecovery.PhaseReadiness
-	RecoveryPhaseStarted   = refreshrecovery.PhaseStarted
-	RecoveryPhaseCompleted = refreshrecovery.PhaseCompleted
-)
-
-func RecordRecoveryQualificationPhase(ctx context.Context, phase, event string) error {
-	return refreshrecovery.RecordQualificationPhase(ctx, phase, event)
-}
-
-type RecoveryScenarioOutcome = refreshrecovery.ScenarioOutcome
-type RecoveryEvidenceArtifact = refreshrecovery.EvidenceArtifact
-type RecoveryEvidencePublisher = refreshrecovery.EvidencePublisher
-type RecoveryFileEvidencePublisher = refreshrecovery.FileEvidencePublisher
 
 const (
 	EvidenceTransitionQualification = refreshrecovery.EvidenceTransitionQualification

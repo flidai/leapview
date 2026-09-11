@@ -398,7 +398,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		AgentBootstrap: config.HTTP.AgentBootstrap,
 		AgentCommands:  config.HTTP.AgentCommands,
 		SpatialTileStreamClosed: func(metrics dashboardhttp.Metrics, streamID string) {
-			if expirer, ok := metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+			if expirer, ok := metrics.(queryruntime.SpatialTileStreamExpirer); ok {
 				expirer.ExpireVisualizationTileStream(streamID)
 			}
 		},
@@ -532,9 +532,7 @@ func (m *Module) Authoring() *dashboardauthoringapplication.Application {
 type PopularityLevel string
 
 const (
-	PopularityLow    PopularityLevel = "low"
-	PopularityMedium PopularityLevel = "medium"
-	PopularityHigh   PopularityLevel = "high"
+	PopularityHigh PopularityLevel = "high"
 )
 
 // Popularity ranks dashboard usage across the instance for a configured

@@ -136,3 +136,85 @@ func TestDeliveryBrokerRetainsMergeRootsAcrossChain(t *testing.T) {
 		t.Fatal("timed out waiting for coalesced patch")
 	}
 }
+
+func TestDeliveryBrokerDisconnectsSlowSubscriberAtPendingLimit(t *testing.T) {
+	broker := NewDeliveryBrokerWithPendingLimit(2)
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	broker.PublishEnvelope("client:page", Envelope{Signals: pagestream.SignalPatch{"sequence": 0}, Delivery: DeliveryMetadata{Boundary: true}})
+	broker.PublishEnvelope("client:page", Envelope{Signals: pagestream.SignalPatch{"sequence": 1}, Delivery: DeliveryMetadata{Boundary: true}})
+	broker.PublishEnvelope("client:page", Envelope{Signals: pagestream.SignalPatch{"sequence": 2}, Delivery: DeliveryMetadata{Boundary: true}})
+
+	select {
+	case _, open := <-updates:
+		if open {
+			t.Fatal("slow subscriber remained open after mailbox overflow")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow subscriber was not disconnected")
+	}
+}
+
+func TestDeliveryBrokerRetainsGenerationZeroStatusBeforeNewerGeneration(t *testing.T) {
+	broker := NewDeliveryBrokerWithPendingLimit(4)
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"status": map[string]any{"lastUpdated": "2026-09-11T00:00:00Z"}},
+		Delivery: DeliveryMetadata{Boundary: true},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 4},
+		Delivery: DeliveryMetadata{Generation: 4, Boundary: true},
+	})
+
+	first := <-updates
+	if first["status"] == nil {
+		t.Fatalf("first patch = %#v, want generation-zero status", first)
+	}
+	second := <-updates
+	if second["generation"] != 4 {
+		t.Fatalf("second patch = %#v, want generation 4", second)
+	}
+}
+
+func TestDeliveryBrokerSupersedesBlockedGenerationButKeepsStatus(t *testing.T) {
+	broker := NewDeliveryBrokerWithPendingLimit(8)
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	// Do not read between publishes. The forwarder may already be blocked on
+	// the first envelope, so a newer generation must cancel that send rather
+	// than allowing an old result to occupy the delivery path.
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"status": map[string]any{"lastUpdated": "now"}},
+		Delivery: DeliveryMetadata{Boundary: true},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 1},
+		Delivery: DeliveryMetadata{Generation: 1, Boundary: true},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 2},
+		Delivery: DeliveryMetadata{Generation: 2, Boundary: true},
+	})
+
+	select {
+	case patch := <-updates:
+		if patch["status"] == nil {
+			t.Fatalf("first patch = %#v, want generation-zero status", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for status envelope")
+	}
+	select {
+	case patch := <-updates:
+		if patch["generation"] != 2 {
+			t.Fatalf("second patch = %#v, want only newer generation 2", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for newer generation")
+	}
+}

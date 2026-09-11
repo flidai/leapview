@@ -18,7 +18,7 @@ type bootstrapCredentialRepository struct {
 
 func TestAuthorizeBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *testing.T) {
 	module := browserGuardModule(nil, Principal{ID: "dev", DevBypass: true}, true)
-	module.auth = NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})
+	module.auth = mustNewAuth(t, nil, AuthConfig{DevBypass: true, DevAPIToken: "local-secret"})
 	serve := func(token string) (bool, error) {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/connections/connection_demo/upload-sessions", nil)
 		request.Header.Set("Authorization", "Bearer "+token)

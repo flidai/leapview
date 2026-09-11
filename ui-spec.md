@@ -84,10 +84,17 @@ CSRF is document security metadata, not application state. Mutating pages render
 
 Signals are product API contracts.
 
-- Go structs are the source of truth.
-- JSON Schema and TypeScript types are generated from Go signal structs.
+- TypeSpec in `api/signals/main.tsp` is the source of truth for signal
+  envelopes and root keys.
+- The UI signal IR, generated Go models, and generated TypeScript types are
+  derived from that source.
 - Lit imports generated types for route, chrome, status, and domain signals.
-- Contract tests enforce signal references and prevent unused payloads unless explicitly marked preloaded.
+- `internal/app/tools/signalcontracts` verifies the IR's declared roots have
+  source-anchored producer/reader evidence and rejects undeclared live roots.
+- `agentTurnPending` is explicitly browser-owned, while `adminProjects` is a
+  consumer-only surface root with no server producer. The nested
+  `adminAgentCommand.systemPrompt` path remains a child of the declared
+  `adminAgentCommand` root.
 - Signal roots should be stable, route-owned, and shaped for rendering rather than backend convenience.
 
 Dashboard signal roots should remain explicit and renderer-neutral:

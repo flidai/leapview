@@ -50,11 +50,11 @@ test('settings surfaces render typed signals and emit commands', async () => {
       await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
-      ;(element.shadowRoot.querySelector('tbody button') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).click()
       return {
-        text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(),
+        text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(),
         detail,
-        displayNameLabel: element.shadowRoot.querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
+        displayNameLabel: (element.shadowRoot as ShadowRoot).querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
       }
     })
     expect(result.text).toContain('CI')
@@ -81,18 +81,18 @@ test('service account and audit controls unlock when a no-op command finishes', 
       const audit = document.querySelector('lv-audit-log') as any
       accounts.requestUpdate(); audit.requestUpdate()
       await accounts.updateComplete; await audit.updateComplete
-      ;(accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).click()
+      ;((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).click()
       await accounts.updateComplete
-      const accountDisabled = (accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled
-      ;(audit.shadowRoot.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      const accountDisabled = ((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled
+      ;((audit.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await audit.updateComplete
-      const auditDisabled = (audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
-      const auditLabels = Array.from(audit.shadowRoot.querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
+      const auditDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const auditLabels = Array.from((audit.shadowRoot as ShadowRoot).querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       const unrelatedOwner = document.createElement('lv-other-page')
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
       await accounts.updateComplete; await audit.updateComplete
-      const accountStillDisabled = (accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled
-      const auditStillDisabled = (audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const accountStillDisabled = ((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled
+      const auditStillDisabled = ((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled
       const owner = document.querySelector('lv-admin-page') as Element
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: owner } }))
       await accounts.updateComplete; await audit.updateComplete
@@ -102,8 +102,8 @@ test('service account and audit controls unlock when a no-op command finishes', 
         accountStillDisabled,
         auditStillDisabled,
         auditLabels,
-        accountUnlocked: !(accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled,
-        auditUnlocked: !(audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+        accountUnlocked: !((accounts.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).disabled,
+        auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
     expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID'], accountUnlocked: true, auditUnlocked: true })
@@ -142,25 +142,25 @@ test('project registry uses the shared searchable entity list', async () => {
       const element = document.querySelector('lv-project-registry') as any
       element.requestUpdate()
       await element.updateComplete
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as any
       await list.updateComplete
-      const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.textContent?.replace(/\s+/g, ' ').trim())
+      const rows = () => Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-table-row')).map((row: Element) => row.textContent?.replace(/\s+/g, ' ').trim())
       const initialRows = rows()
-      const input = element.shadowRoot.querySelector('.entity-search input') as HTMLInputElement
+      const input = (element.shadowRoot as ShadowRoot).querySelector('.entity-search input') as HTMLInputElement
       input.value = 'retail'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await list.updateComplete
       return {
         hasSharedList: Boolean(list),
-        ownTableCount: element.shadowRoot.querySelectorAll(':scope > section > .table-wrap').length,
-        headings: Array.from(element.shadowRoot.querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
-        headers: Array.from(element.shadowRoot.querySelectorAll('.entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
+        ownTableCount: (element.shadowRoot as ShadowRoot).querySelectorAll(':scope > section > .table-wrap').length,
+        headings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
+        headers: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-sort-button > span:first-child')).map((header) => header.textContent?.trim()),
         initialRows,
         filteredRows: rows(),
-        firstHref: element.shadowRoot.querySelector('.entity-list-identity')?.getAttribute('href'),
-        projectIconsArePlain: Array.from(element.shadowRoot.querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
-        projectIconBorderWidth: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
-        projectIconBackground: getComputedStyle(element.shadowRoot.querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+        firstHref: (element.shadowRoot as ShadowRoot).querySelector('.entity-list-identity')?.getAttribute('href'),
+        projectIconsArePlain: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-icon')).every((icon) => icon.classList.contains('is-plain')),
+        projectIconBorderWidth: getComputedStyle((element.shadowRoot as ShadowRoot).querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
+        projectIconBackground: getComputedStyle((element.shadowRoot as ShadowRoot).querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
       }
     })
 
@@ -210,23 +210,23 @@ test('principal administration exposes local controls and keeps external profile
       element.requestUpdate(); await element.updateComplete
       const commands: unknown[] = []
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { commands.push(event.detail) })
-      const form = element.shadowRoot.querySelector('form') as HTMLFormElement
+      const form = (element.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Updated User'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       ;(window as any).confirm = () => true
-      ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.includes('Revoke all sessions'))?.click()
-      const localText = element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim()
+      ;(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.includes('Revoke all sessions'))?.click()
+      const localText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim()
       const local = {
-        headings: Array.from(element.shadowRoot.querySelectorAll('h2')).map((heading: Element) => heading.textContent?.trim()),
-        buttons: Array.from(element.shadowRoot.querySelectorAll('button, summary')).map((button: Element) => button.textContent?.replace(/\s+/g, ' ').trim()),
-        status: element.shadowRoot.querySelector('[data-user-status]')?.textContent?.trim(),
-        sharedLayout: Boolean(element.shadowRoot.querySelector('.detail-surface .detail-sections')),
-        cardCount: element.shadowRoot.querySelectorAll('.detail-card').length,
-        avatarSrc: (element.shadowRoot.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src'),
+        headings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('h2')).map((heading: Element) => heading.textContent?.trim()),
+        buttons: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button, summary')).map((button: Element) => button.textContent?.replace(/\s+/g, ' ').trim()),
+        status: (element.shadowRoot as ShadowRoot).querySelector('[data-user-status]')?.textContent?.trim(),
+        sharedLayout: Boolean((element.shadowRoot as ShadowRoot).querySelector('.detail-surface .detail-sections')),
+        cardCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.detail-card').length,
+        avatarSrc: ((element.shadowRoot as ShadowRoot).querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src'),
       }
       state.selectedPrincipalId = 'sso-1'
       element.requestUpdate(); await element.updateComplete
-      return { commands, localText, local, externalText: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(), externalForm: Boolean(element.shadowRoot.querySelector('form')) }
+      return { commands, localText, local, externalText: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(), externalForm: Boolean((element.shadowRoot as ShadowRoot).querySelector('form')) }
     })
     expect(result.commands).toEqual([
       { action: 'update_principal', principalId: 'local-1', displayName: 'Updated User', revision: 'rev-1' },
@@ -260,7 +260,7 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       const element = document.querySelector('lv-principal-administration') as any
       element.createOpen = true
       element.requestUpdate(); await element.updateComplete
-      const dialog = element.shadowRoot.querySelector('dialog') as HTMLDialogElement
+      const dialog = (element.shadowRoot as ShadowRoot).querySelector('dialog') as HTMLDialogElement
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
       const form = dialog.querySelector('form') as HTMLFormElement
@@ -272,11 +272,11 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       state.message = 'Local user created. Copy the temporary password now.'
       element.requestUpdate(); await element.updateComplete
       return {
-        open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
+        open: ((element.shadowRoot as ShadowRoot).querySelector('dialog') as HTMLDialogElement).open,
         detail,
         labels,
-        formAfterSuccess: Boolean(element.shadowRoot.querySelector('dialog form')),
-        successText: element.shadowRoot.querySelector('dialog')?.textContent?.replace(/\s+/g, ' ').trim(),
+        formAfterSuccess: Boolean((element.shadowRoot as ShadowRoot).querySelector('dialog form')),
+        successText: (element.shadowRoot as ShadowRoot).querySelector('dialog')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
     expect(result.open).toBe(true)
@@ -303,11 +303,11 @@ test('group administration makes synchronized membership read-only', async () =>
       const element = document.querySelector('lv-group-administration') as any
       element.requestUpdate(); await element.updateComplete
       return {
-        text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(),
-        buttons: Array.from(element.shadowRoot.querySelectorAll('button')).map((button: Element) => button.textContent?.trim()),
-        headings: Array.from(element.shadowRoot.querySelectorAll('h2')).map((heading: Element) => heading.textContent?.trim()),
-        sharedLayout: Boolean(element.shadowRoot.querySelector('.detail-surface .detail-sections')),
-        backHref: element.shadowRoot.querySelector('.back-link')?.getAttribute('href'),
+        text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(),
+        buttons: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')).map((button: Element) => button.textContent?.trim()),
+        headings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('h2')).map((heading: Element) => heading.textContent?.trim()),
+        sharedLayout: Boolean((element.shadowRoot as ShadowRoot).querySelector('.detail-surface .detail-sections')),
+        backHref: (element.shadowRoot as ShadowRoot).querySelector('.back-link')?.getAttribute('href'),
       }
     })
     expect(result.text).toContain('SCIM owns this group')
@@ -346,28 +346,28 @@ test('local group detail moves rename and add member into focused modals', async
       const commands: unknown[] = []
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { commands.push(event.detail) })
       const initial = {
-        formCount: element.shadowRoot.querySelectorAll('.detail-section form').length,
-        cardCount: element.shadowRoot.querySelectorAll('.detail-card').length,
-        tableOverflow: (() => { const table = element.shadowRoot.querySelector('.table-wrap') as HTMLElement; return table.scrollWidth > table.clientWidth })(),
-        buttons: Array.from(element.shadowRoot.querySelectorAll('button, summary')).map((item: Element) => item.textContent?.replace(/\s+/g, ' ').trim()),
+        formCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.detail-section form').length,
+        cardCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.detail-card').length,
+        tableOverflow: (() => { const table = (element.shadowRoot as ShadowRoot).querySelector('.table-wrap') as HTMLElement; return table.scrollWidth > table.clientWidth })(),
+        buttons: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button, summary')).map((item: Element) => item.textContent?.replace(/\s+/g, ' ').trim()),
       }
 
-      ;(element.shadowRoot.querySelector('.action-menu summary') as HTMLElement).click()
-      ;(Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('.action-menu-popover button'))).find((button) => button.textContent?.includes('Rename group'))?.click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.action-menu summary') as HTMLElement).click()
+      ;(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLButtonElement>('.action-menu-popover button'))).find((button) => button.textContent?.includes('Rename group'))?.click()
       await element.updateComplete
-      const renameDialog = element.shadowRoot.querySelector('dialog[data-group-detail-dialog="rename"]') as HTMLDialogElement
+      const renameDialog = (element.shadowRoot as ShadowRoot).querySelector('dialog[data-group-detail-dialog="rename"]') as HTMLDialogElement
       const renameForm = renameDialog.querySelector('form') as HTMLFormElement
       ;(renameForm.elements.namedItem('displayName') as HTMLInputElement).value = 'Revenue Analysts'
       renameForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await element.updateComplete
 
-      ;(Array.from(element.shadowRoot.querySelectorAll<HTMLButtonElement>('button'))).find((button) => button.textContent?.trim() === 'Add members')?.click()
+      ;(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLButtonElement>('button'))).find((button) => button.textContent?.trim() === 'Add members')?.click()
       await element.updateComplete
-      const memberDialog = element.shadowRoot.querySelector('dialog[data-group-detail-dialog="add-member"]') as HTMLDialogElement
+      const memberDialog = (element.shadowRoot as ShadowRoot).querySelector('dialog[data-group-detail-dialog="add-member"]') as HTMLDialogElement
       const memberForm = memberDialog.querySelector('form') as HTMLFormElement
       const picker = memberDialog.querySelector('lv-entity-multi-select') as any
       await picker.updateComplete
-      const checkboxes = Array.from(picker.shadowRoot.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+      const checkboxes = Array.from((picker.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
       checkboxes[0].click()
       checkboxes[1].click()
       await picker.updateComplete
@@ -420,12 +420,12 @@ test('group administration creates a local group in the selected project', async
       element.requestUpdate(); await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
-      const form = element.shadowRoot.querySelector('form') as HTMLFormElement
+      const form = (element.shadowRoot as ShadowRoot).querySelector('form') as HTMLFormElement
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Revenue analysts'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       return {
         detail,
-        open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
+        open: ((element.shadowRoot as ShadowRoot).querySelector('dialog') as HTMLDialogElement).open,
         disabled: (form.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })

@@ -31,20 +31,20 @@ test('dashboard header exposes favorite and contextual actions without crowding 
       element.setAttribute('authoring-action-label', 'Continue editing')
       element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
       await element.updateComplete
-      const favorite = element.shadowRoot.querySelector('.dashboard-favorite') as HTMLButtonElement
-      const trigger = element.shadowRoot.querySelector('.dashboard-options-trigger') as HTMLButtonElement
+      const favorite = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-favorite') as HTMLButtonElement
+      const trigger = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-options-trigger') as HTMLButtonElement
       const initialFavoriteLabel = favorite.getAttribute('aria-label')
       favorite.click()
       trigger.click()
       await element.updateComplete
-      const link = element.shadowRoot.querySelector('.dashboard-options-menu a') as HTMLAnchorElement
+      const link = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-options-menu a') as HTMLAnchorElement
       const open = trigger.getAttribute('aria-expanded')
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
       await element.updateComplete
       return {
-        breadcrumb: Array.from(element.shadowRoot.querySelectorAll('.breadcrumb-label')).map((item: Element) => item.textContent?.trim()),
-        headingOrder: Array.from(element.shadowRoot.querySelector('.dashboard-heading').children).map((item: Element) => item.className),
-        controlsRemainOutsideUtilityActions: !element.shadowRoot.querySelector('.actions .dashboard-favorite, .actions .dashboard-options'),
+        breadcrumb: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.breadcrumb-label')).map((item: Element) => item.textContent?.trim()),
+        headingOrder: Array.from((element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.dashboard-heading')!.children).map((item: Element) => item.className),
+        controlsRemainOutsideUtilityActions: !(element.shadowRoot as ShadowRoot).querySelector('.actions .dashboard-favorite, .actions .dashboard-options'),
         initialFavoriteLabel,
         favoriteLabel: favorite.getAttribute('aria-label'),
         favoritePressed: favorite.getAttribute('aria-pressed'),
@@ -55,7 +55,7 @@ test('dashboard header exposes favorite and contextual actions without crowding 
         closed: trigger.getAttribute('aria-expanded'),
         label: link?.textContent?.trim(),
         href: link?.getAttribute('href'),
-        directActionCount: element.shadowRoot.querySelectorAll('.authoring-action').length,
+        directActionCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.authoring-action').length,
       }
     })
     expect(action).toEqual({
@@ -86,15 +86,15 @@ test('dashboard refresh loading does not mark unrelated filter controls stale', 
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const slicer = element.shadowRoot.querySelector('lv-slicer') as any
+      const slicer = (element.shadowRoot as ShadowRoot).querySelector('lv-slicer') as any
       await slicer.updateComplete
-      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      const leaf = (slicer.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
       return {
         stale: leaf.stale,
         pending: leaf.pending,
-        disabled: leaf.shadowRoot.querySelector('fieldset')?.disabled,
-        status: leaf.shadowRoot.querySelector('.status')?.textContent?.trim(),
+        disabled: (leaf.shadowRoot as ShadowRoot).querySelector('fieldset')?.disabled,
+        status: (leaf.shadowRoot as ShadowRoot).querySelector('.status')?.textContent?.trim(),
       }
     })
     expect(result).toEqual({ stale: false, pending: false, disabled: false, status: undefined })
@@ -177,7 +177,7 @@ test('dashboard categorical filter options expose their visible labels to assist
       }
       document.body.append(leaf)
       await leaf.updateComplete
-      return Array.from(leaf.shadowRoot.querySelectorAll<HTMLInputElement>('input')).map((input) => input.getAttribute('aria-label'))
+      return Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('input')).map((input) => input.getAttribute('aria-label'))
     })
     expect(labels).toEqual(['Paid (7)', 'Refunded'])
   } finally {
@@ -260,7 +260,7 @@ test('desktop canonical grids keep stable canvas geometry and scroll when the vi
       await canvas.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
 
-      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      const viewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
       const before = {
         left: visual.style.left,
         width: visual.style.width,
@@ -323,7 +323,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
     const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       element.presentation = 'embed'
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const visible = (selector: string) => {
         const node = root.querySelector(selector) as HTMLElement | null
         return Boolean(node && getComputedStyle(node).display !== 'none')
@@ -375,10 +375,10 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
 
     const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as any
       await sidebar.updateComplete
-      const root = sidebar.shadowRoot!
-      const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
+      const reportHeader = (element.shadowRoot as ShadowRoot).querySelector('.header') as HTMLElement
       const railFooter = root.querySelector('.sidebar-footer') as HTMLElement
       const back = root.querySelector('.back-link') as HTMLAnchorElement
       const backLabel = back.querySelector('.back-label') as HTMLElement
@@ -386,8 +386,8 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
-      const main = element.shadowRoot.querySelector('.main') as HTMLElement
-      const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const main = (element.shadowRoot as ShadowRoot).querySelector('.main') as HTMLElement
+      const reportFooter = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as HTMLElement
       const breadcrumb = reportHeader.querySelector('.breadcrumb') as HTMLElement
       const title = breadcrumb.querySelector('h1') as HTMLElement
       const dashboardGlyph = breadcrumb.querySelector('.dashboard-appearance-glyph') as HTMLElement
@@ -434,7 +434,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         expandedBackLabelDisplay,
         collapsedBackLabelDisplay,
         reportTitle: title.textContent?.trim(),
-        reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
+        reportTitleCount: (element.shadowRoot as ShadowRoot).querySelectorAll('h1').length,
         breadcrumbLabel: breadcrumb.getAttribute('aria-label'),
         breadcrumbItems: Array.from(breadcrumb.querySelectorAll('.breadcrumb-item')).map(item => ({
           text: item.querySelector('.breadcrumb-label')?.textContent?.trim(),
@@ -467,7 +467,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         breadcrumbInset: Math.round(breadcrumbRect.left - mainRect.left),
         sidebarStartsWithHeader: Math.abs(sidebarRect.top - reportHeaderRect.top) < 2,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
-        railHeaderCount: element.shadowRoot.querySelectorAll('.rail-header').length,
+        railHeaderCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.rail-header').length,
         sidebarFooterAtBottom: Math.abs(sidebarRect.bottom - railFooterRect.bottom) < 2,
         railFooterMatchesReportFooter: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
           && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
@@ -489,7 +489,7 @@ test('app report frame uses a settings-style searchable page sidebar with Back a
         collapseTag: collapse.tagName,
         collapseLabel: collapse.getAttribute('aria-label'),
         collapsed: sidebar.hasAttribute('data-collapsed'),
-        railLabelDisplay: getComputedStyle(root.querySelector('.rail-label')).display,
+        railLabelDisplay: getComputedStyle(root.querySelector<HTMLElement>('.rail-label')!).display,
         collapsedPageMovesUp: collapsedPageTop < expandedPageTop,
         toggleIconDistinctFromBack: expandedToggleIconMarkup !== backIconMarkup,
         toggleIconChanges: collapsedToggleIconMarkup !== expandedToggleIconMarkup,
@@ -581,9 +581,9 @@ test('report pages rail resizes accessibly and persists its expanded width', asy
 
     const keyboardState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as any
       await sidebar.updateComplete
-      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      const handle = (sidebar.shadowRoot as ShadowRoot).querySelector('.resize-handle') as HTMLElement
       handle.dispatchEvent(new KeyboardEvent('keydown', {
         key: 'ArrowRight', bubbles: true, cancelable: true,
       }))
@@ -609,18 +609,18 @@ test('report pages rail resizes accessibly and persists its expanded width', asy
       return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 152
     })
     expect(await page.locator('lv-dashboard-page').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
-      const main = element.shadowRoot.querySelector('.main') as HTMLElement
-      const header = element.shadowRoot.querySelector('.header') as HTMLElement
-      const footer = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as HTMLElement
+      const main = (element.shadowRoot as ShadowRoot).querySelector('.main') as HTMLElement
+      const header = (element.shadowRoot as ShadowRoot).querySelector('.header') as HTMLElement
+      const footer = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as HTMLElement
       return [main, header, footer].every(node => (
         Math.round(node.getBoundingClientRect().left) === Math.round(sidebar.getBoundingClientRect().right)
       ))
     })).toBe(true)
 
     const handleBox = await page.locator('lv-dashboard-page').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
-      const handle = sidebar.shadowRoot!.querySelector('.resize-handle') as HTMLElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as HTMLElement
+      const handle = (sidebar.shadowRoot as ShadowRoot)!.querySelector('.resize-handle') as HTMLElement
       const box = handle.getBoundingClientRect()
       return { x: box.x, y: box.y, width: box.width, height: box.height }
     })
@@ -643,10 +643,10 @@ test('report pages rail resizes accessibly and persists its expanded width', asy
     })
 
     const collapsedState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as any
       await sidebar.updateComplete
-      const collapse = sidebar.shadowRoot.querySelector('.collapse') as HTMLButtonElement
-      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      const collapse = (sidebar.shadowRoot as ShadowRoot).querySelector('.collapse') as HTMLButtonElement
+      const handle = (sidebar.shadowRoot as ShadowRoot).querySelector('.resize-handle') as HTMLElement
       collapse.click()
       await sidebar.updateComplete
       await new Promise(resolve => setTimeout(resolve, 200))
@@ -677,32 +677,32 @@ test('narrow dashboards let viewers preserve the desktop canvas with internal sc
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      const footer = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as any
       await footer.updateComplete
-      const view = footer.shadowRoot.querySelector('lv-report-zoom') as any
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const view = (footer.shadowRoot as ShadowRoot).querySelector('lv-report-zoom') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await Promise.all([view.updateComplete, canvas.updateComplete])
-      const details = view.shadowRoot.querySelector('[data-control="layout"]') as HTMLDetailsElement
+      const details = (view.shadowRoot as ShadowRoot).querySelector('[data-control="layout"]') as HTMLDetailsElement
       details.open = true
       await view.updateComplete
-      const control = view.shadowRoot.querySelector('[data-layout="desktop"]') as HTMLButtonElement
+      const control = (view.shadowRoot as ShadowRoot).querySelector('[data-layout="desktop"]') as HTMLButtonElement
       control.click()
       await Promise.all([view.updateComplete, canvas.updateComplete])
       details.open = true
       await view.updateComplete
-      ;(view.shadowRoot.querySelector('[data-mode="actual-size"]') as HTMLButtonElement).click()
+      ;((view.shadowRoot as ShadowRoot).querySelector('[data-mode="actual-size"]') as HTMLButtonElement).click()
       await Promise.all([view.updateComplete, canvas.updateComplete])
       await new Promise(requestAnimationFrame)
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
-      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
-      const assigned = (canvas.shadowRoot.querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
+      const viewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
+      const assigned = ((canvas.shadowRoot as ShadowRoot).querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
       const chart = assigned.find((item) => item.dataset.visualType === 'bar')?.getBoundingClientRect()
       const table = assigned.find((item) => item.dataset.visualType === 'table')?.getBoundingClientRect()
       return {
         controlDisplay: getComputedStyle(view).display,
         controlHeight: Math.round(control.getBoundingClientRect().height),
-        headerControl: Boolean(element.shadowRoot.querySelector('lv-report-view')),
-        bottomControl: Boolean(footer.shadowRoot.querySelector('lv-report-zoom')),
+        headerControl: Boolean((element.shadowRoot as ShadowRoot).querySelector('lv-report-view')),
+        bottomControl: Boolean((footer.shadowRoot as ShadowRoot).querySelector('lv-report-zoom')),
         layout: surface.dataset.layout,
         mode: surface.dataset.presentationMode,
         horizontalScroll: viewport.scrollWidth > viewport.clientWidth,
@@ -741,18 +741,18 @@ test('fit width never exposes a horizontal canvas scrollbar when vertical scroll
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      const footer = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as any
       await footer.updateComplete
-      const toolbar = footer.shadowRoot.querySelector('lv-report-zoom') as any
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const toolbar = (footer.shadowRoot as ShadowRoot).querySelector('lv-report-zoom') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await Promise.all([toolbar.updateComplete, canvas.updateComplete])
-      ;(toolbar.shadowRoot.querySelector('[data-mode="fit-width"]') as HTMLButtonElement).click()
+      ;((toolbar.shadowRoot as ShadowRoot).querySelector('[data-mode="fit-width"]') as HTMLButtonElement).click()
       await Promise.all([toolbar.updateComplete, canvas.updateComplete])
       await new Promise(requestAnimationFrame)
       await new Promise(requestAnimationFrame)
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
-      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
-      const frame = canvas.shadowRoot.querySelector('.frame-wrap') as HTMLElement
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
+      const viewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
+      const frame = (canvas.shadowRoot as ShadowRoot).querySelector('.frame-wrap') as HTMLElement
       const viewportRect = viewport.getBoundingClientRect()
       const frameRect = frame.getBoundingClientRect()
       return {
@@ -791,19 +791,19 @@ test('canvas dropdown popovers follow the authored report zoom scale', async () 
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
-      const slicer = element.shadowRoot.querySelector('lv-slicer') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
+      const slicer = (element.shadowRoot as ShadowRoot).querySelector('lv-slicer') as any
       await Promise.all([canvas.updateComplete, slicer.updateComplete])
-      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      const leaf = (slicer.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
-      const trigger = leaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLElement
+      const trigger = (leaf.shadowRoot as ShadowRoot).querySelector('.dropdown-trigger') as HTMLElement
       trigger.click()
       await leaf.updateComplete
       await new Promise(requestAnimationFrame)
-      const popover = leaf.shadowRoot.querySelector('.dropdown-popover') as HTMLElement
+      const popover = (leaf.shadowRoot as ShadowRoot).querySelector('.dropdown-popover') as HTMLElement
       const triggerRect = trigger.getBoundingClientRect()
       const popoverRect = popover.getBoundingClientRect()
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
       return {
         canvasScale: Number(surface.dataset.scale),
         triggerScale: triggerRect.width / trigger.offsetWidth,
@@ -841,12 +841,12 @@ test('bottom report toolbar separates layout, fit actions, and zoom presets on c
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const footer = element.shadowRoot.querySelector('lv-report-footer') as any
+      const footer = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as any
       await footer.updateComplete
-      const toolbar = footer.shadowRoot.querySelector('lv-report-zoom') as any
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const toolbar = (footer.shadowRoot as ShadowRoot).querySelector('lv-report-zoom') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await Promise.all([toolbar.updateComplete, canvas.updateComplete])
-      const root = toolbar.shadowRoot
+      const root = (toolbar.shadowRoot as ShadowRoot)
       const layoutMenu = root.querySelector('[data-control="layout"]') as HTMLDetailsElement
       const zoomMenu = root.querySelector('[data-control="zoom-presets"]') as HTMLDetailsElement
       const slider = root.querySelector('.slider') as HTMLElement
@@ -862,7 +862,7 @@ test('bottom report toolbar separates layout, fit actions, and zoom presets on c
       ;(root.querySelector('[data-mode="fit-page"]') as HTMLButtonElement).click()
       await Promise.all([toolbar.updateComplete, canvas.updateComplete])
       await new Promise(requestAnimationFrame)
-      const fitPageSurface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const fitPageSurface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
       const fitPageMode = fitPageSurface.dataset.presentationMode
       const fitPageScale = Number(fitPageSurface.dataset.scale)
       const fitPageSelected = root.querySelector('[data-mode="fit-page"]')?.getAttribute('aria-pressed')
@@ -873,7 +873,7 @@ test('bottom report toolbar separates layout, fit actions, and zoom presets on c
       await Promise.all([toolbar.updateComplete, canvas.updateComplete])
       await new Promise(requestAnimationFrame)
 
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
       return {
         layoutTriggerLabel: initialLayoutTriggerLabel,
         layoutHasIcon,
@@ -925,9 +925,9 @@ test('compact report footers keep refresh failures visible and announced without
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       await element.updateComplete
-      const footerHost = element.shadowRoot.querySelector('lv-report-footer') as any
+      const footerHost = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as any
       await footerHost.updateComplete
-      const root = footerHost.shadowRoot
+      const root = (footerHost.shadowRoot as ShadowRoot)
       const footer = root.querySelector('footer') as HTMLElement
       const status = root.querySelector('.status') as HTMLElement
       const controls = root.querySelector('lv-report-zoom') as HTMLElement
@@ -975,12 +975,12 @@ test('mobile layout pins the bottom toolbar while the stacked report content scr
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await canvas.updateComplete
       await new Promise(requestAnimationFrame)
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
-      const body = element.shadowRoot.querySelector('.body') as HTMLElement
-      const footer = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
+      const body = (element.shadowRoot as ShadowRoot).querySelector('.body') as HTMLElement
+      const footer = (element.shadowRoot as ShadowRoot).querySelector('lv-report-footer') as HTMLElement
       const footerBottomBefore = footer.getBoundingClientRect().bottom
       body.scrollTo({ top: body.scrollHeight, behavior: 'instant' })
       await new Promise(requestAnimationFrame)
@@ -1026,11 +1026,11 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const body = root.querySelector('.body') as HTMLElement
       const dock = root.querySelector('lv-filter-dock') as any
       await dock.updateComplete
-      const rail = dock.shadowRoot.querySelector('button.rail') as HTMLElement
+      const rail = (dock.shadowRoot as ShadowRoot).querySelector('button.rail') as HTMLElement
       const bodyRect = body.getBoundingClientRect()
       const before = rail.getBoundingClientRect()
       const dockPosition = getComputedStyle(dock).position
@@ -1040,7 +1040,7 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
       const scrolled = body.scrollTop > 0
       rail.click()
       await dock.updateComplete
-      const panel = dock.shadowRoot.querySelector('.panel') as HTMLElement
+      const panel = (dock.shadowRoot as ShadowRoot).querySelector('.panel') as HTMLElement
       return {
         dockPosition,
         bodyTop: Math.round(bodyRect.top),
@@ -1075,11 +1075,11 @@ test('auto layout follows the viewport and does not stack when desktop side pane
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const canvas = (element.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await canvas.updateComplete
       await new Promise(requestAnimationFrame)
-      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
-      const viewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
+      const surface = (canvas.shadowRoot as ShadowRoot).querySelector('.surface') as HTMLElement
+      const viewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
       return {
         canvasWidth: Math.round(canvas.getBoundingClientRect().width),
         layout: surface.dataset.layout,
@@ -1104,19 +1104,19 @@ test('desktop report tables distribute columns across the available visual width
     await page.waitForFunction(() => {
       const dashboard = document.querySelector('lv-dashboard-page') as any
       const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
     })
     const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       await table.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await table.updateComplete
-      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
-      const plane = table.shadowRoot.querySelector('.table-plane') as HTMLElement
-      const header = table.shadowRoot.querySelector('.head') as HTMLElement
+      const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const plane = (table.shadowRoot as ShadowRoot).querySelector('.table-plane') as HTMLElement
+      const header = (table.shadowRoot as ShadowRoot).querySelector('.head') as HTMLElement
       return {
         viewportWidth: scrollport.clientWidth,
         planeWidth: plane.offsetWidth,
@@ -1140,20 +1140,20 @@ test('mobile report tables keep accessible horizontal scrolling and native scrol
     await page.waitForFunction(() => {
       const dashboard = document.querySelector('lv-dashboard-page') as any
       const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
     })
     const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       await table.updateComplete
-      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
       return {
         role: scrollport.getAttribute('role'),
         label: scrollport.getAttribute('aria-label'),
         tabIndex: scrollport.getAttribute('tabindex'),
-        hasHint: table.shadowRoot.querySelector('.table-scroll-hint') !== null,
+        hasHint: (table.shadowRoot as ShadowRoot).querySelector('.table-scroll-hint') !== null,
         scrollbarWidth: getComputedStyle(scrollport).scrollbarWidth,
         scrollbarColor: getComputedStyle(scrollport).scrollbarColor,
         webkitScrollbarWidth: getComputedStyle(scrollport, '::-webkit-scrollbar').width,
@@ -1176,16 +1176,16 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
     await page.waitForFunction(() => {
       const dashboard = document.querySelector('lv-dashboard-page') as any
       const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
     })
     const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       await table.updateComplete
-      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
-      const request = new Promise<any>((resolve, reject) => {
+      const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const request = new Promise((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error('window request was not emitted')), 1_000)
         dashboard.addEventListener('lv-visualization-window-request', (event: Event) => {
           window.clearTimeout(timeout)
@@ -1194,13 +1194,13 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
       })
       scrollport.scrollTop = 100 * 28
       scrollport.dispatchEvent(new Event('scroll'))
-      const detail = await request
+      const detail = await request as any
       await table.updateComplete
       return {
         detail,
-        renderedRows: table.shadowRoot.querySelectorAll('.canvas > .row').length,
+        renderedRows: (table.shadowRoot as ShadowRoot).querySelectorAll('.canvas > .row').length,
         totalRows: table.table.availableRows,
-        loadingVisible: table.shadowRoot.textContent?.includes('loading'),
+        loadingVisible: (table.shadowRoot as ShadowRoot).textContent?.includes('loading'),
       }
     })
     expect(result.detail).toMatchObject({
@@ -1227,16 +1227,16 @@ test('windowed table keeps requesting the latest chunk during continuous fast sc
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
     })
     const requestedDuringScroll = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       table.table = {
         ...table.table,
         cardinality: { kind: 'exact', value: 1_000 },
         availableRows: 1_000,
       }
       await table.updateComplete
-      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
       let requested = false
       dashboard.addEventListener('lv-visualization-window-request', () => {
         requested = true
@@ -1267,9 +1267,9 @@ test('selected sticky table cells preserve the visible row highlight', async () 
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.row'))
     })
     const colors = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
-      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')!
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       table.table = {
         ...table.table,
         interaction: {
@@ -1283,12 +1283,12 @@ test('selected sticky table cells preserve the visible row highlight', async () 
       }
       table.style.setProperty('--bgColor-accent-muted', 'rgb(221, 244, 255)')
       await table.updateComplete
-      const selected = table.shadowRoot.querySelector('.row[aria-selected="true"]') as HTMLElement
+      const selected = (table.shadowRoot as ShadowRoot).querySelector('.row[aria-selected="true"]') as HTMLElement
       const pinned = selected.querySelector('.cell.pinned-left') as HTMLElement
-      const unselected = table.shadowRoot.querySelector('.row[aria-selected="false"]') as HTMLElement
+      const unselected = (table.shadowRoot as ShadowRoot).querySelector('.row[aria-selected="false"]') as HTMLElement
       const selectedColor = getComputedStyle(selected).backgroundColor
       const pinnedColor = getComputedStyle(pinned).backgroundColor
-      const pinnedHeader = table.shadowRoot.querySelector('.header-cell.pinned-left-edge') as HTMLElement
+      const pinnedHeader = (table.shadowRoot as ShadowRoot).querySelector('.header-cell.pinned-left-edge') as HTMLElement
       selected.classList.add('hovered')
       return {
         selected: selectedColor,
@@ -1297,8 +1297,8 @@ test('selected sticky table cells preserve the visible row highlight', async () 
         pinnedHovered: getComputedStyle(pinned).backgroundColor,
         unselected: getComputedStyle(unselected).backgroundColor,
         dividerWidth: getComputedStyle(pinnedHeader, '::after').width,
-        nativeCellTitles: table.shadowRoot.querySelectorAll('.cell[title]').length,
-        accessibleCellLabels: table.shadowRoot.querySelectorAll('.cell-action[aria-label]').length,
+        nativeCellTitles: (table.shadowRoot as ShadowRoot).querySelectorAll('.cell[title]').length,
+        accessibleCellLabels: (table.shadowRoot as ShadowRoot).querySelectorAll('.cell-action[aria-label]').length,
       }
     })
     expect(colors.selected).toBe('rgb(221, 244, 255)')
@@ -1325,12 +1325,12 @@ test('report tables omit semantic headers without shifting body rows when showHe
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.canvas > .row'))
     })
     const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const tableHost = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host'))
+      const tableHost = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
         .find((candidate: any) => candidate.envelope?.visualID === 'orders') as any
-      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       table.table = { ...table.table, style: { ...table.table.style, showHeader: false } }
       await table.updateComplete
-      const root = table.shadowRoot
+      const root = (table.shadowRoot as ShadowRoot)
       const shell = root.querySelector('.shell') as HTMLElement
       const firstRow = root.querySelector('.canvas > .row') as HTMLElement
       return {
@@ -1362,11 +1362,11 @@ test('table resize handles expose keyboard increments and accessible labels', as
       return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.column-resizer'))
     })
     const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const host = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host'))
+      const host = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
         .find((candidate: any) => candidate.envelope?.visualID === 'orders') as any
-      const table = host.shadowRoot.querySelector('lv-report-table') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
       await table.updateComplete
-      const root = table.shadowRoot
+      const root = (table.shadowRoot as ShadowRoot)
       const handle = root.querySelector('.column-resizer') as HTMLElement
       const shell = root.querySelector('.shell') as HTMLElement
       const frame = root.querySelector('.table-frame') as HTMLElement
@@ -1418,7 +1418,7 @@ test('dashboard refresh progress is owned by the latest stream generation', asyn
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       const read = async () => {
         await element.updateComplete
-        const progress = element.shadowRoot.querySelector('[data-dashboard-refresh-progress]')
+        const progress = (element.shadowRoot as ShadowRoot).querySelector('[data-dashboard-refresh-progress]')
         return { generation: progress?.getAttribute('data-generation'), now: progress?.getAttribute('aria-valuenow'), complete: progress?.getAttribute('data-complete') }
       }
       const initial = await read()
@@ -1452,14 +1452,14 @@ test('dashboard keeps the source visualization selected through canonicalization
         await element.updateComplete
         await Promise.resolve()
         await element.updateComplete
-        const host = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
-          .find((candidate: any) => candidate.envelope?.visualID === 'orders_chart')
+        const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+        const host = hosts.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart')
         return host.envelope.selection
       }
       await element.updateComplete
-      const source = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
-        .find((host: any) => host.envelope?.visualID === 'orders_chart')
-      const command = {
+      const sourceHosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const source = sourceHosts.find((host: any) => host.envelope?.visualID === 'orders_chart')
+      const command: Record<string, unknown> = {
         sourceKind: 'visual', sourceId: 'orders_chart', interactionKind: 'selection', action: 'set', toggle: true,
         mappings: [{ field: 'orders.status', dataset: 'orders', value: 'delivered', label: 'Delivered' }],
       }
@@ -1509,11 +1509,11 @@ test('visualization host renders the shared title and preserves the live source 
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
     const initial = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
+      const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
       const host = hosts.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart')
       await host.updateComplete
-      const title = host.shadowRoot.querySelector('[data-visualization-title]')?.textContent?.trim()
-      const expand = host.shadowRoot.querySelector('button[aria-label="Expand chart"]') as HTMLButtonElement | null
+      const title = (host.shadowRoot as ShadowRoot).querySelector('[data-visualization-title]')?.textContent?.trim()
+      const expand = (host.shadowRoot as ShadowRoot).querySelector('button[aria-label="Expand chart"]') as HTMLButtonElement | null
       return { title, expand: expand?.title }
     })
     expect(initial).toEqual({
@@ -1527,11 +1527,11 @@ test('visualization host renders the shared title and preserves the live source 
       return Boolean(dashboard?.shadowRoot?.querySelector('lv-visual-modal')?.shadowRoot?.querySelector('[role="dialog"]'))
     })
     const focused = await page.locator('lv-dashboard-page').evaluate((dashboard: any) => {
-      const host = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
-        .find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as HTMLElement | undefined
-      const modal = dashboard.shadowRoot.querySelector('lv-visual-modal') as HTMLElement
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const host = hosts.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as HTMLElement | undefined
+      const modal = (dashboard.shadowRoot as ShadowRoot).querySelector('lv-visual-modal') as HTMLElement
       return {
-        dialog: modal.shadowRoot?.querySelector('[role="dialog"]')?.getAttribute('aria-label'),
+        dialog: (modal.shadowRoot as ShadowRoot)?.querySelector('[role="dialog"]')?.getAttribute('aria-label'),
         sourceParent: host?.parentElement?.localName,
         sourceSlot: host?.getAttribute('slot'),
         sourceTitle: host?.shadowRoot?.querySelector('[data-visualization-title]')?.textContent?.trim(),
@@ -1545,8 +1545,8 @@ test('visualization host renders the shared title and preserves the live source 
     })
 
     const focusedStatus = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
-      const source = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
-        .find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as any
+      const sources = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const source = sources.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as any
       source.envelope = { ...source.envelope, status: { kind: 'partial', message: 'Focused refresh' } }
       await source.updateComplete
       return source.envelope?.status
@@ -1560,8 +1560,8 @@ test('visualization host renders the shared title and preserves the live source 
       return !modal?.shadowRoot?.querySelector('[role="dialog"]') && !modal?.querySelector('[slot="focus-visual"]')
     })
     const restored = await page.locator('lv-dashboard-page').evaluate((dashboard: any) => {
-      const host = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host') as NodeListOf<any>)
-        .find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as any
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')) as any[]
+      const host = hosts.find((candidate: any) => candidate.envelope?.visualID === 'orders_chart') as any
       return {
         sourceParent: host?.parentElement?.localName,
         sourceSlot: host?.getAttribute('slot'),
@@ -1593,11 +1593,11 @@ test('collapsed filters and page navigation use the same rail width', async () =
 
     const widths = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const pageSidebar = root.querySelector('lv-sub-sidebar') as any
       const filterDock = root.querySelector('lv-filter-dock') as any
       await Promise.all([pageSidebar.updateComplete, filterDock.updateComplete])
-      const filterRail = filterDock.shadowRoot.querySelector('aside') as HTMLElement
+      const filterRail = (filterDock.shadowRoot as ShadowRoot).querySelector('aside') as HTMLElement
       return {
         pageSidebar: Math.round(pageSidebar.getBoundingClientRect().width),
         filters: Math.round(filterRail.getBoundingClientRect().width),
@@ -1621,14 +1621,14 @@ test('opening the desktop filter pane reduces the usable canvas instead of cover
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const dock = root.querySelector('lv-filter-dock') as any
       const canvas = root.querySelector('.canvas-wrap') as HTMLElement
       const reportCanvas = root.querySelector('lv-report-canvas') as HTMLElement
       const footer = root.querySelector('lv-report-footer') as HTMLElement
       await dock.updateComplete
       const before = canvas.getBoundingClientRect()
-      ;(dock.shadowRoot.querySelector('.rail') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('.rail') as HTMLButtonElement).click()
       await dock.updateComplete
       await new Promise(requestAnimationFrame)
       await Promise.all(dock.getAnimations().map((animation: Animation) => animation.finished))
@@ -1673,8 +1673,8 @@ test('mobile report header combines page and filter controls without stacked rai
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const compact = await dashboard.evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
-      const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const dock = (element.shadowRoot as ShadowRoot).querySelector('lv-filter-dock') as any
       await dock.updateComplete
       const header = root.querySelector('.header') as HTMLElement
       const pageMenu = root.querySelector('.mobile-page-menu') as HTMLDetailsElement
@@ -1682,7 +1682,7 @@ test('mobile report header combines page and filter controls without stacked rai
       const breadcrumbCurrent = breadcrumb.querySelector('[aria-current="page"]') as HTMLElement
       const filterTrigger = root.querySelector('.mobile-filter-toggle') as HTMLButtonElement
       const agentTrigger = root.querySelector('.agent-toggle') as HTMLButtonElement
-      const dockRail = dock.shadowRoot.querySelector('.rail') as HTMLButtonElement
+      const dockRail = (dock.shadowRoot as ShadowRoot).querySelector('.rail') as HTMLButtonElement
       const actions = root.querySelector('.actions') as HTMLElement
       const actionRects = Array.from(actions.children).map((child: any) => child.getBoundingClientRect())
       filterTrigger.focus()
@@ -1692,7 +1692,7 @@ test('mobile report header combines page and filter controls without stacked rai
       const agentFocus = getComputedStyle(agentTrigger)
       const agentFocusStyle = { style: agentFocus.outlineStyle, width: agentFocus.outlineWidth }
       return {
-        sidebarDisplay: getComputedStyle(root.querySelector('lv-sub-sidebar')).display,
+        sidebarDisplay: getComputedStyle(root.querySelector<HTMLElement>('lv-sub-sidebar')!).display,
         headerHeight: Math.round(header.getBoundingClientRect().height),
         pageMenuDisplay: getComputedStyle(pageMenu).display,
         breadcrumbLabels: Array.from(breadcrumb.querySelectorAll('.breadcrumb-label')).map((item: any) => item.textContent.trim()),
@@ -1702,12 +1702,12 @@ test('mobile report header combines page and filter controls without stacked rai
         filterLabel: filterTrigger.getAttribute('aria-label'),
         dockWidth: Math.round(dock.getBoundingClientRect().width),
         dockHeight: Math.round(dock.getBoundingClientRect().height),
-        canvasTop: Math.round(root.querySelector('.canvas-wrap').getBoundingClientRect().top),
+        canvasTop: Math.round(root.querySelector<HTMLElement>('.canvas-wrap')!.getBoundingClientRect().top),
         headerBottom: Math.round(header.getBoundingClientRect().bottom),
         headerOverflow: header.scrollWidth - header.clientWidth,
         actionsOverlap: actionRects.some((rect, index) => index > 0 && rect.left < actionRects[index - 1].right),
-        filterTextDisplay: getComputedStyle(filterTrigger.querySelector('.mobile-filter-label')).display,
-        askTextDisplay: getComputedStyle(root.querySelector('.agent-toggle span')).display,
+        filterTextDisplay: getComputedStyle(filterTrigger.querySelector<HTMLElement>('.mobile-filter-label')!).display,
+        askTextDisplay: getComputedStyle(root.querySelector<HTMLElement>('.agent-toggle span')!).display,
         filterFocusStyle,
         agentFocusStyle,
         dockRailDisplay: getComputedStyle(dockRail).display,
@@ -1745,7 +1745,7 @@ test('mobile report header combines page and filter controls without stacked rai
     await pageMenuSummary.click()
     expect(await pageMenu.getAttribute('open')).not.toBeNull()
     await dashboard.evaluate((element: any) => {
-      element.shadowRoot.querySelector('.header').dispatchEvent(new PointerEvent('pointerdown', {
+      (element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.header')!.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true,
         composed: true,
       }))
@@ -1755,10 +1755,10 @@ test('mobile report header combines page and filter controls without stacked rai
     await pageMenuSummary.click()
     await page.keyboard.press('Escape')
     const dismissedMenu = await dashboard.evaluate((element: any) => {
-      const menu = element.shadowRoot.querySelector('.mobile-page-menu') as HTMLDetailsElement
+      const menu = (element.shadowRoot as ShadowRoot).querySelector('.mobile-page-menu') as HTMLDetailsElement
       return {
         open: menu.open,
-        summaryFocused: element.shadowRoot.activeElement === menu.querySelector('summary'),
+        summaryFocused: (element.shadowRoot as ShadowRoot).activeElement === menu.querySelector('summary'),
       }
     })
     expect(dismissedMenu).toEqual({ open: false, summaryFocused: true })
@@ -1766,20 +1766,20 @@ test('mobile report header combines page and filter controls without stacked rai
     const toggle = page.locator('lv-dashboard-page button.mobile-filter-toggle')
     await toggle.click()
     const opened = await dashboard.evaluate(async (element: any) => {
-      const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
+      const dock = (element.shadowRoot as ShadowRoot).querySelector('lv-filter-dock') as any
       await dock.updateComplete
-      const panel = dock.shadowRoot.querySelector('.panel')
-      const background = element.shadowRoot.querySelector('.agent-toggle')
+      const panel = (dock.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.panel')!
+      const background = (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.agent-toggle')!
       background.focus()
       return {
-        expanded: element.shadowRoot.querySelector('.mobile-filter-toggle').getAttribute('aria-expanded'),
+        expanded: (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.mobile-filter-toggle')!.getAttribute('aria-expanded'),
         panelDisplay: getComputedStyle(panel).display,
         panelRole: panel.getAttribute('role'),
         panelModal: panel.getAttribute('aria-modal'),
         panelTopLayer: panel.matches(':modal'),
-        asidePosition: getComputedStyle(dock.shadowRoot.querySelector('aside')).position,
-        focused: dock.shadowRoot.activeElement?.getAttribute('aria-label'),
-        backgroundFocusBlocked: element.shadowRoot.activeElement !== background,
+        asidePosition: getComputedStyle((dock.shadowRoot as ShadowRoot).querySelector<HTMLElement>('aside')!).position,
+        focused: (dock.shadowRoot as ShadowRoot).activeElement?.getAttribute('aria-label'),
+        backgroundFocusBlocked: (element.shadowRoot as ShadowRoot).activeElement !== background,
       }
     })
     expect(opened).toEqual({
@@ -1795,12 +1795,12 @@ test('mobile report header combines page and filter controls without stacked rai
 
     await page.keyboard.press('Shift+Tab')
     const wrappedFocus = await dashboard.evaluate((element: any) => {
-      const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
-      const active = dock.shadowRoot.activeElement
+      const dock = (element.shadowRoot as ShadowRoot).querySelector('lv-filter-dock') as any
+      const active = (dock.shadowRoot as ShadowRoot).activeElement
       return {
         insideDrawer: active instanceof HTMLElement,
-        insidePanel: dock.shadowRoot.querySelector('.panel').contains(active),
-        backgroundFocused: element.shadowRoot.activeElement?.classList.contains('agent-toggle') ?? false,
+        insidePanel: (dock.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.panel')!.contains(active),
+        backgroundFocused: (element.shadowRoot as ShadowRoot).activeElement?.classList.contains('agent-toggle') ?? false,
       }
     })
     expect(wrappedFocus.insideDrawer).toBe(true)
@@ -1809,15 +1809,15 @@ test('mobile report header combines page and filter controls without stacked rai
 
     await page.keyboard.press('Escape')
     const closed = await dashboard.evaluate(async (element: any) => {
-      const dock = element.shadowRoot.querySelector('lv-filter-dock') as any
+      const dock = (element.shadowRoot as ShadowRoot).querySelector('lv-filter-dock') as any
       await dock.updateComplete
       await element.updateComplete
-      const trigger = element.shadowRoot.querySelector('.mobile-filter-toggle')
-      const background = element.shadowRoot.querySelector('.agent-toggle')
+      const trigger = (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.mobile-filter-toggle')!
+      const background = (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.agent-toggle')!
       return {
         expanded: trigger.getAttribute('aria-expanded'),
-        triggerFocusRestored: element.shadowRoot.activeElement === trigger,
-        backgroundFocusBlocked: element.shadowRoot.activeElement !== background,
+        triggerFocusRestored: (element.shadowRoot as ShadowRoot).activeElement === trigger,
+        backgroundFocusBlocked: (element.shadowRoot as ShadowRoot).activeElement !== background,
       }
     })
     expect(closed).toEqual({
@@ -1843,10 +1843,10 @@ test('single-page mobile dashboards show page context without an empty menu', as
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const label = root.querySelector('.mobile-page-label') as HTMLElement
       const header = root.querySelector('.header') as HTMLElement
-      const actionRects = Array.from(root.querySelector('.actions').children)
+      const actionRects = Array.from(root.querySelector<HTMLElement>('.actions')!.children)
         .filter((child: any) => getComputedStyle(child).display !== 'none')
         .map((child: any) => child.getBoundingClientRect())
       return {
@@ -1958,22 +1958,22 @@ test('filter pane groups scope and exposes clear, reset, apply, and cancel actio
       }
       document.body.append(dock)
       await dock.updateComplete
-      const cards = Array.from(dock.shadowRoot.querySelectorAll('lv-filter-pane-card')) as any[]
+      const cards = Array.from((dock.shadowRoot as ShadowRoot).querySelectorAll('lv-filter-pane-card')) as any[]
       await Promise.all(cards.map(card => card.updateComplete))
       const reportCard = cards.find(card => card.binding.key === 'report_state')
       const pageCard = cards.find(card => card.binding.key === 'page_state')
-      ;(reportCard.shadowRoot.querySelector('button[aria-label="Clear State"]') as HTMLButtonElement).click()
-      ;(pageCard.shadowRoot.querySelector('button[aria-label="Reset State to default"]') as HTMLButtonElement).click()
-      ;(dock.shadowRoot.querySelector('button[data-reset-scope="page"]') as HTMLButtonElement).click()
-      ;(dock.shadowRoot.querySelector('button[data-reset-scope="dashboard"]') as HTMLButtonElement).click()
-      ;(dock.shadowRoot.querySelector('button[data-filter-apply]') as HTMLButtonElement).click()
-      ;(dock.shadowRoot.querySelector('button[data-filter-cancel]') as HTMLButtonElement).click()
+      ;((reportCard.shadowRoot as ShadowRoot).querySelector('button[aria-label="Clear State"]') as HTMLButtonElement).click()
+      ;((pageCard.shadowRoot as ShadowRoot).querySelector('button[aria-label="Reset State to default"]') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('button[data-reset-scope="page"]') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('button[data-reset-scope="dashboard"]') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('button[data-filter-apply]') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('button[data-filter-cancel]') as HTMLButtonElement).click()
       return {
-        groups: Array.from(dock.shadowRoot.querySelectorAll('.group-title')).map(node => node.textContent?.trim()),
+        groups: Array.from((dock.shadowRoot as ShadowRoot).querySelectorAll('.group-title')).map(node => node.textContent?.trim()),
         activeCards: cards.filter(card => card.hasAttribute('active')).map(card => card.binding.key),
         dirtyCards: cards.filter(card => card.hasAttribute('dirty')).map(card => card.binding.key),
         resetCards: cards
-          .filter(card => card.shadowRoot.querySelector('button[aria-label="Reset State to default"]'))
+          .filter(card => (card.shadowRoot as ShadowRoot).querySelector('button[aria-label="Reset State to default"]'))
           .map(card => card.binding.key),
         events,
       }
@@ -2032,10 +2032,10 @@ test('range and text leaves expose visible input semantics', async () => {
       document.body.append(text, range)
       await Promise.all([text.updateComplete, range.updateComplete])
       return {
-        operator: text.shadowRoot.querySelector('.operator')?.textContent?.trim(),
-        placeholder: text.shadowRoot.querySelector('input')?.getAttribute('placeholder'),
-        rangeLabels: Array.from(range.shadowRoot.querySelectorAll('.field-label')).map(node => node.textContent?.trim()),
-        rangePlaceholders: Array.from(range.shadowRoot.querySelectorAll('.range input')).map(node => node.getAttribute('placeholder')),
+        operator: (text.shadowRoot as ShadowRoot).querySelector('.operator')?.textContent?.trim(),
+        placeholder: (text.shadowRoot as ShadowRoot).querySelector('input')?.getAttribute('placeholder'),
+        rangeLabels: Array.from((range.shadowRoot as ShadowRoot).querySelectorAll('.field-label')).map(node => node.textContent?.trim()),
+        rangePlaceholders: Array.from((range.shadowRoot as ShadowRoot).querySelectorAll('.range input')).map(node => node.getAttribute('placeholder')),
       }
     })
     expect(result).toEqual({
@@ -2077,7 +2077,7 @@ test('range filters keep open bounds blank and commit the compound edit once', a
       document.body.append(leaf, outside)
       await leaf.updateComplete
 
-      const inputs = () => Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      const inputs = () => Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('.range input')) as HTMLInputElement[]
       const [minimum, maximum] = inputs()
       minimum.focus()
       minimum.value = '1'
@@ -2140,7 +2140,7 @@ test('range filters reject reversed bounds without replacing the draft', async (
       leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const inputs = Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      const inputs = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('.range input')) as HTMLInputElement[]
       inputs[0].value = '10'
       inputs[0].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       inputs[1].value = '5'
@@ -2148,9 +2148,9 @@ test('range filters reject reversed bounds without replacing the draft', async (
       inputs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
       await leaf.updateComplete
       return {
-        values: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.value),
-        error: leaf.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim() ?? null,
-        invalid: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.getAttribute('aria-invalid')),
+        values: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input')).map((input) => input.value),
+        error: (leaf.shadowRoot as ShadowRoot).querySelector('[role="alert"]')?.textContent?.trim() ?? null,
+        invalid: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input')).map((input) => input.getAttribute('aria-invalid')),
         mutations,
       }
     })
@@ -2195,15 +2195,15 @@ test('active dashboard slicers reserve an atomic clear action', async () => {
       slicer.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
       document.body.append(slicer)
       await slicer.updateComplete
-      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      const leaf = (slicer.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
-      const clear = leaf.shadowRoot.querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
+      const clear = (leaf.shadowRoot as ShadowRoot).querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
       const activeVisibility = getComputedStyle(clear).visibility
       slicer.pending = true
       await slicer.updateComplete
       await leaf.updateComplete
       const pendingDisabled = clear.disabled
-      const inputs = Array.from(leaf.shadowRoot.querySelectorAll('.range input')) as HTMLInputElement[]
+      const inputs = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('.range input')) as HTMLInputElement[]
       inputs[0].focus()
       inputs[0].value = '200'
       inputs[0].dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -2217,7 +2217,7 @@ test('active dashboard slicers reserve an atomic clear action', async () => {
         activeVisibility,
         pendingDisabled,
         inactiveVisibility: getComputedStyle(clear).visibility,
-        values: Array.from(leaf.shadowRoot.querySelectorAll('.range input')).map((input: HTMLInputElement) => input.value),
+        values: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input')).map((input) => input.value),
         mutations,
       }
     })
@@ -2265,13 +2265,13 @@ test('range pane clear discards its draft without an intermediate mutation', asy
       card.addEventListener('lv-filter-clear', () => seen.push('clear'))
       document.body.append(card)
       await card.updateComplete
-      const leaf = card.shadowRoot.querySelector('lv-filter-leaf') as any
+      const leaf = (card.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
-      const minimum = leaf.shadowRoot.querySelector('.range input') as HTMLInputElement
+      const minimum = (leaf.shadowRoot as ShadowRoot).querySelector('.range input') as HTMLInputElement
       minimum.focus()
       minimum.value = '200'
       minimum.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      const clear = card.shadowRoot.querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
+      const clear = (card.shadowRoot as ShadowRoot).querySelector('button[aria-label="Clear Delivery days"]') as HTMLButtonElement
       clear.focus()
       clear.click()
       return seen
@@ -2307,7 +2307,7 @@ test('clearing a text filter emits the typed unfiltered mutation normalized to c
       leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => events.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const input = leaf.shadowRoot.querySelector('input') as HTMLInputElement
+      const input = (leaf.shadowRoot as ShadowRoot).querySelector('input') as HTMLInputElement
       input.value = ''
       input.dispatchEvent(new Event('change', { bubbles: true }))
       return events
@@ -2345,24 +2345,24 @@ test('filter summaries remain explicit without a layout-shifting update indicato
       document.body.append(leaf)
       await leaf.updateComplete
       const idle = {
-        summary: leaf.shadowRoot.querySelector('.selection-summary')?.textContent?.trim() ?? null,
-        status: leaf.shadowRoot.querySelector('.status')?.textContent?.trim() ?? null,
+        summary: (leaf.shadowRoot as ShadowRoot).querySelector('.selection-summary')?.textContent?.trim() ?? null,
+        status: (leaf.shadowRoot as ShadowRoot).querySelector('.status')?.textContent?.trim() ?? null,
       }
 
       leaf.presentation = { ...leaf.presentation, showSummary: true }
       await leaf.updateComplete
-      const explicit = leaf.shadowRoot.querySelector('.selection-summary')?.textContent?.trim() ?? null
+      const explicit = (leaf.shadowRoot as ShadowRoot).querySelector('.selection-summary')?.textContent?.trim() ?? null
 
       leaf.presentation = { ...leaf.presentation, showSummary: false }
       leaf.pending = true
       await leaf.updateComplete
-      const status = leaf.shadowRoot.querySelector('.status')
+      const status = (leaf.shadowRoot as ShadowRoot).querySelector('.status')
       return {
         idle,
         explicit,
         pending: status?.textContent?.trim() ?? null,
-        pendingBusy: leaf.shadowRoot.querySelector('fieldset')?.getAttribute('aria-busy'),
-        pendingHeading: Boolean(leaf.shadowRoot.querySelector('.field-heading')),
+        pendingBusy: (leaf.shadowRoot as ShadowRoot).querySelector('fieldset')?.getAttribute('aria-busy'),
+        pendingHeading: Boolean((leaf.shadowRoot as ShadowRoot).querySelector('.field-heading')),
       }
     })
     expect(result).toEqual({
@@ -2411,8 +2411,8 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
       const snapshot = () => ({
         variant: leaf.dataset.layoutVariant,
         fit: leaf.dataset.layoutFit,
-        controls: leaf.shadowRoot.querySelectorAll('.range lv-date-picker').length,
-        columns: getComputedStyle(leaf.shadowRoot.querySelector('.range')).gridTemplateColumns,
+        controls: (leaf.shadowRoot as ShadowRoot).querySelectorAll('.range lv-date-picker').length,
+        columns: getComputedStyle((leaf.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.range')!).gridTemplateColumns,
       })
       const inline = snapshot()
       leaf.style.width = '240px'
@@ -2468,7 +2468,7 @@ test('bounded list slicers keep every option inside the authored frame', async (
       await new Promise(requestAnimationFrame)
 
       const leafRect = leaf.getBoundingClientRect()
-      const options = leaf.shadowRoot.querySelector('.options') as HTMLElement
+      const options = (leaf.shadowRoot as ShadowRoot).querySelector('.options') as HTMLElement
       const optionsRect = options.getBoundingClientRect()
       return {
         scrollable: options.scrollHeight > options.clientHeight,
@@ -2517,8 +2517,8 @@ test('slicer layout resolution ignores report canvas transforms', async () => {
       await new Promise(requestAnimationFrame)
       await leaf.updateComplete
 
-      const range = leaf.shadowRoot.querySelector('.range') as HTMLElement
-      const fieldset = leaf.shadowRoot.querySelector('fieldset') as HTMLElement
+      const range = (leaf.shadowRoot as ShadowRoot).querySelector('.range') as HTMLElement
+      const fieldset = (leaf.shadowRoot as ShadowRoot).querySelector('fieldset') as HTMLElement
       return {
         cssSize: [leaf.clientWidth, leaf.clientHeight],
         visualSize: [Math.round(leaf.getBoundingClientRect().width), Math.round(leaf.getBoundingClientRect().height)],
@@ -2598,12 +2598,12 @@ test('pane defaults a relative-period definition to the structured shared leaf',
       }
       document.body.append(dock)
       await dock.updateComplete
-      ;(dock.shadowRoot.querySelector('.rail') as HTMLButtonElement).click()
+      ;((dock.shadowRoot as ShadowRoot).querySelector('.rail') as HTMLButtonElement).click()
       await dock.updateComplete
       await new Promise(resolve => setTimeout(resolve, 250))
-      const card = dock.shadowRoot.querySelector('lv-filter-pane-card') as any
+      const card = (dock.shadowRoot as ShadowRoot).querySelector('lv-filter-pane-card') as any
       await card.updateComplete
-      const leaf = card.shadowRoot.querySelector('lv-filter-leaf') as any
+      const leaf = (card.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await leaf.updateComplete
       const layoutStates = []
       for (let index = 0; index < 8; index++) {
@@ -2611,10 +2611,10 @@ test('pane defaults a relative-period definition to the structured shared leaf',
         await new Promise(requestAnimationFrame)
       }
       return {
-        textInputs: leaf.shadowRoot.querySelectorAll('input[type="text"]').length,
-        direction: Boolean(leaf.shadowRoot.querySelector('select[aria-label="Direction"]')),
-        count: Boolean(leaf.shadowRoot.querySelector('input[aria-label="Period count"]')),
-        unit: Boolean(leaf.shadowRoot.querySelector('select[aria-label="Period unit"]')),
+        textInputs: (leaf.shadowRoot as ShadowRoot).querySelectorAll('input[type="text"]').length,
+        direction: Boolean((leaf.shadowRoot as ShadowRoot).querySelector('select[aria-label="Direction"]')),
+        count: Boolean((leaf.shadowRoot as ShadowRoot).querySelector('input[aria-label="Period count"]')),
+        unit: Boolean((leaf.shadowRoot as ShadowRoot).querySelector('select[aria-label="Period unit"]')),
         layoutStates: [...new Set(layoutStates)],
       }
     })
@@ -2665,7 +2665,7 @@ test('rejected filter validation reconciles optimistic state and announces the e
     const result = await page.locator('lv-dashboard-page').evaluate((element: any) => ({
       reconciled: element.filterController.projected.appliedControls.fb_state.expression,
       pending: element.filterController.pending,
-      alert: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+      alert: (element.shadowRoot as ShadowRoot).querySelector('[role="alert"]')?.textContent?.trim(),
     }))
     expect({ optimistic: mutation.optimistic, ...result }).toEqual({
       optimistic: {
@@ -2864,7 +2864,7 @@ test('static filter controls render compiled options without requesting an optio
       await leaf.updateComplete
       return {
         requests: requests.length,
-        buttons: Array.from(leaf.shadowRoot.querySelectorAll('button')).map((button: HTMLButtonElement) => button.textContent?.trim()),
+        buttons: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('button')).map((button: HTMLButtonElement) => button.textContent?.trim()),
       }
     })
     expect(state).toEqual({ requests: 0, buttons: ['Delivered', 'Not delivered'] })
@@ -2920,7 +2920,7 @@ test('static dropdown selections emit a typed filter mutation', async () => {
       leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const select = leaf.shadowRoot.querySelector('select') as HTMLSelectElement
+      const select = (leaf.shadowRoot as ShadowRoot).querySelector('select') as HTMLSelectElement
       const option = Array.from(select.options).find((candidate) => candidate.textContent?.trim() === 'SP')
       select.value = option?.value ?? ''
       select.dispatchEvent(new Event('change', { bubbles: true }))
@@ -3109,7 +3109,7 @@ test('clearing a static dropdown visibly returns it to All', async () => {
       }
       document.body.append(leaf)
       await leaf.updateComplete
-      const select = leaf.shadowRoot.querySelector('select') as HTMLSelectElement
+      const select = (leaf.shadowRoot as ShadowRoot).querySelector('select') as HTMLSelectElement
       const delivered = Array.from(select.options).find(option => option.textContent?.trim() === 'Delivered')
       select.value = delivered?.value ?? ''
       select.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
@@ -3177,19 +3177,19 @@ test('closed dynamic dropdowns defer dependency refresh until they are focused a
       leaf.addEventListener('lv-filter-options-needed', (event: CustomEvent) => seen.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const retained = Array.from(leaf.shadowRoot.querySelectorAll('.dropdown-option')).map((option: HTMLLabelElement) => ({
+      const retained = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLLabelElement>('.dropdown-option')).map((option) => ({
         label: option.textContent?.trim(),
         selected: option.querySelector<HTMLInputElement>('input')?.checked,
       }))
-      leaf.shadowRoot.querySelector<HTMLButtonElement>('.dropdown-trigger').click()
+      ;(leaf.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.dropdown-trigger')!.click()
       await leaf.updateComplete
       const afterOpen = seen.length
-      leaf.shadowRoot.querySelector<HTMLElement>('.dropdown-popover').hidePopover()
+      ;(leaf.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.dropdown-popover')!.hidePopover()
       leaf.optionContext = 'context-two'
       await leaf.updateComplete
       const afterDependencyChange = seen.length
-      const whileDeferred = Array.from(leaf.shadowRoot.querySelectorAll('.dropdown-option')).map((option: HTMLLabelElement) => option.textContent?.trim())
-      leaf.shadowRoot.querySelector<HTMLButtonElement>('.dropdown-trigger').click()
+      const whileDeferred = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLLabelElement>('.dropdown-option')).map((option) => option.textContent?.trim())
+      ;(leaf.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.dropdown-trigger')!.click()
       await leaf.updateComplete
       return { retained, afterOpen, afterDependencyChange, whileDeferred, afterRefocus: seen.length }
     })
@@ -3247,8 +3247,8 @@ test('visible dynamic controls refresh once when their option dependency context
       await new Promise(resolve => setTimeout(resolve, 30))
       return {
         requests: requests.length,
-        status: leaf.shadowRoot.querySelector('.status')?.textContent?.trim(),
-        options: Array.from(leaf.shadowRoot.querySelectorAll('.option span')).map((item: HTMLSpanElement) => item.textContent?.trim()),
+        status: (leaf.shadowRoot as ShadowRoot).querySelector('.status')?.textContent?.trim(),
+        options: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLSpanElement>('.option span')).map((item) => item.textContent?.trim()),
       }
     })
     expect(result).toEqual({ requests: 2, status: undefined, options: ['delivered'] })
@@ -3274,8 +3274,8 @@ test('same-dashboard page navigation commits canonical history after the page pa
       element.addEventListener('lv-page-navigate', (event: CustomEvent) => {
         command = event.detail
       }, { once: true })
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar')
-      const details = sidebar.shadowRoot.querySelector('a[href$="/details"]') as HTMLAnchorElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as TestDomElement
+      const details = (sidebar!.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a[href$="/details"]')!
       details.click()
       await element.updateComplete
 
@@ -3315,8 +3315,8 @@ test('read-only draft preview preserves native revision-pinned page navigation',
       await element.updateComplete
       let commands = 0
       element.addEventListener('lv-page-navigate', () => { commands += 1 })
-      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar')
-      const details = sidebar.shadowRoot.querySelector('a[href$="/details"]') as HTMLAnchorElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sub-sidebar') as TestDomElement
+      const details = (sidebar!.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a[href$="/details"]')!
       const click = new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, button: 0 })
       details.dispatchEvent(click)
       return { commands, defaultPrevented: click.defaultPrevented, reflected: element.hasAttribute('read-only') }

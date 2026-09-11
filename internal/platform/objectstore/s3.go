@@ -23,6 +23,7 @@ import (
 	awss3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 const (
@@ -505,7 +506,7 @@ func (s *S3Store) validateMetadata(metadata ObjectMetadata) error {
 	if metadata.StorageSecurityDomain != s.domain {
 		return fmt.Errorf("%w: got %q want %q", ErrDomainMismatch, metadata.StorageSecurityDomain, s.domain)
 	}
-	if !isSHA256Identity(metadata.Digest) || !isSHA256Identity(metadata.MetadataDigest) {
+	if platformdigest.ValidateSHA256Identity(metadata.Digest) != nil || platformdigest.ValidateSHA256Identity(metadata.MetadataDigest) != nil {
 		return fmt.Errorf("%w: digest and metadata digest must be canonical sha256 identities", ErrInvalid)
 	}
 	if metadata.SizeBytes < 0 || metadata.SizeBytes > s.maxObjectBytes {
@@ -746,7 +747,7 @@ func (s *S3Store) infoFromHead(key string, head *awss3.HeadObjectOutput) (Object
 	}
 	digest := meta[s3DigestMetadataKey]
 	metadataDigest := meta[s3MetadataDigestKey]
-	if !isSHA256Identity(digest) || !isSHA256Identity(metadataDigest) {
+	if platformdigest.ValidateSHA256Identity(digest) != nil || platformdigest.ValidateSHA256Identity(metadataDigest) != nil {
 		return ObjectInfo{}, fmt.Errorf("%w: key %q digest metadata is invalid", ErrCorrupt, key)
 	}
 	rawSize, ok := meta[s3SizeMetadataKey]

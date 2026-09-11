@@ -179,8 +179,6 @@ func (m *Service) Identity() projectgraph.ServingIdentity {
 	return m.identity
 }
 
-func (m *Service) ProjectIdentity() projectgraph.ResourceID { return m.Identity().ProjectID }
-
 func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntimeFactory, identity projectgraph.ServingIdentity, definition *ProjectDefinition) (*Service, error) {
 	if err := definition.Validate(); err != nil {
 		return nil, err

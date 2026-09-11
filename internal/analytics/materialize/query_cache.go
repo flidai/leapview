@@ -33,9 +33,6 @@ type queryResultCache struct {
 	owned          bool
 	scopeOwned     bool
 	executionOwned bool
-	capacity       int
-	maxBytes       int64
-	currentBytes   int64
 	generation     uint64
 }
 
@@ -225,7 +222,6 @@ func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request d
 		storeStarted := time.Now()
 		storeOutcome := c.scope.StoreArrowObserved(address.key, address.family, resultcache.Token(address.generation), execution.data, cacheMetadata)
 		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(storeOutcome), Duration: time.Since(storeStarted)})
-		c.syncStats()
 		if err := validate(flightCtx); err != nil {
 			base.Release()
 			return resultcache.ArrowFlightValue{}, err
@@ -295,7 +291,6 @@ func (c *queryResultCache) getArrowObserved(ctx context.Context, request dataque
 		return dataquery.Result{}, false, observation, err
 	}
 	result.CacheOutcome = dataquery.CacheHit
-	c.syncStats()
 	return result, true, observation, nil
 }
 
@@ -319,7 +314,7 @@ func newQueryResultCacheWithLimits(capacity int, maxBytes int64) *queryResultCac
 	if err != nil {
 		panic(err)
 	}
-	return &queryResultCache{pool: pool, scope: scope, byteScope: scope, execution: resultcache.NewExecutionScope(), owned: true, executionOwned: true, capacity: capacity, maxBytes: maxBytes}
+	return &queryResultCache{pool: pool, scope: scope, byteScope: scope, execution: resultcache.NewExecutionScope(), owned: true, executionOwned: true}
 }
 
 func newQueryResultCacheWithScopes(scope, byteScope *resultcache.Scope) *queryResultCache {
@@ -348,9 +343,6 @@ func (c *queryResultCache) lookupBytes(key string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("result cache scope is required")
 	}
 	value, _, ok, err := c.byteScope.LookupBytes(key)
-	if err == nil {
-		c.syncStats()
-	}
 	return value, ok, err
 }
 
@@ -363,7 +355,6 @@ func (c *queryResultCache) storeBytes(key string, value []byte) resultcache.Stor
 		return resultcache.StoreClosed
 	}
 	outcome := c.byteScope.StoreBytes(key, token, value)
-	c.syncStats()
 	return outcome
 }
 
@@ -386,10 +377,19 @@ func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Qu
 }
 
 func (c *queryResultCache) lookupArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL, canonicalDigest string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
+	return c.lookupArrowWithDigestDomain(ctx, request, partition, dependency, diagnosticsSQL, canonicalDigest, "")
+}
+
+// lookupArrowWithDigestDomain keeps cache entries produced by a composite
+// execution (such as a bundle) in a separate family from single-query
+// materializations. Their Arrow payloads have different metadata contracts;
+// sharing the digest would let a metadata-incomplete bundle entry satisfy a
+// single-query request.
+func (c *queryResultCache) lookupArrowWithDigestDomain(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL, canonicalDigest, domain string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
 	if dependency.HasSemanticAccess() {
 		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, fmt.Errorf("protected result dependency requires an execution cache guard")
 	}
-	address, err := c.cacheAddressWithDigest(request, partition, dependency, canonicalDigest)
+	address, err := c.cacheAddressWithDigestDomain(request, partition, dependency, canonicalDigest, domain)
 	if err != nil {
 		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
 	}
@@ -417,6 +417,10 @@ func (c *queryResultCache) cacheAddress(request dataquery.Query, partition resul
 }
 
 func (c *queryResultCache) cacheAddressWithDigest(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, queryDigest string) (queryCacheAddress, error) {
+	return c.cacheAddressWithDigestDomain(request, partition, dependency, queryDigest, "")
+}
+
+func (c *queryResultCache) cacheAddressWithDigestDomain(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, queryDigest, domain string) (queryCacheAddress, error) {
 	if !queryCacheIdentityAvailable(request, partition, dependency) {
 		return queryCacheAddress{}, fmt.Errorf("complete query result cache identity is required")
 	}
@@ -433,6 +437,7 @@ func (c *queryResultCache) cacheAddressWithDigest(request dataquery.Query, parti
 		Partition:                  json.RawMessage(key.Partition().Canonical()),
 		DependencyDigest:           key.DependencyDigest(),
 		EffectivePolicyFingerprint: key.PolicyFingerprint(),
+		Domain:                     domain,
 	})
 	if err != nil {
 		return queryCacheAddress{}, fmt.Errorf("encode governed query cache family: %w", err)
@@ -442,7 +447,14 @@ func (c *queryResultCache) cacheAddressWithDigest(request dataquery.Query, parti
 	c.mu.Lock()
 	c.generation = generation
 	c.mu.Unlock()
-	return queryCacheAddress{key: key.Digest(), family: resultcache.QueryFamily(family), generation: generation}, nil
+	cacheKey := key.Digest()
+	if domain != "" {
+		// resultcache families classify entries but deliberately do not alter
+		// lookup identity. Prefix the key as well so composite executions cannot
+		// collide with the single-query cache at the pool boundary.
+		cacheKey = domain + "\x00" + cacheKey
+	}
+	return queryCacheAddress{key: cacheKey, family: resultcache.QueryFamily(family), generation: generation}, nil
 }
 
 func queryCacheIdentityAvailable(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) bool {
@@ -495,6 +507,7 @@ type queryResultCacheFamily struct {
 	Partition                  json.RawMessage `json:"partition"`
 	DependencyDigest           string          `json:"dependencyDigest"`
 	EffectivePolicyFingerprint string          `json:"effectivePolicyFingerprint"`
+	Domain                     string          `json:"domain,omitempty"`
 }
 
 func observeTypedCacheLookup(ctx context.Context, observation resultcache.LookupObservation, duration time.Duration) {
@@ -526,7 +539,6 @@ func (c *queryResultCache) clear() {
 	c.mu.Lock()
 	c.generation = uint64(c.scope.Generation())
 	c.mu.Unlock()
-	c.syncStats()
 }
 
 func (c *queryResultCache) close() error {
@@ -548,13 +560,6 @@ func (c *queryResultCache) close() error {
 		return executionErr
 	}
 	return errors.Join(executionErr, c.scope.Close(), c.pool.Close())
-}
-
-func (c *queryResultCache) syncStats() {
-	stats := c.scope.Stats()
-	c.mu.Lock()
-	c.currentBytes = stats.Bytes
-	c.mu.Unlock()
 }
 
 func cloneDataQueryResult(result dataquery.Result) dataquery.Result {

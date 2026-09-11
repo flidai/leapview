@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -159,16 +160,7 @@ func (r *Repository) DB() DBTX {
 func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 func nativeDBConfigured(db DBTX) bool {
-	if db == nil {
-		return false
-	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 // WithTx returns a repository bound to a caller-owned transaction. Methods
@@ -452,12 +444,6 @@ func (r *Repository) PutSchedule(ctx context.Context, in ScheduleInput) (Schedul
 	err := r.withTx(ctx, func(tx pgx.Tx) error { var e error; out, e = r.PutScheduleTx(ctx, tx, in); return e })
 	return out, err
 }
-func (r *Repository) CreateScheduleTx(ctx context.Context, tx Tx, in ScheduleInput) (Schedule, error) {
-	return r.PutScheduleTx(ctx, tx, in)
-}
-func (r *Repository) CreateSchedule(ctx context.Context, in ScheduleInput) (Schedule, error) {
-	return r.PutSchedule(ctx, in)
-}
 
 // Schedule returns one immutable schedule revision by identity.
 func (r *Repository) Schedule(ctx context.Context, revisionID string) (Schedule, error) {
@@ -737,10 +723,6 @@ func (r *Repository) ClaimDue(ctx context.Context, scope Scope, now time.Time, o
 	err = r.withTx(ctx, func(tx pgx.Tx) error { out, err = r.claimDueTx(ctx, tx, scope, now, owner, lease, limit); return err })
 	return out, err
 }
-func (r *Repository) ClaimDueTx(ctx context.Context, tx Tx, scope Scope, now time.Time, owner string, lease time.Duration, limit int) ([]Occurrence, error) {
-	return r.claimDueTx(ctx, tx, scope, now, owner, lease, limit)
-}
-
 func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now time.Time, owner string, lease time.Duration, limit int) ([]Occurrence, error) {
 	if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
 		return nil, err
@@ -1105,15 +1087,7 @@ func sameRunIdentity(r Run, in RunInput) bool {
 	return slicesEqual(r.MatchingScheduleIDs, in.MatchingScheduleIDs) && slicesEqual(r.MaterializationScope, in.MaterializationScope)
 }
 func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 func (r *Repository) CreateRun(ctx context.Context, in RunInput) (Run, error) {
 	var out Run
@@ -1544,52 +1518,6 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 	return true, nil
 }
 
-// FailQueuedRunTreeTx terminalizes a queued root and any queued dependency
-// provenance rows. It is used when a claimed platform job cannot be joined to
-// a valid refresh payload; no refresh attempt exists yet, so the transition
-// is intentionally limited to queued rows.
-func (r *Repository) FailQueuedRunTreeTx(ctx context.Context, tx Tx, runID, message string) error {
-	if tx == nil || runID == "" {
-		return ErrInvalid
-	}
-	if strings.TrimSpace(message) == "" || len(message) > 256 {
-		return ErrInvalid
-	}
-	tag, err := refreshdb.New(tx).FailQueuedTree(ctx, refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
-	if err != nil {
-		return err
-	}
-	if tag == 0 {
-		return ErrStaleFence
-	}
-	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "failed", json.RawMessage(`{"code":"REFRESH_FAILED"}`)); err != nil {
-		return err
-	}
-	return nil
-}
-
-// FailRunTerminalEvidenceTx closes a run tree when its linked canonical job
-// is demonstrably terminal or missing. The job evidence is the authority for
-// this repair, so unlike worker transitions it does not rely on an old lease
-// remaining live at process startup.
-func (r *Repository) FailRunTerminalEvidenceTx(ctx context.Context, tx Tx, runID, message string, evidence json.RawMessage) error {
-	if tx == nil || runID == "" || strings.TrimSpace(message) == "" || len(message) > 256 {
-		return ErrInvalid
-	}
-	ev, err := boundedObject(evidence, MaxJSONBytes)
-	if err != nil {
-		return err
-	}
-	if _, err := refreshdb.New(tx).FailTerminalTreeAttempts(ctx, refreshdb.FailTerminalTreeAttemptsParams{Error: message, Evidence: ev, RunID: runID}); err != nil {
-		return err
-	}
-	_, err = refreshdb.New(tx).FailTerminalTreeRuns(ctx, refreshdb.FailTerminalTreeRunsParams{Error: message, RunID: runID})
-	if err != nil {
-		return err
-	}
-	return r.transitionRunOccurrenceTx(ctx, tx, runID, "failed", ev)
-}
-
 // CheckInvocationAdmission is a read-only fast path. The CreateRunTx
 // transaction remains the authoritative admission fence.
 func (r *Repository) CheckInvocationAdmission(ctx context.Context, scope Scope, pipelineID, source string) error {
@@ -1844,31 +1772,30 @@ func (r *Repository) ClaimAttempt(ctx context.Context, runID, owner string, fenc
 	return out, err
 }
 
-func (r *Repository) HeartbeatAttemptTx(ctx context.Context, tx Tx, runID, owner string, fence int64, lease time.Duration) error {
-	if tx == nil {
-		return ErrInvalid
-	}
-	if lease <= 0 || lease > MaxLease {
-		return ErrInvalid
-	}
-	tag, err := refreshdb.New(tx).HeartbeatRunLease(ctx, refreshdb.HeartbeatRunLeaseParams{Lease: lease, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
-	if err != nil {
+// HeartbeatLease renews both the refresh run and its current attempt in one
+// fenced transaction. A worker that loses either row's exact owner/fence must
+// stop before it can publish or finish the run.
+func (r *Repository) HeartbeatLease(ctx context.Context, runID, owner string, fence int64, lease time.Duration) error {
+	if err := r.requireDB(); err != nil {
 		return err
 	}
-	if tag != 1 {
-		return ErrStaleFence
+	if err := canonicalID("run id", runID, 256); err != nil || canonicalID("owner id", owner, 256) != nil || fence <= 0 || lease <= 0 || lease > MaxLease {
+		return ErrInvalid
 	}
-	tag, err = refreshdb.New(tx).HeartbeatAttemptLease(ctx, refreshdb.HeartbeatAttemptLeaseParams{Lease: lease, RunID: runID, OwnerID: owner, FenceGeneration: fence})
-	if err != nil {
-		return err
-	}
-	if tag != 1 {
-		return ErrStaleFence
-	}
-	return nil
-}
-func (r *Repository) HeartbeatAttempt(ctx context.Context, runID, owner string, fence int64, lease time.Duration) error {
-	return r.withTx(ctx, func(tx pgx.Tx) error { return r.HeartbeatAttemptTx(ctx, tx, runID, owner, fence, lease) })
+	return r.withTx(ctx, func(tx pgx.Tx) error {
+		runRows, err := refreshdb.New(tx).HeartbeatRunLease(ctx, refreshdb.HeartbeatRunLeaseParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence, Lease: lease})
+		if err != nil {
+			return err
+		}
+		attemptRows, err := refreshdb.New(tx).HeartbeatAttemptLease(ctx, refreshdb.HeartbeatAttemptLeaseParams{RunID: runID, OwnerID: owner, FenceGeneration: fence, Lease: lease})
+		if err != nil {
+			return err
+		}
+		if runRows != 1 || attemptRows != 1 {
+			return ErrLeaseExpired
+		}
+		return nil
+	})
 }
 
 func (r *Repository) finishAttemptTx(ctx context.Context, tx Tx, runID, owner string, fence int64, status string, evidence json.RawMessage, message string) error {
@@ -2360,35 +2287,6 @@ func (r *Repository) Maintenance(ctx context.Context, limit int) (int64, error) 
 	}
 	n, err := refreshdb.New(r.db).RunMaintenance(ctx, int32(limit))
 	return n, err
-}
-
-// RecoveryRun is the narrow refresh-side projection used by the startup
-// reconciler. It deliberately contains only durable run/lease identity; the
-// canonical jobs authority is inspected through its own repository.
-type RecoveryRun struct {
-	RunID          string
-	JobID          string
-	Status         string
-	Generation     int64
-	LeaseOwner     string
-	LeaseExpiresAt time.Time
-	Environment    string
-	CreatedAt      time.Time
-}
-
-func (r *Repository) RecoveryRunsTx(ctx context.Context, tx Tx, environment string, afterCreated time.Time, afterID string, limit int) ([]RecoveryRun, error) {
-	if tx == nil || strings.TrimSpace(environment) == "" || limit < 1 || limit > MaxPageSize || (afterID != "" && afterCreated.IsZero()) {
-		return nil, ErrInvalid
-	}
-	rows, err := refreshdb.New(tx).ListRecoveryRuns(ctx, refreshdb.ListRecoveryRunsParams{Environment: environment, AfterCreated: nullableTime(afterCreated), AfterID: afterID, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]RecoveryRun, 0)
-	for _, row := range rows {
-		out = append(out, RecoveryRun{RunID: row.RunID, JobID: row.JobID, Status: row.Status, Generation: row.FenceGeneration, LeaseOwner: row.LeaseOwner, LeaseExpiresAt: ts(row.LeaseExpiresAt), Environment: row.Environment, CreatedAt: row.CreatedAt})
-	}
-	return out, nil
 }
 
 func (r *Repository) Attempts(ctx context.Context, runID string, limit int) ([]Attempt, error) {

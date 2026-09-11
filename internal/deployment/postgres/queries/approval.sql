@@ -86,15 +86,6 @@ SELECT decision_id::text, request_id::text, decision_revision, decision,
 FROM delivery.delivery_approval_decision
 WHERE decision_id = sqlc.arg(decision_id)::uuid;
 
--- name: ListApprovalDecisions :many
-SELECT decision_id::text, request_id::text, decision_revision, decision,
-       decided_by, decision_credential_class, decision_credential_id,
-       decision_credential_expires_at, decided_at, operation_id::text,
-       event_id::text, audit_id::text, evidence
-FROM delivery.delivery_approval_decision
-WHERE request_id = sqlc.arg(request_id)::uuid
-ORDER BY decision_revision, decision_id;
-
 -- name: GetLatestApprovalDecision :one
 SELECT decision_id::text, request_id::text, decision_revision, decision,
        decided_by, decision_credential_class, decision_credential_id,

@@ -520,7 +520,6 @@ func NewNoAuthCredentialSnapshot(now time.Time) CredentialSnapshot {
 }
 
 func (snapshot CredentialSnapshot) ProviderVersion() string { return snapshot.providerVersion }
-func (snapshot CredentialSnapshot) RetrievedAt() time.Time  { return snapshot.retrievedAt }
 func (snapshot CredentialSnapshot) ExpiresAt() time.Time    { return snapshot.expiresAt }
 
 func (snapshot CredentialSnapshot) Use(consumer func(map[string]string) error) error {
