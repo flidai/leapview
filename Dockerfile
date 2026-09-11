@@ -108,7 +108,6 @@ COPY --from=sourcegen /src/internal/lineage/postgres/internal/db ./internal/line
 COPY --from=sourcegen /src/internal/refresh/postgres/internal/db ./internal/refresh/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/physicalpool/postgres/internal/db ./internal/analytics/physicalpool/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/connectionbinding/postgres/internal/db ./internal/analytics/connectionbinding/postgres/internal/db
-COPY --from=sourcegen /src/internal/analytics/exploration/saved/postgres/internal/db ./internal/analytics/exploration/saved/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/ducklake/postgres/internal/db ./internal/analytics/ducklake/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/queryaudit/postgres/internal/db ./internal/analytics/queryaudit/postgres/internal/db
 COPY --from=sourcegen /src/internal/release/postgres/internal/db ./internal/release/postgres/internal/db

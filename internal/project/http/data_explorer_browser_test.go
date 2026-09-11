@@ -1,17 +1,13 @@
 package http
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
-	"strings"
 	"testing"
 
-	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -85,7 +81,7 @@ func TestDataExplorerSemanticDatasetDeepLinksHydrateDistinctModelBindings(t *tes
 		if projectsignals.ValueOrZero(explorer.SelectedKey) != wantKey || projectsignals.ValueOrZero(explorer.Command.ObjectKey) != wantKey {
 			t.Fatalf("dataset %q selection state = %#v/%#v, want hydrated binding key", datasetID, explorer.SelectedKey, explorer.Command.ObjectKey)
 		}
-		if explorer.Explore.Command.Spec.ModelID != semanticModelID || projectsignals.ValueOrZero(explorer.Explore.Command.Spec.DatasetID) != datasetID {
+		if projectsignals.ValueOrZero(explorer.Explore.Command.SemanticModelID) != semanticModelID || projectsignals.ValueOrZero(explorer.Explore.Command.DatasetID) != datasetID {
 			t.Fatalf("dataset %q explore command = %#v, want canonical semantic target", datasetID, explorer.Explore.Command)
 		}
 		if executor.query.ModelID != semanticModelID || executor.query.Target != datasetID {
@@ -103,268 +99,22 @@ func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(command.Spec.DatasetID) != "orders" {
-		t.Fatalf("target = %q/%q", command.Spec.ModelID, projectsignals.ValueOrZero(command.Spec.DatasetID))
+	if projectsignals.ValueOrZero(command.SemanticModelID) != "semantic:sales" || projectsignals.ValueOrZero(command.DatasetID) != "orders" {
+		t.Fatalf("target = %q/%q", projectsignals.ValueOrZero(command.SemanticModelID), projectsignals.ValueOrZero(command.DatasetID))
 	}
-	if !reflect.DeepEqual([]string{command.Spec.Dimensions[0].Field, command.Spec.Dimensions[1].Field}, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual([]string{command.Spec.Metrics[0].Field}, []string{"revenue"}) {
-		t.Fatalf("fields = %#v / %#v", command.Spec.Dimensions, command.Spec.Metrics)
+	if !reflect.DeepEqual(command.Dimensions, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual(command.Metrics, []string{"revenue"}) {
+		t.Fatalf("fields = %#v / %#v", command.Dimensions, command.Metrics)
 	}
-	if len(command.Spec.Filters) != 1 || command.Spec.Filters[0].Field != "customers.state" {
-		t.Fatalf("filters = %#v", command.Spec.Filters)
+	if len(command.Filters) != 1 || command.Filters[0].Field != "customers.state" || command.Filters[0].Values[0] != "CA" {
+		t.Fatalf("filters = %#v", command.Filters)
 	}
-	filter, ok := command.Spec.Filters[0].Expression.Value.(*exploration.ComparisonExplorationFilterExpression)
-	if !ok {
-		t.Fatalf("filter expression = %T, want comparison", command.Spec.Filters[0].Expression.Value)
+	if len(command.Sort) != 1 || command.Sort[0].Field != "revenue" || command.Sort[0].Direction != "desc" {
+		t.Fatalf("sort = %#v", command.Sort)
 	}
-	filterValue, ok := filter.Value.Value.(*exploration.StringExplorationFilterValue)
-	if !ok || filterValue.Value != "CA" {
-		t.Fatalf("filter value = %#v, want CA", filter.Value.Value)
-	}
-	if len(command.Spec.Sort) != 1 || command.Spec.Sort[0].Field != "revenue" || command.Spec.Sort[0].Direction != "desc" {
-		t.Fatalf("sort = %#v", command.Spec.Sort)
-	}
-	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || command.Spec.Limit != 250 {
-		t.Fatalf("time/limit = %#v / %d", command.Spec.Time, command.Spec.Limit)
+	if command.Time == nil || command.Time.Field != "orders.created_at" || command.Time.Grain != "month" || command.Limit != 250 {
+		t.Fatalf("time/limit = %#v / %d", command.Time, command.Limit)
 	}
 	if command.RequestSeq != 0 || command.ResetVersion != 0 {
 		t.Fatalf("runtime state leaked into URL command: %#v", command)
-	}
-}
-
-func TestDataExplorerStopHydratesCatalogBeforeReturningCancelledState(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	clientID := "tab-stop-regression"
-	runID := "explore-run-stop-regression"
-	datasetID := "orders"
-	command := projectsignals.DataExplorerCommand{
-		Action:   projectsignals.Optional("stop"),
-		ClientID: projectsignals.Optional(clientID),
-		RunID:    projectsignals.Optional(runID),
-		Mode:     projectsignals.Optional("explore"),
-		Explore: &projectsignals.DataExploreCommand{
-			Action:     projectsignals.Optional("stop"),
-			Spec:       exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
-			RequestSeq: 4,
-		},
-		RequestSeq: 4,
-	}
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", nil)
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	page, explorer, ok := h.dataExplorerSignalsForCommand(httptest.NewRecorder(), request, command)
-	if !ok {
-		t.Fatal("stop command failed to hydrate state")
-	}
-	if page.Context.ObjectCount == 0 || len(explorer.Objects) == 0 || len(explorer.Explore.Fields) == 0 {
-		t.Fatalf("stop command returned incomplete explorer state: page=%#v explorer=%#v", page, explorer)
-	}
-	if explorer.Explore.Status.State != "cancelled" {
-		t.Fatalf("stop status = %#v, want cancelled", explorer.Explore.Status)
-	}
-	if explorer.Explore.Result.RequestSeq != 0 || len(explorer.Explore.Result.Rows) != 0 {
-		t.Fatalf("stop result = %#v, want no process-local replay", explorer.Explore.Result)
-	}
-	if executor.calls != 0 {
-		t.Fatalf("stop command executed %d analytical queries", executor.calls)
-	}
-}
-
-func TestDataExplorerStopEndpointHydratesCatalogAndDoesNotExecute(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	clientID := "tab-stop-endpoint-regression"
-	datasetID := "orders"
-	command := projectsignals.DataExplorerCommand{
-		Action:     projectsignals.Optional("stop"),
-		ClientID:   projectsignals.Optional(clientID),
-		Mode:       projectsignals.Optional("explore"),
-		RequestSeq: 4,
-		Explore: &projectsignals.DataExploreCommand{
-			Action:     projectsignals.Optional("stop"),
-			Spec:       exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
-			RequestSeq: 4,
-		},
-	}
-	payload, err := json.Marshal(struct {
-		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-	}{Command: command})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	recorder := httptest.NewRecorder()
-	h.DataExplorerCommand(recorder, request)
-	if recorder.Code != stdhttp.StatusOK {
-		t.Fatalf("stop endpoint status = %d, want 200: %s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), "cancelled") || !strings.Contains(recorder.Body.String(), "orders.status") {
-		t.Fatalf("stop endpoint patch = %s, want cancelled hydrated state", recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), `"agentContext"`) || !strings.Contains(recorder.Body.String(), `"exploration":{"schemaVersion":1,"modelId":"semantic:sales","datasetId":"orders"`) {
-		t.Fatalf("stop endpoint patch = %s, want fresh canonical agent context", recorder.Body.String())
-	}
-	if executor.calls != 0 {
-		t.Fatalf("stop endpoint executed %d analytical queries", executor.calls)
-	}
-}
-
-func TestDataExplorerCommandEndpointPatchesFreshAgentContext(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	clientID := "tab-agent-context-refresh"
-	datasetID := "orders"
-	command := projectsignals.DataExplorerCommand{
-		Action:     projectsignals.Optional("configure"),
-		ClientID:   projectsignals.Optional(clientID),
-		Mode:       projectsignals.Optional("explore"),
-		RequestSeq: 7,
-		Explore: &projectsignals.DataExploreCommand{
-			Action:     projectsignals.Optional("configure"),
-			RequestSeq: 7,
-			Spec: exploration.ExplorationSpec{
-				SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID,
-				Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.created_at"}},
-				Metrics:    []exploration.ExplorationMetricRef{{Field: "revenue"}},
-				Filters:    []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 25,
-			},
-		},
-	}
-	payload, err := json.Marshal(struct {
-		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-	}{Command: command})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	recorder := httptest.NewRecorder()
-	h.DataExplorerCommand(recorder, request)
-	if recorder.Code != stdhttp.StatusOK {
-		t.Fatalf("command endpoint status = %d, want 200: %s", recorder.Code, recorder.Body.String())
-	}
-	patch := recorder.Body.String()
-	if !strings.Contains(patch, `"agentContext"`) || !strings.Contains(patch, `"exploration":{"schemaVersion":1,"modelId":"semantic:sales","datasetId":"orders","dimensions":[{"field":"orders.created_at"}],"metrics":[{"field":"revenue"}]`) {
-		t.Fatalf("command endpoint patch = %s, want fresh canonical agent context", patch)
-	}
-	if executor.calls != 0 {
-		t.Fatalf("configure command executed %d analytical queries", executor.calls)
-	}
-}
-
-func TestDataExplorerSuggestionEndpointPatchesOnlySuggestionSignal(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	clientID := "suggestion-narrow-patch-client"
-	datasetID := "orders"
-	search := "paid"
-	command := projectsignals.DataExplorerCommand{
-		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), Mode: projectsignals.Optional("explore"), RequestSeq: 1,
-		Explore: &projectsignals.DataExploreCommand{
-			Action: projectsignals.Optional("configure"), RequestSeq: 1,
-			Spec:              exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
-			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", Search: &search, SuggestionRequestSeq: 1},
-		},
-	}
-	payload, err := json.Marshal(struct {
-		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-	}{Command: command})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	recorder := httptest.NewRecorder()
-	h.DataExplorerCommand(recorder, request)
-	if recorder.Code != stdhttp.StatusOK {
-		t.Fatalf("suggestion endpoint status = %d, want 200: %s", recorder.Code, recorder.Body.String())
-	}
-	patch := recorder.Body.String()
-	if !strings.Contains(patch, `"filterSuggestions"`) || !strings.Contains(patch, `"suggestionRequestSeq":1`) {
-		t.Fatalf("suggestion endpoint patch = %s, want suggestion signal", patch)
-	}
-	for _, forbidden := range []string{`"page"`, `"dataExplorerCommand"`, `"result"`, `"status"`} {
-		if strings.Contains(patch, forbidden) {
-			t.Fatalf("suggestion endpoint patch = %s, must not contain full explorer field %s", patch, forbidden)
-		}
-	}
-	if executor.calls != 1 {
-		t.Fatalf("suggestion endpoint executed %d analytical queries, want one suggestion query", executor.calls)
-	}
-}
-
-func TestDataExplorerSuggestionEndpointRejectsOlderSemanticResponse(t *testing.T) {
-	h, executor := newDataExplorerURLTestHandler(t)
-	clientID := "suggestion-semantic-stale-endpoint-client"
-	keyRequest := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", nil)
-	keyRequest.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	key := h.dataExplorerClientKey(keyRequest, "project:test", projectsignals.DataExplorerCommand{ClientID: projectsignals.Optional(clientID)})
-	if !h.dataExplorerLifecycle.acceptSemantic(key, 2) {
-		t.Fatal("failed to establish newer semantic lifecycle state")
-	}
-	datasetID := "orders"
-	search := "paid"
-	command := projectsignals.DataExplorerCommand{
-		Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID), Mode: projectsignals.Optional("explore"), RequestSeq: 1,
-		Explore: &projectsignals.DataExploreCommand{
-			Action: projectsignals.Optional("configure"), RequestSeq: 1,
-			Spec:              exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID, Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
-			FilterSuggestions: &projectsignals.DataExploreFilterSuggestionsCommand{Field: "orders.status", Search: &search, SuggestionRequestSeq: 1},
-		},
-	}
-	payload, err := json.Marshal(struct {
-		Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-	}{Command: command})
-	if err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
-	request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-	recorder := httptest.NewRecorder()
-	h.DataExplorerCommand(recorder, request)
-	if recorder.Code != stdhttp.StatusOK || recorder.Body.Len() != 0 {
-		t.Fatalf("stale suggestion endpoint response = status %d body %q, want empty successful response", recorder.Code, recorder.Body.String())
-	}
-	if executor.calls != 1 {
-		t.Fatalf("stale suggestion endpoint executed %d analytical queries, want one suggestion query", executor.calls)
-	}
-}
-
-func TestDataExplorerCommandEndpointRejectsOutOfOrderContextPatch(t *testing.T) {
-	h, _ := newDataExplorerURLTestHandler(t)
-	clientID := "tab-agent-context-order"
-	datasetID := "orders"
-	makeCommand := func(requestSeq int64, field string) projectsignals.DataExplorerCommand {
-		return projectsignals.DataExplorerCommand{
-			Action: projectsignals.Optional("configure"), ClientID: projectsignals.Optional(clientID),
-			Mode: projectsignals.Optional("explore"), RequestSeq: requestSeq,
-			Explore: &projectsignals.DataExploreCommand{
-				Action: projectsignals.Optional("configure"), RequestSeq: requestSeq,
-				Spec: exploration.ExplorationSpec{
-					SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &datasetID,
-					Dimensions: []exploration.ExplorationDimensionRef{{Field: field}},
-					Metrics:    []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
-					Sort: []exploration.ExplorationSort{}, Limit: 100,
-				},
-			},
-		}
-	}
-	send := func(command projectsignals.DataExplorerCommand) *httptest.ResponseRecorder {
-		payload, err := json.Marshal(struct {
-			Command projectsignals.DataExplorerCommand `json:"dataExplorerCommand"`
-		}{Command: command})
-		if err != nil {
-			t.Fatal(err)
-		}
-		request := httptest.NewRequest(stdhttp.MethodPost, "/explore/command", bytes.NewReader(payload))
-		request.Header.Set("X-LeapView-Data-Explorer-Client", clientID)
-		recorder := httptest.NewRecorder()
-		h.DataExplorerCommand(recorder, request)
-		return recorder
-	}
-	if recorder := send(makeCommand(1, "orders.status")); recorder.Code != stdhttp.StatusOK || recorder.Body.Len() == 0 {
-		t.Fatalf("initial command response = status %d body %q, want patch", recorder.Code, recorder.Body.String())
-	}
-	if recorder := send(makeCommand(2, "orders.created_at")); recorder.Code != stdhttp.StatusOK || recorder.Body.Len() == 0 {
-		t.Fatalf("newer command response = status %d body %q, want patch", recorder.Code, recorder.Body.String())
-	}
-	if recorder := send(makeCommand(1, "orders.status")); recorder.Body.Len() != 0 {
-		t.Fatalf("late command emitted stale context patch: %s", recorder.Body.String())
 	}
 }

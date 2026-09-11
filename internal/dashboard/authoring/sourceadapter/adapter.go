@@ -204,11 +204,20 @@ func (a *Adapter) LoadDraft(ctx context.Context, ref SourceRef, actorID string) 
 }
 
 func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actorID string, draft bool) (Source, error) {
-	// Both authored paths resolve lifecycle metadata before authorizing the
-	// exact owner/visibility-aware dashboard capability. Published instances
-	// are not project artifacts: using project VIEW here would ignore private
-	// and shared-dashboard policy and could leak a published revision.
-	lifecycle, err := a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
+	var lifecycle authoring.DashboardLifecycle
+	var err error
+	if draft {
+		// Drafts are repository-backed resources and may not exist in the
+		// immutable serving graph yet. Load only lifecycle metadata, then make
+		// the owner-aware repository-scoped decision before exposing a revision.
+		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
+	} else {
+		// Published source reads retain the graph-first disclosure boundary.
+		if err := a.authorizeProjectView(ctx, actorID, ref); err != nil {
+			return Source{}, err
+		}
+		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
+	}
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Source{}, sourceUnavailable(ref, err)
@@ -221,8 +230,10 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 	if err := lifecycle.Validate(); err != nil {
 		return Source{}, err
 	}
-	if err := a.authorizeAuthoredView(ctx, actorID, ref, lifecycle); err != nil {
-		return Source{}, err
+	if draft {
+		if err := a.authorizeAuthoredView(ctx, actorID, ref, lifecycle); err != nil {
+			return Source{}, err
+		}
 	}
 	var selectedToken authoring.RevisionToken
 	instanceProvenance := InstanceProvenance{ProjectID: ref.ProjectID, DashboardID: ref.DashboardID}

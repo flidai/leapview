@@ -42,9 +42,6 @@ export type WindowedTablePayload = {
   resetVersion?: number
   sort?: WindowedTableSort
   blocks?: Partial<Record<WindowedTableBlockID, WindowedTableBlock>>
-  loading?: boolean
-  progressPercent?: number
-  stale?: boolean
   loadingBlock?: string
   error?: string
   visibleColumns?: string[]
@@ -96,9 +93,6 @@ const emptyTable: Required<WindowedTablePayload> = {
   rowHeight: defaultRowHeight,
   resetVersion: 0,
   sort: defaultSort,
-  loading: false,
-  progressPercent: Number.NaN,
-  stale: false,
   blocks: emptyBlocks(),
   loadingBlock: '',
   error: '',
@@ -123,9 +117,6 @@ function normalizeTable(value: WindowedTablePayload | null | undefined): Require
     rowHeight: positiveNumber(value?.rowHeight, defaultRowHeight),
     resetVersion,
     sort,
-    loading: value?.loading === true,
-    progressPercent: boundedProgress(value?.progressPercent),
-    stale: value?.stale === true,
     blocks: {
       a: normalizeBlock(value?.blocks?.a, 0, sort, resetVersion),
       b: normalizeBlock(value?.blocks?.b, chunkSize, sort, resetVersion),
@@ -152,11 +143,6 @@ function normalizeBlock(block: WindowedTableBlock | undefined, fallbackStart: nu
 function positiveNumber(value: unknown, fallback: number): number {
   const next = Number(value)
   return Number.isFinite(next) && next >= 0 ? next : fallback
-}
-
-function boundedProgress(value: unknown): number {
-  const next = Number(value)
-  return Number.isFinite(next) ? Math.min(100, Math.max(0, next)) : Number.NaN
 }
 
 function isRecord(value: unknown): value is Record<string, number> {
@@ -609,14 +595,12 @@ class WindowedTable extends LitElement {
     const tableWidth = Math.max(760, this.viewportWidth, widths.reduce((sum, width) => sum + width, 0))
     const visibleRows = this.visibleRows(table)
     const rowRange = this.rowRangeText(table)
-    const loading = table.loading === true || Boolean(table.loadingBlock) || this.visibleLoading(table)
-    const progress = Number.isFinite(table.progressPercent) ? ` ${Math.round(table.progressPercent)}%` : ''
-    const stale = table.stale ? ' · stale' : ''
+    const loading = Boolean(table.loadingBlock) || this.visibleLoading(table)
 
     return html`
-      <section class="shell" aria-busy=${String(loading)}>
+      <section class="shell">
         <div class="toolbar">
-          <span><strong>${rowRange}</strong>${loading ? ` · loading${progress}` : ''}${stale}</span>
+          <span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>
           <details class="options">
             <summary title="Choose visible columns" aria-label="Choose visible columns">
               ${lucideIcon(Columns3, { size: 15 })}<span>Columns</span><span aria-hidden="true">${columns.length}/${table.columns.length}</span>
@@ -690,7 +674,7 @@ class WindowedTable extends LitElement {
         ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
         <div class="footer">
           ${this.compact
-            ? html`<span><strong>${rowRange}</strong>${loading ? ` · loading${progress}` : ''}${stale}</span>`
+            ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
             : html`
               <span>${table.totalLabel || `${table.totalRows.toLocaleString()} rows`}</span>
               <span>${columns.length} visible · ${table.columns.length} total columns</span>

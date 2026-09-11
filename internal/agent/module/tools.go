@@ -102,7 +102,6 @@ func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 			}
 			return metrics.SemanticModel(modelID)
 		},
-		ExplorationModel: m.explorationModel,
 		QueryDefinition: func(ctx context.Context, projectID string, definition dashboarddefinition.Definition, pageID, visualID string, filters dashboard.Filters) (visualizationir.VisualizationEnvelope, error) {
 			metrics, ok := m.dashboardMetrics(projectID)
 			if !ok || metrics == nil {

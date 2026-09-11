@@ -1,6 +1,5 @@
 import { expect, test } from 'bun:test'
 import type { DashboardVisualizationSignal } from '../../../generated/signals'
-import { currentVisualizationSchemaVersion } from '../../../generated/visualization/schema-version'
 import { DashboardVisualizationSignalDecoder } from './signal-envelope'
 
 test('dashboard visualization signals keep large frames opaque and reconstruct canonical envelopes', () => {
@@ -15,7 +14,6 @@ test('dashboard visualization signals keep large frames opaque and reconstruct c
 
   expect(signal.dataState.schemaVersion).toBe(1)
   expect(typeof signal.dataState.payload).toBe('string')
-  expect(envelope?.schemaVersion).toBe(currentVisualizationSchemaVersion)
   expect((envelope?.dataState as any).datasets[0].rows).toHaveLength(20_000)
   expect(envelope).not.toHaveProperty('filterRevision')
   expect(envelope).not.toHaveProperty('interactionRevision')
@@ -50,17 +48,6 @@ test('dashboard visualization signal decoder preserves envelope identity for unc
   expect(loading?.dataState).toBe(first?.dataState)
 })
 
-test('dashboard visualization signal decoder preserves the received envelope schema version', () => {
-  const decoder = new DashboardVisualizationSignalDecoder()
-  const signal = visualizationSignal({
-    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
-    datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1]], completeness: 'complete' }],
-  })
-  const runtimeVersionSignal = { ...signal, schemaVersion: 7 as unknown as 11 }
-
-  expect(decoder.decode(runtimeVersionSignal)?.schemaVersion).toBe(7)
-})
-
 test('dashboard visualization signal decoder fails closed on transport and payload mismatches', () => {
   const decoder = new DashboardVisualizationSignalDecoder()
   const state = {
@@ -89,7 +76,7 @@ function visualizationSignal(state: Record<string, unknown>): DashboardVisualiza
   const dataRevision = state.dataRevision as number
   const generation = state.generation as number
   return {
-    schemaVersion: currentVisualizationSchemaVersion,
+    schemaVersion: 9,
     visualID: 'map',
     rendererID: 'maplibre',
     specRevision: 'spec-1',

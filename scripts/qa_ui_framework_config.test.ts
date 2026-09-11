@@ -125,19 +125,6 @@ test('browser QA uses canonical project resource IDs', async () => {
   expect(source).not.toContain("visualID === 'revenue_by_month'")
 })
 
-test('Data Explorer route QA covers Analyze accessibility and recovery states', async () => {
-  const [source, dataExplorerQA] = await Promise.all([
-    readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),
-    readFile('scripts/datastar_lit_data_explorer_qa.ts', 'utf8'),
-  ])
-
-  expect(source).toContain("{ label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true }")
-  expect(source).toContain('await verifyDataExplorerKeyboardJourney()')
-  expect(source).toContain('await verifyDataExplorerRecoveryActions()')
-  expect(source).toContain('await verifyDataExplorerResponsiveLayout()')
-  expect(dataExplorerQA).toContain('explicit run action')
-})
-
 test('visual regression QA covers stable representative states, themes, and viewports', async () => {
   const source = await readFile('scripts/visual_regression.spec.ts', 'utf8')
 

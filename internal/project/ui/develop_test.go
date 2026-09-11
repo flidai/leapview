@@ -258,18 +258,6 @@ func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
 	}
 }
 
-func TestAssetDataExplorerCommandUsesScopedCancellation(t *testing.T) {
-	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
-	asset := projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders"}
-	var rendered bytes.Buffer
-	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "data", "dev", "", AssetRefreshState{}, AssetVersionsState{}, "csrf-test").Render(&rendered); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(rendered.String(), "requestCancellation: window.LeapViewDataExplorerTransport.requestCancellation(evt.detail)") {
-		t.Fatalf("asset data explorer command did not use scoped browser cancellation: %s", rendered.String())
-	}
-}
-
 func TestModelDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	const configuration = "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:zip_geolocations, name: zip_geolocations}\n"
 	table := semanticmodel.Table{

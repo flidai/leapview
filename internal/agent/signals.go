@@ -1,7 +1,5 @@
 package agent
 
-import exploration "github.com/flidai/leapview/internal/analytics/exploration"
-
 type ChatTranscriptItem struct {
 	ID              string          `json:"id"`
 	Kind            string          `json:"kind"`
@@ -29,10 +27,9 @@ type ChatTranscriptItem struct {
 }
 
 type ChatArtifact struct {
-	Type        string                       `json:"type"`
-	ID          string                       `json:"id"`
-	Summary     string                       `json:"summary,omitempty"`
-	Exploration *exploration.ExplorationSpec `json:"exploration,omitempty"`
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type ChatArtifactSignals struct {

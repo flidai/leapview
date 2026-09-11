@@ -34,8 +34,6 @@ type CompiledDimensionBinding struct {
 // temporal contract needed to validate a request.
 type CompiledSemanticDimension struct {
 	Name        string
-	Label       string
-	Description string
 	Type        string
 	Datatype    semanticmodel.LogicalDataType
 	NativeGrain string
@@ -440,8 +438,7 @@ func compileSemanticDimensions(model *semanticmodel.Model) map[string]CompiledSe
 	compiled := make(map[string]CompiledSemanticDimension, len(model.Dimensions))
 	for name, dimension := range model.Dimensions {
 		compiled[name] = CompiledSemanticDimension{
-			Name: name, Label: dimension.Label, Description: dimension.Description,
-			Type: dimension.Type, Datatype: dimension.Datatype,
+			Name: name, Type: dimension.Type, Datatype: dimension.Datatype,
 			NativeGrain: dimension.NativeGrain, Grains: append([]string(nil), dimension.Grains...),
 			Timezone: dimension.Timezone, Calendar: dimension.Calendar, WeekStart: dimension.WeekStart,
 		}
@@ -850,24 +847,23 @@ func (c *CompiledModel) DatasetNames() []string {
 	return names
 }
 
-// MetricNames returns metric names in stable lexical order. The returned
-// slice is detached from activation-owned metadata and may be freely mutated
-// by callers.
-func (c *CompiledModel) MetricNames() []string {
-	if c == nil {
-		return nil
-	}
-	return sortedMapKeys(c.metrics)
-}
-
-// SemanticDimensionNames returns semantic dimension names in stable lexical
-// order. The returned slice is detached from activation-owned metadata and
-// may be freely mutated by callers.
+// SemanticDimensionNames returns activation-owned semantic dimension names in
+// stable order. It intentionally excludes physical table fields.
 func (c *CompiledModel) SemanticDimensionNames() []string {
 	if c == nil {
 		return nil
 	}
-	return sortedMapKeys(c.semanticDimensions)
+	names := make([]string, 0, len(c.semanticDimensions))
+	for name := range c.semanticDimensions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// MetricNames returns activation-owned metric names in stable order.
+func (c *CompiledModel) MetricNames() []string {
+	return c.metricNames()
 }
 
 // ResolvePhysicalModelName validates a model transform dependency against the
@@ -947,16 +943,15 @@ func (c *CompiledModel) Metric(name string) (CompiledMetric, bool) {
 }
 
 func (c *CompiledModel) metricNames() []string {
-	return c.MetricNames()
-}
-
-func sortedMapKeys[T any](values map[string]T) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
+	if c == nil {
+		return nil
 	}
-	sort.Strings(keys)
-	return keys
+	names := make([]string, 0, len(c.metrics))
+	for name := range c.metrics {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func cloneCompiledMetric(node CompiledMetric) CompiledMetric {

@@ -35,11 +35,8 @@ import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/
 import './report-canvas'
 import './report-footer'
 import './visual-modal'
-import './dashboard-visual-frame'
-import type { VisualActionDetail } from './visual-modal'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
-import { dashboardExploreHref } from './explore-from-dashboard'
 import {
   applyOptimisticInteraction,
   validateInteractionCommand,
@@ -1157,15 +1154,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       case 'visual': {
         const visual = this.visualFor(component)
         if (!visual) return this.missingPayload('visual')
-        const page = this.renderSnapshot?.page ?? this.page
-        const exploreHref = this.presentation === 'app' && page
-          ? dashboardExploreHref(page, component, this.renderSnapshot?.filterContract ?? this.filterContract, this.renderSnapshot?.filterState ?? this.canonicalFilterState)
-          : undefined
         return html`<lv-visualization-host
           defer-mount
           .envelope=${visual}
           .openVisualFocus=${this.openVisualFocus}
-        >${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
+        >${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`
@@ -1577,6 +1570,66 @@ function visualizationType(visual: VisualizationEnvelope): string {
   return typeof spec.mark === 'string' && spec.mark ? spec.mark : spec.kind
 }
 
+class DashboardVisualFrame extends LitElement {
+  @property({ type: Boolean, reflect: true }) transparent = false
+
+  static styles = css`
+    :host {
+      display: block;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+
+    .frame {
+      position: relative;
+      height: 100%;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-sizing: border-box;
+    }
+
+		:host([data-agent-referenced]) .frame {
+			box-shadow: inset 0 0 0 2px var(--lv-line-accent);
+		}
+
+    :host([transparent]) .frame {
+      border-color: transparent;
+      background: transparent;
+    }
+
+    :host([data-canvas-filter-visual]) {
+      overflow: visible;
+      z-index: 5;
+    }
+
+    :host([data-canvas-filter-visual]) .frame {
+      overflow: visible;
+    }
+
+    ::slotted(*) {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+  `
+
+  render() {
+    return html`
+      <article class="frame">
+        <slot></slot>
+      </article>
+    `
+  }
+}
+
 function tagForComponent(component: DashboardComponentSignal, visuals: Record<string, VisualizationEnvelope>): string {
   switch (component.kind) {
     case 'slicer':
@@ -1621,3 +1674,4 @@ function dashboardIsFavorite(favorites: string[], dashboardID: string): boolean 
 }
 
 if (!customElements.get('lv-dashboard-page')) customElements.define('lv-dashboard-page', LeapViewDashboardPage)
+if (!customElements.get('lv-dashboard-visual-frame')) customElements.define('lv-dashboard-visual-frame', DashboardVisualFrame)

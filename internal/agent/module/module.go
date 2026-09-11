@@ -37,7 +37,6 @@ type Module struct {
 	projectIDResolver  func(context.Context) (projectgraph.ResourceID, error)
 	currentPrincipal   func(*http.Request) (Principal, bool)
 	dashboardMetrics   func(string) (queryruntime.Metrics, bool)
-	explorationModel   VisualExplorationModelFunc
 	recordAudit        func(context.Context, access.AuditEventInput) error
 	dispatchAPIGen     func(agent.Scope, string, http.ResponseWriter, *http.Request) bool
 	catalog            agenttools.Catalog
@@ -97,7 +96,6 @@ type Config struct {
 	// process startup, and is evaluated for each project-dependent operation.
 	ResolveProjectID   func(context.Context) (projectgraph.ResourceID, error)
 	DashboardMetrics   func(string) (queryruntime.Metrics, bool)
-	ExplorationModel   VisualExplorationModelFunc
 	RecordAudit        func(context.Context, access.AuditEventInput) error
 	DispatchAPIGen     func(Scope, string, http.ResponseWriter, *http.Request) bool
 	Catalog            agenttools.Catalog
@@ -116,12 +114,6 @@ type Config struct {
 	ResolveResource    ResourceResolver
 	HTTP               HTTPConfig
 }
-
-// VisualExplorationModelFunc is the module-owned configuration alias for the
-// selected active model/planner capability used by query_visual. Keeping this
-// alias on the module config lets process composition wire the capability
-// without importing the agent tools package directly.
-type VisualExplorationModelFunc = agenttools.VisualExplorationModelFunc
 
 type Principal struct {
 	ID            string
@@ -240,7 +232,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		projectIDResolver: config.ResolveProjectID,
 		currentPrincipal:  config.HTTP.CurrentPrincipal,
 		dashboardMetrics:  config.DashboardMetrics,
-		explorationModel:  config.ExplorationModel,
 		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
 		queryMetadata: config.QueryMetadata, toolContext: toolContext, allowDevAuthBypass: config.AllowDevAuthBypass,

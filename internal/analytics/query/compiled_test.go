@@ -76,48 +76,6 @@ func TestCompileModelBuildsReusableMetricDependencyMetadata(t *testing.T) {
 	}
 }
 
-func TestCompiledNamesAndSemanticDisplayMetadataAreSortedAndDetached(t *testing.T) {
-	model := testModel()
-	model.Dimensions["activity_date"] = semanticmodel.SemanticDimension{
-		Label: "Activity date", Description: "When the activity occurred",
-		Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ,
-		NativeGrain: "day", Grains: []string{"day", "month"}, Bindings: map[string]semanticmodel.DimensionBinding{
-			"orders": {Field: "orders.ordered_at"}, "tags": {Field: "tags.tagged_at"},
-		},
-	}
-	populateFixtureTableModelNames(model)
-	compiled, err := CompileModel(model)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	metricNames := compiled.MetricNames()
-	if !reflect.DeepEqual(metricNames, []string{"order_count", "revenue", "tag_count", "tags_per_order"}) {
-		t.Fatalf("metric names = %#v, want stable lexical order", metricNames)
-	}
-	metricNames[0] = "mutated"
-	if got := compiled.MetricNames()[0]; got != "order_count" {
-		t.Fatalf("metric names were not detached: %#v", compiled.MetricNames())
-	}
-	semanticNames := compiled.SemanticDimensionNames()
-	if !reflect.DeepEqual(semanticNames, []string{"activity_date", "customer_state"}) {
-		t.Fatalf("semantic dimension names = %#v, want stable lexical order", semanticNames)
-	}
-	semanticNames[0] = "mutated"
-	if got := compiled.SemanticDimensionNames()[0]; got != "activity_date" {
-		t.Fatalf("semantic dimension names were not detached: %#v", compiled.SemanticDimensionNames())
-	}
-	semantic, ok := compiled.SemanticDimension("activity_date")
-	if !ok || semantic.Label != "Activity date" || semantic.Description != "When the activity occurred" {
-		t.Fatalf("compiled semantic display metadata = %#v, want copied label and description", semantic)
-	}
-	model.Dimensions["activity_date"] = semanticmodel.SemanticDimension{Label: "mutated"}
-	semanticAgain, _ := compiled.SemanticDimension("activity_date")
-	if semanticAgain.Label != "Activity date" || semanticAgain.Description != "When the activity occurred" {
-		t.Fatalf("compiled semantic display metadata changed after authoring mutation: %#v", semanticAgain)
-	}
-}
-
 func TestCompiledDatasetTableGetterReturnsDetachedMetadata(t *testing.T) {
 	model := testModel()
 	populateFixtureTableModelNames(model)
