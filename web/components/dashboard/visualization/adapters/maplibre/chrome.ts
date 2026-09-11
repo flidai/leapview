@@ -20,7 +20,7 @@ export const mapLibreChromeCSS = `
 .maplibregl-ctrl-group .maplibregl-ctrl-icon{position:absolute;inset:0;display:grid;place-items:center}
 .maplibregl-ctrl-zoom-in::before{content:"+"}
 .maplibregl-ctrl-zoom-out::before{content:"−"}
-.maplibregl-ctrl-compass .maplibregl-ctrl-icon::before{content:"↑";font-size:var(--text-title-size-small)}
+.maplibregl-ctrl-compass .maplibregl-ctrl-icon::before{content:"N";font-size:var(--text-body-size-small);font-weight:var(--base-text-weight-semibold)}
 .maplibregl-ctrl-attrib,.maplibregl-ctrl-logo{display:none}
 `
 

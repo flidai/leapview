@@ -47,20 +47,6 @@ export function contrastTextColor(background: string, candidates: readonly strin
   return [...candidates].sort((left, right) => contrastRatio(backgroundRGB, parseColor(right)) - contrastRatio(backgroundRGB, parseColor(left)))[0]!
 }
 
-export function conditionalIconGlyph(icon: VisualizationIconIntent | undefined): string {
-  switch (icon) {
-    case 'circle': return '●'
-    case 'square': return '■'
-    case 'diamond': return '◆'
-    case 'triangle_up': return '▲'
-    case 'triangle_down': return '▼'
-    case 'arrow_up': return '↑'
-    case 'arrow_down': return '↓'
-    case 'warning': return '⚠'
-    default: return ''
-  }
-}
-
 export function resolveConditionalFormat(
   format: VisualizationConditionalFormat,
   columns: readonly string[],

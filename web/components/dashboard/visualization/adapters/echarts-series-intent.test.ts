@@ -314,7 +314,7 @@ test('ECharts condenses crowded category-series charts without overlapping label
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', left: 8, right: 8, height: 24, bottom: 0 })
-  expect(option.grid).toMatchObject({ left: 12, right: 16, top: 16, bottom: 44, containLabel: true })
+  expect(option.grid).toMatchObject({ left: 12, right: 28, top: 16, bottom: 44, containLabel: true })
   expect(option.yAxis).toMatchObject({ splitNumber: 4, axisLabel: { hideOverlap: true } })
   expect(option.series.filter((series: any) => !series.silent)).toHaveLength(8)
   expect(option.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === false)).toBe(true)
@@ -324,7 +324,7 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(compact.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === true)).toBe(true)
 })
 
-test('ECharts keeps category-series conditional icon cues visible through crowding and percent labels', () => {
+test('ECharts respects density while preserving plain values in conditionally formatted series', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.spec.mark = 'column'
   envelope.spec.presentation.stacked = false
@@ -344,16 +344,20 @@ test('ECharts keeps category-series conditional icon cues visible through crowdi
 
   const crowded = echartsOption(envelope, defaultRendererContext) as any
   const crowdedSeries = crowded.series.filter((series: any) => !series.silent)
-  expect(crowdedSeries.every((series: any) => series.label.show === true)).toBe(true)
-  expect(crowdedSeries.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
-  expect(crowdedSeries[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
+  expect(crowdedSeries.every((series: any) => series.label.show === false)).toBe(true)
+  expect(crowdedSeries.every((series: any) => series.labelLayout.hideOverlap === true)).toBe(true)
+  expect(crowdedSeries[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('1')
+
+  envelope.spec.presentation.labelPolicy.density = 'always'
+  const explicit = echartsOption(envelope, defaultRendererContext) as any
+  expect(explicit.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === true)).toBe(true)
 
   envelope.spec.presentation.stacking = 'percent'
   envelope.spec.presentation.labelPolicy.density = 'hidden'
   const percent = echartsOption(envelope, defaultRendererContext) as any
   const delivered = percent.series.find((series: any) => series.name === 'approved')
-  expect(delivered).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('↑ 2.8%')
+  expect(delivered).toMatchObject({ label: { show: false }, labelLayout: { hideOverlap: true } })
+  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('2.8%')
 })
 
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
@@ -407,7 +411,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
   multiMetric.spec.conditionalFormatting = [format]
   const multiOption = echartsOption(multiMetric, dark) as any
   const multiLabel = multiOption.series[0].label
-  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('↑ 75%')
+  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('75%')
   expect(multiLabel.color({ value: ['Jan', 10, 30, 75, 25] })).toBe(dark.colors.attention)
 
   const categorySeries = cartesianSeriesFixture() as any
@@ -416,7 +420,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
   categorySeries.spec.conditionalFormatting = [{ ...format, id: 'value-status', field: { dataset: 'primary', field: 'value' } }]
   const categoryOption = echartsOption(categorySeries, dark) as any
   const categoryLabel = categoryOption.series.find((series: any) => series.name === 'delivered').label
-  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('↑ 25%')
+  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('25%')
   expect(categoryLabel.color({ value: ['Jan', 'delivered', 10, 25] })).toBe(dark.colors.attention)
 })
 

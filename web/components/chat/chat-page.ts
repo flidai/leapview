@@ -1,11 +1,14 @@
 import { LitElement, css, html } from 'lit'
 import { state } from 'lit/decorators.js'
+import { CircleHelp, LayoutDashboard, TrendingUp, type IconNode } from 'lucide'
 import type { AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
+import { lucideIcon } from '../shared/lucide-icons'
 import '../dashboard/visual-modal'
 import './chat-thread'
+import { agentIcon } from './agent-icon'
 import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId } from './reference'
 import './chat-composer'
 import './chat-list'
@@ -17,6 +20,12 @@ const emptyAgent: ChatSignal = {
   status: { enabled: false, running: false },
   composer: { value: '', disabled: true, placeholder: 'Agent is not configured.' },
 }
+
+const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> = [
+  { label: 'Spot a change', prompt: 'What changed most in the last 30 days?', icon: TrendingUp },
+  { label: 'Explain a metric', prompt: 'Explain how revenue is calculated.', icon: CircleHelp },
+  { label: 'Review a dashboard', prompt: 'Summarize the Executive Sales dashboard.', icon: LayoutDashboard },
+]
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
@@ -101,13 +110,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
 
     .new-chat-stage {
+      box-sizing: border-box;
       display: flex;
       min-width: 0;
       min-height: 100%;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: var(--lv-space-lg);
+      gap: var(--lv-space-sm);
+      overflow-y: auto;
+      padding: calc(var(--lv-space-lg) * 3) 0 var(--lv-space-lg);
       background: var(--lv-bg-app);
     }
 
@@ -120,12 +132,149 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       animation-delay: 70ms;
     }
 
-    .new-chat-title {
+    .new-chat-intro {
       box-sizing: border-box;
       width: min(100%, var(--lv-chat-stack-width));
       padding-inline: var(--lv-space-lg);
+    }
+
+    .new-chat-heading {
+      display: grid;
+      justify-items: center;
+      gap: var(--lv-space-sm);
       text-align: center;
+    }
+
+    .new-chat-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--lv-space-sm);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .agent-mark {
+      display: grid;
+      width: var(--lv-control-medium);
+      height: var(--lv-control-medium);
+      place-items: center;
+      border-radius: var(--lv-radius-large);
+      background: var(--lv-bg-accent-muted);
+      color: var(--lv-accent);
+    }
+
+    .agent-mark svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .new-chat-title {
+      max-width: 100%;
       font: var(--lv-type-page-title);
+    }
+
+    .new-chat-description {
+      max-width: 520px;
+      margin: calc(var(--lv-space-lg) + var(--lv-space-xs)) 0 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body);
+    }
+
+    .prompt-starters {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--lv-space-sm);
+      margin-top: var(--lv-space-xs);
+    }
+
+    .prompt-starter {
+      display: grid;
+      min-width: 0;
+      min-height: 92px;
+      grid-template-columns: var(--lv-control-medium) minmax(0, 1fr);
+      align-content: start;
+      align-items: start;
+      gap: var(--lv-space-sm);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-large);
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-default);
+      padding: var(--lv-space-md);
+      text-align: left;
+      cursor: pointer;
+      transition:
+        background var(--lv-transition-fast),
+        border-color var(--lv-transition-fast),
+        transform var(--lv-transition-fast);
+    }
+
+    .prompt-starter:hover:not(:disabled) {
+      border-color: var(--lv-line-accent-muted);
+      background: var(--lv-bg-control-hover);
+      transform: translateY(-1px);
+    }
+
+    .prompt-starter:focus-visible {
+      outline: var(--lv-border-width-focus) solid var(--lv-line-accent);
+      outline-offset: var(--lv-space-2xs);
+    }
+
+    .prompt-starter:disabled {
+      color: var(--lv-fg-muted);
+      cursor: not-allowed;
+      opacity: 0.65;
+    }
+
+    .prompt-starter-icon {
+      display: grid;
+      width: var(--lv-control-medium);
+      height: var(--lv-control-medium);
+      place-items: center;
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control);
+      color: var(--lv-accent);
+    }
+
+    .prompt-starter-icon svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .prompt-starter-copy {
+      display: grid;
+      min-width: 0;
+      gap: var(--lv-space-xs);
+    }
+
+    .prompt-starter-label {
+      font: var(--lv-type-body);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .prompt-starter-prompt {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      line-height: var(--base-text-lineHeight-normal);
+    }
+
+    .new-chat-context-hint {
+      margin: var(--lv-space-md) 0 0;
+      color: var(--lv-fg-muted);
+      text-align: center;
+      font: var(--lv-type-caption);
+    }
+
+    .new-chat-context-hint kbd {
+      display: inline-grid;
+      min-width: 20px;
+      height: 20px;
+      place-items: center;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-tight);
+      background: var(--lv-bg-control);
+      color: var(--lv-fg-default);
+      font: inherit;
     }
 
     @keyframes new-chat-enter {
@@ -158,7 +307,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
-    @media (max-width: 640px) {
+    @media (max-width: 768px) {
       .route {
         grid-template-columns: 1fr;
       }
@@ -170,6 +319,19 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
       .main.new-main {
         height: 100svh;
+      }
+
+      .new-chat-stage {
+        justify-content: flex-start;
+        padding-top: calc(var(--lv-space-lg) * 2);
+      }
+
+      .prompt-starters {
+        grid-template-columns: 1fr;
+      }
+
+      .prompt-starter {
+        min-height: 0;
       }
     }
   `
@@ -258,16 +420,36 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return html`
       <lv-chat-list
         .conversations=${agent.conversations ?? []}
+        .agentEnabled=${Boolean(agent.status?.enabled)}
         active-conversation-id=${agent.activeConversationId ?? ''}
       ></lv-chat-list>
     `
   }
 
   private renderNewView(composer: ChatSignal['composer'], status: ChatSignal['status']) {
+    const disabled = this.composerDisabled || status.running || composer.disabled
     return html`
       <div class="new-chat-stage">
-        <h1 class="new-chat-title">Ask about your data</h1>
-        ${this.renderComposer(composer, status)}
+        <section class="new-chat-intro" aria-labelledby="new-chat-title">
+          <div class="new-chat-heading">
+            <div class="new-chat-kicker"><span class="agent-mark" aria-hidden="true">${agentIcon()}</span><span>LeapView Agent</span></div>
+            <h1 id="new-chat-title" class="new-chat-title">Ask about your data</h1>
+            <p class="new-chat-description">Get clear answers grounded in the dashboards, metrics, and models you can access.</p>
+          </div>
+          <div class="prompt-starters" aria-label="Example questions">
+            ${promptStarters.map((starter) => html`
+              <button class="prompt-starter" type="button" ?disabled=${disabled} @click=${() => this.selectPromptStarter(starter.prompt)}>
+                <span class="prompt-starter-icon" aria-hidden="true">${lucideIcon(starter.icon, { size: 16, strokeWidth: 2 })}</span>
+                <span class="prompt-starter-copy">
+                  <span class="prompt-starter-label">${starter.label}</span>
+                  <span class="prompt-starter-prompt">${starter.prompt}</span>
+                </span>
+              </button>
+            `)}
+          </div>
+          <p class="new-chat-context-hint">Type <kbd>@</kbd> to attach a dashboard, metric, model, page, or visual.</p>
+        </section>
+        ${this.renderComposer(composer, status, true)}
       </div>
     `
   }
@@ -281,14 +463,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
           .status=${status}
           conversation-id=${agent.activeConversationId ?? ''}
         >${status.error ?? ''}</lv-chat-thread>
-        ${this.renderComposer(composer, status)}
+        ${status.enabled ? this.renderComposer(composer, status) : null}
       </div>
     `
   }
 
-  private renderComposer(composer: ChatSignal['composer'], status: ChatSignal['status']) {
+  private renderComposer(composer: ChatSignal['composer'], status: ChatSignal['status'], hideContextAction = false) {
     return html`
       <lv-chat-composer
+        ?hide-context-action=${hideContextAction}
         .value=${composer.value ?? ''}
         .disabled=${this.composerDisabled || status.running || composer.disabled}
         .pending=${this.pending || status.running}
@@ -302,6 +485,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         @lv-chat-references-change=${this.referencesChanged}
       ></lv-chat-composer>
     `
+  }
+
+  private selectPromptStarter(prompt: string): void {
+    this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(prompt)
   }
 
 	private referencesChanged(event: CustomEvent<ChatReferencesChangeDetail>) {

@@ -58,7 +58,8 @@ test('composer renders a compact centered prompt surface', async () => {
       const surface = root.querySelector('.composer-surface') as HTMLElement
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const actions = root.querySelector('.actions') as HTMLElement
-      const button = root.querySelector('button') as HTMLButtonElement
+      const contextButton = root.querySelector('.context-button') as HTMLButtonElement
+      const button = root.querySelector('.send-button') as HTMLButtonElement
       const formRect = form.getBoundingClientRect()
       const surfaceRect = surface.getBoundingClientRect()
       const surfaceStyle = getComputedStyle(surface)
@@ -81,6 +82,9 @@ test('composer renders a compact centered prompt surface', async () => {
         textareaMinHeight: Math.round(parseFloat(textareaStyle.minHeight)),
         textareaMaxHeight: Math.round(parseFloat(textareaStyle.maxHeight)),
         actionsJustify: getComputedStyle(actions).justifyContent,
+        contextButtonLabel: contextButton.getAttribute('aria-label'),
+        contextButtonWidth: Math.round(contextButton.getBoundingClientRect().width),
+        contextButtonHeight: Math.round(contextButton.getBoundingClientRect().height),
         buttonWidth: Math.round(button.getBoundingClientRect().width),
         buttonHeight: Math.round(button.getBoundingClientRect().height),
         buttonDisabled: button.disabled,
@@ -103,6 +107,9 @@ test('composer renders a compact centered prompt surface', async () => {
 	  textareaMinHeight: 46,
       textareaMaxHeight: 160,
       actionsJustify: 'flex-end',
+      contextButtonLabel: 'Add context',
+      contextButtonWidth: 32,
+      contextButtonHeight: 32,
       buttonWidth: 32,
       buttonHeight: 32,
       buttonDisabled: true,
@@ -123,7 +130,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     const events = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
       const root = element.shadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
-      const button = root.querySelector('button') as HTMLButtonElement
+      const button = root.querySelector('.send-button') as HTMLButtonElement
       const received: string[] = []
       element.addEventListener('lv-chat-submit', (event: CustomEvent) => received.push(event.detail.input))
 
@@ -215,6 +222,7 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
 	  const root = element.shadowRoot
 	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+	  const contextButton = root.querySelector('.context-button') as HTMLButtonElement
 	  const button = root.querySelector('.send-button') as HTMLButtonElement
 	  let submits = 0
 	  element.addEventListener('lv-chat-submit', () => submits += 1)
@@ -225,6 +233,7 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	  const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, cancelable: true })
 	  textarea.dispatchEvent(enter)
 	  const buttonRect = button.getBoundingClientRect()
+	  const contextButtonRect = contextButton.getBoundingClientRect()
 
 	  return {
 		coarsePointer: matchMedia('(pointer: coarse)').matches,
@@ -232,6 +241,8 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 		submits,
 		buttonWidth: Math.round(buttonRect.width),
 		buttonHeight: Math.round(buttonRect.height),
+		contextButtonWidth: Math.round(contextButtonRect.width),
+		contextButtonHeight: Math.round(contextButtonRect.height),
 	  }
 	})
 
@@ -241,9 +252,46 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	  submits: 0,
 	  buttonWidth: 44,
 	  buttonHeight: 44,
+	  contextButtonWidth: 44,
+	  contextButtonHeight: 44,
 	})
   } finally {
 	await context.close()
+  }
+})
+
+test('Add context opens the existing @ picker and keeps the draft editable', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+      const root = element.shadowRoot
+      const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+      const contextButton = root.querySelector('.context-button') as HTMLButtonElement
+      textarea.value = 'Compare revenue'
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      contextButton.click()
+      await element.updateComplete
+      return {
+        value: textarea.value,
+        focused: root.activeElement === textarea,
+        expanded: textarea.getAttribute('aria-expanded'),
+        controls: textarea.getAttribute('aria-controls'),
+        pickerLabel: root.querySelector('.mention-picker')?.getAttribute('aria-label'),
+      }
+    })
+
+    expect(state).toEqual({
+      value: 'Compare revenue @',
+      focused: true,
+      expanded: 'true',
+      controls: 'chat-context-options',
+      pickerLabel: 'Add LeapView context',
+    })
+  } finally {
+    await page.close()
   }
 })
 
@@ -291,7 +339,7 @@ test('composer searches for and attaches typed @ references with spaces', async 
 
     expect(result).toEqual({
       searches: ['orders by'],
-      optionText: 'Orders Sales › Executive Sales › Overview Visual',
+      optionText: 'Orders Sales / Executive Sales / Overview Visual',
 		iconClass: 'reference-icon-visual',
 		iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',
       draftAfterReference: 'Compare',
@@ -454,6 +502,8 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
 		descriptionVisible: Boolean(root.querySelector('.mention-description')),
         scrolled: picker.scrollTop > initialScrollTop,
         activeText: active.textContent?.replace(/\s+/g, ' ').trim(),
+        activeID: active.id,
+        activeDescendant: textarea.getAttribute('aria-activedescendant'),
         activeVisible: activeBox.top >= pickerBox.top && activeBox.bottom <= pickerBox.bottom,
       }
     })
@@ -466,6 +516,8 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
 	expect(result.descriptionVisible).toBe(false)
     expect(result.scrolled).toBe(true)
     expect(result.activeText).toContain('Result 8')
+    expect(result.activeID).toBe('chat-context-option-7')
+    expect(result.activeDescendant).toBe(result.activeID)
     expect(result.activeVisible).toBe(true)
   } finally {
     await page.close()
@@ -567,7 +619,7 @@ test('mention picker pins on-page results above deduplicated accessible results'
     })
 
     expect(result.labels).toEqual(['On this page', 'All accessible'])
-	expect(result.options).toEqual(['Orders on this page Sales › Executive Sales › Overview Visual', 'Orders metric Sales model Metric'])
+	expect(result.options).toEqual(['Orders on this page Sales / Executive Sales / Overview Visual', 'Orders metric Sales model Metric'])
   } finally {
     await page.close()
   }
