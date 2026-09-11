@@ -75,6 +75,7 @@ import './data-explorer-dashboard-picker'
 import { type ExplorationInteractionMode } from './data-explorer-drill'
 import { handleDataExploreInteraction, handleDataExploreWindowRequest } from './data-explorer-window'
 import { releaseDataExplorerTransport } from './data-explorer-transport'
+import { dataExplorerResultStyles, renderExploreFailure } from './data-explorer-result-styles'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -156,7 +157,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
   })
 
-  static styles = css`
+  static styles = [dataExplorerResultStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -796,24 +797,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
-    .semantic-result {
-      display: grid;
-      min-width: 0;
-      min-height: 0;
-      grid-template-rows: auto auto auto minmax(0, 1fr);
-      overflow: hidden;
-    }
-
     .explore-main {
       grid-template-rows: auto auto minmax(0, 1fr) auto;
-    }
-
-    .query-bar {
-      display: grid;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-12) var(--base-size-16);
-      background: var(--lv-bg-app);
     }
 
     .query-row {
@@ -854,47 +839,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       border-color: var(--lv-line-accent, var(--lv-line-muted));
       background: var(--lv-bg-accent-muted);
       color: var(--lv-fg-accent);
-    }
-
-    .result-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--base-size-8);
-      align-items: center;
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-8) var(--base-size-16);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .execution-state {
-      display: inline-flex;
-      align-items: center;
-      gap: var(--base-size-4);
-      color: var(--lv-fg-muted);
-    }
-
-    .execution-state[data-state="stale"] {
-      color: var(--lv-fg-warning);
-    }
-
-    .execution-state[data-state="error"] {
-      color: var(--lv-fg-danger);
-    }
-
-    .result-error {
-      color: var(--lv-fg-danger);
-    }
-
-    .result-failure {
-      display: inline-flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    lv-data-explore-table {
-      min-height: 0;
     }
 
     .icon-button {
@@ -1058,7 +1002,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       }
 
     }
-  `
+  `]
 
   private readonly handleDatastarFetch = (event: Event) => {
     const actionInFlight = this.exploreTransportAction
@@ -1323,16 +1267,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       return html`<span class="execution-state" data-state="stale" role="status">Results are stale — run to refresh</span>`
     }
     return nothing
-  }
-
-  private renderExploreFailure(error: string, command: DataExploreCommand) {
-    return html`
-      <span class="result-failure" role="alert">
-        <span class="result-error">${error}</span>
-        <button type="button" class="text-button" @click=${() => this.runExplore(command)}>Retry</button>
-        <button type="button" class="text-button" @click=${() => this.resetExplore(command)}>Reset query</button>
-      </span>
-    `
   }
 
   private handleExploreSpecChange(event: CustomEvent<ExplorationSpec>, command: DataExploreCommand): void {
@@ -1853,6 +1787,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const hasQuery = queryFields.size > 0 || Boolean(spec.time)
     const runValidation = explorationRunValidation(spec, explore.fields)
     const runDisabled = runValidation.length > 0
+    const exploreError = rawResult.error || explore.status?.error || this.exploreTransportFailure?.message || (explore.status?.state === 'error' ? 'Query failed' : '')
     const exploreRunning = status?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
     return html`
       <div class="content" aria-label="Data exploration">
@@ -1901,23 +1836,27 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               @lv-data-explorer-filter-open=${(event: CustomEvent<string>) => this.handleExploreFilterOpen(event, command)}
               @lv-data-explorer-filter-change=${(event: CustomEvent<{ action: 'apply' | 'cancel' | 'operator' | 'value'; operator?: string; value?: string }>) => this.handleExploreFilterChange(event, command)}
             ></lv-data-explorer-query-controls>
-            ${this.renderExecutionState(command, result, status, rawResult.error || this.exploreTransportFailure?.message)}
-            ${rawResult.error || status?.error || this.exploreTransportFailure ? this.renderExploreFailure(rawResult.error || status?.error || this.exploreTransportFailure?.message || 'Query failed', command) : nothing}
-            ${this.exploreInteractionError ? html`<p class="result-error" role="alert">${this.exploreInteractionError}</p>` : nothing}
-            ${hasQuery
-              ? html`<lv-data-explorer-results
-                  .command=${command}
-                  .result=${result}
-                  .status=${status}
-                  .views=${presentation.views}
-                  .recommendedView=${presentation.recommendedView}
-                  .selectedDataset=${selectedDataset ? { id: selectedDataset.id, title: selectedDataset.title, grainEntity: selectedDataset.grainEntity, grainLabel: datasetGrainLabel(selectedDataset) } : undefined}
-                  .executionState=${this.exploreExecutionState}
-                  aria-busy=${String(exploreRunning)}
-                  @lv-data-explore-interaction=${(event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>) => this.handleExploreInteraction(event, command, explore.fields, selectedDataset?.grainFields ?? [])}
-                  @lv-visualization-window-request=${(event: CustomEvent<VisualizationWindowRequest>) => this.handleExploreWindowRequest(event, command, presentation.views, result)}
-                ></lv-data-explorer-results>`
-              : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
+            <section class="result-notices" aria-label="Query status">
+              ${this.renderExecutionState(command, result, status, rawResult.error || this.exploreTransportFailure?.message)}
+              ${exploreError ? renderExploreFailure(exploreError, runValidation.length === 0, () => this.runExplore(command), () => this.resetExplore(command)) : nothing}
+              ${this.exploreInteractionError ? html`<p class="result-error" role="alert">${this.exploreInteractionError}</p>` : nothing}
+            </section>
+            <section class="result-body" aria-label="Result body">
+              ${hasQuery
+                ? html`<lv-data-explorer-results
+                    .command=${command}
+                    .result=${result}
+                    .status=${status}
+                    .views=${presentation.views}
+                    .recommendedView=${presentation.recommendedView}
+                    .selectedDataset=${selectedDataset ? { id: selectedDataset.id, title: selectedDataset.title, grainEntity: selectedDataset.grainEntity, grainLabel: datasetGrainLabel(selectedDataset) } : undefined}
+                    .executionState=${this.exploreExecutionState}
+                    aria-busy=${String(exploreRunning)}
+                    @lv-data-explore-interaction=${(event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>) => this.handleExploreInteraction(event, command, explore.fields, selectedDataset?.grainFields ?? [])}
+                    @lv-visualization-window-request=${(event: CustomEvent<VisualizationWindowRequest>) => this.handleExploreWindowRequest(event, command, presentation.views, result)}
+                  ></lv-data-explorer-results>`
+                : exploreError ? nothing : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
+            </section>
         </section>
       </div>
     `
