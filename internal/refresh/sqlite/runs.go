@@ -1155,34 +1155,6 @@ func (r *SQLRunRepository) cancelRun(ctx context.Context, identity projectgraph.
 	return r.getRunForIdentity(ctx, identity, runID)
 }
 
-func (r *SQLRunRepository) FailRunsForTerminalServingStates(ctx context.Context, environment, message string) error {
-	if r == nil || r.db == nil {
-		return fmt.Errorf("refresh run database is required")
-	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "refresh did not complete"
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	q := r.q.WithTx(tx)
-	if err := q.FailTerminalServingStateRuns(ctx, platformdb.FailTerminalServingStateRunsParams{
-		FailedStatus: refreshrun.RunStatusFailed, ErrorMessage: message,
-		QueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning, Environment: environment,
-	}); err != nil {
-		return err
-	}
-	if err := q.FailTerminalServingStateJobs(ctx, platformdb.FailTerminalServingStateJobsParams{
-		FailedStatus: refreshrun.RunStatusFailed, QueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning, Environment: environment,
-	}); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 func (r *SQLRunRepository) markRun(ctx context.Context, identity projectgraph.ServingIdentity, runID, status, message string) (refreshrun.RunRecord, error) {
 	if err := identity.Validate(); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
 		return refreshrun.RunRecord{}, fmt.Errorf("serving identity and canonical run id are required")

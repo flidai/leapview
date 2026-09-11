@@ -64,7 +64,6 @@ func (f ClockFunc) Now() time.Time { return f() }
 
 // TrustedClock is an explicit name for the same injected clock boundary.
 type TrustedClock = Clock
-type TrustedClockFunc = ClockFunc
 
 // TrustGeneration identifies the authoritative policy snapshot. A capture
 // worker may present an assignment, but it cannot make that assignment

@@ -73,10 +73,6 @@ func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
 // NewMaintenance constructs the bounded cursor-signing retention facade.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
-// NewMaintenanceRepository is a descriptive alias for callers that name all
-// capability adapters as repositories.
-func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
-
 // Configure loads the durable ring and installs it in cursorsigning. The
 // first caller atomically creates a random active key; later callers only
 // reload the existing ring. Configuration commits its durable changes before

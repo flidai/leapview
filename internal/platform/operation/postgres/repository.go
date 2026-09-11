@@ -350,10 +350,6 @@ func NewWithConfig(db DBTX, lease, retention time.Duration) *Repository {
 // no destructive prune method to call accidentally.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
-// NewMaintenanceRepository is a descriptive alias for callers that name all
-// capability adapters as repositories.
-func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
-
 // RequestDigest computes canonical SHA-256 for JSON requests. Whitespace and
 // object-key ordering therefore cannot produce a second logical operation.
 func RequestDigest(request []byte) (string, error) {

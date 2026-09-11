@@ -2137,16 +2137,6 @@ func ValidateOperationIDs(doc ir.Document) error {
 	return validateOperationIDsByName(doc)
 }
 
-// SortedOperationIDs returns operation IDs in deterministic order.
-func SortedOperationIDs(doc ir.Document) []string {
-	ids := make([]string, 0, len(doc.Endpoints))
-	for _, endpoint := range doc.Endpoints {
-		ids = append(ids, endpoint.OperationID)
-	}
-	sort.Strings(ids)
-	return ids
-}
-
 func emitCommandExecutionEntryPoints(b *strings.Builder, endpoint ir.Endpoint) {
 	name := exportedName(endpoint.OperationID)
 	targetField := ""

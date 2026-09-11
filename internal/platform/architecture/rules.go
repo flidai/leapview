@@ -454,12 +454,3 @@ func ClassifyPackage(path string) (PackageRule, bool) {
 	}
 	return PackageRule{Prefix: internal + owner, Capability: owner, Layer: layer}, true
 }
-
-func HasExplicitPackageRule(path string) bool {
-	for _, rule := range PackageRules {
-		if path == rule.Prefix || strings.HasPrefix(path, rule.Prefix+"/") {
-			return true
-		}
-	}
-	return false
-}

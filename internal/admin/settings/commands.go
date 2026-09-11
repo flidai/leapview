@@ -17,14 +17,6 @@ type ServiceAccountMutator interface {
 	RevokeServicePrincipalSecret(context.Context, string, string) error
 }
 
-// ApplyServiceAccountCommand executes a validated settings command. It
-// returns the one-time raw secret only for create_secret; callers should put
-// that value in a short-lived signal patch and never persist it.
-func ApplyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutator, command ServiceAccountCommand) (string, error) {
-	secret, _, err := applyServiceAccountCommand(ctx, mutator, command)
-	return secret, err
-}
-
 func applyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutator, command ServiceAccountCommand) (string, string, error) {
 	if mutator == nil {
 		return "", "", errors.New("service account mutator is nil")

@@ -124,14 +124,6 @@ type ListResponse struct {
 	Page  PageInfo   `json:"page"`
 }
 
-type ArtifactResponse struct {
-	ActualDigest string `json:"actualDigest"`
-	Digest       string `json:"digest"`
-	GenerationID string `json:"generationId"`
-	ReleaseID    string `json:"releaseId"`
-	SizeBytes    int64  `json:"sizeBytes"`
-}
-
 type ManagedConnectionResponse struct {
 	ActiveRevisionID *string `json:"activeRevisionId,omitempty"`
 	Description      *string `json:"description,omitempty"`

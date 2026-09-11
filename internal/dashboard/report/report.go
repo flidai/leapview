@@ -27,20 +27,6 @@ func ActivePage(pages []dashboard.Page, pageID string) (dashboard.Page, bool) {
 	return pages[0].WithDefaults(), true
 }
 
-func ActivePageOrDefault(pages []dashboard.Page, pageID string) (dashboard.Page, bool) {
-	if len(pages) == 0 {
-		return dashboard.Page{}, false
-	}
-	if pageID != "" {
-		for _, page := range pages {
-			if page.ID == pageID {
-				return page.WithDefaults(), true
-			}
-		}
-	}
-	return pages[0].WithDefaults(), true
-}
-
 func DefaultPage() dashboard.Page {
 	return dashboard.Page{
 		ID:     "overview",

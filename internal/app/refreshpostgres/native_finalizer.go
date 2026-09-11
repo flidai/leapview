@@ -71,12 +71,6 @@ func NewPostgresNativeRefreshFinalizer(refresh *refreshpostgres.Repository, depl
 	return finalizer, nil
 }
 
-// NewNativeRefreshFinalizer is kept as a short constructor alias for module
-// composition code.
-func NewNativeRefreshFinalizer(refresh *refreshpostgres.Repository, deployment *deploymentpostgres.Repository, targetID string) (*PostgresNativeRefreshFinalizerAdapter, error) {
-	return NewPostgresNativeRefreshFinalizer(refresh, deployment, targetID)
-}
-
 // NewPostgresNativeRefreshFinalizerWithResolver constructs the preferred
 // multi-project target-resolving adapter.
 func NewPostgresNativeRefreshFinalizerWithResolver(refresh *refreshpostgres.Repository, deployment *deploymentpostgres.Repository, resolver PostgresNativeRefreshTargetResolver) (*PostgresNativeRefreshFinalizerAdapter, error) {

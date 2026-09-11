@@ -61,10 +61,6 @@ func NewSourceRuntime(db analyticsresource.SessionProvider) *SourceRuntime {
 	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}}
 }
 
-func NewSourceRuntimeWithExtensionAdmission(db analyticsresource.SessionProvider, admission ExtensionAdmission) *SourceRuntime {
-	return &SourceRuntime{db: db, resolver: NonSecretCredentialResolver{}, extensionAdmission: admission}
-}
-
 func NewSourceRuntimeWithCredentials(db analyticsresource.SessionProvider, resolver CredentialResolver) *SourceRuntime {
 	if resolver == nil {
 		resolver = NonSecretCredentialResolver{}

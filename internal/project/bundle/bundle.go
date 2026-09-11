@@ -768,10 +768,6 @@ func ValidateCompiledSourceBundleArtifact(compiled CompiledSourceBundleArtifact)
 	return nil
 }
 
-func ValidateCompiledProjectArtifact(compiled CompiledProjectArtifact) error {
-	return ValidateCompiledSourceBundleArtifact(compiled)
-}
-
 func readManifest(root string) (Manifest, error) {
 	data, err := os.ReadFile(filepath.Join(root, "manifest.json"))
 	if err != nil {
