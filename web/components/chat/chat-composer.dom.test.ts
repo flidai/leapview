@@ -582,14 +582,15 @@ test('composer enforces the server-provided reference limit', async () => {
       element.referenceLimit = 2
       const searches: string[] = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
-      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
+      const root = element.shadowRoot as ShadowRoot
+      const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       for (const id of ['one', 'two', 'three']) {
 	 element.suggestions = [{ reference: { kind: 'metric', id }, name: id, href: `/explore?metric=${id}`, locations: [], context: [] }]
         textarea.value = `@${id}`
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
         await element.updateComplete
-        (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.click()
+        root.querySelector<HTMLElement>('.mention-option')?.click()
         await element.updateComplete
       }
       textarea.value = '@three'
@@ -598,10 +599,10 @@ test('composer enforces the server-provided reference limit', async () => {
       await element.updateComplete
       const limited = {
 		references: element.references.map((reference: any) => reference.reference.id),
-        status: (element.shadowRoot as ShadowRoot).querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
-        optionCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option').length,
+        status: root.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
+        optionCount: root.querySelectorAll('.mention-option').length,
       };
-      ;((element.shadowRoot as ShadowRoot).querySelector('.reference-chip') as HTMLElement | null)?.click()
+      (root.querySelector('.reference-chip') as HTMLElement | null)?.click()
       await element.updateComplete
       return {
         limited,

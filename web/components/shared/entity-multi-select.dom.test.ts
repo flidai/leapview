@@ -89,17 +89,17 @@ test('remote search preserves selections across result pages', async () => {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-entity-multi-select'))
     const result = await page.evaluate(async () => {
-      const picker = document.querySelector('lv-entity-multi-select') as any
+      const picker = document.querySelector('lv-entity-multi-select') as any, root = picker.shadowRoot as ShadowRoot
       picker.remoteSearch = true
       picker.items = [{ id: 'ana', label: 'Ana', detail: 'ana@example.com' }]
       await picker.updateComplete
-      ((picker.shadowRoot as ShadowRoot).querySelector('input[value="ana"]') as HTMLInputElement | null)?.click()
+      root.querySelector<HTMLInputElement>('input[value="ana"]')?.click()
       await picker.updateComplete
       picker.items = [{ id: 'sam', label: 'Sam', detail: 'sam@example.com' }]
       await picker.updateComplete
-      ((picker.shadowRoot as ShadowRoot).querySelector('input[value="sam"]') as HTMLInputElement | null)?.click()
+      root.querySelector<HTMLInputElement>('input[value="sam"]')?.click()
       await picker.updateComplete
-      return { selectedIds: picker.selectedIds, count: (picker.shadowRoot as ShadowRoot).querySelector('.selection-count')?.textContent?.trim() }
+      return { selectedIds: picker.selectedIds, count: root.querySelector('.selection-count')?.textContent?.trim() }
     })
     expect(result).toEqual({ selectedIds: ['ana', 'sam'], count: '2 selected' })
   } finally {
