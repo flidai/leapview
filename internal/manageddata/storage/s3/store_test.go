@@ -86,6 +86,25 @@ func TestStoreCapturesAuthoritativePutResponseVersion(t *testing.T) {
 	}
 }
 
+func TestStoreVerifyExactRejectsProfileSubstitutionBeforeProviderIO(t *testing.T) {
+	client := newFakeClient()
+	store := newObservedStore(t, client, time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC))
+	body := []byte("versioned content")
+	stored, err := store.Put(t.Context(), blobFor(body), bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.headVersions, client.getVersions = nil, nil
+	observation := *stored.ProviderVersion
+	observation.Profile.AccountIdentity = "substituted-account"
+	if err := store.VerifyExact(t.Context(), observation); !errors.Is(err, storage.ErrObservationConflict) {
+		t.Fatalf("profile substitution error = %v, want observation conflict", err)
+	}
+	if len(client.headVersions) != 0 || len(client.getVersions) != 0 {
+		t.Fatalf("profile substitution contacted provider: head=%v get=%v", client.headVersions, client.getVersions)
+	}
+}
+
 func TestStorePersistsVerifiedWriteObservation(t *testing.T) {
 	client := newFakeClient()
 	recorder := &providerObservationRecorder{}
