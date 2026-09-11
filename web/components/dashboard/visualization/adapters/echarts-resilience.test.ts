@@ -20,7 +20,7 @@ function cartesian(dataZoom = true): VisualizationEnvelope {
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
       accessibility: { title: 'Sales', description: 'Sales over time' }, interactions: [],
       x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }],
-      presentation: { labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, dataZoom },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom, area: false, step: false },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:echarts-resilience', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:echarts-resilience', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [[null, null]], completeness: 'complete' }] },
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
@@ -170,7 +170,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
     setOption(option: Record<string, any>) { calls.push(option); current = { ...current, ...option } },
     getOption() { return current },
   }
-  const handle = new EChartsHandle({}, {}, chart as any, new CategoryColorRegistry())
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   const initial = cartesian(true)
   handle.mount(initial, defaultRendererContext)
   handle.resize(320, 240)
@@ -200,7 +200,7 @@ test('ECharts handle recomputes proportional cue geometry for every size change'
     id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
     rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
   }]
-  const handle = new EChartsHandle({}, {}, chart as any, new CategoryColorRegistry())
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   handle.mount(envelope, defaultRendererContext)
   handle.resize(320, 240)
   const first = calls.at(-1)!.series[0]

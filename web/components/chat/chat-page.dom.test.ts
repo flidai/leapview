@@ -80,7 +80,7 @@ for (const viewport of [
       await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-chat-page').evaluate((element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const composer = root.querySelector('lv-chat-composer') as any
         const thread = root.querySelector('lv-chat-thread') as any
         const threadRoot = thread?.shadowRoot
@@ -131,7 +131,7 @@ for (const viewport of [
       await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-chat-page').evaluate((element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
         const composer = root.querySelector('lv-chat-composer') as any
@@ -226,7 +226,7 @@ test('chat list page renders searchable conversation history', async () => {
     await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
     const initial = await page.locator('lv-chat-page').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const list = root.querySelector('lv-chat-list') as any
       const listRoot = list?.shadowRoot
       return {
@@ -292,17 +292,17 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', text: 'Inventory status Jan 3', optionsLabel: 'More options for Inventory status' })
 
     await page.locator('lv-chat-page').evaluate((element: any) => {
-      const input = element.shadowRoot.querySelector('lv-chat-list').shadowRoot.querySelector('.search') as HTMLInputElement
+      const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
       input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: 'inventory' }))
     })
     await page.locator('lv-chat-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-chat-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
       await list.updateComplete
     })
 
     const filteredRows = await page.locator('lv-chat-page').evaluate((element: any) => {
-      const root = element.shadowRoot.querySelector('lv-chat-list').shadowRoot
+      const root = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!
       return Array.from(root.querySelectorAll('tbody tr')).map((row: any) => ({
         href: row.querySelector('.primary-link')?.getAttribute('href'),
         text: row.textContent.replace(/\s+/g, ' ').trim(),

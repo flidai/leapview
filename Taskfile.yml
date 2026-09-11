@@ -252,6 +252,7 @@ tasks:
       - desktop:deps
     dir: desktop
     cmds:
+      - bun run typecheck:tests
       - bun run test
       - bun run build
 
@@ -331,6 +332,7 @@ tasks:
       - bun run test:app-shell
       - bun run typecheck:app
       - bun run typecheck:contracts
+      - bun run typecheck:tests
       - bun run test:production-assets
       - bun run test:movielens-performance-harness
       - bun run test:viewport-qualification-harness
@@ -1420,6 +1422,12 @@ tasks:
       - task: db:check
       - task: apigen:test
       - task: test:go:prepared
+      # Keep the documented local contract aligned with the quality checks
+      # enforced by the hosted package lane without invoking that lane twice.
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - task: quality:critical:coverage
 
   odcs:oracle:
     desc: Validate ODCS 3.1 golden exports with the pinned independent CI-only CLI

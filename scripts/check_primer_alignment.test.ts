@@ -208,7 +208,7 @@ describe("checkPrimerAlignment", () => {
       );
 
       const violations = await checkPrimerAlignment({root: workspace});
-      expect(violations.map(violation => violation.kind).sort()).toEqual([
+      expect(violations.map(violation => violation.kind).sort() as string[]).toEqual([
         "asset-token",
         "standard-state-color-mix",
         "standard-state-color-mix",

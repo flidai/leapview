@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/config/spec"
-	"github.com/flidai/leapview/internal/app/tools/internal/sharedassets"
+	"github.com/flidai/leapview/internal/app/tools/internal/bootstrap"
 )
 
 const (
@@ -55,97 +55,51 @@ func main() {
 }
 
 func run(client *http.Client, out string) error {
-	return runWithForce(client, out, truthy(os.Getenv(configspec.EnvLEAPVIEW_BOOTSTRAP_FORCE)))
+	return runWithForce(client, out, bootstrap.Truthy(os.Getenv(configspec.EnvLEAPVIEW_BOOTSTRAP_FORCE)))
 }
 
 func runWithForce(client *http.Client, out string, force bool) error {
-	target, err := targetDir(out)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		return fmt.Errorf("create data directory %s: %w", target, err)
-	}
-
-	missing := missingCSVs(target)
-	if len(missing) == 0 && !force {
-		fmt.Printf("Olist CSVs already available in %s\n", target)
-		return nil
-	}
-
-	cacheDir, err := cacheDir()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		return fmt.Errorf("create bootstrap cache %s: %w", cacheDir, err)
-	}
-
-	archivePath := filepath.Join(cacheDir, archiveName)
-	if force || !fileExists(archivePath) {
-		if err := downloadArchive(client, archivePath); err != nil {
-			return err
-		}
-	}
-	if err := verifyArchiveDigest(archivePath, archiveDigest); err != nil {
-		return err
-	}
-
-	copied, err := extractExpectedCSVs(archivePath, target)
-	if err != nil {
-		return err
-	}
-
-	if len(missing) > 0 {
-		fmt.Printf("Missing CSVs: %s\n", strings.Join(missing, ", "))
-	}
-	if force {
-		fmt.Println("Force refresh requested")
-	}
-	fmt.Printf("Bootstrapped %s version %s\n", datasetHandle, datasetVersion)
-	fmt.Printf("Source archive: %s\n", archivePath)
-	fmt.Printf("Copied %d CSV files to %s\n", copied, target)
-	return nil
+	return bootstrap.Run(bootstrap.Options{
+		Client:         client,
+		Out:            out,
+		Name:           datasetHandle + " version " + datasetVersion,
+		ArchiveName:    archiveName,
+		DownloadURL:    downloadURL,
+		DownloadLabel:  "Olist dataset",
+		CacheName:      "olist",
+		AlreadyMessage: "Olist CSVs already available",
+		MissingLabel:   "CSVs",
+		FileLabel:      "CSV files",
+		Force:          force,
+		Missing:        missingCSVs,
+		Extract:        extractExpectedCSVs,
+		VerifyArchive: func(archivePath string) error {
+			return verifyArchiveDigest(archivePath, archiveDigest)
+		},
+	})
 }
 
 func runShared(client *http.Client, out string) error {
-	target, err := targetDir(out)
-	if err != nil {
-		return err
-	}
-	root, err := sharedassets.CacheRoot(os.Getenv(configspec.EnvLEAPVIEW_DEV_ASSET_CACHE_DIR))
-	if err != nil {
-		return err
-	}
-	shared := filepath.Join(root, "datasets", "olist", "v"+datasetVersion+"-"+archiveDigest)
-	ready := func(directory string) error {
-		missing := missingCSVs(directory)
-		if len(missing) > 0 {
-			return fmt.Errorf("missing Olist CSVs: %s", strings.Join(missing, ", "))
-		}
-		return nil
-	}
-	hadReadyAssets := ready(shared) == nil
-	if info, statErr := os.Lstat(target); statErr == nil && info.IsDir() && ready(target) == nil {
-		hadReadyAssets = true
-	}
-	if err := sharedassets.Ensure(sharedassets.Options{
-		Local:  target,
-		Shared: shared,
-		Ready:  ready,
+	return bootstrap.RunShared(bootstrap.SharedOptions{
+		Out:       out,
+		CacheName: filepath.Join("olist", "v"+datasetVersion+"-"+archiveDigest),
+		Name:      "Olist",
+		Force:     bootstrap.Truthy(os.Getenv(configspec.EnvLEAPVIEW_BOOTSTRAP_FORCE)),
+		Ready: func(directory string) error {
+			missing := missingCSVs(directory)
+			if len(missing) > 0 {
+				return fmt.Errorf("missing Olist CSVs: %s", strings.Join(missing, ", "))
+			}
+			return nil
+		},
 		Populate: func(directory string) error {
 			return runWithForce(client, directory, false)
 		},
-	}); err != nil {
-		return err
-	}
-	if truthy(os.Getenv(configspec.EnvLEAPVIEW_BOOTSTRAP_FORCE)) && hadReadyAssets {
-		if err := runWithForce(client, target, true); err != nil {
-			return err
-		}
-	}
-	fmt.Printf("Using shared Olist assets at %s (linked from %s)\n", shared, target)
-	return nil
+		Refresh: func(directory string) error {
+			return runWithForce(client, directory, true)
+		},
+		CacheRoot: os.Getenv(configspec.EnvLEAPVIEW_DEV_ASSET_CACHE_DIR),
+	})
 }
 
 func verifyArchiveDigest(archivePath, expected string) error {
@@ -166,91 +120,14 @@ func verifyArchiveDigest(archivePath, expected string) error {
 	return nil
 }
 
-func targetDir(out string) (string, error) {
-	if strings.TrimSpace(out) == "" {
-		return "", fmt.Errorf("out is required")
-	}
-	abs, err := filepath.Abs(out)
-	if err != nil {
-		return "", fmt.Errorf("resolve output directory %s: %w", out, err)
-	}
-	return abs, nil
-}
-
-func cacheDir() (string, error) {
-	if dir := os.Getenv(configspec.EnvLEAPVIEW_BOOTSTRAP_CACHE_DIR); dir != "" {
-		return filepath.Abs(dir)
-	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("find user cache directory: %w", err)
-	}
-	return filepath.Join(base, "leapview", "olist"), nil
-}
-
 func missingCSVs(target string) []string {
 	var missing []string
 	for _, filename := range expectedCSVs {
-		if !fileExists(filepath.Join(target, filename)) {
+		if !bootstrap.FileExists(filepath.Join(target, filename)) {
 			missing = append(missing, filename)
 		}
 	}
 	return missing
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
-}
-
-func truthy(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
-}
-
-func downloadArchive(client *http.Client, archivePath string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary archive: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
-	if err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("create Kaggle request: %w", err)
-	}
-	req.Header.Set("User-Agent", "LeapView bootstrap")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("download Olist dataset: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		_ = tmp.Close()
-		return fmt.Errorf("download Olist dataset: %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write Olist archive: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close Olist archive: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, archivePath); err != nil {
-		return fmt.Errorf("store Olist archive at %s: %w", archivePath, err)
-	}
-	return nil
 }
 
 func extractExpectedCSVs(archivePath, target string) (int, error) {
@@ -271,7 +148,7 @@ func extractExpectedCSVs(archivePath, target string) (int, error) {
 		if _, ok := remaining[name]; !ok || file.FileInfo().IsDir() {
 			continue
 		}
-		if err := extractZipFile(file, filepath.Join(target, name)); err != nil {
+		if err := bootstrap.ExtractZipFile(file, filepath.Join(target, name), "Olist"); err != nil {
 			return copied, err
 		}
 		delete(remaining, name)
@@ -288,31 +165,4 @@ func extractExpectedCSVs(archivePath, target string) (int, error) {
 		return copied, fmt.Errorf("expected CSVs missing from downloaded dataset: %s", strings.Join(missing, ", "))
 	}
 	return copied, nil
-}
-
-func extractZipFile(file *zip.File, destination string) error {
-	source, err := file.Open()
-	if err != nil {
-		return fmt.Errorf("open %s from Olist archive: %w", file.Name, err)
-	}
-	defer source.Close()
-
-	tmp, err := os.CreateTemp(filepath.Dir(destination), filepath.Base(destination)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temporary CSV %s: %w", destination, err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := io.Copy(tmp, source); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("copy %s from Olist archive: %w", file.Name, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temporary CSV %s: %w", destination, err)
-	}
-	if err := os.Rename(tmpPath, destination); err != nil {
-		return fmt.Errorf("store CSV %s: %w", destination, err)
-	}
-	return nil
 }

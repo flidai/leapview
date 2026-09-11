@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import * as echarts from 'echarts'
 
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { InlineVisualizationDataState, VisualizationEnvelope, VisualizationLabelPolicy } from '../../../../generated/visualization'
 import { Change, defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echartsUpdatePlan, interactionCommandForRow, legendSelectionCommand, normalizeRendererLocale, removeEChartsRendererFrame, waitForEChartsFrame } from './echarts'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
@@ -29,13 +29,14 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
   const policy = {
     density: 'automatic', priority: ['selected', 'threshold'],
     maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
-  } as const
+  } satisfies VisualizationLabelPolicy
   const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
 
   expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
   expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
-  expect(translated.labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
-  expect(translated.labelLayout({ dataIndex: 99 }).hideOverlap).toBe(true)
+  const layout = (dataIndex: number) => typeof translated.labelLayout === 'function' ? translated.labelLayout({ dataIndex }) : translated.labelLayout
+  expect(layout(0).hideOverlap).toBe(false)
+  expect(layout(99).hideOverlap).toBe(true)
   expect(truncateVisualizationLabel('ação 😀 norte', 7, 'pt-BR')).toBe('ação 😀…')
 
   const dense = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'dense', minimumSpacing: 2 }, () => 'value', defaultRendererContext)
@@ -45,10 +46,10 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
   const hidden = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'hidden' }, () => 'value', defaultRendererContext)
   expect(hidden.label.show).toBe(false)
   envelope.spec.presentation.labelPolicy = { ...policy, density: 'hidden' }
-  envelope.dataState.datasets[0].rows[0][0] = 'São Paulo 😀 zone'
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows[0][0] = 'São Paulo 😀 zone'
   const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
   expect(hiddenOption.tooltip.confine).toBe(true)
-  expect(hiddenOption.tooltip.formatter({ value: envelope.dataState.datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
+  expect(hiddenOption.tooltip.formatter({ value: (envelope.dataState as InlineVisualizationDataState).datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
   expect(hiddenOption.aria.description).toContain('label: São Paulo 😀 zone')
 })
 
@@ -87,7 +88,7 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
       rows: [['o-1', 'Consumer', 2, 80, 1], ['o-2', 'Corporate', 7, 240, 5]], completeness: 'complete',
     }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.xAxis.type).toBe('value')
@@ -103,23 +104,24 @@ test('ECharts renders governed bivariate points, bubbles, labels, color, and sta
   expect(option.brush.toolbox).toEqual(['rect', 'polygon'])
   expect(option.tooltip.formatter({ value: ['o-1', 'Consumer', 2, 80, 1] })).toBe('Segment: Consumer<br>Revenue: 80')
 
-  envelope.spec.color = { dataset: 'primary', field: 'revenue' }
-  envelope.spec.colorScale = { kind: 'quantitative' }
+  const pointSpec = envelope.spec as Extract<VisualizationEnvelope['spec'], { kind: 'point' }>
+  pointSpec.color = { dataset: 'primary', field: 'revenue' }
+  pointSpec.colorScale = { kind: 'quantitative' }
   const quantitative = echartsOption(envelope, defaultRendererContext) as any
   expect(quantitative.visualMap).toMatchObject({ type: 'continuous', dimension: 'revenue', min: 80, max: 240 })
 
-  envelope.spec.x = { dataset: 'primary', field: 'purchase_time' }
-  envelope.spec.datasets[0].fields.push({ id: 'purchase_time', role: 'temporal', dataType: 'temporal', nullable: false, label: 'Purchase time' })
-  envelope.dataState.datasets[0].columns.push('purchase_time')
-  envelope.dataState.datasets[0].rows[0].push(Date.UTC(2026, 0, 2))
-  envelope.dataState.datasets[0].rows[1].push(Date.UTC(2026, 1, 3))
+  pointSpec.x = { dataset: 'primary', field: 'purchase_time' }
+  pointSpec.datasets[0].fields.push({ id: 'purchase_time', role: 'dimension', dataType: 'temporal', nullable: false, label: 'Purchase time' })
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].columns.push('purchase_time')
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows[0].push(Date.UTC(2026, 0, 2))
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows[1].push(Date.UTC(2026, 1, 3))
   const temporal = echartsOption(envelope, defaultRendererContext) as any
   expect(temporal.xAxis.type).toBe('time')
   expect(temporal.xAxis.splitNumber).toBe(6)
   expect(temporal.xAxis.axisLabel.hideOverlap).toBe(true)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).toMatch(/2026/)
   expect(temporal.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 2))).not.toContain('1767')
-  envelope.spec.axes = [{
+  pointSpec.axes = [{
     id: 'x', type: 'time', inversion: 'inverted', ticks: 'visible', grid: 'hidden', labelRotation: 'vertical', dateUnit: 'month',
     scale: 'automatic', zero: 'automatic', tickDensity: 'normal',
   }, {
@@ -152,7 +154,7 @@ test('ECharts formats Cartesian temporal axis ticks as UTC dates and preserves r
   const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
   category.dataType = 'date'
   category.format = { kind: 'temporal', dateStyle: 'short' }
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     ['2016-12-23', 19.62],
     ['2017-01-05', 27.4],
   ]
@@ -177,7 +179,7 @@ test('ECharts heatmap axis labels preserve governed temporal and null category f
   category.nullable = true
   category.format = { kind: 'temporal', dateStyle: 'short' }
   envelope.spec.presentation.dataZoom = true
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     ['2026-01-02', 'R1', 1],
     [null, 'R2', 2],
   ]
@@ -230,7 +232,7 @@ test('ECharts translation uses dataset and encode without native option passthro
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue'], rows: [['Jan', 10]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope) as any
   expect(option.dataset.source).toEqual([['month', 'revenue'], ['Jan', 10]])
@@ -258,7 +260,7 @@ test('ECharts interactions translate stable IR field mappings without renderer r
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 7, generation: 2, columns: ['status', 'count'], rows: [['delivered', 42]], completeness: 'complete' },
     ] },
     selection: [{ datum: { dataset: 'primary', dataRevision: 7, identity: { status: 'delivered' } }, label: 'Delivered' }], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(interactionCommandForRow(envelope, 'primary', ['delivered', 42])).toEqual({
     sourceKind: 'visual', sourceId: 'orders', interactionKind: 'point_selection', action: 'set', toggle: true,
@@ -331,7 +333,7 @@ test('ECharts translation preserves combo series marks and axes', () => {
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'series', 'value'], rows: [['Jan', 'Revenue', 10], ['Jan', 'Orders', 2]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(base) as any
   const renderedSeries = option.series.filter((series: any) => !series.silent)
@@ -360,7 +362,7 @@ test('ECharts translation preserves combo series marks and axes', () => {
   expect(horizontalSeries.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
   expect(horizontalSeries[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
-  reordered.dataState.datasets[0].rows.reverse()
+  ;(reordered.dataState as InlineVisualizationDataState).datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any
   expect(new Set(reorderedOption.series.filter((series: any) => !series.silent).map((series: any) => series.id))).toEqual(new Set(renderedSeries.map((series: any) => series.id)))
   expect(new Set(reorderedOption.dataset.map((dataset: any) => dataset.id))).toEqual(new Set(option.dataset.map((dataset: any) => dataset.id)))
@@ -387,7 +389,7 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue', 'order_count'], rows: [['Jan', 10, 2], ['Feb', 12, 3]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series.map((series: any) => [series.name, series.type, series.yAxisIndex])).toEqual([
@@ -439,7 +441,7 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
   const temporalSecondary = structuredClone(envelope) as any
   temporalSecondary.spec.datasets[0].fields[2].dataType = 'temporal'
   temporalSecondary.spec.datasets[0].fields[2].format = { kind: 'temporal', dateStyle: 'short' }
-  temporalSecondary.dataState.datasets[0].rows = [['Jan', 10, '2026-01-01T00:00:00Z'], ['Feb', 12, '2026-02-01T00:00:00Z']]
+  ;(temporalSecondary.dataState as InlineVisualizationDataState).datasets[0].rows = [['Jan', 10, '2026-01-01T00:00:00Z'], ['Feb', 12, '2026-02-01T00:00:00Z']]
   temporalSecondary.spec.axes = [{
     id: 'secondary_y', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'inverted',
     tickDensity: 'sparse', ticks: 'visible', grid: 'hidden', labelRotation: 'diagonal', dateUnit: 'month',
@@ -477,7 +479,7 @@ test('ECharts scopes multi-measure combo axes and colors by authored measure', (
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue', 'delivery_days'], rows: [['Jan', 10, 4], ['Feb', 12, 5]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.yAxis[0].axisLabel.formatter(1000)).toBe('$1,000')
@@ -558,7 +560,7 @@ test('ECharts uses stable IDs, contractual formatting, and resolved theme colors
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['month', 'revenue'], rows: [['Jan', 1234.5]], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const context = {
     ...defaultRendererContext,
     locale: 'pt-BR' as const,
@@ -596,7 +598,7 @@ test('ECharts constructs deterministic nested hierarchy data and honors layout p
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['node', 'parent', 'value'], rows: [['root', null, 10], ['child', 'root', 4]], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].id).toBe('series:hierarchy:tree')
   expect(option.series[0].orient).toBe('LR')
@@ -608,7 +610,7 @@ test('ECharts constructs deterministic nested hierarchy data and honors layout p
 
 test('ECharts hierarchy keeps null display labels separate from typed node identity', () => {
   const envelope = hierarchyFixture('tree') as any
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     [null, null, 10], ['—', null, 9], [1, null, 8], ['1', null, 7],
   ]
   const option = echartsOption(envelope, defaultRendererContext) as any
@@ -629,14 +631,14 @@ test('ECharts hierarchy source nodes select only when their compiled identity tu
       { source: { dataset: 'primary', field: 'status' }, targetFieldID: 'orders.status' },
     ],
   }]
-  envelope.dataState.datasets[0].columns = ['node', 'parent', 'value', 'category', 'status']
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].columns = ['node', 'parent', 'value', 'category', 'status']
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     ['A', null, 10, 'A', null],
     ['delivered', 'A', 4, 'A', 'delivered'],
   ]
 
-  expect(interactionCommandForRow(envelope, 'primary', envelope.dataState.datasets[0].rows[0])).toBeUndefined()
-  expect(interactionCommandForRow(envelope, 'primary', envelope.dataState.datasets[0].rows[1])).toMatchObject({
+  expect(interactionCommandForRow(envelope, 'primary', (envelope.dataState as InlineVisualizationDataState).datasets[0].rows[0])).toBeUndefined()
+  expect(interactionCommandForRow(envelope, 'primary', (envelope.dataState as InlineVisualizationDataState).datasets[0].rows[1])).toMatchObject({
     sourceId: 'treemap', action: 'set', mappings: [
       { field: 'orders.category', value: 'A' },
       { field: 'orders.status', value: 'delivered' },
@@ -667,7 +669,7 @@ test('ECharts network links retain source-row selection while aggregate nodes st
 
 test('ECharts network node identities keep numeric and string endpoints distinct', () => {
   const envelope = networkFixture('graph') as any
-  envelope.dataState.datasets[0].rows = [[1, '1', 4], ['1', 1, 3]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [[1, '1', 4], ['1', 1, 3]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].links.map((link: any) => [link.source, link.target])).toEqual([
     ['number:1', 'string:1'], ['string:1', 'number:1'],
@@ -732,10 +734,10 @@ test('ECharts highlight plans replace series and refresh ARIA for apply and clea
 
 test('ECharts completeness ARIA prioritizes partial or truncated empty frames', () => {
   const partial = cartesianFixture('line') as any
-  partial.dataState.datasets[0].rows = []
-  partial.dataState.datasets[0].completeness = 'partial'
+  ;(partial.dataState as InlineVisualizationDataState).datasets[0].rows = []
+  ;(partial.dataState as InlineVisualizationDataState).datasets[0].completeness = 'partial'
   const truncated = structuredClone(partial)
-  truncated.dataState.datasets[0].completeness = 'truncated'
+  ;(truncated.dataState as InlineVisualizationDataState).datasets[0].completeness = 'truncated'
   expect(completenessAccessibilitySummary(partial)).toBe('Data is partial; 0 rows are currently available.')
   expect(completenessAccessibilitySummary(truncated)).toBe('Data is truncated; showing 0 rows.')
   expect((echartsOption(partial, defaultRendererContext) as any).aria.description.indexOf('Data is partial')).toBeGreaterThanOrEqual(0)
@@ -831,7 +833,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   const heatmapEnvelope = cartesianFixture('heatmap', ['label', 'row', 'value']) as any
   heatmapEnvelope.spec.presentation.displayUnits = 'none'
   heatmapEnvelope.spec.presentation.dataZoom = true
-  heatmapEnvelope.dataState.datasets[0].rows = [['A', 'R1', 1], ['B', 'R1', 1234]]
+  ;(heatmapEnvelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', 1], ['B', 'R1', 1234]]
   const heatmap = echartsOption(heatmapEnvelope, defaultRendererContext) as any
   expect(heatmap.series[0]).toMatchObject({ id: 'series:primary:heatmap', type: 'heatmap', encode: { x: 'label', y: 'row', value: 'value' } })
   expect(heatmap.visualMap).toMatchObject({
@@ -869,7 +871,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect((echartsOption(explicitRotation, defaultRendererContext) as any).xAxis.axisLabel.rotate).toBe(90)
 
   const emptyHeatmapEnvelope = structuredClone(heatmapEnvelope)
-  emptyHeatmapEnvelope.dataState.datasets[0].rows = []
+  ;(emptyHeatmapEnvelope.dataState as InlineVisualizationDataState).datasets[0].rows = []
   const emptyHeatmap = echartsOption(emptyHeatmapEnvelope, defaultRendererContext) as any
   expect(emptyHeatmap.dataZoom).toEqual([])
   expect(emptyHeatmap.grid.bottom).toBe(64)
@@ -882,14 +884,14 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(resetHeatmap.settings.replaceMerge).toContain('grid')
 
   const nonPositiveHeatmap = structuredClone(heatmapEnvelope)
-  nonPositiveHeatmap.dataState.datasets[0].rows = [['A', 'R1', -1234], ['B', 'R1', -1]]
+  ;(nonPositiveHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', -1234], ['B', 'R1', -1]]
   const nonPositiveOption = echartsOption(nonPositiveHeatmap, defaultRendererContext) as any
   expect(nonPositiveOption.visualMap).toMatchObject({ min: -1234, max: 0 })
   expect(nonPositiveOption.visualMap.text).toBeUndefined()
   expect(nonPositiveOption.visualMap.formatter(-1234)).toBe('-1,234')
 
   const mixedSignHeatmap = structuredClone(heatmapEnvelope)
-  mixedSignHeatmap.dataState.datasets[0].rows = [['A', 'R1', -1], ['B', 'R1', 1234]]
+  ;(mixedSignHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', -1], ['B', 'R1', 1234]]
   const mixedSignOption = echartsOption(mixedSignHeatmap, defaultRendererContext) as any
   expect(mixedSignOption.visualMap).toMatchObject({ min: -1, max: 1234 })
   expect(mixedSignOption.visualMap.text).toBeUndefined()
@@ -898,7 +900,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   const numericHeatmap = structuredClone(heatmapEnvelope)
   numericHeatmap.spec.presentation.dataZoom = true
   numericHeatmap.spec.datasets[0].fields[0].dataType = 'integer'
-  numericHeatmap.dataState.datasets[0].rows = [[100, 'R1', 1], [20, 'R2', 2]]
+  ;(numericHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [[100, 'R1', 1], [20, 'R2', 2]]
   const numericOption = echartsOption(numericHeatmap, defaultRendererContext) as any
   expect(numericOption.xAxis.data).toBeUndefined()
   expect(numericOption.dataZoom[0]).toMatchObject({ startValue: 0, endValue: 1 })
@@ -906,7 +908,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   try {
     numericChart.setOption(numericOption)
     numericChart.renderToSVGString()
-    const model = numericChart.getModel()
+    const model = (numericChart as unknown as { getModel: () => { getComponent: (id: string) => { axis: { scale: { getOrdinalMeta: () => { categories: unknown[] } } } }; getSeriesByIndex: (index: number) => { getData: () => { count: () => number } } } }).getModel()
     expect(model.getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([100, 20])
     expect(model.getSeriesByIndex(0).getData().count()).toBe(2)
   } finally {
@@ -914,14 +916,14 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   }
 
   const decimalStringHeatmap = structuredClone(heatmapEnvelope)
-  decimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '100'], ['B', 'R2', '300']]
+  ;(decimalStringHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', '100'], ['B', 'R2', '300']]
   const decimalStringOption = echartsOption(decimalStringHeatmap, defaultRendererContext) as any
   expect(decimalStringOption.visualMap).toMatchObject({ min: 0, max: 300 })
   const mixedDecimalStringHeatmap = structuredClone(decimalStringHeatmap)
-  mixedDecimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '300']]
+  ;(mixedDecimalStringHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '300']]
   expect((echartsOption(mixedDecimalStringHeatmap, defaultRendererContext) as any).visualMap).toMatchObject({ min: -100, max: 300 })
   const negativeDecimalStringHeatmap = structuredClone(decimalStringHeatmap)
-  negativeDecimalStringHeatmap.dataState.datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '-20']]
+  ;(negativeDecimalStringHeatmap.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 'R1', '-100'], ['B', 'R2', '-20']]
   expect((echartsOption(negativeDecimalStringHeatmap, defaultRendererContext) as any).visualMap).toMatchObject({ min: -100, max: 0 })
   const boxplot = echartsOption(cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']), defaultRendererContext) as any
   expect(boxplot.xAxis.data).toEqual(['A'])
@@ -935,7 +937,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
 
   const orderedBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
   orderedBoxplot.spec.presentation.dataZoom = false
-  orderedBoxplot.dataState.datasets[0].rows = [
+  ;(orderedBoxplot.dataState as InlineVisualizationDataState).datasets[0].rows = [
     ['Later', 10, 11, 12, 13, 14],
     ['Earlier', 1, 2, 3, 4, 5],
     ['Middle', 5, 6, 7, 8, 9],
@@ -948,7 +950,7 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(orderedOption.grid.bottom).toBe(44)
 
   const incompleteBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
-  incompleteBoxplot.dataState.datasets[0].rows[0][3] = ''
+  ;(incompleteBoxplot.dataState as InlineVisualizationDataState).datasets[0].rows[0][3] = ''
   const incompleteOption = echartsOption(incompleteBoxplot, defaultRendererContext) as any
   expect(incompleteOption.series[0].data).toEqual([])
   expect(incompleteOption.graphic[0].style.text).toBe('No complete distribution data')
@@ -984,7 +986,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   ])
   const sankeyEnvelope = networkFixture('sankey') as any
   sankeyEnvelope.spec.presentation.orientation = 'horizontal'
-  sankeyEnvelope.dataState.datasets[0].rows = [['Same', 'Same', 4], ['', 'Target', 2], ['Source', 'Target', 0]]
+  ;(sankeyEnvelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['Same', 'Same', 4], ['', 'Target', 2], ['Source', 'Target', 0]]
   const sankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
   expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
   expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45, curveness: 0.3 })
@@ -1000,7 +1002,7 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(defaultLayoutSankey.series[0]).not.toHaveProperty('nodeGap')
   expect(defaultLayoutSankey.series[0].lineStyle).not.toHaveProperty('curveness')
 
-  sankeyEnvelope.dataState.datasets[0].rows = [['', 'Target', 2]]
+  ;(sankeyEnvelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['', 'Target', 2]]
   const emptySankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
   expect(emptySankey.series[0].links).toEqual([])
   expect(emptySankey.graphic[0].style.text).toBe('No flow data')
@@ -1050,7 +1052,7 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
   const envelope = proportionalFixture('donut') as any
   envelope.spec.presentation.centerLabel = undefined
   envelope.spec.presentation.legend = 'bottom'
-  envelope.dataState.datasets[0].rows = Array.from({ length: 18 }, (_, index) => [`Category ${index + 1}`, index + 1])
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = Array.from({ length: 18 }, (_, index) => [`Category ${index + 1}`, index + 1])
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.dataset.source).toHaveLength(19)
@@ -1077,7 +1079,7 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
   expect(option.aria.description).toContain('donut')
   expect(proportionalCenterText(envelope, defaultRendererContext, ['Category 1', 1])).toBe('{centerValue|1}\n{centerLabel|Category 1}')
 
-  envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.slice(0, 2)
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = (envelope.dataState as InlineVisualizationDataState).datasets[0].rows.slice(0, 2)
   const filtered = echartsOption(envelope, defaultRendererContext) as any
   const update = echartsUpdatePlan(Change.Data, filtered)
   expect(update.option.graphic[0].style.text).toBe('{centerValue|3}\n{centerLabel|Total}')
@@ -1087,7 +1089,7 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
 test('ECharts preserves proportional category colors when filtering changes row order', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
-  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
 
   const categoryColors = new CategoryColorRegistry()
   const initial = echartsOption(envelope, defaultRendererContext, categoryColors) as any
@@ -1097,7 +1099,7 @@ test('ECharts preserves proportional category colors when filtering changes row 
   expect(delivered).not.toBe(shipped)
 
   const filtered = structuredClone(envelope)
-  filtered.dataState.datasets[0].rows = [['shipped', 8], ['canceled', 2]]
+  ;(filtered.dataState as InlineVisualizationDataState).datasets[0].rows = [['shipped', 8], ['canceled', 2]]
   const filteredColor = (echartsOption(filtered, defaultRendererContext, categoryColors) as any).series[0].itemStyle.color
   expect(filteredColor({ value: ['shipped', 8] })).toBe(shipped)
 
@@ -1107,7 +1109,7 @@ test('ECharts preserves proportional category colors when filtering changes row 
   expect(siblingColor({ value: ['shipped', 8] })).toBe(shipped)
 
   const reordered = structuredClone(envelope)
-  reordered.dataState.datasets[0].rows.reverse()
+  ;(reordered.dataState as InlineVisualizationDataState).datasets[0].rows.reverse()
   const reorderedColor = (echartsOption(reordered, defaultRendererContext, categoryColors) as any).series[0].itemStyle.color
   expect(reorderedColor({ value: ['delivered', 90] })).toBe(delivered)
   expect(reorderedColor({ value: ['shipped', 8] })).toBe(shipped)
@@ -1116,7 +1118,7 @@ test('ECharts preserves proportional category colors when filtering changes row 
 
 test('ECharts honors governed proportional category colors across filtering', () => {
   const envelope = proportionalFixture('donut') as any
-  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2], ['unavailable', 1]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2], ['unavailable', 1]]
   envelope.spec.conditionalFormatting = [{
     id: 'status-colors', target: 'series_color', field: { dataset: 'primary', field: 'value' },
     rule: {
@@ -1138,7 +1140,7 @@ test('ECharts honors governed proportional category colors across filtering', ()
   expect(color({ value: ['canceled', 2] })).toBe(defaultRendererContext.colors.data[2])
   expect(color({ value: ['unavailable', 1] })).toBe(defaultRendererContext.colors.data[3])
 
-  envelope.dataState.datasets[0].rows = [['shipped', 8]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['shipped', 8]]
   const filteredColor = (echartsOption(envelope, defaultRendererContext) as any).series[0].itemStyle.color
   expect(filteredColor({ value: ['shipped', 8] })).toBe(defaultRendererContext.colors.data[1])
 })
@@ -1146,9 +1148,9 @@ test('ECharts honors governed proportional category colors across filtering', ()
 test('ECharts category colors do not depend on fresh-load query completion order', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
-  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
   const reordered = structuredClone(envelope)
-  reordered.dataState.datasets[0].rows.reverse()
+  ;(reordered.dataState as InlineVisualizationDataState).datasets[0].rows.reverse()
 
   const firstRegistry = new CategoryColorRegistry()
   const firstColor = (echartsOption(envelope, defaultRendererContext, firstRegistry) as any).series[0].itemStyle.color
@@ -1184,7 +1186,7 @@ test('ECharts proportional legends keep raw item names while formatting display 
       source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
     }],
   }]
-  envelope.dataState.datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['—', 1], [null, 2], ['null', 3]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend.data).toEqual([{ name: '—' }, { name: 'null [null:]' }, { name: 'null [string:null]' }])
   expect(option.legend.formatter('—')).toBe('— [string:—]')
@@ -1203,7 +1205,7 @@ test('ECharts proportional legends preserve numeric and string category identiti
       source: { dataset: 'primary', field: 'label' }, targetFieldID: 'orders.status', targetDatasetID: 'orders',
     }],
   }]
-  envelope.dataState.datasets[0].rows = [[1, 1], ['1', 2]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [[1, 1], ['1', 2]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend.data).toEqual([{ name: '1 [number:1]' }, { name: '1 [string:1]' }])
   expect(option.series[0].data.map((entry: any) => [entry.name, entry.value[0]])).toEqual([
@@ -1215,7 +1217,7 @@ test('ECharts proportional legends preserve numeric and string category identiti
 
 test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
   const envelope = hierarchyFixture('tree') as any
-  envelope.dataState.datasets[0].rows = [['A', null, 10], ['A child', 'A', 4], ['B', null, 8], ['B child', 'B', 3]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', null, 10], ['A child', 'A', 4], ['B', null, 8], ['B child', 'B', 3]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].data).toHaveLength(1)
   expect(option.series[0].data[0]).toMatchObject({
@@ -1227,7 +1229,7 @@ test('ECharts wraps a hierarchy forest so every tree root is rendered', () => {
 
 test('ECharts scopes repeated hierarchy labels to their compiled parent path', () => {
   const envelope = hierarchyFixture('tree') as any
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     ['Books', null, 6],
     ['Electronics', null, 5],
     ['BA', 'Books', 2],
@@ -1252,7 +1254,7 @@ test('ECharts hierarchy treats a raw unit-separator node as one typed identity',
   // Go emits the escaped canonical identity as the child's parent.  The raw
   // display value itself is not a canonical parent path.
   const canonicalRoot = 'A\u001f\u001fB'
-  envelope.dataState.datasets[0].rows = [[raw, null, 10], ['child', canonicalRoot, 4]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [[raw, null, 10], ['child', canonicalRoot, 4]]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].data[0]).toMatchObject({ name: raw, children: [{ name: 'child' }] })
 })
@@ -1260,7 +1262,7 @@ test('ECharts hierarchy treats a raw unit-separator node as one typed identity',
 test('ECharts hierarchy resolves canonical paths before typed root labels', () => {
   const envelope = hierarchyFixture('tree') as any
   const separator = '\u001f'
-  envelope.dataState.datasets[0].rows = [
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [
     [`A${separator}B`, null, 10],
     ['A', null, 9],
     ['B', 'A', 8],
@@ -1295,23 +1297,24 @@ test('ECharts formats gauges, applies semantic thresholds, and renders status st
   expect(option.series[0].axisLine.lineStyle.color).toEqual([[0.5, defaultRendererContext.colors.attention], [0.8, defaultRendererContext.colors.danger]])
   expect(option.series[0].detail.formatter(0.75)).toBe('75%')
 
-  envelope.spec.presentation.showPointer = false
-  envelope.spec.presentation.minimum = 0
-  envelope.spec.presentation.maximum = 1
-  envelope.spec.presentation.target = 0
-  envelope.spec.presentation.thresholds = [{ value: 0, tone: 'success' }, { value: 1, tone: 'danger' }]
-  envelope.dataState.datasets[0].rows = [['0']]
+  const gaugePresentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation']
+  gaugePresentation.showPointer = false
+  gaugePresentation.minimum = 0
+  gaugePresentation.maximum = 1
+  gaugePresentation.target = 0
+  gaugePresentation.thresholds = [{ value: 0, tone: 'success' }, { value: 1, tone: 'danger' }]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['0']]
   const bounded = echartsOption(envelope, defaultRendererContext) as any
   expect(bounded.series[0]).toMatchObject({ min: 0, max: 1, pointer: { show: false }, data: [{ value: '0' }] })
   expect(bounded.series[0].axisLine.lineStyle.color).toEqual([[0, defaultRendererContext.colors.success], [1, defaultRendererContext.colors.danger]])
   expect(bounded.series[1].data[0]).toMatchObject({ value: 0, name: 'Target 0%' })
 
-  envelope.dataState.datasets[0].rows = [['1']]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['1']]
   const upperBoundary = echartsOption(envelope, defaultRendererContext) as any
   expect(upperBoundary.series[0]).toMatchObject({ min: 0, max: 1, data: [{ value: '1' }] })
   expect(upperBoundary.graphic).toBeUndefined()
 
-  const noData = { ...cartesianFixture('line'), status: { kind: 'no_data', message: 'No matching rows' } } as VisualizationEnvelope
+  const noData = { ...cartesianFixture('line'), status: { kind: 'no_data', message: 'No matching rows' } } as unknown as VisualizationEnvelope
   const statusOption = echartsOption(noData, defaultRendererContext) as any
   expect(statusOption.graphic[0]).toMatchObject({ type: 'text', style: { text: 'No matching rows' } })
 })
@@ -1350,7 +1353,7 @@ test('ECharts renders an explicit labeled target independently from the metricd 
 
 test('ECharts renders a visible diagnostic instead of clipping an out-of-domain gauge value', () => {
   const envelope = gaugeFixture() as any
-  envelope.dataState.datasets[0].rows = [['1.2']]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0].rows = [['1.2']]
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series).toEqual([])
   expect(option.graphic[0].style.text).toContain('outside configured gauge domain 0.0%–100.0%')
@@ -1360,7 +1363,7 @@ function hierarchyFixture(mark: 'tree' | 'treemap' | 'sunburst'): VisualizationE
   const envelope = cartesianFixture('line') as any
   envelope.visualID = mark
   envelope.spec = { kind: 'hierarchy', title: mark, mark, datasets: [{ id: 'primary', fields: [{ id: 'node', role: 'identity', dataType: 'string', nullable: false, label: 'Node' }, { id: 'parent', role: 'dimension', dataType: 'string', nullable: true, label: 'Parent' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }] }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], node: { dataset: 'primary', field: 'node' }, parent: { dataset: 'primary', field: 'parent' }, value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, orientation: 'vertical', initialDepth: 2, roam: true, layout: 'standard', breadcrumb: true } }
-  envelope.dataState.datasets[0] = { ...envelope.dataState.datasets[0], columns: ['node', 'parent', 'value'], rows: [['root', null, 10], ['child', 'root', 4]] }
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0] = { ...(envelope.dataState as InlineVisualizationDataState).datasets[0], columns: ['node', 'parent', 'value'], rows: [['root', null, 10], ['child', 'root', 4]] }
   return envelope
 }
 
@@ -1374,7 +1377,7 @@ function networkFixture(mark: 'graph' | 'sankey'): VisualizationEnvelope {
   envelope.spec.target = { dataset: 'primary', field: 'target' }
   envelope.spec.presentation = { ...envelope.spec.presentation, orientation: 'vertical', layout: 'circular', nodeGap: 18, curveness: 0.3, focus: 'adjacency' }
   envelope.spec.datasets[0].fields = [{ id: 'source', role: 'dimension', dataType: 'string', nullable: false, label: 'Source' }, { id: 'target', role: 'dimension', dataType: 'string', nullable: false, label: 'Target' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }]
-  envelope.dataState.datasets[0] = { ...envelope.dataState.datasets[0], columns: ['source', 'target', 'value'], rows: [['A', 'B', 4]] }
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0] = { ...(envelope.dataState as InlineVisualizationDataState).datasets[0], columns: ['source', 'target', 'value'], rows: [['A', 'B', 4]] }
   return envelope
 }
 
@@ -1383,5 +1386,5 @@ function gaugeFixture(): VisualizationEnvelope {
     schemaVersion: 9, visualID: 'gauge', rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'polar', title: 'Gauge', mark: 'gauge', datasets: [{ id: 'primary', fields: [{ id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Rate', format: { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 } }] }], dataBudget: { maxRows: 1, requiredCompleteness: 'complete' }, accessibility: { title: 'Gauge', description: 'Gauge' }, interactions: [], value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, minimum: 0, maximum: 1, showPointer: true, progressWidth: 12, thresholds: [{ value: 0.5, tone: 'warning' }, { value: 0.8, tone: 'danger' }] } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [['0.75']], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }

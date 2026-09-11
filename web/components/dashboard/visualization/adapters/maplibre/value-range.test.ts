@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 
+import type { InlineVisualizationDataState } from '../../../../../generated/visualization'
+
 import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection } from './value-range'
 
 const layer = { kind: 'point', value: { dataset: 'primary', field: 'orders' } } as any
@@ -41,8 +43,8 @@ test('map value filters project the same visible inline rows into controls and a
   } as any
   const range = { minimum: 4, maximum: 10, selectedMinimum: 6, selectedMaximum: 10, step: 1 }
   const filtered = mapValueFilteredEnvelope(envelope, [{ id: 'orders', ...layer }], new Map([['orders', range]]))
-  expect(filtered.dataState.datasets[0].rows).toEqual([['SP', 10], ['RJ', 6]])
-  expect(envelope.dataState.datasets[0].rows).toHaveLength(3)
+  expect((filtered.dataState as InlineVisualizationDataState).datasets[0].rows).toEqual([['SP', 10], ['RJ', 6]])
+  expect((envelope.dataState as InlineVisualizationDataState).datasets[0].rows).toHaveLength(3)
   expect(mapValueFilteredEnvelope(envelope, [{ id: 'orders', ...layer }], new Map([['orders', { ...range, selectedMinimum: 4 }]]))).toBe(envelope)
 })
 

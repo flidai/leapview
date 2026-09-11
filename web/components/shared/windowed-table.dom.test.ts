@@ -60,8 +60,8 @@ test('mobile windowed tables expose horizontal scrolling and a visible swipe hin
       }
       document.body.append(element)
       await element.updateComplete
-      const scrollport = element.shadowRoot.querySelector('.scrollport') as HTMLElement
-      const hint = element.shadowRoot.querySelector('.scroll-hint') as HTMLElement
+      const scrollport = (element.shadowRoot as ShadowRoot).querySelector('.scrollport') as HTMLElement
+      const hint = (element.shadowRoot as ShadowRoot).querySelector('.scroll-hint') as HTMLElement
       return {
         role: scrollport.getAttribute('role'),
         label: scrollport.getAttribute('aria-label'),
@@ -130,7 +130,7 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
         },
       })
       const requests: any[] = []
-      const firstRequestPromise = new Promise<any>((resolve) => {
+      const firstRequestPromise = new Promise((resolve) => {
         const handleRequest = (event: Event) => {
           const request = (event as CustomEvent).detail
           requests.push(request)
@@ -144,7 +144,7 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
       await element.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const scrollport = root.querySelector('.scrollport') as HTMLDivElement
       const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window)
       let heldFrame: FrameRequestCallback | undefined
@@ -165,7 +165,7 @@ test('windowed table loads requested blocks and rejects stale payloads', async (
       } finally {
         window.requestAnimationFrame = nativeRequestAnimationFrame
       }
-      const firstRequest = await firstRequestPromise
+      const firstRequest = await firstRequestPromise as any
       const blockStarts = firstRequest.block === 'all'
         ? [Math.max(0, firstRequest.start - 50), firstRequest.start, firstRequest.start + 50]
         : [0, 50, 100]
@@ -256,7 +256,7 @@ test('windowed table resizes columns and emits width state', async () => {
       document.body.append(element)
       await element.updateComplete
 
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const firstHeader = root.querySelector('.header-cell') as HTMLElement
       const firstWidthBefore = Math.round(firstHeader.getBoundingClientRect().width)
       const planeWidthBefore = Math.round((root.querySelector('.plane') as HTMLElement).getBoundingClientRect().width)
@@ -343,12 +343,12 @@ test('windowed table clears cached rows when table key changes without reset ver
       element.table = makeTable('project:customers', [{ id: 'customer-1', state: 'SP' }])
       document.body.append(element)
       await element.updateComplete
-      const before = element.shadowRoot!.textContent ?? ''
+      const before = (element.shadowRoot as ShadowRoot)!.textContent ?? ''
 
       element.table = makeTable('project:orders', [])
       await element.updateComplete
-      const after = element.shadowRoot!.textContent ?? ''
-      const skeletonRows = element.shadowRoot!.querySelectorAll('.row[aria-busy="true"]').length
+      const after = (element.shadowRoot as ShadowRoot)!.textContent ?? ''
+      const skeletonRows = (element.shadowRoot as ShadowRoot)!.querySelectorAll('.row[aria-busy="true"]').length
 
       return {
         beforeHadCustomer: before.includes('customer-1'),

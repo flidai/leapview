@@ -49,26 +49,26 @@ test('filters entities and emits ordered multi-selection changes', async () => {
       await picker.updateComplete
       const events: string[][] = []
       picker.addEventListener('lv-entity-selection-change', (event: CustomEvent) => events.push(event.detail.selectedIds))
-      const search = picker.shadowRoot.querySelector('input[type="search"]') as HTMLInputElement
+      const search = (picker.shadowRoot as ShadowRoot).querySelector('input[type="search"]') as HTMLInputElement
       search.value = 'ana'
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await picker.updateComplete
-      const visibleLabels = Array.from(picker.shadowRoot.querySelectorAll('.item-label')).map((node: Element) => node.textContent?.trim())
-      const checkbox = picker.shadowRoot.querySelector('input[type="checkbox"]') as HTMLInputElement
+      const visibleLabels = Array.from((picker.shadowRoot as ShadowRoot).querySelectorAll('.item-label')).map((node: Element) => node.textContent?.trim())
+      const checkbox = (picker.shadowRoot as ShadowRoot).querySelector('input[type="checkbox"]') as HTMLInputElement
       checkbox.click()
       await picker.updateComplete
       search.value = ''
       search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await picker.updateComplete
-      const sam = picker.shadowRoot.querySelector('input[value="sam"]') as HTMLInputElement
+      const sam = (picker.shadowRoot as ShadowRoot).querySelector('input[value="sam"]') as HTMLInputElement
       sam.click()
       await picker.updateComplete
       return {
         visibleLabels,
         events,
-        summary: picker.shadowRoot.querySelector('.selection-count')?.textContent?.trim(),
+        summary: (picker.shadowRoot as ShadowRoot).querySelector('.selection-count')?.textContent?.trim(),
         overflow: picker.scrollWidth > picker.clientWidth,
-        multiselect: picker.shadowRoot.querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable'),
+        multiselect: (picker.shadowRoot as ShadowRoot).querySelector('[role="listbox"]')?.getAttribute('aria-multiselectable'),
       }
     })
     expect(result).toEqual({
@@ -93,13 +93,13 @@ test('remote search preserves selections across result pages', async () => {
       picker.remoteSearch = true
       picker.items = [{ id: 'ana', label: 'Ana', detail: 'ana@example.com' }]
       await picker.updateComplete
-      picker.shadowRoot.querySelector<HTMLInputElement>('input[value="ana"]')?.click()
+      ((picker.shadowRoot as ShadowRoot).querySelector('input[value="ana"]') as HTMLInputElement | null)?.click()
       await picker.updateComplete
       picker.items = [{ id: 'sam', label: 'Sam', detail: 'sam@example.com' }]
       await picker.updateComplete
-      picker.shadowRoot.querySelector<HTMLInputElement>('input[value="sam"]')?.click()
+      ((picker.shadowRoot as ShadowRoot).querySelector('input[value="sam"]') as HTMLInputElement | null)?.click()
       await picker.updateComplete
-      return { selectedIds: picker.selectedIds, count: picker.shadowRoot.querySelector('.selection-count')?.textContent?.trim() }
+      return { selectedIds: picker.selectedIds, count: (picker.shadowRoot as ShadowRoot).querySelector('.selection-count')?.textContent?.trim() }
     })
     expect(result).toEqual({ selectedIds: ['ana', 'sam'], count: '2 selected' })
   } finally {

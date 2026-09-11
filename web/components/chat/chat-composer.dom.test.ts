@@ -53,7 +53,7 @@ test('composer renders a compact centered prompt surface', async () => {
     await page.locator('lv-chat-composer').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-chat-composer').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const form = root.querySelector('form') as HTMLElement
       const surface = root.querySelector('.composer-surface') as HTMLElement
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
@@ -85,7 +85,7 @@ test('composer renders a compact centered prompt surface', async () => {
         buttonHeight: Math.round(button.getBoundingClientRect().height),
         buttonDisabled: button.disabled,
 		surfaceClickFocusesTextarea: root.activeElement === textarea,
-      }
+      };
     })
 
     expect(state).toMatchObject({
@@ -121,7 +121,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     await page.locator('lv-chat-composer').evaluate((element: any) => element.updateComplete)
 
     const events = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const button = root.querySelector('button') as HTMLButtonElement
       const received: string[] = []
@@ -154,7 +154,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       const pendingDisabled = button.disabled
       const spinner = root.querySelector('lv-loading-spinner') as any
       await spinner.updateComplete
-      const spinnerSvg = spinner.shadowRoot.querySelector('svg') as SVGElement
+      const spinnerSvg = (spinner.shadowRoot as ShadowRoot).querySelector('svg') as SVGElement
       const spinnerCircle = spinnerSvg.querySelector('circle') as SVGCircleElement
       const spinnerPath = spinnerSvg.querySelector('path') as SVGPathElement
       const spinnerStyle = getComputedStyle(spinnerSvg)
@@ -213,7 +213,7 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	await page.goto(baseURL)
 	await page.waitForFunction(() => customElements.get('lv-chat-composer'))
 	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-	  const root = element.shadowRoot
+	  const root = (element.shadowRoot as ShadowRoot)
 	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
 	  const button = root.querySelector('.send-button') as HTMLButtonElement
 	  let submits = 0
@@ -265,21 +265,21 @@ test('composer searches for and attaches typed @ references with spaces', async 
       }
       element.suggestions = [reference]
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       const searches: string[] = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
       textarea.value = 'Compare @orders by'
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await element.updateComplete
-      const option = element.shadowRoot.querySelector('.mention-option') as HTMLButtonElement
+      const option = (element.shadowRoot as ShadowRoot).querySelector('.mention-option') as HTMLButtonElement
       const optionText = option?.textContent?.replace(/\s+/g, ' ').trim()
       option.click()
       await element.updateComplete
       const draftAfterReference = textarea.value
       textarea.value = 'Compare this with last month'
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
-      const submitted = await new Promise<any>((resolve) => {
+      const submitted = await new Promise((resolve) => {
         element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true })
         textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       })
@@ -332,7 +332,7 @@ test('composer consumes attachments only after a user turn is accepted', async (
       await element.updateComplete
 	  element.references = [reference]
 	  await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       textarea.value = 'Why did revenue fall?'
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
       const changes: any[] = []
@@ -379,14 +379,14 @@ test('composer distinguishes matching reference IDs from different kinds', async
       }))
       element.suggestions = references
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
 
       for (const reference of references) {
         textarea.value = '@revenue'
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
         await element.updateComplete
-        const option = Array.from(element.shadowRoot.querySelectorAll('.mention-option'))
+        const option = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option'))
 		  .find((candidate: any) => candidate.textContent.includes(reference.name)) as HTMLButtonElement
         option.click()
         await element.updateComplete
@@ -407,7 +407,7 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       textarea.value = '@'
       textarea.setSelectionRange(1, 1)
@@ -478,7 +478,7 @@ test('mention picker ignores search responses from an older request', async () =
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       const requests: Array<{ query: string; requestId: number }> = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => requests.push(event.detail))
 
@@ -495,7 +495,7 @@ test('mention picker ignores search responses from an older request', async () =
       element.suggestionRequestId = first.requestId
 	  element.suggestions = [{ reference: { kind: 'visual', id: 'orders' }, name: 'Orders', href: '/dashboards/orders', locations: [], context: [] }]
       await element.updateComplete
-      const optionText = () => element.shadowRoot.querySelector('.mention-option')?.textContent?.replace(/\s+/g, ' ').trim()
+      const optionText = () => (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.textContent?.replace(/\s+/g, ' ').trim()
       const firstVisible = optionText()
 
       await search('@revenue')
@@ -504,8 +504,8 @@ test('mention picker ignores search responses from an older request', async () =
       element.suggestionRequestId = first.requestId
 	  element.suggestions = [{ reference: { kind: 'visual', id: 'orders-old' }, name: 'Old orders response', href: '/dashboards/orders-old', locations: [], context: [] }]
       await element.updateComplete
-      const staleVisible = element.shadowRoot.querySelector('.mention-option')?.textContent?.trim() ?? ''
-      const staleStatus = element.shadowRoot.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim()
+      const staleVisible = (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.textContent?.trim() ?? ''
+      const staleStatus = (element.shadowRoot as ShadowRoot).querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim()
 
       element.suggestionQuery = second.query
       element.suggestionRequestId = second.requestId
@@ -554,15 +554,15 @@ test('mention picker pins on-page results above deduplicated accessible results'
 		{ reference: { kind: 'metric', id: 'orders-metric' }, name: 'Orders metric', description: 'Sales model', hierarchy: ['Sales model'], href: '/explore?metric=orders', locations: [], context: [] },
       ]
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       textarea.value = '@orders'
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await element.updateComplete
 
       return {
-        labels: Array.from(element.shadowRoot.querySelectorAll('.mention-section-label')).map((node: any) => node.textContent.trim()),
-        options: Array.from(element.shadowRoot.querySelectorAll('.mention-option')).map((node: any) => node.textContent.replace(/\s+/g, ' ').trim()),
+        labels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-section-label')).map((node) => node.textContent.trim()),
+        options: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option')).map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
       }
     })
 
@@ -582,14 +582,14 @@ test('composer enforces the server-provided reference limit', async () => {
       element.referenceLimit = 2
       const searches: string[] = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       for (const id of ['one', 'two', 'three']) {
 	 element.suggestions = [{ reference: { kind: 'metric', id }, name: id, href: `/explore?metric=${id}`, locations: [], context: [] }]
         textarea.value = `@${id}`
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
         await element.updateComplete
-        element.shadowRoot.querySelector('.mention-option')?.click()
+        (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.click()
         await element.updateComplete
       }
       textarea.value = '@three'
@@ -598,10 +598,10 @@ test('composer enforces the server-provided reference limit', async () => {
       await element.updateComplete
       const limited = {
 		references: element.references.map((reference: any) => reference.reference.id),
-        status: element.shadowRoot.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
-        optionCount: element.shadowRoot.querySelectorAll('.mention-option').length,
-      }
-      element.shadowRoot.querySelector('.reference-chip')?.click()
+        status: (element.shadowRoot as ShadowRoot).querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
+        optionCount: (element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option').length,
+      };
+      ;((element.shadowRoot as ShadowRoot).querySelector('.reference-chip') as HTMLElement | null)?.click()
       await element.updateComplete
       return {
         limited,

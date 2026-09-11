@@ -5,6 +5,11 @@ import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 
+type CatalogListElement = TestDomElement & {
+  exportFilename?: string
+  items: Array<{ iconColor?: string; iconNode?: unknown; iconButtonLabel?: string }>
+}
+
 let server: Server
 let baseURL = ''
 let browser: Browser
@@ -55,7 +60,7 @@ test('catalog introduces authoring as an explicit New dashboard action with a cr
     const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       element.setAttribute('create-draft-href', '/dashboards/new')
       await element.updateComplete
-      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      const trigger = (element.shadowRoot as ShadowRoot).querySelector('.catalog-create-draft') as HTMLAnchorElement
       return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href'), hasIcon: Boolean(trigger?.querySelector('svg')) }
     })
     expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new', hasIcon: true })
@@ -78,11 +83,11 @@ test('new dashboard trigger opens an accessible native dialog with the create fo
       element.setAttribute('create-draft-csrf-token', 'csrf-modal')
       element.setAttribute('create-draft-idempotency-key', 'idem-modal')
       await element.updateComplete
-      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      const trigger = (element.shadowRoot as ShadowRoot).querySelector('.catalog-create-draft') as HTMLAnchorElement
       trigger.click()
       await element.updateComplete
       await new Promise<void>((resolve) => setTimeout(resolve, 10))
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const dialog = root.querySelector('dialog') as HTMLDialogElement
       const form = root.querySelector('.catalog-create-dialog-form') as HTMLFormElement
       const shell = root.querySelector('.catalog-create-dialog-shell') as HTMLElement
@@ -151,7 +156,7 @@ test('create query auto-opens with the semantic model preselected and dismissal 
       await element.updateComplete
       await element.updateComplete
       await new Promise<void>((resolve) => queueMicrotask(resolve))
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const dialog = root.querySelector('dialog') as HTMLDialogElement
       const select = root.querySelector('#catalog-create-draft-model') as HTMLSelectElement
       const autoOpened = dialog.open
@@ -189,7 +194,7 @@ test('native Escape and backdrop dismissal close the create dialog', async () =>
       element.setAttribute('create-draft-href', '/dashboards/new')
       element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
       const dialog = () => root.querySelector('dialog') as HTMLDialogElement
       trigger.click()
@@ -223,7 +228,7 @@ test('mobile create dialog stays within the viewport and disables submission wit
       element.setAttribute('create-draft-href', '/dashboards/new')
       element.setAttribute('create-draft-models', '[]')
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
       trigger.click()
       await element.updateComplete
@@ -268,7 +273,7 @@ test('create form submits natively to the builder with hidden request values', a
       element.setAttribute('create-draft-csrf-token', 'csrf-submit')
       element.setAttribute('create-draft-idempotency-key', 'idem-submit')
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       ;(root.querySelector('.catalog-create-draft') as HTMLAnchorElement).click()
       await element.updateComplete
       ;(root.querySelector('[name="title"]') as HTMLInputElement).value = 'Sales overview'
@@ -298,7 +303,7 @@ for (const viewport of [
       await page.locator('lv-catalog-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const section = root.querySelector('section') as HTMLElement
         const list = root.querySelector('.entity-list-items') as HTMLElement
         const table = root.querySelector('.entity-list-table') as HTMLElement
@@ -459,12 +464,12 @@ test('dashboard tabs expose favorites and owned dashboards without hiding either
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health', 'inventory-risk']))
       element.reloadDiscoveryPreferences()
       await element.updateComplete
-      const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const rows = () => Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
       const all = rows()
-      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
       await element.updateComplete
       const favorites = rows()
-      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
       await element.updateComplete
       return { all, favorites, mine: rows() }
     })
@@ -489,7 +494,7 @@ test('recording a recent dashboard does not retarget the activated link during r
       await page.keyboard.press('Tab')
       focused = await target.evaluate((element) => {
         let active: Element | null = element.ownerDocument.activeElement
-        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+        while (active?.shadowRoot?.activeElement) active = (active.shadowRoot as ShadowRoot).activeElement
         return active === element
       })
       if (focused) break
@@ -520,9 +525,9 @@ test('dashboard favorites use resource ids when catalog ids are qualified', asyn
       localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health']))
       element.reloadDiscoveryPreferences()
       await element.updateComplete
-      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
       await element.updateComplete
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       const button = list.querySelector('.entity-list-favorite') as HTMLButtonElement
       const titles = Array.from(list.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
@@ -560,8 +565,8 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
         })),
       } })
       await element.updateComplete
-      const root = element.shadowRoot
-      const list = root.querySelector('lv-entity-list') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const list = root.querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       let copiedLink = ''
       Object.defineProperty(navigator, 'clipboard', {
@@ -623,8 +628,8 @@ test('managed dashboard menu offers an editable copy without edit or archive act
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const menu = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
-      const list = root.querySelector('lv-entity-list') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const list = root.querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
       await element.updateComplete
@@ -656,9 +661,9 @@ test('My dashboards removes the redundant owner column', async () => {
         dashboards: element.page.dashboards.map((dashboard: any) => ({ ...dashboard, catalogScope: 'mine', owner: 'You' })),
       } })
       await element.updateComplete
-      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
       await element.updateComplete
-      return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+      return Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
     })
     expect(headers).toEqual(['Dashboard', 'Data model', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'])
   } finally {
@@ -672,7 +677,7 @@ test('data model is a dedicated sortable column instead of dashboard subtitle me
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
       return {
@@ -708,7 +713,7 @@ test('owned dashboards use the signed-in display name and avatar instead of You'
           : dashboard),
       } })
       await element.updateComplete
-      const cell = element.shadowRoot.querySelectorAll('.entity-list-cell')[1] as HTMLElement
+      const cell = (element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-cell')[1] as HTMLElement
       const avatar = cell.querySelector('lv-user-avatar') as any
       return {
         text: cell.textContent?.trim(),
@@ -737,12 +742,12 @@ test('dashboard owners render as compact accessible avatars with hover labels', 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
     })
     await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-person-avatar').first().hover()
     const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       const ownerCell = list.querySelector('tbody tr.entity-list-table-row')?.querySelectorAll('.entity-list-cell')[1] as HTMLElement
       const owner = ownerCell.querySelector('.entity-list-person-avatar') as HTMLElement
       const tooltip = owner?.querySelector('.entity-list-hover-tooltip') as HTMLElement
@@ -777,12 +782,12 @@ test('dashboard titles use regular emphasis and popularity has a dedicated hover
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
     })
     await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-popularity').first().hover()
     const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
       const firstPopularity = rows[0].querySelector('.entity-list-popularity') as HTMLElement
       const missingPopularity = rows[3].querySelector('.entity-list-popularity') as HTMLElement
@@ -816,8 +821,8 @@ test('catalog omits deferred filter and recommendation controls for v1', async (
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
-      const list = root.querySelector('lv-entity-list') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const list = root.querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       return {
         hasFilter: Boolean(root.querySelector('[aria-label="Filter dashboards"]')),
@@ -845,14 +850,14 @@ test('dashboard favorites persist and rank first while dashboard opens are recor
       localStorage.clear()
       element.reloadDiscoveryPreferences()
       await element.updateComplete
-      let list = element.shadowRoot.querySelector('lv-entity-list') as any
+      let list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
-      const favorites = () => Array.from(list.querySelectorAll('.entity-list-favorite')).map((button: Element) => button.getAttribute('aria-label'))
-      const titles = () => Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim())
+      const favorites = () => Array.from(list.querySelectorAll<HTMLElement>('.entity-list-favorite')).map((button) => button.getAttribute('aria-label'))
+      const titles = () => Array.from(list.querySelectorAll<HTMLElement>('.entity-list-title')).map((title) => title.textContent?.trim() ?? '')
       const favoriteLabels = favorites()
       ;(list.querySelectorAll('.entity-list-favorite')[2] as HTMLButtonElement).click()
       await element.updateComplete
-      list = element.shadowRoot.querySelector('lv-entity-list') as any
+      list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       const ranked = titles()
       const pressed = (list.querySelector('.entity-list-favorite') as HTMLButtonElement).getAttribute('aria-pressed')
@@ -892,7 +897,7 @@ test('date columns reveal exact localized date and time on hover and focus', asy
         }))
         element.reloadDiscoveryPreferences()
         await element.updateComplete
-        const list = element.shadowRoot.querySelector('lv-entity-list') as any
+        const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
         await list.updateComplete
         return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
           title: row.querySelector('.entity-list-title')?.textContent?.trim(),
@@ -942,14 +947,14 @@ test('dashboard lifecycle status is implicit in discovery views and explicit in 
       const lifecycleStatuses = ['published', 'private_draft', 'unpublished_changes', 'published']
       mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, catalogScope: 'mine', owner: 'You', status: lifecycleStatuses[index] })) } })
       await element.updateComplete
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       const discoveryHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
       const discoveryBadges = Array.from(list.querySelectorAll('.entity-list-title-row .entity-list-badge')).map((badge: Element) => ({
         label: badge.textContent?.trim(),
         title: badge.getAttribute('title'),
       }))
-      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
       await element.updateComplete
       await list.updateComplete
       const mineHeaders = Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
@@ -997,7 +1002,7 @@ test('updated sorting uses timestamps rather than relative labels', async () => 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
       const header = list.querySelector('button[aria-label="Sort by Updated"]') as HTMLButtonElement
       header.click()
@@ -1022,7 +1027,7 @@ test('CSV export uses compact displayed dates instead of internal sort keys', as
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const csv = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as CatalogListElement
       let exported: Blob | undefined
       URL.createObjectURL = (blob: Blob) => {
         exported = blob
@@ -1053,7 +1058,7 @@ test('updated dates include the year when it differs from the current year', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
+      (element.shadowRoot as ShadowRoot).querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
     )
 
     expect(await updated()).toBe('Aug 12, 2026')
@@ -1068,7 +1073,7 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const colors = async () => page.locator('lv-catalog-page').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const highPaths = Array.from(root.querySelectorAll('.entity-list-badge-popularity.is-high path')) as SVGPathElement[]
       return {
         bars: highPaths.map((path) => getComputedStyle(path).stroke),
@@ -1100,8 +1105,8 @@ test('catalog page explains an empty dashboard collection', async () => {
       mergePatch({ page: { ...element.page, dashboards: [] } })
       await element.updateComplete
       return {
-        empty: element.shadowRoot.querySelector('[role="status"]')?.textContent?.trim(),
-        cards: element.shadowRoot.querySelectorAll('article').length,
+        empty: (element.shadowRoot as ShadowRoot).querySelector('[role="status"]')?.textContent?.trim(),
+        cards: (element.shadowRoot as ShadowRoot).querySelectorAll('article').length,
       }
     })
 
@@ -1120,13 +1125,13 @@ test('dashboard list displays persisted appearance without editing controls', as
     const catalog = page.locator('lv-catalog-page')
     const state = await catalog.evaluate(async (element: any) => {
       await element.updateComplete
-      const list = element.shadowRoot!.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot)!.querySelector('lv-entity-list') as CatalogListElement
       await list.updateComplete
       return {
         color: list.items[0].iconColor,
         hasIcon: Boolean(list.items[0].iconNode),
         iconButtonLabel: list.items[0].iconButtonLabel,
-        picker: Boolean(element.shadowRoot!.querySelector('lv-dashboard-icon-picker')),
+        picker: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-dashboard-icon-picker')),
         customizeButton: Boolean(list.querySelector('button[aria-label^="Customize"]')),
       }
     })

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import * as echarts from 'echarts'
 
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationLabelPolicy } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { echartsOption, heatmapFocusDataZoom, heatmapFocusZoomEnabled, responsiveEChartsPatch } from './echarts'
 import { constrainEChartsLabelToDataRect, echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
@@ -26,13 +26,14 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
   const policy = {
     density: 'automatic', priority: ['selected', 'threshold'],
     maxCharacters: 8, minimumSpacing: 6, tooltipFallback: true,
-  } as const
+  } satisfies VisualizationLabelPolicy
   const translated = echartsLabelPolicy(envelope, 'primary', policy, (params) => String(params.value?.[0] ?? ''), defaultRendererContext)
 
   expect(translated.label).toMatchObject({ show: true, padding: 3, overflow: 'truncate' })
   expect(translated.label.formatter({ value: ['São Paulo 😀 zone'] })).toBe('São Pau…')
-  expect(translated.labelLayout({ dataIndex: 0 }).hideOverlap).toBe(false)
-  expect(translated.labelLayout({ dataIndex: 99 }).hideOverlap).toBe(true)
+  const layout = (dataIndex: number) => typeof translated.labelLayout === 'function' ? translated.labelLayout({ dataIndex }) : translated.labelLayout
+  expect(layout(0).hideOverlap).toBe(false)
+  expect(layout(99).hideOverlap).toBe(true)
   expect(truncateVisualizationLabel('ação 😀 norte', 7, 'pt-BR')).toBe('ação 😀…')
 
   const dense = echartsLabelPolicy(envelope, 'primary', { ...policy, density: 'dense', minimumSpacing: 2 }, () => 'value', defaultRendererContext)
@@ -90,7 +91,7 @@ test('ECharts heatmap focus requires initialized generated zoom controls', () =>
 
 test('compact generated heatmap keeps rotated categories above its visual map', () => {
   const document = (visualDocumentation as any).documents['visuals/heatmap']
-  const envelope = structuredClone(document.find((candidate: any) => candidate.visualID === 'category_status_heatmap')) as VisualizationEnvelope
+  const envelope = structuredClone(document.find((candidate: any) => candidate.visualID === 'category_status_heatmap')) as unknown as VisualizationEnvelope
   const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
   const option = { ...source, ...responsiveEChartsPatch(source, 358, 411) }
   expect(option.grid.bottom).toBe(96)
@@ -123,8 +124,10 @@ function assertCompactHeatmapBounds(chart: echarts.EChartsType, state: string): 
   const categories = new Set(['Books', 'Sports', 'Electronics', 'Fashion', 'Beauty', 'Home'])
   const labels = chart.getZr().storage.getDisplayList().filter((item: any) => item.type === 'tspan' && categories.has(item.style?.text))
   expect(labels, `${state} category labels should render`).toHaveLength(categories.size)
-  const visualMap = chart.getModel().findComponents({ mainType: 'visualMap' })[0]
-  const slider = chart.getModel().findComponents({ mainType: 'dataZoom' }).find((component: any) => component.option?.id === 'dataZoom:heatmap:slider')
+  type InternalModel = { findComponents: (query: { mainType: string }) => Array<{ option?: { id?: string } }> }
+  const model = (chart as unknown as { getModel: () => InternalModel }).getModel()
+  const visualMap = model.findComponents({ mainType: 'visualMap' })[0]
+  const slider = model.findComponents({ mainType: 'dataZoom' }).find((component) => component.option?.id === 'dataZoom:heatmap:slider')
   const visualMapGroup = visualMap ? (chart as any).getViewOfComponentModel(visualMap)?.group : undefined
   const sliderGroup = slider ? (chart as any).getViewOfComponentModel(slider)?.group : undefined
   expect(visualMapGroup, `${state} visual map should render`).toBeDefined()
@@ -151,7 +154,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
     schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function globalBounds(item: any): { x: number; y: number; width: number; height: number } {
