@@ -93,7 +93,20 @@ async function verifyDataExplorerRecoveryActions(): Promise<void> {
       await firstGroup.locator(':scope > summary').click()
       const firstObject = firstGroup.locator('.object-button').first()
       await firstObject.waitFor({ state: 'visible' })
+      // Selecting an object sends a Datastar command whose complete SSE body
+      // carries the authoritative signal patch. The preview can render
+      // optimistically before that transport settles, so wait for the body
+      // and successful status before injecting the synthetic preview failure.
+      const selectionResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return url.pathname === '/explore/command' && response.request().method() === 'POST'
+      })
       await firstObject.click()
+      const selectionResponse = await selectionResponsePromise
+      await selectionResponse.body()
+      if (!selectionResponse.ok()) {
+        throw new Error(`/explore recovery selection: status ${selectionResponse.status()}`)
+      }
     }
     await preview.waitFor({ state: 'visible' })
     await page.evaluate(async () => {

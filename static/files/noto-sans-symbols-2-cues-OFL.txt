@@ -1,0 +1,112 @@
+LeapView Chart Cues is a subsetted derivative of the Noto Sans Symbols 2
+5.3.0 and Noto Sans Symbols 5.3.0 web fonts published by Fontsource. The
+subset contains only U+2191 U+2193 U+25A0 U+25B2 U+25BC U+25C6 U+25CF U+26A0.
+The source archives are pinned by the @fontsource packages in package.json;
+the source archive SHA-256 values are:
+
+  fontsource-noto-sans-symbols-2-5.3.0.tgz
+  dd714f47e1ba768274c25d14ac95610ca32e416d70c5455cd11d8995042a4552
+  fontsource-noto-sans-symbols-5.3.0.tgz
+  f38047dcf42fcf90e7e9fcd3cb07f6900186d30137b173aa6f63f17d86b30db9
+
+The generated subset SHA-256 is:
+  814efd1ab221bc83136fd9c3e485dc21863737e422e733abe43086235b44c03c
+
+Reproduction (verified with Python 3.13.5, fontTools 4.65.0, and Brotli
+1.2.0; set PYTHONPATH to the fontTools environment):
+  PYTHONPATH=/tmp/fai-fonttools SOURCE_DATE_EPOCH=1789101809 python3 -m fontTools.merge /tmp/noto-sans-symbols-2-symbols.woff2 /tmp/noto-sans-symbols-symbols.woff2 --output-file=/tmp/leapview-chart-cues.ttf
+  PYTHONPATH=/tmp/fai-fonttools SOURCE_DATE_EPOCH=1789101809 python3 - /tmp/leapview-chart-cues.ttf /tmp/leapview-chart-cues-fixed.ttf <<'PY'
+  import sys
+  from fontTools.ttLib import TTFont
+  source, target = sys.argv[1:]
+  font = TTFont(source, recalcTimestamp=False)
+  font['head'].modified = font['head'].created + 1
+  font.save(target, reorderTables=False)
+  PY
+  PYTHONPATH=/tmp/fai-fonttools python3 -m fontTools.subset /tmp/leapview-chart-cues-fixed.ttf --unicodes=U+25A0,U+25B2,U+25BC,U+25C6,U+25CF,U+2191,U+2193,U+26A0 --flavor=woff2 --output-file=noto-sans-symbols-2-cues-400-normal.woff2
+
+The timestamp normalization is required for byte-identical output; the
+un-normalized merge otherwise differs only in the OpenType head timestamps.
+
+The first input is package/files/noto-sans-symbols-2-symbols-400-normal.woff2
+from @fontsource/noto-sans-symbols-2@5.3.0. The second is
+package/files/noto-sans-symbols-symbols-400-normal.woff2 from
+@fontsource/noto-sans-symbols@5.3.0; the Noto Sans Symbols 2 package's
+published subset does not contain U+2191/U+2193, so this same-family Noto
+source supplies those two arrow outlines before the final restricted subset.
+
+Copyright 2022 The Noto Project Authors
+(https://github.com/notofonts/symbols)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The fonts,
+including any reserved names, may be bundled, embedded, redistributed and/or
+sold with any software provided that any reserved names are not used by
+derivative works. The requirement for fonts to remain under this license does
+not apply to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may include
+source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting, or
+substituting -- in part or in whole -- any of the components of the Original
+Version, by changing formats or by porting the Font Software to a new
+environment.
+
+"Author" refers to any designer, engineer, programmer, technical writer or
+other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font Software,
+subject to the following conditions:
+
+1. Neither the Font Software nor any of its individual components, in
+Original or Modified Versions, may be sold by itself.
+
+2. Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy contains
+the above copyright notice and this license.
+
+3. No Modified Version of the Font Software may use the Reserved Font Name(s)
+unless explicit written permission is granted by the corresponding copyright
+holder. This derivative is named LeapView Chart Cues.
+
+4. The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any Modified
+Version, except to acknowledge the contribution or with explicit written
+permission.
+
+5. The Font Software, modified or unmodified, in part or in whole, must be
+distributed entirely under this license.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+COPYRIGHT, PATENT, TRADEMARK OR OTHER RIGHT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING ANY
+GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, WHETHER IN
+AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF THE USE OR
+INABILITY TO USE THE FONT SOFTWARE.

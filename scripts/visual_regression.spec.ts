@@ -65,6 +65,11 @@ for (const mode of modes) {
         localStorage.removeItem('leapview-sidebar-collapsed')
       }, mode)
       await openStableDashboard(page, new URL('/dashboards/dashboard:visual-showcase/pages/overview', baseURL!).toString(), 'Visual Showcase')
+      // Verify production loaded the pinned cue face before rendering; do not
+      // load it here and hide a first-render fallback-font regression.
+      expect(await page.evaluate(() => Array.from(document.fonts).some((face) =>
+        face.family.replace(/["']/g, '') === 'LeapView Chart Cues' && face.status === 'loaded',
+      ))).toBe(true)
       const card = page.locator('lv-visualization-host').filter({ has: page.getByText('Orders by status', { exact: true }) })
       await expect(card).toHaveCount(1)
       // A cropped baseline makes small-label regressions significant instead

@@ -33,3 +33,11 @@ test('production topology JavaScript has no external CDN dependencies', async ()
 test('production build does not publish the retired Vega-Lite sandbox', async () => {
   expect(await Bun.file('static/vega-sandbox.js').exists()).toBe(false)
 })
+
+test('production assets include the restricted chart cue face and its OFL notice', async () => {
+  const font = Bun.file('static/files/noto-sans-symbols-2-cues-400-normal.woff2')
+  expect(await font.exists()).toBe(true)
+  expect(font.size).toBeGreaterThan(0)
+  expect(font.size).toBeLessThan(10_000)
+  expect(await Bun.file('static/files/noto-sans-symbols-2-cues-OFL.txt').text()).toContain('SIL OPEN FONT LICENSE Version 1.1')
+})

@@ -1,4 +1,4 @@
-import type { VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
+import type { VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayField, formatField, inlineDataset, legendDecoration, type EChartsTranslation } from './common'
 import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
@@ -6,6 +6,9 @@ import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
 import { conditionalColorWithFallback } from './series-intent'
+import { chartCueFontStack, proportionalConditionalCueFormat } from '../../cue-font'
+
+export { proportionalConditionalCueFormat } from '../../cue-font'
 
 const CENTER_GRAPHIC_ID = 'graphic:proportional:center'
 
@@ -41,6 +44,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   if (conditionalCue) {
     labels.label.show = true
     labels.labelLayout = { hideOverlap: false }
+    if (isPie) labels.label.fontFamily = chartCueFontStack(context.fontFamily)
     // Keep the authored cue and formatted value together when native pie
     // layout narrows an outside label. ECharts wraps instead of truncating,
     // then uses the extra leader-line segment to keep the text off the ring.
@@ -159,32 +163,6 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     series: [series],
     aria: { decal: { show: repeatsColors } },
   }
-}
-
-export function proportionalConditionalCueFormat(
-  envelope: VisualizationEnvelope,
-  value: VisualizationFieldRef,
-): VisualizationConditionalFormat | undefined {
-  const formats = envelope.spec.conditionalFormatting ?? []
-  return formats.find((format) =>
-    format.target === 'mark_fill'
-    && format.field.dataset === value.dataset
-    && format.field.field === value.field
-    && conditionalRuleHasIcon(format))
-    ?? formats.find((format) =>
-      format.target === 'series_color'
-      && format.field.dataset === value.dataset
-      && format.field.field === value.field
-      && conditionalRuleHasIcon(format))
-}
-
-function conditionalRuleHasIcon(format: VisualizationConditionalFormat): boolean {
-  const rule = format.rule
-  if (rule.nullStyle.icon) return true
-  if (rule.kind === 'gradient') return Boolean(rule.low.icon || rule.high.icon)
-  if (rule.defaultStyle.icon) return true
-  if (rule.kind === 'rules') return rule.rules.some((candidate) => Boolean(candidate.style.icon))
-  return Object.values(rule.values).some((style) => Boolean(style.icon))
 }
 
 export function proportionalCenterText(envelope: VisualizationEnvelope, context: RendererContext, activeRow?: readonly unknown[]): string | undefined {

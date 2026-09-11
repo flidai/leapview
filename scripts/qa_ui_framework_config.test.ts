@@ -120,6 +120,24 @@ test('browser QA uses canonical project resource IDs', async () => {
   expect(source).not.toContain("visualID === 'revenue_by_month'")
 })
 
+test('data explorer recovery waits for the selection command to settle', async () => {
+  const source = await readFile('scripts/datastar_lit_route_qa.ts', 'utf8')
+  const recovery = source.slice(source.indexOf('async function verifyDataExplorerRecoveryActions'))
+  const arm = recovery.indexOf('const selectionResponsePromise = page.waitForResponse')
+  const click = recovery.indexOf('await firstObject.click()')
+  const body = recovery.indexOf('await selectionResponse.body()')
+  const preview = recovery.indexOf("await preview.waitFor({ state: 'visible' })")
+  const inject = recovery.indexOf("Qualification-injected preview failure.")
+
+  expect(arm).toBeGreaterThanOrEqual(0)
+  expect(click).toBeGreaterThan(arm)
+  expect(body).toBeGreaterThan(click)
+  expect(preview).toBeGreaterThan(body)
+  expect(inject).toBeGreaterThan(preview)
+  expect(recovery).toContain("response.request().method() === 'POST'")
+  expect(recovery).toContain('if (!selectionResponse.ok())')
+})
+
 test('visual regression QA covers stable representative states, themes, and viewports', async () => {
   const source = await readFile('scripts/visual_regression.spec.ts', 'utf8')
 
