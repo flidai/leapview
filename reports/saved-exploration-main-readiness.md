@@ -2,6 +2,60 @@
 
 Tracking: [FAI-769](https://linear.app/flid/issue/FAI-769/reconcile-saved-data-exploration-with-current-main-and-prepare-green).
 
+## September 11 merge-queue remediation
+
+PR #543 remains open and unmerged. Two merge-queue candidates
+(`d7bcc8c` and `f57c593d`) passed the ordinary PR/security lanes but failed the
+same merge-only Data Explorer recovery journey. After Preview Retry/Reset, a
+full navigation restored the browser command sequence to zero while the Go
+lifecycle retained the tab client's later sequence, so the Analyze configure
+response was correctly rejected as stale. Requeueing the unchanged head was
+stopped after the deterministic second failure.
+
+The reviewed correction keeps a tab-scoped semantic command clock in
+`sessionStorage`, with an in-memory fallback, and aligns the body client ID with
+the existing request-header identity. Configure/Run sequences remain monotonic
+across remounts; Stop retains the addressed Run sequence; filter suggestions
+remain on their independent lane; malformed storage is ignored and sequence
+exhaustion fails closed. Current main `1027b08bf` was merged normally into the
+feature branch at `0b4ce97f3`; no force push was used.
+
+The exact browser journey then exposed two pre-existing recovery-test/UI
+contracts that the stale-sequence failure had masked. Recovery had attempted
+Retry with an invalid empty query, and recovery notices shared a grid row with
+the empty/result body. The follow-up now selects and awaits a governed field
+before injecting a retryable error, gives notices and preserved results distinct
+rows, offers Reset without Retry for invalid specs, and parses the actual posted
+`dataExplorerCommand` rather than scanning unrelated Datastar signal state.
+Real Playwright coverage verifies both a physically clickable valid Retry and
+the invalid Reset-only state. The result styles/recovery renderer were extracted
+from the oversized route component, reducing TypeScript production excess from
+19,077 to 19,016 against the unchanged 19,080 budget.
+
+Independent code review found no findings in either the sequence correction or
+the recovery/layout follow-up. The full Data Explorer suite, client/controller
+tests, app typecheck, quality budget, and exact 13-route DatastarLit QA pass. The
+approved visual-update task refreshed only four compact dashboard snapshots;
+independent image review confirmed the differences are limited to the intended
+Explore handoff and current header/action controls, with no chart, card, filter,
+spacing, or overflow regression. Visual thresholds were not changed.
+
+Two local `task ci:full` attempts passed generation, database verification,
+APIGen, Go/application/PostgreSQL and the affected feature suites before
+unrelated five-second browser setup timeouts closed their shared Chromium
+processes (first Admin, then Dashboard Builder). Those suites subsequently
+passed four and three isolated full-file runs respectively. A frontend-only
+rerun later timed out in a third unrelated dashboard file while the 16-CPU host
+was at load 17.7 and another workspace was running an eight-core SQL generator
+and `task ci`. These interrupted aggregates are not recorded as green and no
+timeout was relaxed. A clean full gate and exact-head hosted checks remain
+required after shared-host contention clears.
+
+Current correction commits are `f6ad03cbc` (durable sequence), `535081193`
+(actionable recovery layout/contracts), and `f96631349` (reviewed compact
+baselines). FAI-769 remains In Review until the exact pushed head clears all
+required checks and the approved merge queue completes.
+
 ## September 10 follow-up integration with main `85bdf484e`
 
 Main advanced after the `60dc6f238` checkpoint passed 28 hosted checks (four
