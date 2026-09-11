@@ -69,6 +69,7 @@ func VerifyProvider(ctx context.Context, provider SQLDBProvider) error {
 const rolePolicySQL = `
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.sync_managed_data_generation_root(uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION dashboard.lock_authoring_dashboard(text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION project.bind_resource_uid_generation(uuid) FROM PUBLIC;
