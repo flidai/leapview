@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     fencing_epoch bigint NOT NULL CHECK (fencing_epoch > 0),
     request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
-    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('running','committed','aborted','indeterminate','fenced')),
+    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('running','committed','aborted','indeterminate')),
     namespace text NOT NULL CHECK (namespace = btrim(namespace) AND octet_length(namespace) BETWEEN 1 AND 512),
     lease_expires_at timestamptz NOT NULL,
     session_identity text NOT NULL CHECK (session_identity = btrim(session_identity) AND octet_length(session_identity) BETWEEN 1 AND 512),
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     CHECK ((state = 'running' AND finished_at IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL)),
     CHECK ((state = 'running' AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NULL)
         OR (state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL AND termination_evidence IS NULL)
-        OR (state IN ('aborted','indeterminate','fenced') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
+        OR (state IN ('aborted','indeterminate') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
     UNIQUE (attempt_id, candidate_id),
     UNIQUE (attempt_id, physical_pool_id, catalog_id),
     FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)

@@ -269,6 +269,47 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	}
 }
 
+func TestPostgresHeartbeatRenewsRunAndAttemptForCompletion(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, admin, "job-heartbeat", "run-heartbeat", "project-heartbeat", "prod", "principal")
+	if _, err := r.CreateRun(t.Context(), RunInput{
+		RunID: "run-heartbeat", ProjectID: "project-heartbeat", Environment: "prod", GenerationID: "generation-heartbeat",
+		PipelineID: "pipeline-heartbeat", SemanticModelID: "semantic-heartbeat", TargetType: "refresh_pipeline", TargetID: "pipeline-heartbeat",
+		TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-heartbeat",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := r.ClaimAttempt(t.Context(), "run-heartbeat", "worker-heartbeat", 1, 40*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var beforeRun, beforeAttempt time.Time
+	if err := admin.QueryRow(t.Context(), `
+		SELECT r.lease_expires_at, a.lease_expires_at
+		FROM refresh.run r JOIN refresh.attempt a ON a.run_id=r.run_id
+		WHERE r.run_id=$1 AND a.attempt_number=$2`, claimed.RunID, claimed.AttemptNumber).Scan(&beforeRun, &beforeAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.HeartbeatLease(t.Context(), claimed.RunID, claimed.OwnerID, claimed.FenceGeneration, time.Minute); err != nil {
+		t.Fatalf("heartbeat error = %v", err)
+	}
+	var afterRun, afterAttempt time.Time
+	if err := admin.QueryRow(t.Context(), `
+		SELECT r.lease_expires_at, a.lease_expires_at
+		FROM refresh.run r JOIN refresh.attempt a ON a.run_id=r.run_id
+		WHERE r.run_id=$1 AND a.attempt_number=$2`, claimed.RunID, claimed.AttemptNumber).Scan(&afterRun, &afterAttempt); err != nil {
+		t.Fatal(err)
+	}
+	if !afterRun.After(beforeRun) || !afterAttempt.After(beforeAttempt) {
+		t.Fatalf("heartbeat lease expiry did not advance: run %s -> %s, attempt %s -> %s", beforeRun, afterRun, beforeAttempt, afterAttempt)
+	}
+	if err := r.CompleteAttempt(t.Context(), claimed.RunID, claimed.OwnerID, claimed.FenceGeneration, []byte(`{"ok":true}`)); err != nil {
+		t.Fatalf("completion after heartbeat = %v", err)
+	}
+}
+
 func TestPostgresRefreshStandaloneRootRequiresCanonicalJob(t *testing.T) {
 	_, admin := refreshTestDB(t)
 	r := New(admin)

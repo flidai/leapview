@@ -2642,6 +2642,14 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_JOB_EXECUTION_TIMEOUT": {
+      "default": "24h",
+      "description": "River worker execution deadline, independent of renewable capability leases.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_LOCAL_AUTH": {
       "description": "Enable administrator-managed local browser authentication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
@@ -3499,6 +3507,14 @@
       "default": "2m",
       "description": "Lease duration before an abandoned refresh job may be reclaimed.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_REQUIRE_ACTIVE_DEPLOYMENT": {
+      "default": "false",
+      "description": "Require an active serving deployment before readiness succeeds; production always enables this contract.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

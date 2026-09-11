@@ -50,7 +50,7 @@ func nativeBuildStatus(state nativepostgres.BuildAttemptState, sealed bool) depl
 			return deploymentgen.DeliveryBuildStatusSealed
 		}
 		return deploymentgen.DeliveryBuildStatusSealing
-	case nativepostgres.AttemptAborted, nativepostgres.AttemptFenced, nativepostgres.AttemptIndeterminate:
+	case nativepostgres.AttemptAborted, nativepostgres.AttemptIndeterminate:
 		return deploymentgen.DeliveryBuildStatusAbandoned
 	default:
 		return deploymentgen.DeliveryBuildStatusBuilding

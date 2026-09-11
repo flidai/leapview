@@ -93,6 +93,7 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 		{name: "LEAPVIEW_PRODUCTION", value: "sometimes"},
 		{name: "LEAPVIEW_WORKLOAD_REFRESH_MAX_QUEUED", value: "several"},
 		{name: "LEAPVIEW_REFRESH_JOB_LEASE_TIMEOUT", value: "later"},
+		{name: "LEAPVIEW_JOB_EXECUTION_TIMEOUT", value: "later"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv(test.name, test.value)
@@ -100,6 +101,14 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 				t.Fatalf("Load() accepted %s=%q", test.name, test.value)
 			}
 		})
+	}
+}
+
+func TestValidateRequiresPositiveIndependentJobExecutionTimeout(t *testing.T) {
+	cfg := withAnalyticalTestDefaults(Config{CSRFKey: "0123456789abcdef0123456789abcdef"})
+	cfg.JobExecutionTimeout = 0
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_JOB_EXECUTION_TIMEOUT") {
+		t.Fatalf("non-positive job execution timeout error = %v", err)
 	}
 }
 
@@ -623,6 +632,7 @@ func withAnalyticalTestDefaults(cfg Config) Config {
 	cfg.QueryCacheRuntimeMaxBytes = 4 << 20
 	cfg.QueryCacheNodeMaxEntries = 64
 	cfg.QueryCacheNodeMaxBytes = 16 << 20
+	cfg.JobExecutionTimeout = 24 * time.Hour
 	return cfg
 }
 

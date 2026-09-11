@@ -316,10 +316,10 @@ func (m *Module) JobHandlers() []jobs.Handler {
 				m.runFinishedCallback(context.Background(), claimed)
 			}
 		}()
-		return m.service.ExecuteClaimedJob(ctx, claimed)
+		return executeWithLeaseHeartbeat(ctx, claimed, m.leaseTimeout, m.runs.RenewJobLease, m.service.ExecuteClaimedJob)
 	}
 	return []jobs.Handler{
-		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run},
+		jobs.HandlerFunc{JobKind: refreshrun.JobKindRefreshPipeline, Run: run, ExecutionLeaseTimeout: m.leaseTimeout},
 	}
 }
 

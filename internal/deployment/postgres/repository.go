@@ -138,7 +138,6 @@ const (
 	AttemptCommitted     BuildAttemptState = "committed"
 	AttemptAborted       BuildAttemptState = "aborted"
 	AttemptIndeterminate BuildAttemptState = "indeterminate"
-	AttemptFenced        BuildAttemptState = "fenced"
 )
 
 type DeliveryBuildAttempt struct {
@@ -1506,7 +1505,7 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 	if predecessor.OwnerID != in.Predecessor.OwnerID || predecessor.FencingEpoch != in.Predecessor.FencingEpoch {
 		return BuildAttemptSuccessorResult{}, ErrStaleFence
 	}
-	if predecessor.State == AttemptCommitted || predecessor.State == AttemptAborted || predecessor.State == AttemptFenced {
+	if predecessor.State == AttemptCommitted || predecessor.State == AttemptAborted {
 		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: predecessor attempt is %s", ErrConflict, predecessor.State)
 	}
 	if predecessor.CandidateID == "" || predecessor.PlanID == "" || predecessor.PhysicalPoolID == "" {

@@ -240,6 +240,9 @@ func (c Config) Validate(profile Profile) error {
 	if err := configspec.Validate(values); err != nil {
 		return err
 	}
+	if c.JobExecutionTimeout <= 0 {
+		return fmt.Errorf("LEAPVIEW_JOB_EXECUTION_TIMEOUT must be positive")
+	}
 	if err := c.WorkloadConfig().Validate(); err != nil {
 		return fmt.Errorf("invalid workload configuration: %w", err)
 	}

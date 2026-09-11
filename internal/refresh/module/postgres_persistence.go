@@ -316,6 +316,13 @@ type postgresRunPersistence struct {
 	createAuditWriter PostgresRefreshAuditWriter
 }
 
+func (p *postgresRunPersistence) RenewJobLease(ctx context.Context, job refreshrun.JobRecord, lease time.Duration) error {
+	if p == nil || p.repository == nil {
+		return errors.New("refresh PostgreSQL run persistence is unavailable")
+	}
+	return p.repository.HeartbeatLease(ctx, job.RunID, job.LeaseOwner, job.LeaseRevision, lease)
+}
+
 func (p *postgresRunPersistence) queueLifecycle() (PostgresQueueLifecycle, error) {
 	if p == nil || p.jobs == nil {
 		return nil, errors.New("canonical platform jobs queue is not configured")

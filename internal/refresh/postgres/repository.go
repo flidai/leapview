@@ -1788,6 +1788,32 @@ func (r *Repository) ClaimAttempt(ctx context.Context, runID, owner string, fenc
 	return out, err
 }
 
+// HeartbeatLease renews both the refresh run and its current attempt in one
+// fenced transaction. A worker that loses either row's exact owner/fence must
+// stop before it can publish or finish the run.
+func (r *Repository) HeartbeatLease(ctx context.Context, runID, owner string, fence int64, lease time.Duration) error {
+	if err := r.requireDB(); err != nil {
+		return err
+	}
+	if err := canonicalID("run id", runID, 256); err != nil || canonicalID("owner id", owner, 256) != nil || fence <= 0 || lease <= 0 || lease > MaxLease {
+		return ErrInvalid
+	}
+	return r.withTx(ctx, func(tx pgx.Tx) error {
+		runRows, err := refreshdb.New(tx).HeartbeatRunLease(ctx, refreshdb.HeartbeatRunLeaseParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence, Lease: lease})
+		if err != nil {
+			return err
+		}
+		attemptRows, err := refreshdb.New(tx).HeartbeatAttemptLease(ctx, refreshdb.HeartbeatAttemptLeaseParams{RunID: runID, OwnerID: owner, FenceGeneration: fence, Lease: lease})
+		if err != nil {
+			return err
+		}
+		if runRows != 1 || attemptRows != 1 {
+			return ErrLeaseExpired
+		}
+		return nil
+	})
+}
+
 func (r *Repository) finishAttemptTx(ctx context.Context, tx Tx, runID, owner string, fence int64, status string, evidence json.RawMessage, message string) error {
 	if tx == nil {
 		return ErrInvalid
