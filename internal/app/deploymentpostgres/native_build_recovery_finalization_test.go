@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
@@ -28,6 +29,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	"github.com/flidai/leapview/internal/release"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -133,6 +135,38 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	base.Artifacts.Compiler.Manifest = portableArtifact.Manifest()
 	base.Artifacts.Compiler.Plan = projectcompiler.BundlePlan{Deterministic: true}
 	base.Artifacts.Artifact.ProjectDigest = portableArtifact.Digest()
+	policyScope := access.AuthorizationPolicyScope{TargetID: base.Plan.TargetID, ProjectID: base.Plan.ProjectID.String(), Environment: string(base.Plan.Environment)}
+	policyRepository, err := accesspostgres.NewAuthorizationPolicyRepository(db, policyScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := policyRepository.AuthorizationPolicy(t.Context(), policyScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDocument := projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{}}
+	for _, binding := range policy.RoleBindings {
+		policyDocument.RoleBindings[binding.ID] = projectmanifest.RoleBinding{ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: projectmanifest.Subject{Kind: string(binding.Subject.Kind), PrincipalID: binding.Subject.ID}}
+	}
+	policyJSON, err := json.Marshal(policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: base.Plan.ProjectID, Environment: base.Plan.Environment, GenerationID: release.CandidatePolicyGenerationID}, graph, policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationDigest, err := policySnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Artifacts.AuthorizationPolicyRevision = policy.Revision
+	base.Artifacts.AuthorizationPolicyDigest = policy.Digest
+	base.Artifacts.AuthorizationFingerprint = authorizationDigest
+	base.Artifacts.Generation.AccessPolicyJSON = string(policyJSON)
+	base.Plan.Governance.PolicyRevision = policy.Revision
+	base.Plan.Governance.PolicyDigest = policy.Digest
+	base.Plan.Governance.AuthorizationDigest = authorizationDigest
 	base.Plan.ServingArtifactDigest = base.Artifacts.Generation.ArtifactDigest
 	base.Plan.Digest = ""
 	normalizedPlan, err := deploymentdomain.NewDeliveryPlan(base.Plan)

@@ -147,12 +147,18 @@ func nativeRecoveredArtifactFixture(t *testing.T) (release.CandidateArtifactSet,
 		SecurityDomainFingerprint: securityDigest, ServingArtifactID: "artifact-1", ServingArtifactDigest: servingDigest,
 		ArtifactRoot: "artifacts/root", ArtifactRootDigest: servingDigest, CompiledGraphDigest: project.Digest(),
 	}
-	plan := deployment.DeliveryPlan{ProjectID: projectID, Environment: "prod", SourceDigest: nativeReadDigest('c')}
+	policyDigest := nativeReadDigest('4')
+	plan := deployment.DeliveryPlan{
+		ProjectID: projectID, Environment: "prod", SourceDigest: nativeReadDigest('c'),
+		Governance: deployment.DeliveryGovernance{PolicyRevision: 1, PolicyDigest: policyDigest},
+	}
 	candidate := nativepostgres.DeliveryCandidate{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000203", ArtifactDigest: servingDigest}
 	gate := release.GateEvidence{SourceDigest: plan.SourceDigest}
 	set := release.CandidateArtifactSet{
-		AuthorizationFingerprint: securityDigest,
-		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: plan.SourceDigest, ContentDigest: servingDigest},
+		AuthorizationFingerprint:    securityDigest,
+		AuthorizationPolicyRevision: 1,
+		AuthorizationPolicyDigest:   policyDigest,
+		Artifact:                    release.ProjectArtifactProvenance{SourceDigest: plan.SourceDigest, ContentDigest: servingDigest},
 		Generation: release.CandidateGenerationArtifact{
 			Identity: identity, ServingArtifactID: seal.ServingArtifactID, ArtifactDigest: servingDigest, DataRevision: "sources:revision",
 			NativeArtifact: release.NativeArtifactObjectEvidence{Locator: seal.ArtifactRoot},

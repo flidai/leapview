@@ -41,21 +41,23 @@ type Module struct {
 }
 
 type surfaceConfig struct {
-	Persistence                  *Persistence
-	Repository                   func() (access.Repository, error)
-	CurrentPrincipal             func(*http.Request) (Principal, bool)
-	CurrentCredential            func(*http.Request) (access.APICredential, bool)
-	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	AuthoringProjectID           func(context.Context) (projectgraph.ResourceID, error)
-	Auth                         *Auth
-	Logger                       *slog.Logger
-	OAuth                        *mcpoauth.Service
-	OAuthResource                mcpoauth.ResourceServer
-	AuthoringAuth                *access.AuthoringAuthService
-	Avatar                       *avatar.Service
-	Presentation                 webpage.Presentation
-	Assets                       staticasset.Resolver
+	Persistence                    *Persistence
+	Repository                     func() (access.Repository, error)
+	AuthorizationPolicyTargetID    string
+	AuthorizationPolicyEnvironment string
+	CurrentPrincipal               func(*http.Request) (Principal, bool)
+	CurrentCredential              func(*http.Request) (access.APICredential, bool)
+	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	Auth                           *Auth
+	Logger                         *slog.Logger
+	OAuth                          *mcpoauth.Service
+	OAuthResource                  mcpoauth.ResourceServer
+	AuthoringAuth                  *access.AuthoringAuthService
+	Avatar                         *avatar.Service
+	Presentation                   webpage.Presentation
+	Assets                         staticasset.Resolver
 }
 
 func newSurface(config surfaceConfig) (*Module, error) {
@@ -110,7 +112,8 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		currentProjectID:             config.CurrentProjectID,
 		authoringProjectID:           config.AuthoringProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
-			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
+			Repository: config.Repository, AuthorizationPolicyTargetID: config.AuthorizationPolicyTargetID,
+			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			AuthoringAuth:                config.AuthoringAuth,

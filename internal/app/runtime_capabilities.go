@@ -100,6 +100,7 @@ type accessCapabilityConfig struct {
 	AvatarBlobs      accessmodule.AvatarBlobStore
 	PublicURL        string
 	InstanceID       string
+	Environment      string
 	MCPIssuerURL     string
 	CurrentProject   func(context.Context) (projectgraph.ResourceID, error)
 	AuthoringProject func(context.Context) (projectgraph.ResourceID, error)
@@ -116,7 +117,8 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
 		Auth:        cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
-		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
+		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, AuthorizationPolicyTargetID: cfg.InstanceID,
+		AuthorizationPolicyEnvironment: cfg.Environment, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID:   cfg.CurrentProject,
 		AuthoringProjectID: cfg.AuthoringProject,
 		Presentation:       page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},

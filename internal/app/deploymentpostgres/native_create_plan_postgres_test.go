@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	deploymentevents "github.com/flidai/leapview/internal/app/deploymentevents"
@@ -35,6 +36,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const nativePlanPolicySubjectID = "70000000-0000-0000-0000-000000000041"
 
 type nativePlanSourceReader struct {
 	mu    sync.Mutex
@@ -158,10 +161,12 @@ func nativePlanPostgresFixture(t *testing.T, sourceDigest, attestationDigest str
 	}
 	source := project.CandidateSourceSnapshot{ProjectID: projectID, ArtifactDigest: sourceDigest, SourceAttestationDigest: attestationDigest, ProjectDigest: artifact.Digest()}
 	set := release.CandidateArtifactSet{
-		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
-		AuthorizationFingerprint: createPlanTestDigest('c'),
-		Generation:               release.CandidateGenerationArtifact{DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Graph: graph, Manifest: artifact.Manifest(), Artifact: artifact, Plan: projectcompiler.BundlePlan{Deterministic: true}},
+		Artifact:                    release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
+		AuthorizationPolicyRevision: 1,
+		AuthorizationPolicyDigest:   createPlanTestDigest('b'),
+		AuthorizationFingerprint:    createPlanTestDigest('c'),
+		Generation:                  release.CandidateGenerationArtifact{DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
+		Compiler:                    release.CandidateCompilerEvidence{Graph: graph, Manifest: artifact.Manifest(), Artifact: artifact, Plan: projectcompiler.BundlePlan{Deterministic: true}},
 	}
 	return source, set
 }
@@ -178,7 +183,51 @@ func nativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSou
 	} else if err != nil {
 		t.Fatal(err)
 	}
+	seedNativePlanAuthorizationPolicy(t, db, inspector, "target_native_plan", "prod")
 	return newNativePlanCoordinator(t, db, source, inspector)
+}
+
+func seedNativePlanAuthorizationPolicy(t *testing.T, db *pgxpool.Pool, inspector *nativePlanArtifactInspector, targetID, environment string) {
+	t.Helper()
+	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active') ON CONFLICT (id) DO NOTHING`, nativePlanPolicySubjectID); err != nil {
+		t.Fatalf("seed native plan policy principal: %v", err)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: "project_native_plan", Environment: environment}
+	policyRepository, err := accesspostgres.NewAuthorizationPolicyRepository(db, scope)
+	if err != nil {
+		t.Fatalf("native plan policy repository: %v", err)
+	}
+	binding := nativePlanAuthorizationBinding()
+	policy, err := policyRepository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{
+		Scope: scope, Binding: binding, ExpectedRevision: 0, IdempotencyKey: "native-plan-policy",
+	})
+	if err != nil {
+		t.Fatalf("seed native plan authorization policy: %v", err)
+	}
+	document := projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{
+		binding.ID: {ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: projectmanifest.Subject{Kind: string(binding.Subject.Kind), PrincipalID: binding.Subject.ID}},
+	}}
+	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{
+		ProjectID: projectgraph.ResourceID(scope.ProjectID), Environment: scope.Environment, GenerationID: release.CandidatePolicyGenerationID,
+	}, inspector.set.Compiler.Graph, document)
+	if err != nil {
+		t.Fatalf("compile native plan authorization policy: %v", err)
+	}
+	authorizationDigest, err := snapshot.Digest()
+	if err != nil {
+		t.Fatalf("digest native plan authorization policy: %v", err)
+	}
+	inspector.set.AuthorizationPolicyRevision = policy.Revision
+	inspector.set.AuthorizationPolicyDigest = policy.Digest
+	inspector.set.AuthorizationFingerprint = authorizationDigest
+}
+
+func nativePlanAuthorizationBinding() access.RoleBinding {
+	return access.RoleBinding{
+		ID: "binding-native-plan-viewer", Name: "Native plan viewer",
+		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: nativePlanPolicySubjectID},
+		Role:    access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
+	}
 }
 
 func newNativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSourceReader, inspector *nativePlanArtifactInspector) *NativeCreatePlanCoordinator {
@@ -378,6 +427,55 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 	}
 	if persistedRich.Execution.BindingDigest != wantBindingDigest {
 		t.Fatalf("persisted binding digest = %q, want exact lease evidence %q", persistedRich.Execution.BindingDigest, wantBindingDigest)
+	}
+}
+
+func TestNativeCreatePlanPostgresRejectsPolicyChangedDuringArtifactInspection(t *testing.T) {
+	db, _ := nativePlanPostgresDB(t)
+	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
+	entered := make(chan struct{}, 1)
+	continueInspection := make(chan struct{})
+	inspector := &nativePlanArtifactInspector{set: artifacts, entered: entered, continueC: continueInspection}
+	coord := nativePlanCoordinator(t, db, &nativePlanSourceReader{snap: snapshot}, inspector)
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := coord.CreatePlan(t.Context(), nativePlanRequest())
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("artifact inspection did not start")
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: "target_native_plan", ProjectID: "project_native_plan", Environment: "prod"}
+	policyRepository, err := accesspostgres.NewAuthorizationPolicyRepository(db, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := nativePlanAuthorizationBinding()
+	changed.Name = "Changed native plan viewer"
+	if _, err := policyRepository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{
+		Scope: scope, Binding: changed, ExpectedRevision: 1, IdempotencyKey: "native-plan-policy-changed",
+	}); err != nil {
+		t.Fatalf("change native plan authorization policy: %v", err)
+	}
+	close(continueInspection)
+	if err := <-result; !errors.Is(err, access.ErrAuthorizationPolicyStaleRevision) {
+		t.Fatalf("CreatePlan stale policy error = %v, want ErrAuthorizationPolicyStaleRevision", err)
+	}
+
+	var targets, operations, plans, events, audits int
+	if err := db.QueryRow(t.Context(), `SELECT
+		(SELECT count(*) FROM delivery.delivery_target),
+		(SELECT count(*) FROM platform.operation),
+		(SELECT count(*) FROM delivery.delivery_plan),
+		(SELECT count(*) FROM event.event_log),
+		(SELECT count(*) FROM audit.audit_event)`).Scan(&targets, &operations, &plans, &events, &audits); err != nil {
+		t.Fatal(err)
+	}
+	if targets != 0 || operations != 0 || plans != 0 || events != 0 || audits != 0 {
+		t.Fatalf("stale policy persisted target/operation/plan/event/audit = %d/%d/%d/%d/%d", targets, operations, plans, events, audits)
 	}
 }
 

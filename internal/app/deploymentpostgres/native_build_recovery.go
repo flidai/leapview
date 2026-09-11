@@ -204,7 +204,12 @@ func deriveNativeBuildRecoveryArtifactValues(
 	marker := nativeBuildMarker(prepared.Operation.OperationID, prepared.GenerationID, prepared.AttemptID, requestDigest, request, plan.Digest, physicalPoolID, prepared.DeliveryAttempt.FencingEpoch)
 	marker.FencingToken = fmt.Sprintf("%d", prepared.DeliveryAttempt.FencingEpoch)
 	binding := deploymentnative.BuildArtifactBinding{AttemptID: prepared.AttemptID, ServingArtifactID: artifactIdentity.ServingArtifactID, ServingArtifactDigest: artifactIdentity.ServingArtifactDigest, ServingStateID: artifactIdentity.ServingStateID}
-	return release.CandidateArtifactRecoveryRequest{CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest, ManagedDataPins: managedPins, Artifact: artifactIdentity}, binding, marker, nil
+	return release.CandidateArtifactRecoveryRequest{
+		CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest,
+		AuthorizationPolicyRevision: plan.Governance.PolicyRevision,
+		AuthorizationPolicyDigest:   plan.Governance.PolicyDigest,
+		ManagedDataPins:             managedPins, Artifact: artifactIdentity,
+	}, binding, marker, nil
 }
 
 // nativeRecoveryPlanManagedDataPins lowers the exact pinned managed-data

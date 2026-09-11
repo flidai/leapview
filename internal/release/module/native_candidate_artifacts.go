@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
@@ -38,14 +39,16 @@ import (
 // storage: materialization is one immutable object write and hydration is
 // one exact object read.
 type nativeCandidateArtifactPhases struct {
-	reader               project.CandidateSourceObjectReader
-	states               ServingStateReader
-	provenance           release.ServingStateProvenanceRepository
-	artifacts            platformobjectstore.ImmutableStore
-	storageDomain        string
-	environment          servingstate.Environment
-	pins                 ManagedDataPins
-	extensionPreparation extension.Preparation
+	reader                project.CandidateSourceObjectReader
+	states                ServingStateReader
+	provenance            release.ServingStateProvenanceRepository
+	artifacts             platformobjectstore.ImmutableStore
+	storageDomain         string
+	environment           servingstate.Environment
+	targetID              string
+	authorizationPolicies access.AuthorizationPolicyReader
+	pins                  ManagedDataPins
+	extensionPreparation  extension.Preparation
 }
 
 var _ candidateArtifactPhases = (*nativeCandidateArtifactPhases)(nil)
@@ -134,6 +137,25 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiledProject.Graph(), policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("resolve target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	result.AuthorizationPolicyRevision = targetPolicy.revision
+	result.AuthorizationPolicyDigest = targetPolicy.digest
+	result.AuthorizationFingerprint = authorizationFingerprint
+	result.Generation.AccessPolicyJSON = targetPolicy.canonical
+	result.Generation.Restrictions = candidateRestrictions(targetPolicy.snapshot)
 	if err := retainNativeServingDocuments(&result.Generation, compiledProject); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -160,167 +182,6 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	result.Generation.ServingArtifactID = nativeServingArtifactID(bundleDigest)
 	result.Generation.ArtifactDigest = bundleDigest
 	return result, nil
-}
-
-// nativeGenerationBase loads one exact serving generation from the immutable
-// native authorities. Unlike compatibility paths, every byte and
-// identity is checked against the serving-state row, its provenance, and the
-// object-store metadata before the compiled project can affect planning.
-func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.Context, identity *projectgraph.ServingIdentity) (candidateGenerationBase, error) {
-	if identity == nil {
-		return candidateGenerationBase{pins: map[string]string{}}, nil
-	}
-	if service == nil || service.states == nil || service.provenance == nil || service.artifacts == nil {
-		return candidateGenerationBase{}, candidateArtifactUnavailable(errors.New("native serving-state base authority is unavailable"))
-	}
-	if err := identity.Validate(); err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	parsedGenerationID, err := validateNativeGenerationID(identity.GenerationID, true)
-	if err != nil || parsedGenerationID.String() != identity.GenerationID {
-		if err == nil {
-			err = errors.New("native base generation identity must be a canonical UUIDv7")
-		}
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-
-	state, err := service.states.ByID(ctx, servingstate.ID(identity.GenerationID))
-	if errors.Is(err, servingstate.ErrNotFound) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation not found"))
-	}
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
-	}
-	if state.ID != servingstate.ID(identity.GenerationID) || state.ProjectID != identity.ProjectID || state.Environment != servingstate.Environment(identity.Environment) || state.Status != servingstate.StatusActive || state.DuckLakeSnapshotID <= 0 || state.ProjectID.Validate() != nil || servingstate.ValidateEnvironment(state.Environment) != nil || platformdigest.ValidateSHA256Identity(state.ProjectDigest) != nil || platformdigest.ValidateSHA256Identity(state.Digest) != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation identity mismatch"))
-	}
-
-	baseProvenance, err := service.provenance.ProvenanceForServingState(ctx, *identity)
-	if errors.Is(err, release.ErrNotFound) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance not found"))
-	}
-	if errors.Is(err, release.ErrConflict) || errors.Is(err, release.ErrInvalid) || errors.Is(err, release.ErrProvenanceInvalid) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
-	}
-	if err := baseProvenance.Validate(); err != nil || baseProvenance.Plan.Identity != *identity {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
-	}
-
-	artifact, err := service.states.ArtifactByServingState(ctx, state.ID)
-	if errors.Is(err, servingstate.ErrNotFound) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact not found"))
-	}
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
-	}
-	if artifact.ServingStateID != state.ID || artifact.ID != nativeServingArtifactID(artifact.Digest) || artifact.Path != "" || artifact.Format != servingstate.ArtifactBundleFormat || platformdigest.ValidateSHA256Identity(artifact.Digest) != nil || artifact.Digest != state.Digest || artifact.ManifestJSON == "" || artifact.ManifestJSON != state.ManifestJSON || artifact.SizeBytes < 1 || artifact.SizeBytes > projectbundle.MaxBundleBytes || artifact.ContentType != nativeServingArtifactContentType || !validNativeStorageDomain(artifact.StorageSecurityDomain) || artifact.StorageSecurityDomain != service.storageDomain || platformdigest.ValidateSHA256Identity(artifact.MetadataDigest) != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact identity or evidence mismatch"))
-	}
-	locator := nativeServingArtifactKey(artifact.Digest)
-	if locator == "" || artifact.Locator != locator || artifact.Locator != strings.TrimSpace(artifact.Locator) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact locator is not canonical"))
-	}
-	durableManifestJSON, err := projectbundle.CanonicalManifestJSON(artifact.ManifestJSON)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	if baseProvenance.Artifact.ContentDigest != artifact.Digest || baseProvenance.Artifact.ProjectDigest != state.ProjectDigest {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance content identity mismatch"))
-	}
-
-	object, err := service.artifacts.Open(ctx, artifact.Locator)
-	if err != nil {
-		return candidateGenerationBase{}, nativeCandidateObjectError(err)
-	}
-	if object.Body == nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact object body is nil"))
-	}
-	defer object.Body.Close()
-	expectedMetadata := platformobjectstore.ObjectMetadata{StorageSecurityDomain: artifact.StorageSecurityDomain, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, ContentType: artifact.ContentType, MetadataDigest: artifact.MetadataDigest}
-	if err := validateNativeServingArtifactInfo(object.Info, artifact.Locator, expectedMetadata); err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	validatedManifestJSON, err := projectbundle.CanonicalManifestJSON(validation.ManifestJSON)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	if validation.Digest != artifact.Digest || validation.BundleDigest != state.ProjectDigest || !bytes.Equal(validatedManifestJSON, durableManifestJSON) || compiled.BundleDigest != state.ProjectDigest {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact content identity mismatch"))
-	}
-	baseArtifact, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	if baseArtifact.Digest() != state.ProjectDigest {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base source bundle identity mismatch"))
-	}
-	if baseProvenance.Artifact.CompilerVersion != projectartifact.CompilerVersion || baseProvenance.Artifact.SchemaVersion != baseArtifact.Version() {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance compiler identity mismatch"))
-	}
-	for _, document := range []struct {
-		label     string
-		persisted string
-	}{
-		{label: "access policy", persisted: state.AccessPolicyJSON},
-		{label: "dashboard publications", persisted: state.DashboardPublicationsJSON},
-		{label: "dashboard appearances", persisted: state.DashboardAppearancesJSON},
-	} {
-		// These documents are target-owned serving state, not source-bundle
-		// identity. Validate their canonical encoding without comparing them to
-		// the portable bundle's intentionally empty placeholders.
-		if err := validateNativeServingDocument(document.persisted, document.label); err != nil {
-			return candidateGenerationBase{}, candidateArtifactInvalid(err)
-		}
-	}
-	pins := make(map[string]string, len(baseProvenance.Plan.ManagedDataPins))
-	for _, pin := range baseProvenance.Plan.ManagedDataPins {
-		connection, revision := pin.ConnectionID, pin.RevisionID
-		if connection != strings.TrimSpace(connection) || revision != strings.TrimSpace(revision) || connection == "" || revision == "" {
-			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical managed-data pins"))
-		}
-		if _, exists := pins[connection]; exists {
-			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains duplicate managed-data pins"))
-		}
-		pins[connection] = revision
-	}
-	dataRevision := strings.TrimSpace(baseProvenance.Plan.DataRevision)
-	if dataRevision == "" && state.DuckLakeSnapshotID > 0 {
-		dataRevision = fmt.Sprintf("snapshot:%d", state.DuckLakeSnapshotID)
-	}
-	baseBindings := make(map[string]string, len(baseProvenance.Plan.Bindings))
-	for _, binding := range baseProvenance.Plan.Bindings {
-		connectionID := strings.TrimSpace(binding.ConnectionID)
-		kind := strings.TrimSpace(binding.ConnectorKind)
-		if connectionID == "" || kind == "" || connectionID != binding.ConnectionID || kind != binding.ConnectorKind {
-			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical binding evidence"))
-		}
-		if existing, ok := baseBindings[connectionID]; ok && existing != kind {
-			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains conflicting binding evidence"))
-		}
-		if _, exists := baseBindings[connectionID]; exists {
-			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains duplicate binding evidence"))
-		}
-		baseBindings[connectionID] = kind
-	}
-	if len(baseBindings) == 0 {
-		activations, activationErr := baseArtifact.ConnectionActivations()
-		if activationErr != nil {
-			return candidateGenerationBase{}, candidateArtifactInvalid(activationErr)
-		}
-		baseBindings = candidateActivationBindings(activations)
-	}
-	relationContext, err := candidateRelationContexts(pins, baseArtifact, baseBindings)
-	if err != nil {
-		return candidateGenerationBase{}, candidateArtifactInvalid(err)
-	}
-	return candidateGenerationBase{graph: validation.Graph, artifact: baseArtifact, pins: pins, bindings: baseBindings, snapshotID: state.DuckLakeSnapshotID, dataRevision: dataRevision, relationContext: relationContext, gateEvidence: baseProvenance.Plan.GateEvidence, active: true}, nil
 }
 
 func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
@@ -390,10 +251,29 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 		}
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiledProject.Graph(), policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("revalidate target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if targetPolicy.revision != inspected.AuthorizationPolicyRevision || targetPolicy.digest != inspected.AuthorizationPolicyDigest ||
+		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
+	}
+	_, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	accessPolicyJSON := targetPolicy.canonical
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -521,10 +401,29 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if compiled.GraphDigest != inspected.Compiler.Graph.Digest() || !sameNativeJSON(compiled.Plan, inspected.Compiler.Plan) || !sameNativeJSON(compiled.Manifest, inspected.Compiler.Manifest) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving artifact compiler evidence mismatch"))
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiled.Graph, policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("revalidate target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if targetPolicy.revision != inspected.AuthorizationPolicyRevision || targetPolicy.digest != inspected.AuthorizationPolicyDigest ||
+		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
+	}
+	_, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	accessPolicyJSON := targetPolicy.canonical
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -581,6 +480,9 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	}
 	if err := validateNativeRecoveryRequest(request, service.environment); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if service.authorizationPolicies != nil && (request.AuthorizationPolicyRevision <= 0 || platformdigest.ValidateSHA256Identity(request.AuthorizationPolicyDigest) != nil) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovery target authorization policy evidence is incomplete"))
 	}
 
 	digest := request.Artifact.ServingArtifactDigest
@@ -667,22 +569,25 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 		}
 	}
 
-	// Keep restrictions bound to the concrete serving identity used for this
-	// recovery. The fingerprint itself is governance evidence and must remain
-	// stable when the same artifact is reattached to another generation.
-	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
+	// Reload the exact historical target policy selected by the plan. Recovery
+	// must not silently adopt a newer mutable policy head.
 	policyIdentity, err := candidatePolicyIdentity(request.ServingIdentity.ProjectID, request.ServingIdentity.Environment)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.ServingIdentity.ProjectID, request.ServingIdentity.Environment,
+		request.AuthorizationPolicyRevision, request.AuthorizationPolicyDigest,
+		canonicalProject.Graph(), policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("recover target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	authorizationFingerprint, err := policySnapshot.Digest()
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), targetPolicy.manifest)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -690,10 +595,11 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(canonicalProject)
+	_, publicationsJSON, appearancesJSON, err := nativeServingDocuments(canonicalProject)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	accessPolicyJSON := targetPolicy.canonical
 	relationContext, err := candidateRelationContexts(managedPins, canonicalProject, candidateActivationBindings(activations))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -708,8 +614,10 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 			SourceDigest: request.SourceDigest, ProjectDigest: canonicalProject.Digest(), ContentDigest: digest,
 			CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: canonicalProject.Version(),
 		},
-		Extensions:               extensions,
-		AuthorizationFingerprint: authorizationFingerprint,
+		Extensions:                  extensions,
+		AuthorizationPolicyRevision: targetPolicy.revision,
+		AuthorizationPolicyDigest:   targetPolicy.digest,
+		AuthorizationFingerprint:    authorizationFingerprint,
 		Generation: release.CandidateGenerationArtifact{
 			Identity: request.ServingIdentity, ServingArtifactID: request.Artifact.ServingArtifactID,
 			ArtifactDigest: digest, BundleManifestJSON: validation.ManifestJSON,
@@ -806,7 +714,11 @@ func retainNativeServingDocuments(generation *release.CandidateGenerationArtifac
 	if err != nil {
 		return err
 	}
-	generation.AccessPolicyJSON = accessPolicyJSON
+	if generation.AccessPolicyJSON == "" {
+		generation.AccessPolicyJSON = accessPolicyJSON
+	} else if err := validateNativeServingDocument(generation.AccessPolicyJSON, "access policy"); err != nil {
+		return err
+	}
 	generation.DashboardPublicationsJSON = publicationsJSON
 	generation.DashboardAppearancesJSON = appearancesJSON
 	return nil

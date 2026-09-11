@@ -843,6 +843,101 @@ CREATE TABLE access.authorization_data_policy (
 );
 CREATE INDEX authorization_data_policy_resource_idx ON access.authorization_data_policy(project_id, environment, generation_id, resource_id);
 
+-- Target-owned mutable authorization policy. The head row is only a
+-- compare-and-swap pointer; every positive revision has an immutable child
+-- document so release planning and recovery can resolve the exact historical
+-- policy rather than whatever is current when they run.
+CREATE TABLE access.authorization_policy (
+    target_id text NOT NULL CHECK (target_id = btrim(target_id) AND length(target_id) BETWEEN 1 AND 255),
+    project_id text NOT NULL CHECK (project_id = btrim(project_id) AND length(project_id) BETWEEN 1 AND 255),
+    environment text NOT NULL CHECK (environment = btrim(environment) AND length(environment) BETWEEN 1 AND 255),
+    revision bigint NOT NULL CHECK (revision > 0),
+    digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (target_id, project_id, environment)
+);
+
+CREATE TABLE access.authorization_policy_revision (
+    target_id text NOT NULL,
+    project_id text NOT NULL,
+    environment text NOT NULL,
+    revision bigint NOT NULL CHECK (revision > 0),
+    digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    source_generation_id text CHECK (source_generation_id IS NULL OR (source_generation_id = btrim(source_generation_id) AND length(source_generation_id) BETWEEN 1 AND 255)),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (target_id, project_id, environment, revision),
+    FOREIGN KEY (target_id, project_id, environment)
+        REFERENCES access.authorization_policy(target_id, project_id, environment)
+        ON DELETE RESTRICT
+);
+
+CREATE TABLE access.authorization_policy_role_binding (
+    target_id text NOT NULL,
+    project_id text NOT NULL,
+    environment text NOT NULL,
+    revision bigint NOT NULL CHECK (revision > 0),
+    id text NOT NULL CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
+    subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
+    subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
+    role text NOT NULL CHECK (role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
+    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (target_id, project_id, environment, revision, id),
+    UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, role),
+    FOREIGN KEY (target_id, project_id, environment, revision)
+        REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
+        ON DELETE RESTRICT
+);
+CREATE INDEX authorization_policy_role_binding_subject_idx
+    ON access.authorization_policy_role_binding(target_id, project_id, environment, revision, subject_kind, subject_id);
+
+-- An idempotency record binds a retry key to the complete canonical command,
+-- not merely to a binding ID. This rejects accidental key reuse while
+-- retaining the exact historical revision produced by a successful write.
+CREATE TABLE access.authorization_policy_operation (
+    target_id text NOT NULL,
+    project_id text NOT NULL,
+    environment text NOT NULL,
+    idempotency_key text NOT NULL CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    revision bigint NOT NULL CHECK (revision > 0),
+    policy_digest text NOT NULL CHECK (policy_digest ~ '^sha256:[0-9a-f]{64}$'),
+    binding_id text NOT NULL CHECK (binding_id = btrim(binding_id) AND length(binding_id) BETWEEN 1 AND 255),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (target_id, project_id, environment, idempotency_key),
+    FOREIGN KEY (target_id, project_id, environment, revision)
+        REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
+        ON DELETE RESTRICT
+);
+
+CREATE OR REPLACE FUNCTION access.reject_authorization_policy_revision_rewind() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.target_id <> OLD.target_id OR NEW.project_id <> OLD.project_id OR NEW.environment <> OLD.environment
+       OR NEW.revision <> OLD.revision + 1 OR NEW.digest = OLD.digest THEN
+        RAISE EXCEPTION 'authorization policy identity or revision is not monotonic';
+    END IF;
+    RETURN NEW;
+END; $$;
+CREATE TRIGGER authorization_policy_revision_monotonic
+    BEFORE UPDATE ON access.authorization_policy
+    FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_revision_rewind();
+CREATE OR REPLACE FUNCTION access.reject_authorization_policy_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'authorization policy history is immutable';
+END; $$;
+CREATE TRIGGER authorization_policy_revision_immutable
+    BEFORE UPDATE ON access.authorization_policy_revision
+    FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER authorization_policy_role_binding_immutable
+    BEFORE UPDATE ON access.authorization_policy_role_binding
+    FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+CREATE TRIGGER authorization_policy_operation_immutable
+    BEFORE UPDATE ON access.authorization_policy_operation
+    FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_policy_history_mutation();
+
+
 CREATE TABLE access.authorization_revocation (
     id uuid PRIMARY KEY DEFAULT uuidv7(),
     project_id text NOT NULL,
@@ -1029,6 +1124,10 @@ CREATE TRIGGER authorization_grant_revocation_monotonic BEFORE UPDATE ON access.
 CREATE TRIGGER authorization_data_policy_no_delete BEFORE DELETE ON access.authorization_data_policy FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER authorization_data_policy_immutable BEFORE UPDATE ON access.authorization_data_policy FOR EACH ROW EXECUTE FUNCTION access.reject_authorization_identity_rewrite();
 CREATE TRIGGER authorization_data_policy_revocation_monotonic BEFORE UPDATE ON access.authorization_data_policy FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
+CREATE TRIGGER authorization_policy_no_delete BEFORE DELETE ON access.authorization_policy FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER authorization_policy_revision_no_delete BEFORE DELETE ON access.authorization_policy_revision FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER authorization_policy_role_binding_no_delete BEFORE DELETE ON access.authorization_policy_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER authorization_policy_operation_no_delete BEFORE DELETE ON access.authorization_policy_operation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER authorization_revocation_append_only BEFORE UPDATE OR DELETE ON access.authorization_revocation FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER principal_preferences_no_delete BEFORE DELETE ON access.principal_preferences FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER principal_preferences_revocation_monotonic BEFORE UPDATE ON access.principal_preferences FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
@@ -1070,6 +1169,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE ON access.authorization_policy_revision, access.authorization_policy_role_binding, access.authorization_policy_operation FROM leapview_control_runtime';
         EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';

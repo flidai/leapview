@@ -506,6 +506,9 @@ func (c *Controller) QualifyImage(
 		!authoringReport.Assertions.ExactCandidateActivated {
 		return fmt.Errorf("enterprise authoring report is incomplete")
 	}
+	if err := validateQualificationAuthoringPolicyEvidence(authoringReport); err != nil {
+		return err
+	}
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}

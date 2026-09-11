@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_target_authorization_policy.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,37 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestTargetAuthorizationPolicyMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "009_target_authorization_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"access.authorization_policy",
+		"access.authorization_policy_revision",
+		"access.authorization_policy_role_binding",
+		"access.authorization_policy_operation",
+		"source_generation_id",
+		"authorization_policy_revision",
+		"authorization_policy_digest",
+		"authorization policy history is immutable",
+		"REVOKE UPDATE",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("target authorization policy migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("target authorization policy migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("target authorization policy Down must refuse instead of deleting evidence")
 	}
 }
 

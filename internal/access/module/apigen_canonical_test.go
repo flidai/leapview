@@ -475,6 +475,40 @@ func generatedAPIGenContracts() map[string]APIGenOperationContract {
 	return contracts
 }
 
+func TestRoleBindingAPIGenContractsAreScopedAndTransactional(t *testing.T) {
+	contracts := generatedAPIGenContracts()
+	list, ok := contracts["listProjectRoleBindings"]
+	if !ok {
+		t.Fatal("generated listProjectRoleBindings contract is missing")
+	}
+	if list.Method != http.MethodGet || list.Path != "/api/v1/projects/{project}/role-bindings" || !list.Protected || list.AuthzMode != "privilege" {
+		t.Fatalf("listProjectRoleBindings contract = %#v", list)
+	}
+	if list.Command != nil {
+		t.Fatal("listProjectRoleBindings unexpectedly has a command contract")
+	}
+	if got := list.Extensions[apiGenObjectScopeExtension]; got != "project" {
+		t.Fatalf("listProjectRoleBindings object scope = %#v, want project", got)
+	}
+
+	create, ok := contracts["createProjectRoleBinding"]
+	if !ok {
+		t.Fatal("generated createProjectRoleBinding contract is missing")
+	}
+	if create.Method != http.MethodPost || create.Path != "/api/v1/projects/{project}/role-bindings" || !create.Protected || create.AuthzMode != "privilege" {
+		t.Fatalf("createProjectRoleBinding contract = %#v", create)
+	}
+	if create.Command == nil {
+		t.Fatal("createProjectRoleBinding is missing its command contract")
+	}
+	if create.Command.AuthzMode != "privilege" || create.Command.Privilege != "PROJECT_ADMIN" || create.Command.Idempotency != "required" || create.Command.Target == nil || create.Command.Target.Parameter != "project" {
+		t.Fatalf("createProjectRoleBinding command = %#v", create.Command)
+	}
+	if got := create.Extensions[apiGenObjectScopeExtension]; got != "project" {
+		t.Fatalf("createProjectRoleBinding object scope = %#v, want project", got)
+	}
+}
+
 func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testing.T) {
 	contracts := generatedAPIGenContracts()
 	if len(contracts) == 0 {
@@ -1647,6 +1681,12 @@ func TestAPIGenDeliveryStatusBootstrapRemainsFailClosed(t *testing.T) {
 func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t *testing.T) {
 	if !isBootstrapAPIGenOperation("retainProjectCandidateSource") {
 		t.Fatal("source retention operation is not bootstrap-authorized")
+	}
+	if !isBootstrapAPIGenOperation("createProjectRoleBinding") {
+		t.Fatal("role binding creation is not bootstrap-authorized")
+	}
+	if !isBootstrapAPIGenOperation("listProjectRoleBindings") {
+		t.Fatal("role binding policy verification is not bootstrap-authorized")
 	}
 	for _, operation := range []string{
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",

@@ -101,6 +101,38 @@ model RoleListResponse {
   page: PageInfo;
 }
 
+model RoleBindingResponse {
+  id: string;
+  name: string;
+  subjectType: string;
+  subjectId: string;
+  role: string;
+  @doc("The immutable capability bundle derived from role by the target authority.")
+  capabilities: Capability[];
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model RoleBindingListResponse {
+  items: RoleBindingResponse[];
+  page: PageInfo;
+  targetId: string;
+  projectId: ResourceId;
+  environment: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model RoleBindingCreateRequest {
+  id: string;
+  name?: string;
+  subjectType: string;
+  subjectId: string;
+  role: string;
+  @doc("Compare-and-swap fence. Use 0 when creating the first policy revision.")
+  expectedRevision: int64;
+}
+
 model GroupCreateRequest {
   name: string;
   displayName?: string;
@@ -468,6 +500,52 @@ model DataPolicyResponse {
 model DataPolicyListResponse {
   items: DataPolicyResponse[];
   page: PageInfo;
+}
+
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "ROLE_BINDING_INVALID",
+  publicDetail: "The role binding request is invalid.",
+})
+model RoleBindingInvalidFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "ROLE_BINDING_NOT_FOUND",
+  publicDetail: "The authorization policy was not found.",
+})
+model RoleBindingNotFoundFailure {}
+
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "ROLE_BINDING_CONFLICT",
+  publicDetail: "The authorization policy conflicts with current state.",
+})
+model RoleBindingConflictFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model RoleBindingAuditPayload {
+  @apigen.auditInternal
+  targetId: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditInternal
+  environment: string;
+  @apigen.auditInternal
+  bindingId: string;
+  @apigen.auditPublic
+  subjectType: string;
+  @apigen.auditPii
+  subjectId: string;
+  @apigen.auditPublic
+  role: string;
+  @apigen.auditInternal
+  policyRevision: int64;
+  @apigen.auditInternal
+  policyDigest: string;
 }
 
 model EffectiveCapabilityListResponse {
@@ -897,6 +975,34 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
 @extension("x-leapview-object-scope", "project")
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
+
+alias ListProjectRoleBindingsOK = OkJson<RoleBindingListResponse>;
+
+model CreateProjectRoleBindingCreated {
+  ...Response<201>;
+  ...Body<RoleBindingResponse>;
+}
+
+@tag("Access")
+@summary("List target-owned project role bindings")
+@route("/projects/{project}/role-bindings")
+@get
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRoleBindingsOK | CommonErrors;
+
+@tag("Access")
+@summary("Create a target-owned project role binding")
+@route("/projects/{project}/role-bindings")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "role_binding.created", guarantee: "transactional" })
+@apigen.failsWith(RoleBindingInvalidFailure)
+@apigen.failsWith(RoleBindingConflictFailure)
+@apigen.failsWith(RoleBindingNotFoundFailure)
+@apigen.auditPayload(RoleBindingAuditPayload)
+op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingCreateRequest): CreateProjectRoleBindingCreated | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 

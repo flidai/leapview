@@ -328,7 +328,12 @@ func (provenance DeliveryProvenance) Validate() error {
 // DeliveryGovernance controls expiry, authorization, and qualification. It
 // does not alter the execution digest.
 type DeliveryGovernance struct {
-	PolicyDigest           string    `json:"policyDigest"`
+	PolicyDigest string `json:"policyDigest"`
+	// PolicyRevision is the exact target-owned authorization policy revision
+	// selected during planning. Zero is retained only for decoding historical
+	// plans created before versioned target policy existed; native planning and
+	// sealing require a positive value.
+	PolicyRevision         int64     `json:"policyRevision,omitempty"`
 	AuthorizationDigest    string    `json:"authorizationDigest"`
 	QualificationDigest    string    `json:"qualificationDigest"`
 	ExpiresAt              time.Time `json:"expiresAt"`
@@ -338,6 +343,9 @@ type DeliveryGovernance struct {
 }
 
 func (governance DeliveryGovernance) Validate() error {
+	if governance.PolicyRevision < 0 {
+		return fmt.Errorf("%w: policy revision cannot be negative", ErrDeliveryInvalid)
+	}
 	for name, value := range map[string]string{
 		"policy": governance.PolicyDigest, "authorization": governance.AuthorizationDigest,
 		"qualification": governance.QualificationDigest,

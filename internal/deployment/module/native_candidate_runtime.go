@@ -188,10 +188,12 @@ func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, 
 		return nativeCandidateRuntimeUnavailable("candidate serving identity is invalid")
 	}
 	artifacts, err := m.candidateArtifactRecovery.RecoverCandidateArtifacts(ctx, release.CandidateArtifactRecoveryRequest{
-		CandidateID:     candidate.CandidateID,
-		ServingIdentity: identity,
-		SourceDigest:    plan.SourceDigest,
-		ManagedDataPins: managedPins,
+		CandidateID:                 candidate.CandidateID,
+		ServingIdentity:             identity,
+		SourceDigest:                plan.SourceDigest,
+		AuthorizationPolicyRevision: plan.Governance.PolicyRevision,
+		AuthorizationPolicyDigest:   plan.Governance.PolicyDigest,
+		ManagedDataPins:             managedPins,
 		Artifact: release.CandidateArtifactIdentity{
 			ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest,
 			ServingStateID: generation.GenerationID,
@@ -277,6 +279,10 @@ func validateNativePreviewGeneration(m *Module, generation nativepostgres.Delive
 func validateRecoveredNativePreviewArtifacts(artifacts release.CandidateArtifactSet, identity projectgraph.ServingIdentity, candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, gate release.GateEvidence) error {
 	if artifacts.AuthorizationFingerprint == "" || artifacts.AuthorizationFingerprint != strings.TrimSpace(artifacts.AuthorizationFingerprint) || platformdigest.ValidateSHA256Identity(artifacts.AuthorizationFingerprint) != nil || artifacts.AuthorizationFingerprint != seal.SecurityDomainFingerprint {
 		return errors.New("recovered candidate authorization evidence is invalid")
+	}
+	if artifacts.AuthorizationPolicyRevision <= 0 || artifacts.AuthorizationPolicyRevision != plan.Governance.PolicyRevision ||
+		artifacts.AuthorizationPolicyDigest != plan.Governance.PolicyDigest {
+		return errors.New("recovered candidate target authorization policy evidence is invalid")
 	}
 	if artifacts.Artifact.SourceDigest != plan.SourceDigest || artifacts.Artifact.ContentDigest != seal.ServingArtifactDigest || artifacts.Generation.Identity != identity || artifacts.Generation.ServingArtifactID != seal.ServingArtifactID || artifacts.Generation.ArtifactDigest != seal.ServingArtifactDigest || artifacts.Generation.DataRevision == "" || artifacts.Generation.DataRevision != strings.TrimSpace(artifacts.Generation.DataRevision) || artifacts.Compiler.Graph.Digest() != seal.CompiledGraphDigest || seal.ArtifactRoot != "" && artifacts.Generation.NativeArtifact.Locator != seal.ArtifactRoot || seal.ArtifactRootDigest != "" && artifacts.Generation.ArtifactDigest != seal.ArtifactRootDigest {
 		return errors.New("recovered candidate artifact identity is inconsistent")

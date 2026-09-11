@@ -59,7 +59,7 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 
 func hasActiveBootstrapServingState(
 	ctx context.Context,
-	_ canonicalRuntimeHost,
+	runtimeHost canonicalRuntimeHost,
 	states servingStateRepository,
 	environment string,
 	targets deliveryTargetReader,
@@ -75,7 +75,46 @@ func hasActiveBootstrapServingState(
 			if target.TargetID != targetID || target.ProjectID != strings.TrimSpace(projectID) || strings.TrimSpace(target.Environment) != strings.TrimSpace(environment) {
 				return false, fmt.Errorf("active delivery target scope does not match %q/%q/%q", targetID, projectID, environment)
 			}
-			return strings.TrimSpace(target.ActiveGenerationID) != "", nil
+			activeGenerationID := strings.TrimSpace(target.ActiveGenerationID)
+			if activeGenerationID == "" {
+				return false, nil
+			}
+			// A legacy native generation can carry the canonical empty access
+			// document because target-owned policy revisions did not yet exist. If
+			// that exact generation is already loaded, retain the narrow claim- and
+			// platform-admin-gated bootstrap path until an explicit project role is
+			// sealed into a successor generation. An unavailable runtime remains
+			// closed so a warm-up or infrastructure failure cannot broaden access.
+			if runtimeHost != nil {
+				lease, acquireErr := runtimeHost.Acquire(ctx)
+				if acquireErr == nil {
+					if lease == nil {
+						return false, errors.New("runtime host returned a nil lease")
+					}
+					defer lease.Release()
+					identity := lease.Identity()
+					if identity.ProjectID.String() != target.ProjectID || identity.Environment != target.Environment || identity.GenerationID != activeGenerationID {
+						return false, errors.New("active runtime identity does not match delivery target")
+					}
+					authorized, ok := lease.(interface {
+						AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+					})
+					if !ok {
+						return false, errors.New("active runtime lease does not expose authorization snapshot")
+					}
+					snapshot := authorized.AuthorizationSnapshot()
+					if snapshot.Identity() != identity {
+						return false, errors.New("active runtime authorization snapshot identity does not match lease")
+					}
+					if err := snapshot.ValidateBound(); err != nil {
+						return false, err
+					}
+					if len(snapshot.RoleBindings()) == 0 && len(snapshot.Grants()) == 0 && len(snapshot.DataPolicies()) == 0 {
+						return false, nil
+					}
+				}
+			}
+			return true, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
 			return false, fmt.Errorf("read active delivery target: %w", err)
@@ -152,14 +191,32 @@ func bootstrapAPIGenDecision(
 	targets deliveryTargetReader,
 	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	// Deployment status/event reads, delivery plan resolution, and candidate
-	// source synchronization are control-plane operations. Their project-scoped
-	// RESOURCE_READ/EDIT contracts cannot be evaluated against the project graph
-	// (projects intentionally only support PROJECT_ADMIN), and the sealed delivery
-	// pointer advances before the in-process runtime cutover. Keep these
-	// operations on the durable, exact-claim bootstrap path through that
-	// marker-to-runtime warm-up window.
-	if bootstrapControlPlaneOperation(operationID) {
+	// Deployment status/event reads and delivery plan resolution are control-plane
+	// operations. Their project-scoped RESOURCE_READ contracts cannot be evaluated
+	// against the project graph (projects intentionally only support PROJECT_ADMIN),
+	// and the sealed delivery pointer advances before the in-process runtime cutover.
+	// Candidate-source authoring normally follows the active snapshot too, except
+	// for the canonical-empty legacy generation that must stage its policy-bearing
+	// successor through the durable, exact-claim bootstrap path.
+	if bootstrapCandidateSourceOperation(operationID) {
+		// A legacy active generation with no authorization content still needs
+		// these authoring operations to stage the policy-bearing successor that
+		// closes bootstrap. During runtime warm-up, keep using the durable exact
+		// claim as before; once ready, non-empty active snapshots are authoritative.
+		runtimeReady, err := hasActiveBootstrapRuntime(ctx, runtimeHost)
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if runtimeReady {
+			active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
+			if err != nil {
+				return accessmodule.APIGenBootstrapDecision{}, err
+			}
+			if active {
+				return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+			}
+		}
+	} else if bootstrapControlPlaneOperation(operationID) {
 		active, err := hasActiveBootstrapRuntime(ctx, runtimeHost)
 		if err != nil {
 			return accessmodule.APIGenBootstrapDecision{}, err
@@ -200,8 +257,16 @@ func bootstrapAPIGenDecision(
 
 func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
-		"getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+	case "getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+		return true
+	default:
+		return false
+	}
+}
+
+func bootstrapCandidateSourceOperation(operationID string) bool {
+	switch operationID {
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource":
 		return true
 	default:
 		return false
@@ -212,7 +277,7 @@ func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload", "createProjectRoleBinding", "listProjectRoleBindings":
 		return true
 	case "managedDataTusTransport":
 		return true

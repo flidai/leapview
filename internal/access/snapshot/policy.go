@@ -43,16 +43,10 @@ type Grant struct {
 	Canonical access.CanonicalGrant
 }
 
-// RoleBinding is one explicit project-wide RBAC assignment. Capabilities are
-// captured when the snapshot is compiled so later edits to mutable role
-// templates cannot change an installed generation.
-type RoleBinding struct {
-	ID           string
-	Name         string
-	Subject      access.SubjectRef
-	Role         access.ProjectRole
-	Capabilities []access.Capability
-}
+// RoleBinding is one explicit project-wide RBAC assignment. It aliases the
+// target-owned access policy type so mutable policy reads and immutable
+// serving snapshots cannot drift into subtly different role contracts.
+type RoleBinding = access.RoleBinding
 
 type DataPolicy struct {
 	ID             string
@@ -456,33 +450,12 @@ func cloneRoleBindings(input []RoleBinding) []RoleBinding {
 }
 
 func validateRoleBinding(binding *RoleBinding) error {
-	if err := binding.Subject.Validate(); err != nil {
-		return fmt.Errorf("subject: %w", err)
-	}
-	role, err := access.ParseProjectRole(string(binding.Role))
-	if err != nil {
-		return err
-	}
-	binding.Role = role
-	want := access.ProjectRoleCapabilities(role)
-	if len(binding.Capabilities) != len(want) {
-		return fmt.Errorf("capability bundle for role %q must contain exactly %d capabilities", role, len(want))
-	}
-	seen := make(map[access.Capability]struct{}, len(binding.Capabilities))
-	for i, capability := range binding.Capabilities {
-		if _, duplicate := seen[capability]; duplicate {
-			return fmt.Errorf("capability bundle contains duplicate %q", capability)
-		}
-		seen[capability] = struct{}{}
-		if capability != want[i] {
-			return fmt.Errorf("capability bundle for role %q is not the canonical captured bundle", role)
-		}
-		if err := capability.Validate(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return access.ValidateAuthorizationRoleBinding(*binding)
 }
+
+// ValidateRoleBinding exposes the snapshot's existing role/capability
+// validation to target policy repositories without requiring a project graph.
+func ValidateRoleBinding(binding RoleBinding) error { return validateRoleBinding(&binding) }
 
 func clonePolicies(input []DataPolicy) []DataPolicy {
 	output := append([]DataPolicy(nil), input...)
