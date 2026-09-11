@@ -10,7 +10,6 @@ import (
 	"github.com/flidai/leapview/internal/admin/personalsettings"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	adminview "github.com/flidai/leapview/internal/admin/view"
-	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -281,10 +280,10 @@ func AdminBootstrapSignals(active string, data AdminData, providers ...webpage.P
 	signals := map[string]any{
 		"page":    page,
 		"runtime": uisignals.RouteRuntimeSignal{Kind: uisignals.RouteAdmin},
-		"status":  dashboard.Status{},
+		"status":  uisignals.DashboardStatus{},
 	}
 	if active == "agent" {
-		signals["adminAgentCommand"] = map[string]string{"systemPrompt": data.Agent.SystemPrompt}
+		signals["adminAgentCommand"] = uisignals.AdminAgentCommandSignal{SystemPrompt: data.Agent.SystemPrompt}
 	}
 	if active == "queries" {
 		queryHistory := AdminQueryHistorySignalFromData(data.QueryHistory)
