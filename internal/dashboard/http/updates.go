@@ -166,13 +166,21 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		registry = dashboardstream.NewRegistry()
 	}
 	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
-	coordinator, closeCoordinator := registry.Open(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
+	coordinator, closeCoordinator, openErr := registry.OpenWithError(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
+	if openErr != nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
 	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, projectID, environment, request.ModelID, func() {
+	publicationScope := ""
+	if presentation, ok := publicPresentationFromContext(r.Context()); ok {
+		publicationScope = presentation.PublicationID
+	}
+	registry.BindForPublication(streamID, projectID, environment, request.ModelID, publicationScope, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err

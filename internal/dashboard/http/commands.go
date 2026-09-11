@@ -81,6 +81,10 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 			return
 		}
 	}
+	if !h.privateStreamActive(streamID) {
+		nethttp.NotFound(w, r)
+		return
+	}
 
 	registry := h.Coordinators
 	if registry == nil {
@@ -94,6 +98,10 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	coordinator := registry.Ensure(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
+	if coordinator == nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
 	h.observeRefreshes(coordinator, dashboardID, pageID)
 	_, err := coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		if h.SharedCommandPrepare != nil {

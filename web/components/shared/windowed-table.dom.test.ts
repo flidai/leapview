@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import type { WindowedTableBlock, WindowedTablePayload, WindowedTableRequest } from './windowed-table'
 
 let server: Server
 let baseURL = ''
@@ -360,6 +361,146 @@ test('windowed table clears cached rows when table key changes without reset ver
     expect(state.beforeHadCustomer).toBe(true)
     expect(state.afterHasCustomer).toBe(false)
     expect(state.skeletonRows).toBeGreaterThan(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('windowed table keeps a bounded trailing jump and clears matching empty responses', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+
+    const state = await page.evaluate(async () => {
+      const sort = { key: 'id', direction: 'asc' as const }
+      const block = (start: number, requestSeq: number, rows: Array<Record<string, unknown>> = []): WindowedTableBlock => ({
+        start, requestSeq, resetVersion: 0, sort, rows,
+      })
+      const makeTable = (availableRows: number): WindowedTablePayload => ({
+        tableKey: 'fast-scroll', title: 'Rows',
+        columns: [{ key: 'id', label: 'ID', type: 'VARCHAR', width: 180 }],
+        totalRows: availableRows, availableRows, chunkSize: 50, rowHeight: 34,
+        resetVersion: 0, sort,
+        blocks: { a: block(0, 0), b: block(50, 0), c: block(100, 0) },
+      })
+      const element = document.createElement('lv-windowed-table')
+      element.table = makeTable(1000)
+      const requests: WindowedTableRequest[] = []
+      element.addEventListener('lv-windowed-table-request', (event) => {
+        requests.push((event as CustomEvent<WindowedTableRequest>).detail)
+      })
+      document.body.append(element)
+      await element.updateComplete
+      const initialViewport = element.shadowRoot?.querySelector<HTMLDivElement>('.scrollport')
+      if (!initialViewport) throw new Error('windowed table viewport was not rendered')
+      initialViewport.scrollTop = 5000
+      initialViewport.dispatchEvent(new Event('scroll'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const initial = requests.at(-1)
+      if (!initial) throw new Error('initial request was not emitted')
+      const initialStarts = initial.block === 'all'
+        ? [Math.max(0, initial.start - 50), initial.start, initial.start + 50]
+        : [initial.start, 50, 100]
+      element.table = {
+        ...makeTable(1000),
+        blocks: {
+          a: block(initialStarts[0]!, initial.requestSeq, [{ id: `row-${initialStarts[0]}` }]),
+          b: block(initialStarts[1]!, initial.requestSeq, [{ id: `row-${initialStarts[1]}` }]),
+          c: block(initialStarts[2]!, initial.requestSeq, [{ id: `row-${initialStarts[2]}` }]),
+        },
+      }
+      await element.updateComplete
+
+      const scrollport = element.shadowRoot?.querySelector<HTMLDivElement>('.scrollport')
+      if (!scrollport) throw new Error('windowed table viewport was not rendered')
+      scrollport.scrollTop = 0
+      scrollport.dispatchEvent(new Event('scroll'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      scrollport.scrollTop = 8500
+      scrollport.dispatchEvent(new Event('scroll'))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const beforeTrailing = requests.length
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      const trailing = requests.at(-1)
+      if (!trailing || trailing === initial) throw new Error('trailing jump request was not emitted')
+      const latestStart = Math.floor(Math.floor(scrollport.scrollTop / 34) / 50) * 50
+      const noDuplicateDuringWindow = beforeTrailing === requests.length - 1
+
+      const responseStarts = trailing.block === 'all'
+        ? [Math.max(0, trailing.start - 50), trailing.start, trailing.start + 50]
+        : [0, 50, 100]
+      element.table = {
+        ...makeTable(0),
+        blocks: {
+          a: block(responseStarts[0]!, trailing.requestSeq),
+          b: block(responseStarts[1]!, trailing.requestSeq),
+          c: block(responseStarts[2]!, trailing.requestSeq),
+        },
+      }
+      await element.updateComplete
+      const text = element.shadowRoot?.textContent ?? ''
+      return {
+        latestStart,
+        trailingStart: trailing.start,
+        noDuplicateDuringWindow,
+        emptyMessage: text.includes('No rows to show.'),
+        loadingCleared: !element.shadowRoot?.querySelector('.loading'),
+      }
+    })
+
+    expect(state.trailingStart).toBe(state.latestStart)
+    expect(state.noDuplicateDuringWindow).toBe(true)
+    expect(state.emptyMessage).toBe(true)
+    expect(state.loadingCleared).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('windowed table recreates viewport observation after reconnecting the same instance', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+
+    const state = await page.evaluate(async () => {
+      const observations: Element[] = []
+      const NativeResizeObserver = window.ResizeObserver
+      class TestResizeObserver {
+        private readonly callback: ResizeObserverCallback
+        constructor(callback: ResizeObserverCallback) { this.callback = callback }
+        observe(target: Element): void {
+          observations.push(target)
+        }
+        disconnect(): void {}
+        trigger(): void { this.callback([], this as unknown as ResizeObserver) }
+      }
+      window.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver
+      try {
+        const element = document.createElement('lv-windowed-table')
+        element.table = {
+          tableKey: 'reconnect', title: 'Rows', columns: [{ key: 'id', label: 'ID' }],
+          totalRows: 1, availableRows: 1, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [{ id: 'one' }] } },
+        }
+        document.body.append(element)
+        await element.updateComplete
+        const firstCount = observations.length
+        element.remove()
+        document.body.append(element)
+        await new Promise<void>((resolve) => queueMicrotask(resolve))
+        await element.updateComplete
+        const viewportCount = observations.length
+        return { firstCount, viewportCount, sameInstance: element.isConnected }
+      } finally {
+        window.ResizeObserver = NativeResizeObserver
+      }
+    })
+
+    expect(state.firstCount).toBe(1)
+    expect(state.viewportCount).toBe(2)
+    expect(state.sameInstance).toBe(true)
   } finally {
     await page.close()
   }
