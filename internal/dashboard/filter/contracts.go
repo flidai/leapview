@@ -8,7 +8,6 @@ type PredicatePolicy struct {
 type OptionSourceKind string
 
 const (
-	OptionSourceNone     OptionSourceKind = ""
 	OptionSourceStatic   OptionSourceKind = "static"
 	OptionSourceDistinct OptionSourceKind = "distinct"
 )

@@ -391,13 +391,3 @@ func (m *Module) NativePersistence() *Persistence {
 	}
 	return m.persistence
 }
-
-func (m *Module) PrepareCandidateRuntime(
-	ctx context.Context,
-	request deployment.CandidateRuntimeRequest,
-) (deployment.CandidateRuntimeReceipt, error) {
-	if m == nil || m.candidateRuntimes == nil {
-		return deployment.CandidateRuntimeReceipt{}, deployment.ErrCandidateUnavailable
-	}
-	return m.candidateRuntimes.Prepare(ctx, request)
-}

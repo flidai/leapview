@@ -100,13 +100,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	})
 }
 
-// DashboardDraftForkPage is a small, server-rendered entry point for the
-// existing headless copy operation. Dashboard creation lives in the catalog
-// modal so users keep their place while choosing the required data model.
-func DashboardDraftForkPage(dashboardID, csrfToken, action string, providers ...webpage.Provider) g.Node {
-	return DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, "", providers...)
-}
-
 func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
 	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionID: dashboardID, SectionTitle: dashboardID, PageTitle: "Make a copy", Compact: true})
 	return webpage.Render(layout, webpage.Spec{

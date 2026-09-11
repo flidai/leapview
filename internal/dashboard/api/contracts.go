@@ -10,12 +10,6 @@ type PageInfo struct {
 
 type PublicationStatus string
 
-const (
-	PublicationStatusActive       PublicationStatus = "active"
-	PublicationStatusSuspended    PublicationStatus = "suspended"
-	PublicationStatusUnconfigured PublicationStatus = "unconfigured"
-)
-
 type PublicationResponse struct {
 	ActiveServingStateID *string           `json:"activeServingStateId,omitempty"`
 	AllowedOrigins       []string          `json:"allowedOrigins"`

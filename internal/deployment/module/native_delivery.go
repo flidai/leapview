@@ -354,12 +354,6 @@ func (f NativeDeliveryMutationFuncs) BuildPlan(ctx context.Context, request Nati
 	return f.Build(ctx, request)
 }
 
-// NewNativeDeliveryMutationAdapter makes callback wiring explicit while
-// retaining a stable interface for application composition.
-func NewNativeDeliveryMutationAdapter(plan func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error), build func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error)) NativeDeliveryMutationPort {
-	return NativeDeliveryMutationFuncs{Plan: plan, Build: build}
-}
-
 func (r NativeDeliveryPlanRequest) validate(environment string) error {
 	if err := r.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
