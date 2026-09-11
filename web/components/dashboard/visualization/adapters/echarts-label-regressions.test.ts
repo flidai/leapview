@@ -1,8 +1,44 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
-import { defaultRendererContext } from '../host-controller'
-import { echartsOption } from './echarts'
+import { Change, defaultRendererContext } from '../host-controller'
+import { echartsOption, echartsUpdatePlan } from './echarts'
+
+for (const categorical of [false, true]) {
+  test(`ECharts selection-only updates refresh ${categorical ? 'categorical' : 'ungrouped'} point labels`, () => {
+    const rows = Array.from({ length: 20 }, (_, index) => [`p-${index}`, index % 2 === 0 ? 'A' : 'B', index, index])
+    const envelope = pointFixture(rows) as any
+    if (!categorical) {
+      delete envelope.spec.color
+      delete envelope.spec.colorScale
+    }
+    const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+    const seriesIndex = categorical ? 1 : 0
+    const dataIndex = categorical ? 9 : 19
+    const series = () => (chart as any).getModel().getSeriesByIndex(seriesIndex)
+    try {
+      chart.setOption(echartsOption(envelope, defaultRendererContext))
+      expect(series().getFormattedLabel(dataIndex)).toBe('')
+      for (const selected of [true, false]) {
+        const next = { ...envelope, selection: selected
+          ? [{ datum: { dataset: 'primary', dataRevision: 1, identity: { id: 'p-19' } }, label: 'p-19' }]
+          : [] }
+        const plan = echartsUpdatePlan(Change.Selection, echartsOption(next, defaultRendererContext))
+        chart.setOption(plan.option, plan.settings)
+        expect(series().getFormattedLabel(dataIndex)).toBe(selected ? 'p-19' : '')
+        expect(series().get('labelLayout')({ dataIndex }).hideOverlap).toBe(!selected)
+        expect(series().getFormattedLabel(dataIndex - 1)).toBe('')
+        expect(plan.settings.replaceMerge).not.toContain('series')
+        expect(plan.option).not.toHaveProperty('legend')
+        expect(plan.option).not.toHaveProperty('dataZoom')
+        for (const patch of plan.option.series) expect(Object.keys(patch).sort()).toEqual(['id', 'label', 'labelLayout'])
+      }
+    } finally {
+      chart.dispose()
+    }
+  })
+}
 
 test('ECharts maps categorical point label priorities back to source rows', () => {
   const rows = Array.from({ length: 20 }, (_, index) => [`p-${index}`, index % 2 === 0 ? 'A' : 'B', index, index])

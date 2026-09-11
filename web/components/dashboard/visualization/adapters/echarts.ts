@@ -503,6 +503,11 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []
     replaceMerge.push('dataset', 'visualMap')
+    // Scatter label callbacks capture selection; merge fresh callbacks without resetting native series state.
+    const labels = (source.series ?? [])
+      .filter((series: Record<string, any>) => series.type === 'scatter')
+      .map(({ id, label, labelLayout }: Record<string, any>) => ({ id, label, labelLayout }))
+    if (labels.length > 0) patch.series = labels
   }
   if ((change & Change.Highlight) !== 0) {
     patch.series = source.series
