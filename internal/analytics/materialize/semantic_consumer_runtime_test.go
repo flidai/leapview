@@ -281,6 +281,7 @@ func protectedConsumerFixtureWithModelModifier(t *testing.T, allowMetric bool, m
 	authority := semanticquery.SemanticAccessAuthority{InstanceID: "instance-1", Registry: registry, Control: control, ObservedAt: time.Now().UTC()}
 	consumer, err := semanticquery.NewSemanticAccessConsumer(planner, semanticquery.SemanticAccessConsumerConfig{
 		InstanceID: "instance-1", ProjectID: "project:test", Environment: "prod", ModelID: "sales", Generation: "generation-1", PrincipalID: "alice",
+		PublicationPolicy: semanticCacheTestPublicationPolicy("instance-1", "sales"),
 		Authority: func() (semanticquery.SemanticAccessAttributeSnapshot, semanticquery.SemanticAccessAuthority, error) {
 			return snapshot, authority, nil
 		},

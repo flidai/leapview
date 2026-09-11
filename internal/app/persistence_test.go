@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
@@ -108,10 +109,11 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		}
 	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
+		semanticCatalogAuditRecorder, _ := options.AccessRepo.(access.CanonicalAuditRecorder)
 		catalog, err := projectcatalog.NewService(
 			projectCatalogLeaseProvider{provider: options.RuntimeHost.Provider()},
 			projectCatalogSubjectResolver{resolve: options.AccessModule.AuthorizationSubjects},
-			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility("lvinst_test", options.AccessModule.ResolveSemanticAttributes)),
+			projectcatalog.WithSemanticModelVisibility(projectmodule.SemanticCatalogVisibility("lvinst_test", options.AccessModule.ResolveSemanticAttributes, semanticCatalogAuditRecorder)),
 		)
 		if err != nil {
 			panic(err)

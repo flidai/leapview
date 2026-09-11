@@ -314,19 +314,34 @@ type Table struct {
 	// ModelName is populated only on lowered semantic execution tables. It
 	// preserves the project Model binding after the runtime table is keyed by
 	// its semantic dataset alias; authored Model resources do not expose it.
-	ModelName           string                      `yaml:"-" json:"modelName,omitempty"`
-	AIContext           *AIContext                  `yaml:"aiContext,omitempty" json:"-"`
-	Execution           ExecutionDefinition         `yaml:"-" json:"-"`
-	Columns             map[string]ModelColumn      `yaml:"columns"`
-	Entities            map[string]EntityDefinition `yaml:"entities"`
-	GrainEntity         string                      `yaml:"grain_entity"`
-	Dimensions          map[string]MetricDimension  `yaml:"fields"`
-	Description         string                      `yaml:"description"`
-	Schema              TableSchema                 `yaml:"-"`
-	SourceDependencies  []string                    `yaml:"-"`
-	ModelDependencies   []string                    `yaml:"-"`
-	SQLAnalysisEvidence *SQLAnalysisEvidence        `yaml:"-" json:"sqlAnalysisEvidence,omitempty"`
-	Checks              []ModelCheck                `yaml:"-" json:"checks,omitempty"`
+	ModelName string              `yaml:"-" json:"modelName,omitempty"`
+	AIContext *AIContext          `yaml:"aiContext,omitempty" json:"-"`
+	Execution ExecutionDefinition `yaml:"-" json:"-"`
+	// AuthoredFields preserves the optional field declarations separately from
+	// Columns and Dimensions, which become the complete discovered output
+	// schema. A non-nil empty map means the author omitted fields. Nil is
+	// reserved for legacy/runtime tables whose Columns are already resolved.
+	AuthoredFields      map[string]ModelFieldDeclaration `yaml:"-" json:"authoredFields"`
+	Columns             map[string]ModelColumn           `yaml:"columns"`
+	Entities            map[string]EntityDefinition      `yaml:"entities"`
+	GrainEntity         string                           `yaml:"grain_entity"`
+	Dimensions          map[string]MetricDimension       `yaml:"fields"`
+	Description         string                           `yaml:"description"`
+	Schema              TableSchema                      `yaml:"-"`
+	SourceDependencies  []string                         `yaml:"-"`
+	ModelDependencies   []string                         `yaml:"-"`
+	SQLAnalysisEvidence *SQLAnalysisEvidence             `yaml:"-" json:"sqlAnalysisEvidence,omitempty"`
+	Checks              []ModelCheck                     `yaml:"-" json:"checks,omitempty"`
+}
+
+// ModelFieldDeclaration is the immutable authoring overlay for one Model
+// output field. Discovery applies it to the observed output; it never selects,
+// aliases, or casts columns.
+type ModelFieldDeclaration struct {
+	Datatype    LogicalDataType `json:"datatype,omitempty"`
+	Label       string          `json:"label,omitempty"`
+	Description string          `json:"description,omitempty"`
+	AIContext   *AIContext      `json:"-"`
 }
 
 // ModelCheck is the compiler-owned normalized form of the closed authored

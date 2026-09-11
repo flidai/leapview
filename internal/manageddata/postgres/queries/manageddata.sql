@@ -1,6 +1,33 @@
 -- Managed-data PostgreSQL leaf queries. Repository methods retain validation,
 -- domain mapping, transaction ownership, and cross-store orchestration.
 
+-- name: InsertProviderObservationProfile :exec
+INSERT INTO managed_data.provider_observation_profile
+    (profile_id, implementation, account_identity, endpoint, region, bucket, namespace)
+VALUES (sqlc.arg(profile_id), sqlc.arg(implementation), sqlc.arg(account_identity),
+        sqlc.arg(endpoint), sqlc.arg(region), sqlc.arg(bucket), sqlc.arg(namespace))
+ON CONFLICT (profile_id) DO NOTHING;
+
+-- name: GetProviderObservationProfile :one
+SELECT profile_id, implementation, account_identity, endpoint, region, bucket, namespace
+FROM managed_data.provider_observation_profile
+WHERE profile_id = sqlc.arg(profile_id);
+
+-- name: InsertProviderVersionObservation :exec
+INSERT INTO managed_data.provider_version_observation
+    (profile_id, object_key, version_id, sha256, size_bytes, captured_at)
+VALUES (sqlc.arg(profile_id), sqlc.arg(object_key), sqlc.arg(version_id),
+        sqlc.arg(sha256), sqlc.arg(size_bytes), sqlc.arg(captured_at))
+ON CONFLICT (profile_id, object_key) DO NOTHING;
+
+-- name: GetProviderVersionObservation :one
+SELECT p.profile_id, p.implementation, p.account_identity, p.endpoint, p.region,
+       p.bucket, p.namespace, o.object_key, o.version_id, o.sha256,
+       o.size_bytes, o.captured_at
+FROM managed_data.provider_version_observation AS o
+JOIN managed_data.provider_observation_profile AS p USING (profile_id)
+WHERE o.profile_id = sqlc.arg(profile_id) AND o.object_key = sqlc.arg(object_key);
+
 -- name: InsertCollection :exec
 INSERT INTO managed_data.collection
     (collection_id, project_id, connection_id, name, description, created_by, request_digest)

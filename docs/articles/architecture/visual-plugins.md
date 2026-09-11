@@ -419,12 +419,53 @@ The architecture applies bounds before rendering:
 - Frame construction and adapter indexing are linear in row count unless a declared algorithm documents another bound.
 - Specification and frame changes use revision identity instead of whole-payload `JSON.stringify` comparisons.
 - Pagestream patches immutable specification only when its revision changes.
-- Renderers mount near the viewport and remain reusable across frame updates.
+- Dashboard viewers mount hosts near the viewport and reuse mounted renderers across frame updates; builder, documentation, and chat-artifact callers remain eager.
 - Resize notifications are coalesced to animation frames.
 - Renderer and map code is lazy-loaded by capability.
 - Theme or selection changes do not rebuild query data.
 
 Performance budgets are tested for initial module bytes, mount latency, update latency, memory after disposal, maximum live renderer count, and large-frame interaction latency.
+
+### Viewport lifecycle rollout (FAI-551)
+
+`lv-visualization-host` defaults to eager mounting. Dashboard viewer hosts opt in
+to `deferMount`; builder, documentation, and chat-artifact callers remain eager.
+The property delays renderer initialization while retaining the host shell and
+the latest valid signal state across app, public, embed, and read-only draft
+views.
+An eligible host mounts once; scrolling away does not dispose it. Authoring
+hosts and browsers with unavailable or failing `IntersectionObserver` remain
+eager. Dashboard hosts apply the same margin to nested scrollports; browsers
+without `IntersectionObserver.scrollMargin` fall back to eager mounting rather
+than silently losing the prefetch contract. This follows the
+[Intersection Observer scroll-margin contract](https://www.w3.org/TR/intersection-observer/#dom-intersectionobserverinit-scrollmargin).
+The current
+`600px 0px` observer margin is a rollout parameter, not a
+qualified latency budget or a measured performance improvement.
+
+Explicit `ensureMounted()` and `snapshot()` calls can request mounting without
+an intersection callback. They reject when no envelope is available; later
+signals can still mount the eligible host. Dashboard capture tooling calls the
+awaited `ensureVisualizationsMounted()` page seam before inspecting renderer
+output. Browser-menu printing cannot be assumed to await asynchronous renderer
+initialization, and no native print path currently exists.
+
+The reports CI shard runs the host browser lifecycle tests through
+`bun run test:dashboard-page`. Controller tests run through
+`bun run test:visualization-ir`. These checks establish lifecycle correctness;
+they do not replace runtime latency/memory qualification or prove FAI-551 complete.
+
+`task qa:viewport-qualification` produces paired, local evidence from a fixed
+24-visual dashboard fixture. It compares the production deferred behavior with
+a test-only eager counterfactual from the same build, discards one warmup per mode,
+alternates five measured repetitions in fresh browser contexts, and records
+commit, fixture, source, lockfile, browser, toolchain, CPU, memory, viewport, raw
+samples, and aggregation. Lifecycle or missing-metric evidence fails closed.
+Timing and heap observations have no universal cross-hardware threshold and are
+not production measurements. FAI-551 owns this optimization-specific evidence;
+FAI-39 continues to own reusable visualization CI budgets and device/visual
+matrices. The runner's forced snapshots establish an awaited qualification path,
+not support for unawaitable native browser-menu printing.
 
 ## Security and trust boundaries
 

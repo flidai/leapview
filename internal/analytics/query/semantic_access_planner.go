@@ -1,6 +1,7 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -51,7 +52,17 @@ func (p *Planner) captureSemanticAccessAdmission(graph *planir.Graph, admission 
 // target-qualified policy against the immutable serving model and the current
 // registry, evaluates one authority snapshot, admits all referenced members,
 // then seals every protected scan through PlanIR.
-func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccessMemberRef) (semanticAccessAdmission, error) {
+func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccessMemberRef) (admission semanticAccessAdmission, err error) {
+	captureAttempted := false
+	defer func() {
+		if err == nil || captureAttempted || p == nil || p.semanticAccessErrorHook == nil {
+			return
+		}
+		if auditErr := p.semanticAccessErrorHook(graph, err); auditErr != nil {
+			admission = semanticAccessAdmission{}
+			err = errors.Join(err, auditErr)
+		}
+	}()
 	if graph == nil {
 		return semanticAccessAdmission{}, fmt.Errorf("plan graph is nil")
 	}
@@ -64,6 +75,7 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 	}
 	if model.AccessPolicy.Empty() {
 		admission := semanticAccessAdmission{}
+		captureAttempted = true
 		if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
 			return semanticAccessAdmission{}, err
 		}
@@ -133,6 +145,7 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 	}
 	if len(policies) == 0 {
 		admission := semanticAccessAdmission{PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest}
+		captureAttempted = true
 		if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
 			return semanticAccessAdmission{}, err
 		}
@@ -141,7 +154,8 @@ func (p *Planner) securePlanGraph(graph *planir.Graph, members ...semanticAccess
 	if err := planir.ApplySecurityBarriers(graph, policies); err != nil {
 		return semanticAccessAdmission{}, fmt.Errorf("apply semantic access barriers: %w", err)
 	}
-	admission := semanticAccessAdmission{Policies: policies, PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest}
+	admission = semanticAccessAdmission{Policies: policies, PolicyDigest: qualified.Digest(), DecisionDigest: decision.IdentityDigest}
+	captureAttempted = true
 	if err := p.captureSemanticAccessAdmission(graph, admission); err != nil {
 		return semanticAccessAdmission{}, err
 	}

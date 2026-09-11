@@ -489,10 +489,14 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string) projectartif
 		t.Fatal(err)
 	}
 	artifact, err := projectartifact.NewSourceBundle(graphValue, projectmanifest.ResourceManifest{
-		Connections:          map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
-		Sources:              map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
-		Models:               map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
-		SemanticModels:       map[string]*semanticmodel.Model{"semantic:sales": {Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}}}},
+		Connections: map[string]semanticmodel.Connection{"connection:warehouse": {Kind: "managed"}},
+		Sources:     map[string]semanticmodel.Source{"source:orders": {Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}},
+		Models:      map[string]semanticmodel.Table{"model:orders": {Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": {
+			Name:     "sales",
+			Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders_model"}},
+			Tables:   map[string]semanticmodel.Table{"orders": {Execution: semanticmodel.ExecutionDefinition{Source: "orders"}}},
+		}},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{"dashboard:sales": {ID: "dashboard:sales", Title: dashboardTitle, SemanticModel: "semantic:sales"}},
 		DashboardSources:     map[string]projectmanifest.DashboardSource{"dashboard:sales": {Document: dashboarddocument.DashboardDocument{APIVersion: dashboarddocument.DashboardApiVersionLeapviewDevV1, Kind: dashboarddocument.DashboardResourceKindDashboard, Metadata: dashboarddocument.DashboardMetadata{ID: "dashboard:sales", Name: "sales_dashboard"}, Spec: dashboarddocument.DashboardSpec{SemanticModel: "semantic:sales"}}}},
 	})

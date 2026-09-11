@@ -388,6 +388,138 @@ recovery, and measured RPO/RTO remain later UBDR work.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.
 
+## Exact-version S3 evidence adapter qualification
+
+This section defines the qualification scope for the exact-version S3 evidence
+adapter. The adapter is responsible for validating the configured provider
+namespace, reading an already selected historical object, and returning only
+bytes that match the declared transport size and raw SHA-256 identity. The
+RecoverySet repository separately revalidates canonical and domain identity.
+The adapter is a read-only evidence
+transport boundary, not an uploader, capture owner, or recovery lifecycle
+controller.
+
+### Trusted construction and exact verification
+
+Construction is the trusted profile/client boundary. A caller provisions the
+S3 client and an explicit profile containing the endpoint, region, bucket,
+namespace, and bounded read policy. The adapter validates that profile once and
+always uses that client; an observation's endpoint, bucket, key, or credentials
+cannot select a different client or route. Invalid or missing profile/client
+inputs fail construction. The portable evidence reference contains no client,
+credentials, or signed URL.
+
+For every source or evidence object, the adapter must issue `HeadObject` and
+`GetObject` with the supplied nonempty, non-`null` `VersionID`. It requires the
+provider to echo that exact version, requires `ContentLength` to equal the
+declared size, bounds the streamed response, and hashes the fetched bytes with
+SHA-256. A version, size, or hash mismatch fails closed; latest-object lookup,
+ETag, metadata, and a successful HEAD are not content proof. Version IDs are
+observations supplied by the capture boundary, not values inferred by this
+adapter.
+
+### Intended qualification cases
+
+The qualification uses a disposable versioned MinIO bucket and the frozen
+RecoverySet v3 evidence bundle. It uploads all six canonical payloads, captures
+their provider VersionIDs, overwrites each current object, and creates a delete
+marker before the repository reads anything. `CreateSet3` succeeds only by
+using the selected historical versions. After the PostgreSQL connection is
+closed and reopened, `ReadSet3` retrieves and verifies the same exact off-host
+bytes again; identical create/read retries preserve the canonical set bytes.
+
+The rejection matrix covers missing, `latest`, wrong, deleted, and corrupt
+versions; denied credentials; and bucket, profile, and endpoint substitution.
+Direct adapter calls reject profile substitutions before provider I/O.
+Provider failures are
+reduced to bounded categories and cannot expose provider messages, credentials,
+signed URLs, or response bodies. Every failed repository submission leaves no
+successor association.
+
+### Explicit limitations
+
+This adapter qualification uses MinIO and does not establish AWS or other
+S3-compatible provider behavior. Its trusted endpoint identity is deliberately
+separate from the disposable MinIO transport endpoint, so it does not qualify
+TLS, redirect, or endpoint-discovery behavior. It makes no retention or lifecycle
+guarantee. Write-time capture is qualified below, but durable association and
+signed Manifest v2 creation remain separate prerequisites. It does not add
+recovery admission, publication, or startup/readiness behavior. It does not
+perform PostgreSQL restore or PITR, activation, or provider disaster recovery,
+and it makes no physical DR, RPO, or RTO claim.
+
+This validates historical managed-object retrieval. It does not prove successful physical disaster recovery.
+
+## Write-time S3 VersionID capture
+
+The managed-data S3 store now has an opt-in trusted observation profile. When
+that profile is configured, a successful ordinary `PutObject` or multipart
+`CompleteMultipartUpload` must return a nonempty exact `VersionID`. The store
+retains that value directly from the write response, verifies the same exact
+version by key, size, and SHA-256 bytes, and returns a provider-version
+observation beside the immutable blob result. It never discovers or replaces
+the captured identity with a later `HeadObject` of the latest object.
+
+The observation binds the trusted profile identity, implementation, account,
+endpoint, region, bucket and namespace to the exact key/version, content digest,
+size, and UTC capture time. Construction rejects a profile whose bucket or
+namespace differs from the store. Missing, `null`, or `latest` response versions
+fail closed when capture is enabled; failed provider writes and failed exact-byte
+verification return no observation. Provider failures remain sanitized by the
+existing storage boundary.
+
+`ProviderVersionObservationSet` is a bounded in-process handoff helper, not a
+database or recovery manifest. It makes identical observation retries
+idempotent, rejects replacement of the first observation for one profile/object
+identity, rejects one profile identity resolving to conflicting trusted
+configuration, and rejects conflicting version, digest, size, or capture metadata.
+Distinct content-addressed object keys retain distinct observations. Qualification now takes managed object
+VersionIDs from the production write result rather than inferring them with a
+post-write latest-object HEAD. Ordinary and multipart response handling share
+the same exact-version and integrity checks.
+
+An exact retry may reuse an observation already returned by this writer and is
+reverified at that exact version. When capture is enabled, finding an existing
+object without such a prior write observation fails closed; the store does not
+turn a latest-object HEAD into replacement evidence. Multipart reconciliation
+likewise cannot convert an ambiguous preexisting completion into an observation.
+
+This slice does not configure capture authority in production, create or sign
+ManagedObservationManifest v2, enforce provider
+retention, or connect evidence to admission, publication, startup, restore, PITR,
+RPO, or RTO. Those remain explicit later gates.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Captured provider-version observation persistence
+
+The managed-data PostgreSQL owner now provides the durable handoff between an
+exact S3 write response and a future recovery capture. Trusted profile
+configuration is inserted once by profile identity; each profile/object key then
+accepts exactly one provider `VersionID`, SHA-256 digest, size, and canonical UTC
+capture timestamp. The runtime capability may only select and insert these rows.
+Update and delete paths are denied and owner-side triggers reject mutation;
+maintenance, read-only, and backup capabilities can inspect but cannot insert or
+rewrite observations.
+
+The transaction starts only after S3 has completed and the storage adapter has
+verified the returned exact version and bytes. It atomically inserts or compares
+the profile and observation. Identical retries return the immutable stored row;
+any profile, version, digest, size, key, or capture-time conflict fails without a
+partial profile/observation pair. A reconnect reloads all fields and reruns the
+storage contract validator, rather than trusting a cached verification flag.
+
+There is deliberately no distributed transaction with S3. A provider write may
+exist when PostgreSQL persistence fails, but that object is not a durable recovery
+observation until this transaction commits. Retry must carry the exact observation
+already returned by the write; latest-object discovery remains forbidden. Capture
+generation and signing fences belong to the later authority/Manifest v2 phase and
+are not fabricated at this write-fact boundary.
+
+Durable observation storage does not itself create signed Manifest v2 evidence.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
 ## Proposed managed observation manifest contract
 
 The following proposal and implementation-planning sections are retained as
@@ -1757,5 +1889,90 @@ capture deployment, upload-intent execution, destination-profile provisioning,
 worker/deadline fencing, policy freshness and provider retention qualification
 remain required before production enablement. Admission, publication, startup,
 physical restore, PITR and RPO/RTO measurement are outside this foundation.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Manifest v2 capture and signing qualification
+
+This bounded qualification composes durable provider observations, a complete
+managed closure, a source anchor, the canonical ManagedObservationManifest v2,
+a detached signer receipt, and the existing RecoverySet v3 persistence path.
+It qualifies evidence assembly and verification only; it does not change the
+existing admission, publication, startup, restore, or recovery contracts.
+
+### Evidence flow
+
+Durable managed-data observations begin with a successful S3 write response.
+The exact nonempty VersionID, profile identity, object key, size, SHA-256, and
+UTC capture time are persisted in the managed-data PostgreSQL owner. Capture
+reads the authoritative revision projection and resolves each file through an
+explicit provider-profile binding. It then reads the stored observation and
+replays that exact provider version, checking profile/account/endpoint/region/
+bucket/prefix, returned VersionID, size, and fetched-byte digest. Latest-object
+lookup, ETags, and post-write discovery cannot supply evidence.
+
+The qualification source is intentionally instance-global: it captures every
+ready managed revision in the control database under a PostgreSQL lock. An
+independent policy resolver must authorize that complete provider-free
+revision membership, its closure digest, the recovery-set identity, provider
+profiles, authority registry, trust generation, worker fence, and deadline.
+This prevents the capture worker from selecting its own scope or trust roots.
+
+The verified revision/path membership is sorted into the provider-free managed
+closure and its domain-separated digest. The capture service combines that
+digest and the independently configured provider-profile digest with the
+normalized existing recovery frontier to build and hash the source anchor.
+The anchor digest is necessarily bound after PostgreSQL supplies the capture
+restore point and WAL position; the resolver authorizes membership before that
+capture rather than attempting to predict those source-owned values.
+Manifest v2 then emits strict canonical bytes containing the set and anchor
+identities, capture interval, closure, complete revision/file membership, and
+the exact provider observations. Its capture record commits to the receipt
+core digest. The final manifest digest is computed only after that core is
+fixed; a detached signer receives the domain-separated receipt payload and
+returns the Ed25519 signature. A trusted clock supplies verification time, and
+the service re-resolves the independently owned policy immediately before
+signing; a changed/revoked generation, fence, deadline, scope, profile, or key
+fails closed. The authority registry checks authority/key identity, algorithm,
+validity interval, revocation, and allowed provider-profile digest before the
+evidence graph is accepted. Private keys remain behind the signer callback and
+are not stored in capture results or recovery evidence.
+
+The existing RecoverySet v3 persistence adapter fetches every canonical
+payload by its configured exact-version locator, repeats canonical, domain,
+profile, closure, anchor, manifest, receipt, and authority checks, and then
+atomically stores the immutable evidence graph and prepared set association in
+PostgreSQL. The transaction performs no provider I/O. A separate connection
+can read back the same exact payloads and reverify them under independently
+resolved trust.
+
+This slice follows the current `CreateSet3` bundle, where the capture core is
+embedded in the detached receipt and committed by its domain digest. It does
+not add the separately located capture-core transport entry described by the
+frozen transport design; that representation must be reconciled explicitly
+before production evidence upload is enabled.
+
+### Deterministic and failure behavior
+
+Identical already-captured source facts and construction inputs produce
+identical canonical documents and frontier commitment; collection ordering is
+normalized without mutating the source. Exact retries of those saved documents
+through `CreateSet3` are idempotent. A fresh PostgreSQL capture creates a new
+restore point and must use a new set/capture identity; it is not a retry.
+Missing observations,
+incomplete closure, profile or namespace substitution, wrong or unavailable
+versions, size/digest mismatches, stale capture boundaries, malformed
+canonical bytes, invalid or revoked authority, signer errors, and signature or
+binding mismatches fail closed with bounded categories. No latest fallback,
+partial success, conflicting replacement, or dangling RecoverySet v3
+association is accepted.
+
+### Limitations
+
+This qualification does not establish provider retention, restart durability of
+the source system, PostgreSQL restore or PITR, physical provider recovery,
+production signer/key deployment, or RPO/RTO. It also does not grant admission,
+startup, publication, or activation authority. Standalone capture-core payload
+transport remains unresolved as noted above. Signed evidence does not prove physical disaster recovery.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.

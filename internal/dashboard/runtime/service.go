@@ -54,6 +54,12 @@ type DataRuntimePlanner interface {
 	Planner() consumer.Planner
 }
 
+// DataRuntimeResolvedSemanticModel exposes the schema-discovered semantic
+// snapshot owned by the same planner that will execute dashboard queries.
+type DataRuntimeResolvedSemanticModel interface {
+	ResolvedSemanticModel() (*semanticmodel.Model, bool)
+}
+
 type setupRequiredError interface {
 	SetupRequired() bool
 }
@@ -93,6 +99,11 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	if m == nil || m.reports == nil {
 		return nil, fmt.Errorf("dashboard runtime is unavailable")
 	}
+	cloned, err := cloneDashboard(definition)
+	if err != nil {
+		return nil, fmt.Errorf("clone compiled dashboard definition: %w", err)
+	}
+	definition = cloned
 	definition.ID = strings.TrimSpace(definition.ID)
 	definition.SemanticModel = strings.TrimSpace(definition.SemanticModel)
 	if definition.ID == "" || definition.SemanticModel == "" {
@@ -112,6 +123,10 @@ func (m *Service) definitionService(definition dashboarddefinition.Definition) (
 	}
 	if runtime.model == nil {
 		return nil, fmt.Errorf("semantic model %q does not match compiled dashboard", definition.SemanticModel)
+	}
+	definition, err = resolveDashboardSchemas(definition, runtime.model)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dashboard schema: %w", err)
 	}
 	models := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(m.reports.models)+1)
 	for modelID, model := range m.reports.models {
@@ -227,6 +242,7 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		}
 		return nil, err
 	}
+	resolvedModelIDs := map[projectgraph.ResourceID]bool{}
 	for modelID, runtime := range service.runtimes {
 		dataRuntime, ok := dataRuntimes[modelID]
 		if !ok {
@@ -242,12 +258,36 @@ func newFromDefinition(ctx context.Context, duckDBDir string, factory DataRuntim
 		}
 		runtime.data = newGovernedDataRuntime(identity.ProjectID, modelID, dataRuntime)
 		runtime.optimizer = optimizer
+		if provider, ok := dataRuntime.(DataRuntimeResolvedSemanticModel); ok {
+			resolved, exists := provider.ResolvedSemanticModel()
+			if !exists || resolved == nil {
+				return nil, fmt.Errorf("semantic model %q runtime does not provide its resolved schema", modelID)
+			}
+			runtime.model = resolved
+			service.reports.models[modelID] = resolved
+			resolvedModelIDs[modelID] = true
+		}
 		runtime.ready = true
 	}
 	for modelID := range dataRuntimes {
 		if _, ok := service.runtimes[modelID]; !ok {
 			return nil, fmt.Errorf("project data runtime returned unknown semantic model %q", modelID)
 		}
+	}
+	for dashboardID, dashboard := range service.reports.dashboards {
+		modelID, err := projectgraph.NewResourceID(dashboard.SemanticModel)
+		if err != nil {
+			return nil, fmt.Errorf("dashboard %q semantic model: %w", dashboardID, err)
+		}
+		if !resolvedModelIDs[modelID] {
+			continue
+		}
+		model := service.reports.models[modelID]
+		resolved, err := resolveDashboardSchemas(dashboard, model)
+		if err != nil {
+			return nil, fmt.Errorf("resolve dashboard %q schema: %w", dashboardID, err)
+		}
+		service.reports.dashboards[dashboardID] = resolved
 	}
 	return service, nil
 }

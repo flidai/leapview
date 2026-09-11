@@ -37,7 +37,9 @@ jobs:
         run: >-
           go test -race -tags='duckdb_arrow fai520qualification'
           ./internal/manageddata/storage/s3
+          ./internal/recoveryset/capture
           ./internal/recoveryset/postgres
+          ./internal/recoveryset/s3reader
           ./internal/recoveryset/observationstore
           -run '^(TestFAI520|TestProviderObservation)'
           -count=2 -timeout=15m -v

@@ -276,6 +276,11 @@ spec:
 		for name, original := range model.Tables {
 			table := original
 			table.AIContext = nil
+			table.AuthoredFields = maps.Clone(original.AuthoredFields)
+			for field, declaration := range table.AuthoredFields {
+				declaration.AIContext = nil
+				table.AuthoredFields[field] = declaration
+			}
 			table.Columns = maps.Clone(original.Columns)
 			for field, column := range table.Columns {
 				column.AIContext = nil
@@ -425,6 +430,27 @@ func TestResourceResolverRejectsAmbiguousNames(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("newResourceResolver() error = %v, want ambiguous name", err)
+	}
+}
+
+func TestResourceResolverDoesNotResolveThroughProvenance(t *testing.T) {
+	resolver, err := newResourceResolver([]projectgraph.Resource{{
+		ID:   "model:orders",
+		Kind: projectgraph.KindModel,
+		Name: "orders",
+		Provenance: projectgraph.Provenance{
+			Origin: "dbt",
+			Source: "foreign_project.orders",
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, err := resolver.resolve("orders", projectgraph.KindModel); err != nil || id != "model:orders" {
+		t.Fatalf("resolve(local name) = %q, %v", id, err)
+	}
+	if _, err := resolver.resolve("foreign_project.orders", projectgraph.KindModel); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Fatalf("resolve(provenance source) error = %v, want missing reference", err)
 	}
 }
 
@@ -772,6 +798,52 @@ spec:
 	}
 	if len(compiled.Edges()) != 5 {
 		t.Fatalf("edge count = %d, want 5", len(compiled.Edges()))
+	}
+}
+
+func TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically(t *testing.T) {
+	projectPath := writeSourceFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec: {definition: {type: direct, source: orders}, entities: {order: {type: primary, fields: [order_id]}}, grain: {entity: order}, fields: {order_id: {datatype: String}}}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic:sales, name: sales}
+spec:
+  datasets: {orders: {model: foreign_project.orders_model}}
+  metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}, empty: zero}}
+`,
+	})
+
+	var first string
+	for attempt := 0; attempt < 2; attempt++ {
+		_, err := LoadSourceRoot(projectPath)
+		if err == nil {
+			t.Fatal("LoadSourceRoot() accepted qualified foreign Project reference")
+		}
+		if strings.Contains(err.Error(), "model:orders") {
+			t.Fatalf("foreign reference diagnostic disclosed local resource identity: %v", err)
+		}
+		if !strings.Contains(err.Error(), `reference "foreign_project.orders_model" is missing`) {
+			t.Fatalf("LoadSourceRoot() error = %v, want closed local resolver rejection", err)
+		}
+		if attempt == 0 {
+			first = err.Error()
+		} else if err.Error() != first {
+			t.Fatalf("foreign reference diagnostic changed across runs:\n%s\n%s", first, err)
+		}
 	}
 }
 
@@ -1451,6 +1523,66 @@ spec:
 	}
 	if got := project.Manifest.DashboardDefinitions["dashboard:sales"].SemanticModel; got != "semantic:sales" {
 		t.Fatalf("dashboard definition semantic model = %q, want canonical stable ID", got)
+	}
+}
+
+func TestLoadSourceRootAllowsSemanticReferencesOutsidePartialModelFields(t *testing.T) {
+	files := map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed, defaults: {csv: {header: true}}}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:warehouse.orders, name: warehouse.orders}
+spec:
+  connection: warehouse
+  location: {type: path, path: orders.csv, format: csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders}
+spec:
+  definition: {type: direct, source: warehouse.orders}
+  fields: {order_id: {datatype: String, label: Order ID}}
+  entities:
+    order: {type: primary, fields: [order_id]}
+    customer: {type: foreign, fields: [customer_id]}
+  grain: {entity: order}
+  checks:
+    - {id: status_values, type: accepted_values, field: status, values: [open, closed], severity: error}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders, defaultTimeDimension: order_date}}
+  dimensions:
+    order_date:
+      datatype: Date
+      bindings: {orders: {field: orders.order_date}}
+      time: {nativeGrain: day, grains: [day], calendar: iso8601}
+  metrics:
+    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
+`,
+	}
+	project, err := LoadSourceRoot(writeSourceFixture(t, files))
+	if err != nil {
+		t.Fatalf("LoadSourceRoot(partial Model fields): %v", err)
+	}
+	model := project.Manifest.SemanticModels["semantic-model:sales"]
+	if model == nil {
+		t.Fatal("compiled semantic model is missing")
+	}
+	table := model.Tables["orders"]
+	if len(table.AuthoredFields) != 1 || table.AuthoredFields["order_id"].Label != "Order ID" {
+		t.Fatalf("authored field overlay = %#v", table.AuthoredFields)
+	}
+	for _, field := range []string{"order_id", "customer_id", "status", "order_date", "revenue"} {
+		if _, ok := table.Dimensions[field]; !ok {
+			t.Fatalf("provisional resolved field %q is missing: %#v", field, table.Dimensions)
+		}
 	}
 }
 

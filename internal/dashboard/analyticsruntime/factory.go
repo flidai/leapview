@@ -142,6 +142,21 @@ type projectRuntime struct {
 	data    reportdef.DataService
 }
 
+func (r projectRuntime) ResolvedSemanticModel() (*semanticmodel.Model, bool) {
+	planner, ok := r.runtime.(interface {
+		Planner(string) (*semanticquery.Planner, bool)
+	})
+	if !ok {
+		return nil, false
+	}
+	compiled, ok := planner.Planner(r.modelID)
+	if !ok || compiled == nil || compiled.CompiledModel() == nil {
+		return nil, false
+	}
+	model := compiled.CompiledModel().SourceModel()
+	return model, model != nil
+}
+
 func (r projectRuntime) Query(ctx context.Context, request reportdef.AggregateQuery) (reportdef.QueryRows, error) {
 	return r.data.Query(ctx, request)
 }
