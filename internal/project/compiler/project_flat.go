@@ -5,6 +5,7 @@ package compiler
 // emits a graph whose edges contain only canonical IDs.
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -13,14 +14,6 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
-
-func copySources(in map[string]semanticmodel.Source) map[string]semanticmodel.Source {
-	out := make(map[string]semanticmodel.Source, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
 
 type resourceResolver struct {
 	byID   map[projectgraph.ResourceID]projectgraph.Resource
@@ -255,7 +248,10 @@ func validateSourceAssembly(project sourceAssembly) error {
 		// alias for this validation snapshot and retain the explicit ModelName
 		// on the table. This keeps validation strict without inventing a
 		// compatibility path that permits unbound runtime tables.
-		runtimeTables := translatedTablesForRuntime(project.Models, sourceAliases)
+		runtimeTables, err := translatedTablesForRuntime(project.Models, sourceAliases)
+		if err != nil {
+			return err
+		}
 		runtimeDatasets := make(map[string]semanticmodel.SemanticDatasetSpec, len(runtimeTables))
 		for name, table := range runtimeTables {
 			table.ModelName = name
@@ -264,10 +260,16 @@ func validateSourceAssembly(project sourceAssembly) error {
 		}
 		validatedModel := &semanticmodel.Model{Name: "source-root", Connections: copyConnections(project.Connections), Sources: aliasedSources, Datasets: runtimeDatasets, Tables: runtimeTables}
 		if err := deriveModelSQLDependencies(validatedModel); err != nil {
-			for name := range project.Models {
-				return resourceError(project.ModelPaths[name], project.ModelIDs[name], "spec", "Model %q SQL validation: %v", name, err)
+			var failure *modelSQLDependencyError
+			if !errors.As(err, &failure) || failure.ModelName == "" {
+				return err
 			}
-			return err
+			path, pathOK := project.ModelPaths[failure.ModelName]
+			resourceID, idOK := project.ModelIDs[failure.ModelName]
+			if !pathOK && !idOK {
+				return err
+			}
+			return resourceError(path, resourceID, "spec", "Model %q SQL validation: %v", failure.ModelName, failure.Err)
 		}
 		if err := validatedModel.ValidateAuthored(); err != nil {
 			for name := range project.Models {
