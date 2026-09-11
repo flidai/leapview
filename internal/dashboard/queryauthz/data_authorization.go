@@ -53,6 +53,8 @@ type Metrics struct {
 	auditRecorder             access.CanonicalAuditRecorder
 }
 
+var _ queryruntime.SpatialTileStreamExpirer = Metrics{}
+
 // Planner forwards the activation-owned planner exposed by the active runtime.
 // Authorization uses the same compiled semantic graph as execution and
 // dashboard optimization; it never compiles a request-local planner.
@@ -856,6 +858,14 @@ func (m Metrics) QueryVisualizationTile(ctx context.Context, dashboardID, visual
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
 	return port.QueryVisualizationTile(dataquery.WithGovernor(ctx, m), dashboardID, visualID, revision, zoom, x, y)
+}
+
+// ExpireVisualizationTileStream preserves tile capability retirement through
+// the authorization decorator used by the production dashboard chain.
+func (m Metrics) ExpireVisualizationTileStream(streamID string) {
+	if expirer, ok := m.Metrics.(queryruntime.SpatialTileStreamExpirer); ok {
+		expirer.ExpireVisualizationTileStream(streamID)
+	}
 }
 
 func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {

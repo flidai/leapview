@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -104,6 +105,8 @@ type spatialTileRuntime interface {
 	QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
 	QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
 }
+
+var _ queryruntime.SpatialTileStreamExpirer = runtimeMetrics{}
 
 type semanticQueryRuntime interface {
 	ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error)
@@ -522,7 +525,7 @@ func (m runtimeMetrics) ExpireVisualizationTileStream(streamID string) {
 		return
 	}
 	defer release()
-	if expirer, ok := runtime.(interface{ ExpireVisualizationTileStream(string) }); ok {
+	if expirer, ok := runtime.(queryruntime.SpatialTileStreamExpirer); ok {
 		expirer.ExpireVisualizationTileStream(streamID)
 	}
 }

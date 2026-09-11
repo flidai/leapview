@@ -398,7 +398,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		AgentBootstrap: config.HTTP.AgentBootstrap,
 		AgentCommands:  config.HTTP.AgentCommands,
 		SpatialTileStreamClosed: func(metrics dashboardhttp.Metrics, streamID string) {
-			if expirer, ok := metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+			if expirer, ok := metrics.(queryruntime.SpatialTileStreamExpirer); ok {
 				expirer.ExpireVisualizationTileStream(streamID)
 			}
 		},
