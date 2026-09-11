@@ -100,7 +100,7 @@ func provenance(t *testing.T, id projectgraph.ServingIdentity) release.Provenanc
 	in := release.ProvenanceInput{
 		Artifact:  release.ProjectArtifactProvenance{SourceDigest: digest("1"), ProjectDigest: digest("2"), ContentDigest: digest("3"), CompilerVersion: "leapview:test", SchemaVersion: 3},
 		Candidate: release.CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"},
-		Plan:      release.GenerationPlanProvenance{Identity: id, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: digest("4"), DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase},
+		Plan:      release.GenerationPlanProvenance{Identity: id, TargetID: "target_1", RuntimeVersion: "runtime:test", PolicyDigest: digest("4"), PolicyRevision: 1, AuthorizationDigest: digest("5"), DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase},
 	}
 	binding := release.BindingFingerprint(in.Plan.Bindings)
 	evidence, err := (release.GateEvidence{Version: 1, CandidateID: in.Candidate.ID, SourceDigest: in.Artifact.SourceDigest, BindingGeneration: binding, RuntimeVersion: in.Plan.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}}).Canonical()

@@ -242,6 +242,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			ArtifactRoot: artifactRoot, ArtifactRootDigest: artifactRootDigest,
 			CompiledGraphDigest: input.Artifacts.Compiler.Graph.Digest(), CompiledConfigDigest: input.Plan.Execution.ConfigDigest,
 			SecurityDomainFingerprint: input.Artifacts.AuthorizationFingerprint, RequestDigest: attempt.RequestDigest,
+			AuthorizationPolicyRevision: input.Artifacts.AuthorizationPolicyRevision, AuthorizationPolicyDigest: input.Artifacts.AuthorizationPolicyDigest,
 			PlanDigest: input.Plan.Digest, CompatibilityDigest: input.Compatibility.CompatibilityDigest,
 			ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest,
 			DuckDBVersion: input.Compatibility.DuckDBRuntime, RuntimeVersion: input.RuntimeVersion,
@@ -269,7 +270,11 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			DashboardPublicationsJSON: artifact.DashboardPublicationsJSON, DashboardAppearancesJSON: artifact.DashboardAppearancesJSON,
 			CreatedBy: attempt.OwnerID,
 		},
-		ManagedDataPins:   append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		ManagedDataPins: append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		AuthorizationPolicy: AuthorizationPolicyEvidence{
+			Revision: input.Artifacts.AuthorizationPolicyRevision,
+			Digest:   input.Artifacts.AuthorizationPolicyDigest,
+		},
 		Graph:             input.Artifacts.Compiler.Graph,
 		ResourceInventory: inventory,
 	}
@@ -300,7 +305,8 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 		SourceRevision: sourceRevision,
 		Plan: release.GenerationPlanProvenance{
 			Identity: artifact.Identity, BaseIdentity: baseIdentity, TargetID: input.Plan.TargetID,
-			RuntimeVersion: input.RuntimeVersion, PolicyDigest: input.Artifacts.AuthorizationFingerprint,
+			RuntimeVersion: input.RuntimeVersion, PolicyDigest: input.Artifacts.AuthorizationPolicyDigest,
+			PolicyRevision: input.Artifacts.AuthorizationPolicyRevision, AuthorizationDigest: input.Artifacts.AuthorizationFingerprint,
 			DataRevision: artifact.DataRevision, DataMode: artifact.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifact.ManagedDataPins...), Bindings: bindings,
 			AuthoredConnections: nativeAuthoredConnectionEvidence(artifact.AuthoredConnections), Extensions: append([]extension.Evidence(nil), input.Artifacts.Extensions...), GateEvidence: &gates,
@@ -560,6 +566,10 @@ func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerIn
 	}
 	if input.Artifacts.AuthorizationFingerprint == "" || input.Artifacts.AuthorizationFingerprint != input.Plan.Governance.AuthorizationDigest {
 		return conflict("candidate authorization fingerprint differs from delivery plan")
+	}
+	if input.Artifacts.AuthorizationPolicyRevision <= 0 || input.Artifacts.AuthorizationPolicyRevision != input.Plan.Governance.PolicyRevision ||
+		input.Artifacts.AuthorizationPolicyDigest == "" || input.Artifacts.AuthorizationPolicyDigest != input.Plan.Governance.PolicyDigest {
+		return conflict("candidate target authorization policy differs from delivery plan")
 	}
 	if err := validateNativeArtifactObject(input.Artifacts.Generation.NativeArtifact, input.Artifacts.Generation.ArtifactDigest); err != nil {
 		return err

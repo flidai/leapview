@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
@@ -310,6 +312,11 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	if _, err := accesspostgres.ValidateAuthorizationPolicyRevisionTx(ctx, tx, access.AuthorizationPolicyScope{
+		TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment,
+	}, inspected.AuthorizationPolicyRevision, inspected.AuthorizationPolicyDigest); err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("validate native plan authorization policy: %w", err)
+	}
 
 	acquired, err := c.operations.AcquireTx(ctx, tx, operationInput)
 	if err != nil {
@@ -735,6 +742,7 @@ func validateNativePlanInspection(request deploymentmodule.NativeDeliveryPlanReq
 		compilerGraph.Digest() != compilerArtifact.Graph().Digest() || compilerGraph.Validate() != nil ||
 		!sameNativeValue(inspected.Compiler.Manifest, compilerArtifact.Manifest()) ||
 		identity.Validate() != nil || identity.ProjectID != request.ProjectID || identity.Environment != request.Environment || identity.GenerationID != expectedGenerationID ||
+		inspected.AuthorizationPolicyRevision <= 0 || platformdigest.ValidateSHA256Identity(inspected.AuthorizationPolicyDigest) != nil ||
 		platformdigest.ValidateSHA256Identity(inspected.AuthorizationFingerprint) != nil ||
 		platformdigest.ValidateSHA256Identity(inspected.Artifact.ContentDigest) != nil ||
 		inspected.Generation.ArtifactDigest != inspected.Artifact.ContentDigest ||

@@ -17,6 +17,21 @@ func TestProvenanceCanonicalizesGenerationEvidence(t *testing.T) {
 	require.Equal(t, provenance.Artifact.ContentDigest, provenance.Artifact.ContentDigest)
 }
 
+func TestProvenanceRequiresPolicyEvidenceAndValidatesLegacyVersionFour(t *testing.T) {
+	current := testGenerationInput(t, GenerationDataRefreshSources)
+	current.Plan.PolicyRevision = 0
+	current.Plan.AuthorizationDigest = ""
+	if _, err := NewProvenance(current); err == nil {
+		t.Fatal("version-5 provenance accepted missing target authorization policy evidence")
+	}
+
+	legacy, err := newProvenanceVersion(current, legacyProvenanceVersion)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Validate())
+	legacy.Digest = testDigest("0")
+	require.Error(t, legacy.Validate())
+}
+
 func TestProvenanceBindsGateEvidenceAndDetectsTampering(t *testing.T) {
 	input := testGenerationInput(t, GenerationDataRefreshSources)
 	evidence, err := (GateEvidence{Version: 1, CandidateID: input.Candidate.ID, SourceDigest: input.Artifact.SourceDigest, BindingGeneration: BindingFingerprint(input.Plan.Bindings), RuntimeVersion: input.Plan.RuntimeVersion, DuckDBVersion: "duckdb:1", Outcome: GateSuccess, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
@@ -134,7 +149,7 @@ func testGenerationInput(t *testing.T, mode GenerationDataMode) ProvenanceInput 
 	require.NoError(t, err)
 	artifact := ProjectArtifactProvenance{SourceDigest: testDigest("a"), ProjectDigest: testDigest("b"), ContentDigest: testDigest("c"), CompilerVersion: "compiler:v1", SchemaVersion: 1}
 	candidate := CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"}
-	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
+	plan := GenerationPlanProvenance{Identity: identity, TargetID: "target_1", RuntimeVersion: "runtime:v1", PolicyDigest: testDigest("d"), PolicyRevision: 1, AuthorizationDigest: testDigest("f"), DataRevision: "sources:1", DataMode: mode, ManagedDataPins: []ManagedDataPin{{ConnectionID: "connection_1", RevisionID: "revision_1"}}, Bindings: []BindingEvidence{{BindingID: "binding_1", ConnectionID: "connection_1", ConnectorKind: "postgres", Revision: 1, ValidatedVersion: "provider:v1", EndpointConfigHash: testDigest("e")}}, AuthoredConnections: nil}
 	plan.GateEvidence = testPlanGateEvidence(t, artifact, candidate, plan)
 	return ProvenanceInput{Artifact: artifact, Candidate: candidate, Plan: plan}
 }

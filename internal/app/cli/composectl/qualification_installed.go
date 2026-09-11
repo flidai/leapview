@@ -415,6 +415,9 @@ func (c *Controller) QualifyInstalledCandidate(
 	if authoringReport.Result != "success" || authoringReport.Candidate == "" || authoringReport.GenerationID == "" {
 		return errors.New("installed authoring report is incomplete")
 	}
+	if err := validateQualificationAuthoringPolicyEvidence(authoringReport); err != nil {
+		return err
+	}
 	if err := c.waitQualificationReadiness(ctx); err != nil {
 		return fmt.Errorf("installed candidate did not become ready after sealed publication: %w", err)
 	}

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -30,6 +32,7 @@ import (
 )
 
 const admissionInstanceID = "lvinst_0123456789abcdefghijklmnopqrstuv"
+const admissionPolicySubjectID = "70000000-0000-0000-0000-000000000010"
 
 func admissionDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
@@ -80,6 +83,27 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	if err != nil {
 		t.Fatal(err)
 	}
+	policyScope := access.AuthorizationPolicyScope{TargetID: admissionInstanceID, ProjectID: "project_admission", Environment: "prod"}
+	policyBinding := admissionAuthorizationBinding()
+	policyDigest, err := access.AuthorizationPolicyDigest(policyScope, []access.RoleBinding{policyBinding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDocument := projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{
+		policyBinding.ID: {ID: policyBinding.ID, Name: policyBinding.Name, Role: string(policyBinding.Role), Subject: projectmanifest.Subject{Kind: string(policyBinding.Subject.Kind), PrincipalID: policyBinding.Subject.ID}},
+	}}
+	policyJSON, err := json.Marshal(policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: release.CandidatePolicyGenerationID}, graph, policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationDigest, err := policySnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	portableArtifact, err := projectartifact.NewSourceBundle(graph, projectmanifest.ResourceManifest{
 		Connections: map[string]semanticmodel.Connection{
 			"connection-admission": {Kind: "postgres"},
@@ -95,7 +119,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	planRecord := nativePlanFixture(t, deploymentnative.PlanInput{
 		PlanID: planID, TargetID: admissionInstanceID, PlanRevision: 1,
 		CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'),
-		SecurityDomainFingerprint: admissionDigest('d'), ArtifactDigest: artifactDigest,
+		SecurityDomainFingerprint: authorizationDigest, ArtifactDigest: artifactDigest,
 		QualificationDigest: admissionDigest('3'),
 	}, "project_admission")
 	planDigest := planRecord.PlanDigest
@@ -120,12 +144,13 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	}
 	return GenerationAdmissionInput{
 		Commit:              CommitEvidence{DeliveryID: "delivery-admission", AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
-		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
+		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: authorizationDigest, AuthorizationPolicyRevision: 1, AuthorizationPolicyDigest: policyDigest, RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
 		QualificationDigest: admissionDigest('3'),
 		CandidateExpiresAt:  time.Date(2099, 1, 1, 13, 0, 0, 0, time.UTC),
 		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: admissionInstanceID, OwnerID: "builder-admission", FencingEpoch: 1},
-		Generation:          GenerationEvidence{GenerationID: genID, TargetID: admissionInstanceID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
-		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: portableArtifact.Digest(), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
+		Generation:          GenerationEvidence{GenerationID: genID, TargetID: admissionInstanceID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: authorizationDigest},
+		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: portableArtifact.Digest(), AccessPolicyJSON: string(policyJSON), DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
+		AuthorizationPolicy: AuthorizationPolicyEvidence{Revision: 1, Digest: policyDigest},
 		Graph:               graph,
 		ResourceInventory:   resourceInventory,
 		ManagedDataPins:     []release.ManagedDataPin{},
@@ -133,10 +158,18 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 			Artifact:  release.ProjectArtifactProvenance{SourceDigest: admissionDigest('a'), ProjectDigest: portableArtifact.Digest(), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1},
 			Candidate: release.CandidateProvenance{ID: candidateID, OwnerID: "builder-admission"},
 			Plan: release.GenerationPlanProvenance{
-				Identity: projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: genID}, TargetID: admissionInstanceID, RuntimeVersion: "runtime", PolicyDigest: admissionDigest('d'), DataRevision: "sources:admission", DataMode: release.GenerationDataRefreshSources,
+				Identity: projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: genID}, TargetID: admissionInstanceID, RuntimeVersion: "runtime", PolicyDigest: policyDigest, PolicyRevision: 1, AuthorizationDigest: authorizationDigest, DataRevision: "sources:admission", DataMode: release.GenerationDataRefreshSources,
 				AuthoredConnections: []release.AuthoredConnectionEvidence{{ConnectionID: "connection-admission", ConnectorKind: "postgres"}}, GateEvidence: &gate,
 			},
 		},
+	}
+}
+
+func admissionAuthorizationBinding() access.RoleBinding {
+	return access.RoleBinding{
+		ID: "binding-admission-viewer", Name: "Admission viewer",
+		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: admissionPolicySubjectID},
+		Role:    access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer),
 	}
 }
 
@@ -343,6 +376,10 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := deploymentnative.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -391,6 +428,17 @@ func seedGenerationAdmissionBootstrap(t *testing.T, db *pgxpool.Pool, instanceID
 		ClaimedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
 	}); err != nil {
 		t.Fatalf("claim project: %v", err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active') ON CONFLICT (id) DO NOTHING`, admissionPolicySubjectID); err != nil {
+		t.Fatalf("seed authorization policy principal: %v", err)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: instanceID, ProjectID: projectID, Environment: environment}
+	repository, err := accesspostgres.NewAuthorizationPolicyRepository(db, scope)
+	if err != nil {
+		t.Fatalf("authorization policy repository: %v", err)
+	}
+	if _, err := repository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: admissionAuthorizationBinding(), ExpectedRevision: 0, IdempotencyKey: "generation-admission-policy"}); err != nil {
+		t.Fatalf("seed authorization policy: %v", err)
 	}
 }
 
@@ -474,6 +522,14 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if servingProvenance.Digest != retained.Digest {
 		t.Fatalf("serving provenance digest = %q, want %q", servingProvenance.Digest, retained.Digest)
+	}
+	var sealedPolicyRevision int64
+	var sealedPolicyDigest string
+	if err := p.QueryRow(t.Context(), `SELECT authorization_policy_revision, authorization_policy_digest FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, input.Seal.SealID).Scan(&sealedPolicyRevision, &sealedPolicyDigest); err != nil {
+		t.Fatalf("load sealed authorization policy evidence: %v", err)
+	}
+	if sealedPolicyRevision != input.AuthorizationPolicy.Revision || sealedPolicyDigest != input.AuthorizationPolicy.Digest {
+		t.Fatalf("sealed authorization policy = %d/%q, want %d/%q", sealedPolicyRevision, sealedPolicyDigest, input.AuthorizationPolicy.Revision, input.AuthorizationPolicy.Digest)
 	}
 	if managedData.calls < 1 || managedData.pins == nil || len(managedData.pins) != 0 {
 		t.Fatalf("managed-data binding admission calls=%d pins=%#v, want nonnil empty pins", managedData.calls, managedData.pins)
@@ -582,6 +638,46 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if _, err := provenance.CandidateProvenance(t.Context(), rollbackInput.Bundle.ProjectID, rollbackInput.Generation.CandidateID, 1); !errors.Is(err, releasepostgres.ErrNotFound) {
 		t.Fatalf("rollback retained candidate provenance, err=%v", err)
+	}
+}
+
+func TestGenerationAdmissionRejectsStaleAuthorizationPolicyBeforeDeliveryMutation(t *testing.T) {
+	p := generationAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validGenerationAdmissionInput(t)
+	seedGenerationAdmission(t, delivery, input)
+
+	scope := access.AuthorizationPolicyScope{TargetID: input.Generation.TargetID, ProjectID: input.Bundle.ProjectID.String(), Environment: string(input.Bundle.Environment)}
+	repository, err := accesspostgres.NewAuthorizationPolicyRepository(p, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := admissionAuthorizationBinding()
+	changed.Name = "Changed after candidate inspection"
+	if _, err := repository.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{Scope: scope, Binding: changed, ExpectedRevision: 1, IdempotencyKey: "generation-admission-policy-drift"}); err != nil {
+		t.Fatalf("advance authorization policy: %v", err)
+	}
+
+	if _, err := capability.CompleteBuildAndAdmit(t.Context(), input); !errors.Is(err, access.ErrAuthorizationPolicyStaleRevision) {
+		t.Fatalf("stale authorization policy admission error = %v, want ErrAuthorizationPolicyStaleRevision", err)
+	}
+	var state string
+	if err := p.QueryRow(t.Context(), `SELECT state FROM delivery.delivery_build_attempt WHERE attempt_id=$1::uuid`, input.Commit.AttemptID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "running" {
+		t.Fatalf("build attempt state = %q, want running after rejected admission", state)
+	}
+	var artifacts, seals, generations, bundles int
+	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid)`, input.Commit.AttemptID, input.Seal.SealID, input.Generation.GenerationID).Scan(&artifacts, &seals, &generations, &bundles); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts != 0 || seals != 0 || generations != 0 || bundles != 0 {
+		t.Fatalf("rejected admission persisted artifacts=%d seals=%d generations=%d bundles=%d", artifacts, seals, generations, bundles)
 	}
 }
 

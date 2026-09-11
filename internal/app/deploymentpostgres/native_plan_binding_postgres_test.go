@@ -56,6 +56,7 @@ func TestNativeCreatePlanPostgresBindsPortableSourceToIndependentEnvironmentTarg
 
 		source := &nativePlanSourceReader{snap: snapshot}
 		inspector := &nativePlanArtifactInspector{set: artifacts}
+		seedNativePlanAuthorizationPolicy(t, db, inspector, targetID, environment)
 		coord := newNativePlanCoordinator(t, db, source, inspector)
 		// newNativePlanCoordinator is shared with the single-target tests and
 		// intentionally defaults to prod. Keep this adaptation local to the

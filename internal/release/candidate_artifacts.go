@@ -26,6 +26,12 @@ var (
 	ErrCandidateArtifactUnavailable = errors.New("candidate artifact preparation unavailable")
 )
 
+// CandidatePolicyGenerationID is the stable non-runtime generation identity
+// used when hashing authorization policy evidence. A candidate may later be
+// materialized under different concrete generation IDs without changing the
+// reviewed policy fingerprint.
+const CandidatePolicyGenerationID = "candidate-policy"
+
 type CandidateConnectionRequirement struct {
 	ConnectionID  projectgraph.ResourceID
 	ConnectorKind string
@@ -131,6 +137,11 @@ type CandidateArtifactRecoveryRequest struct {
 	CandidateID     string
 	ServingIdentity projectgraph.ServingIdentity
 	SourceDigest    string
+	// AuthorizationPolicyRevision and AuthorizationPolicyDigest identify the
+	// exact target-owned policy selected by the durable delivery plan. Recovery
+	// must reload this historical revision rather than consulting a newer head.
+	AuthorizationPolicyRevision int64
+	AuthorizationPolicyDigest   string
 	// ManagedDataPins is the exact immutable revision ledger selected by the
 	// durable delivery plan. Managed activations are not embedded in serving
 	// bundles, so native recovery must carry these pins explicitly rather than
@@ -143,9 +154,14 @@ type CandidateArtifactSet struct {
 	Artifact ProjectArtifactProvenance
 	// Extensions is target-side, non-secret evidence for exact extension
 	// artifacts admitted during bounded candidate preparation.
-	Extensions               []extension.Evidence
-	AuthorizationFingerprint string
-	Generation               CandidateGenerationArtifact
+	Extensions []extension.Evidence
+	// AuthorizationPolicyRevision/Digest bind the mutable target authority;
+	// AuthorizationFingerprint binds that policy after compilation against the
+	// candidate's exact graph and stable policy identity.
+	AuthorizationPolicyRevision int64
+	AuthorizationPolicyDigest   string
+	AuthorizationFingerprint    string
+	Generation                  CandidateGenerationArtifact
 	// Compiler is the exact immutable compiler evidence used to produce the
 	// serving artifact. Keeping the graph, manifest, and plan alongside the
 	// artifact prevents production delivery from reloading or recompiling a

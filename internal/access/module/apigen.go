@@ -316,14 +316,16 @@ func (a *APIGenAuthorizer) projectBoundaryProjectID(ctx context.Context) (projec
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
-// Candidate source retention and managed-data staging operations are the only
-// project-scoped routes that may run before an active serving generation; all
-// other project resource operations must use immutable snapshot authorization.
+// Candidate source retention, managed-data staging, and the narrowly scoped
+// target-policy role-binding creation command are the only project-scoped
+// routes that may run before an active serving generation; all other project
+// resource operations must use immutable snapshot authorization.
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"createProjectRoleBinding":
 		return true
 	default:
 		return false

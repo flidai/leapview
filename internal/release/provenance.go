@@ -19,7 +19,9 @@ import (
 
 // ProvenanceVersion is bumped whenever the canonical project-generation
 // evidence shape changes. Provenance is immutable release evidence.
-const ProvenanceVersion = 4
+const ProvenanceVersion = 5
+
+const legacyProvenanceVersion = 4
 
 var (
 	ErrProvenanceInvalid = errors.New("release provenance invalid")
@@ -111,6 +113,8 @@ type GenerationPlanProvenance struct {
 	TargetID            string                        `json:"targetId"`
 	RuntimeVersion      string                        `json:"runtimeVersion"`
 	PolicyDigest        string                        `json:"policyDigest"`
+	PolicyRevision      int64                         `json:"policyRevision,omitempty"`
+	AuthorizationDigest string                        `json:"authorizationDigest,omitempty"`
 	DataRevision        string                        `json:"dataRevision"`
 	DataMode            GenerationDataMode            `json:"dataMode"`
 	ManagedDataPins     []ManagedDataPin              `json:"managedDataPins"`
@@ -150,6 +154,13 @@ func NewProvenance(input ProvenanceInput) (Provenance, error) {
 
 // newProvenance canonicalizes and digests provenance.
 func newProvenance(input ProvenanceInput) (Provenance, error) {
+	return newProvenanceVersion(input, ProvenanceVersion)
+}
+
+func newProvenanceVersion(input ProvenanceInput, version int) (Provenance, error) {
+	if version != legacyProvenanceVersion && version != ProvenanceVersion {
+		return Provenance{}, provenanceInvalid(fmt.Errorf("unsupported version %d", version))
+	}
 	artifact, err := normalizeProjectArtifactProvenance(input.Artifact)
 	if err != nil {
 		return Provenance{}, err
@@ -165,6 +176,13 @@ func newProvenance(input ProvenanceInput) (Provenance, error) {
 	plan, err := normalizeGenerationPlanProvenance(input.Plan, artifact)
 	if err != nil {
 		return Provenance{}, err
+	}
+	if version == ProvenanceVersion {
+		if plan.PolicyRevision < 1 || platformdigest.ValidateSHA256Identity(plan.AuthorizationDigest) != nil {
+			return Provenance{}, provenanceInvalid(errors.New("target authorization policy revision and compiled digest are required"))
+		}
+	} else if plan.PolicyRevision != 0 || plan.AuthorizationDigest != "" {
+		return Provenance{}, provenanceInvalid(errors.New("legacy provenance cannot carry version-5 authorization evidence"))
 	}
 	if plan.GateEvidence == nil || plan.GateEvidence.CandidateID != candidate.ID {
 		return Provenance{}, provenanceInvalid(errors.New("gate evidence is not bound to candidate identity"))
@@ -185,11 +203,11 @@ func newProvenance(input ProvenanceInput) (Provenance, error) {
 		Version                  int    `json:"version"`
 		ArtifactProvenanceDigest string `json:"artifactProvenanceDigest"`
 		PlanDigest               string `json:"planDigest"`
-	}{ProvenanceVersion, artifactDigest, planDigest})
+	}{version, artifactDigest, planDigest})
 	if err != nil {
 		return Provenance{}, provenanceInvalid(err)
 	}
-	return Provenance{Version: ProvenanceVersion, Artifact: artifact, Candidate: candidate, SourceRevision: source, Plan: plan, ArtifactProvenanceDigest: artifactDigest, PlanDigest: planDigest, Digest: digest}, nil
+	return Provenance{Version: version, Artifact: artifact, Candidate: candidate, SourceRevision: source, Plan: plan, ArtifactProvenanceDigest: artifactDigest, PlanDigest: planDigest, Digest: digest}, nil
 }
 
 func (p Provenance) Validate() error {
@@ -197,10 +215,10 @@ func (p Provenance) Validate() error {
 }
 
 func (p Provenance) validate() error {
-	if p.Version != ProvenanceVersion {
-		return provenanceInvalid(fmt.Errorf("version = %d, want %d", p.Version, ProvenanceVersion))
+	if p.Version != legacyProvenanceVersion && p.Version != ProvenanceVersion {
+		return provenanceInvalid(fmt.Errorf("unsupported version %d", p.Version))
 	}
-	expected, err := newProvenance(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan})
+	expected, err := newProvenanceVersion(ProvenanceInput{Artifact: p.Artifact, Candidate: p.Candidate, SourceRevision: p.SourceRevision, Plan: p.Plan}, p.Version)
 	if err != nil {
 		return err
 	}
@@ -268,11 +286,14 @@ func normalizeGenerationPlanProvenance(p GenerationPlanProvenance, artifact Proj
 			return GenerationPlanProvenance{}, provenanceInvalid(errors.New("base identity scope does not match generation identity"))
 		}
 	}
-	if !canonicalLiteral(p.RuntimeVersion) || !canonicalLiteral(p.PolicyDigest) || !canonicalLiteral(p.DataRevision) {
+	if !canonicalLiteral(p.RuntimeVersion) || !canonicalLiteral(p.PolicyDigest) || !canonicalLiteral(p.AuthorizationDigest) || !canonicalLiteral(p.DataRevision) {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("generation plan literals must be canonical"))
 	}
 	if validateOperationalID(p.TargetID) != nil || p.RuntimeVersion == "" || platformdigest.ValidateSHA256Identity(p.PolicyDigest) != nil || p.DataRevision == "" || artifact.ContentDigest == "" {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("runtime, policy, data, and artifact evidence are required"))
+	}
+	if p.PolicyRevision < 0 || p.PolicyRevision > 0 && platformdigest.ValidateSHA256Identity(p.AuthorizationDigest) != nil || p.PolicyRevision == 0 && p.AuthorizationDigest != "" {
+		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("authorization policy revision and compiled digest evidence are inconsistent"))
 	}
 	if p.DataMode != GenerationDataReuseBase && p.DataMode != GenerationDataRefreshSources {
 		return GenerationPlanProvenance{}, provenanceInvalid(errors.New("data mode is invalid"))
