@@ -277,6 +277,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	}
 
   public openDrawer(): void {
+    if (this.open) this.focusComposer()
     this.open = true
   }
 
@@ -304,9 +305,16 @@ class ChatDrawer extends DatastarLit(LitElement) {
       return
     }
     this.focusReturnTarget = deepActiveElement(document)
-    const composer = this.shadowRoot?.querySelector('lv-chat-composer') as (HTMLElement & { remeasure(): void }) | null
-    composer?.remeasure()
-    void this.updateComplete.then(() => {
+    this.focusComposer()
+  }
+
+  private focusComposer(): void {
+    void this.updateComplete.then(async () => {
+      if (!this.open) return
+      const composer = this.shadowRoot?.querySelector('lv-chat-composer') as (LitElement & { remeasure(): void }) | null
+      await composer?.updateComplete
+      if (!this.open) return
+      composer?.remeasure()
       const textarea = composer?.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)')
       const fallback = this.shadowRoot?.querySelector<HTMLButtonElement>('.close-action')
       ;(textarea ?? fallback)?.focus()

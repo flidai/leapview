@@ -1576,6 +1576,39 @@ test('visualization host renders the shared title and preserves the live source 
   } finally { await page.close() }
 })
 
+test('reopening an active agent drawer refocuses the composer and preserves return focus', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
+      const drawer = root.querySelector('lv-chat-drawer') as any
+      trigger.focus()
+      drawer.openDrawer()
+      await drawer.updateComplete
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
+      await composer.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      trigger.focus()
+      drawer.openDrawer()
+      await drawer.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const composerFocused = composer.shadowRoot.activeElement === composer.shadowRoot.querySelector('textarea')
+      drawer.open = false
+      await drawer.updateComplete
+      return { composerFocused, focusReturned: root.activeElement === trigger }
+    })
+    expect(result).toEqual({ composerFocused: true, focusReturned: true })
+  } finally { await page.close() }
+})
+
 test('dashboard agent drawer carries page context and explicit visual references', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -1778,9 +1811,9 @@ test('dashboard agent drawer carries page context and explicit visual references
     })
     expect(groupedSearch.labels).toEqual(['On this page', 'All accessible'])
     expect(groupedSearch.options[0]).toContain('Orders')
-	expect(groupedSearch.onPage).toContain('Finance orders Finance › Executive Sales › Overview Visual')
-	expect(groupedSearch.accessible).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
-	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Metric')
+	expect(groupedSearch.onPage).toContain('Finance orders Finance / Executive Sales / Overview Visual')
+	expect(groupedSearch.accessible).not.toContain('Finance orders Finance / Executive Sales / Overview Visual')
+	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales / Olist Metric')
 
     await moduleHandle.evaluate((module: any) => module.mergePatch({ agentContext: { referenceLimit: 1 } }))
     await page.waitForFunction(() => {
