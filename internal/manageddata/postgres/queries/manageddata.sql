@@ -164,14 +164,15 @@ SELECT (COALESCE(MAX(sequence), 0) + 1)::bigint AS sequence
 FROM managed_data.revision
 WHERE collection_id = sqlc.arg(collection_id);
 
--- name: InsertRevisionFromUpload :exec
+-- name: InsertRevisionFromUpload :execresult
 INSERT INTO managed_data.revision
     (revision_id, collection_id, sequence, digest, status, manifest,
      file_count, size_bytes, created_by)
 SELECT sqlc.arg(revision_id), sqlc.arg(collection_id), sqlc.arg(sequence), sqlc.arg(digest),
        'pending', sqlc.arg(manifest)::jsonb, sqlc.arg(file_count), sqlc.arg(size_bytes), created_by
 FROM managed_data.upload_session
-WHERE upload_id = sqlc.arg(upload_id);
+WHERE upload_id = sqlc.arg(upload_id)
+ON CONFLICT (collection_id, digest) DO NOTHING;
 
 -- name: InsertRevisionFile :exec
 INSERT INTO managed_data.revision_file
@@ -197,6 +198,14 @@ SELECT revision_id, collection_id, sequence, digest, status, manifest::text,
        file_count, size_bytes, created_by, created_at, ready_at, error
 FROM managed_data.revision
 WHERE revision_id = sqlc.arg(revision_id);
+
+-- name: GetReadyRevisionByCollectionDigest :one
+SELECT revision_id, collection_id, sequence, digest, status, manifest::text,
+       file_count, size_bytes, created_by, created_at, ready_at, error
+FROM managed_data.revision
+WHERE collection_id = sqlc.arg(collection_id)
+  AND digest = sqlc.arg(digest)
+  AND status = 'ready';
 
 -- name: ListRevisionsByCollection :many
 SELECT revision_id, collection_id, sequence, digest, status, manifest::text,

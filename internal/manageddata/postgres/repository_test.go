@@ -320,6 +320,65 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	}
 }
 
+func TestPostgresCompleteUploadReusesReadyRevisionForDuplicateDigest(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	r := New(p)
+	collection, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_duplicate", ProjectID: "project_demo", ConnectionID: "connection_orders", Name: "Orders",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := manageddata.Manifest{Files: []manageddata.File{{
+		Path: "orders.parquet", Size: 12,
+		SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}}
+	complete := func(uploadID, revisionID string) manageddata.Revision {
+		t.Helper()
+		session, createErr := r.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+			ID: manageddata.UploadID(uploadID), CollectionID: collection.ID, Manifest: manifest,
+			StorageBackend: "s3", StagingPrefix: "staging/" + uploadID, ExpiresAt: time.Now().Add(time.Hour),
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, beginErr := r.BeginUploadFinalization(t.Context(), session.ID, jobspkg.WorkflowIntent{}); beginErr != nil {
+			t.Fatal(beginErr)
+		}
+		revision, completeErr := r.CompleteUpload(t.Context(), manageddata.CompleteUploadInput{
+			SessionID: session.ID, RevisionID: manageddata.RevisionID(revisionID),
+			Files: []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "objects/" + uploadID}},
+		})
+		if completeErr != nil {
+			t.Fatal(completeErr)
+		}
+		return revision
+	}
+
+	original := complete("upload_original", "revision_original")
+	reingested := complete("upload_reingested", "revision_reingested")
+	if reingested.ID != original.ID {
+		t.Fatalf("duplicate digest created revision %q, want existing revision %q", reingested.ID, original.ID)
+	}
+	if reingested.Status != manageddata.RevisionStatusReady {
+		t.Fatalf("duplicate digest revision status = %q, want ready", reingested.Status)
+	}
+	session, err := r.UploadSessionByID(t.Context(), "upload_reingested")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Status != manageddata.UploadStatusComplete || session.RevisionID != original.ID {
+		t.Fatalf("duplicate upload session = %#v, want complete bound to %q", session, original.ID)
+	}
+	replay, err := r.CompleteUpload(t.Context(), manageddata.CompleteUploadInput{
+		SessionID: "upload_reingested", RevisionID: "revision_reingested",
+		Files: []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "objects/upload_reingested"}},
+	})
+	if err != nil || replay.ID != original.ID {
+		t.Fatalf("duplicate upload replay = %#v, error = %v, want existing revision %q", replay, err, original.ID)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
