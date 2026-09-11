@@ -101,10 +101,14 @@ func newApplicationService(t *testing.T, repo *applicationRepository, auth *appl
 
 type applicationAuthorizer struct {
 	calls []service.AuthorizationRequest
+	err   error
 }
 
 func (a *applicationAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.calls = append(a.calls, request)
+	if a.err != nil {
+		return a.err
+	}
 	return nil
 }
 

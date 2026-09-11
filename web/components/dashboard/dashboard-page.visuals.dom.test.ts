@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { currentVisualizationSchemaVersion } from '../../generated/visualization/schema-version'
+import { testDocument, testVisualizationEnvelopes, testVisualizationSignals } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -13,10 +14,14 @@ const projectRoot = process.cwd()
 const root = join(projectRoot, '.tmp/dashboard-page-test')
 
 test('dashboard fixtures satisfy the fail-closed visualization contract', () => {
-  for (const [id, envelope] of Object.entries(testVisualizationEnvelopes())) {
+  const envelopes = testVisualizationEnvelopes()
+  const signals = testVisualizationSignals()
+  for (const [id, envelope] of Object.entries(envelopes)) {
     if (!validateVisualizationEnvelope(envelope)) {
       throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
     }
+    expect(signals[id]?.schemaVersion).toBe(currentVisualizationSchemaVersion)
+    expect(signals[id]?.schemaVersion).toBe(envelope.schemaVersion)
   }
 })
 
@@ -134,9 +139,15 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
         const visualFrame = (id: string) => assigned.find((item) => (item.querySelector('lv-visualization-host') as any)?.envelope?.visualID === id)?.getBoundingClientRect()
         const chart = visualFrame('orders_chart')
         const tableFrame = visualFrame('orders')
+        const exploreActions = hosts.map((host) => ({
+          visualID: host.envelope?.visualID,
+          text: host.querySelector('a.explore-visual')?.textContent?.trim(),
+          href: host.querySelector('a.explore-visual')?.getAttribute('href'),
+        }))
         return {
           title: root.querySelector('h1')?.textContent?.trim(), hostCount: hosts.length,
           deferredHosts: hosts.filter((host) => host.deferMount && host.hasAttribute('defer-mount')).length,
+          exploreActions,
           legacyCount: root.querySelectorAll('lv-echart, lv-kpi-card, lv-report-table').length,
           kinds: hosts.map((host) => host.envelope?.spec?.kind).sort(),
           statuses: Object.fromEntries(hosts.map((host) => [host.envelope?.visualID, host.envelope?.status?.kind])),
@@ -168,6 +179,12 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       expect(state.title).toBe('Executive Sales Dashboard')
       expect(state.hostCount).toBe(3)
       expect(state.deferredHosts).toBe(state.hostCount)
+      expect(state.exploreActions).toHaveLength(state.hostCount)
+      for (const action of state.exploreActions) {
+        expect(action.text).toBe('Explore')
+        expect(action.href).toContain('/dashboards/executive-sales/pages/overview/components/')
+        expect(action.href).toContain('/explore?')
+      }
       expect(state.legacyCount).toBe(0)
       expect(state.kinds).toEqual(['cartesian', 'kpi', 'table'])
       expect(state.statuses).toEqual({ orders_kpi: 'ready', orders_chart: 'loading', orders: 'error' })

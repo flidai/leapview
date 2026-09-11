@@ -123,9 +123,11 @@ func TestExplorerProtectedProjectionFiltersPhysicalAndAuxiliaryFields(t *testing
 		dimensions: map[string]map[string]bool{"region": {"orders": true}},
 		metrics:    map[string]bool{},
 	}
-	fields := explorerFields(model, "orders", projectsignals.DataExploreCommand{}, compiled, access)
-	if len(fields) != 1 || fields[0].ID != "orders.region" {
-		t.Fatalf("protected fields = %#v, want only authorized region", fields)
+	fields := explorerFields(model, "orders", dataExploreState{}, compiled, access)
+	// Both selectable forms of the authorized field are intentional: the
+	// physical rows reference and the governed semantic Analyze reference.
+	if len(fields) != 2 || fields[0].ID != "orders.region" || fields[1].ID != "region" {
+		t.Fatalf("protected fields = %#v, want only authorized physical and semantic region references", fields)
 	}
 	datasets := explorerDatasets(model, compiled, access)
 	if len(datasets) != 1 || datasets[0].FieldCount != 1 {

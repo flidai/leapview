@@ -927,6 +927,7 @@ test('date columns reveal exact localized date and time on hover and focus', asy
       const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
       expect(focusVisibility).toBe('visible')
     } finally {
+      await page.close()
       await context.close()
     }
   }

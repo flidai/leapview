@@ -123,6 +123,10 @@ type SpatialMetadata struct {
 type Field struct {
 	Field string
 	Alias string
+	// Grain is an optional temporal grain for a selected semantic dimension.
+	// It allows canonical exploration specs to carry multiple independently
+	// grained time dimensions through the governed query boundary.
+	Grain string
 	// Kind preserves the semantic member kind when a field is carried outside
 	// its original dimensions/metrics collection (for example, into a
 	// count-only authorization projection). An empty kind is retained for
@@ -204,6 +208,38 @@ type ColumnMask struct {
 
 type Column struct {
 	Name string
+	// Type carries optional result value metadata that cannot be recovered
+	// safely from decoded Go values alone. An empty Kind means the producer did
+	// not provide a logical type; analytical Arrow producers populate supported
+	// primitive, decimal, date, and timestamp kinds for typed exports.
+	Type ColumnType `json:"-"`
+}
+
+type ColumnTypeKind string
+
+const (
+	ColumnTypeBoolean   ColumnTypeKind = "boolean"
+	ColumnTypeInteger   ColumnTypeKind = "integer"
+	ColumnTypeUnsigned  ColumnTypeKind = "unsigned"
+	ColumnTypeFloat     ColumnTypeKind = "float"
+	ColumnTypeString    ColumnTypeKind = "string"
+	ColumnTypeDecimal   ColumnTypeKind = "decimal"
+	ColumnTypeDate      ColumnTypeKind = "date"
+	ColumnTypeTimestamp ColumnTypeKind = "timestamp"
+)
+
+// ColumnType is deliberately independent of any analytical engine package.
+// BitWidth applies to integer, unsigned, and float values. Precision and Scale
+// apply to decimal values; Unit and TimeZone apply to dates/timestamps.
+// Producers must leave unsupported metadata empty rather than guessing from a
+// decoded row value.
+type ColumnType struct {
+	Kind      ColumnTypeKind
+	BitWidth  int32
+	Precision int32
+	Scale     int32
+	Unit      string
+	TimeZone  string
 }
 
 type Row map[string]any
@@ -277,20 +313,21 @@ const (
 	SurfaceDataExplorer    = "data_explorer"
 	SurfacePublicDashboard = "public_dashboard"
 
-	OperationDashboardAggregate         = "dashboard_aggregate"
-	OperationDashboardRows              = "dashboard_rows"
-	OperationDashboardCount             = "dashboard_count"
-	OperationDashboardHistogram         = "dashboard_histogram"
-	OperationDashboardDistribution      = "dashboard_distribution"
-	OperationDashboardFilterOptions     = "dashboard_filter_options"
-	OperationDashboardSpatialTile       = "dashboard_spatial_tile"
-	OperationDashboardSpatialTileBudget = "dashboard_spatial_tile_budget"
-	OperationDashboardSpatialMetadata   = "dashboard_spatial_metadata"
-	OperationAPIQuery                   = "api_query"
-	OperationAPIPreview                 = "api_preview"
-	OperationAgentQuery                 = "agent_query"
-	OperationPreviewWindow              = "preview_window"
-	OperationSemanticExplore            = "semantic_explore"
+	OperationDashboardAggregate           = "dashboard_aggregate"
+	OperationDashboardRows                = "dashboard_rows"
+	OperationDashboardCount               = "dashboard_count"
+	OperationDashboardHistogram           = "dashboard_histogram"
+	OperationDashboardDistribution        = "dashboard_distribution"
+	OperationDashboardFilterOptions       = "dashboard_filter_options"
+	OperationDashboardSpatialTile         = "dashboard_spatial_tile"
+	OperationDashboardSpatialTileBudget   = "dashboard_spatial_tile_budget"
+	OperationDashboardSpatialMetadata     = "dashboard_spatial_metadata"
+	OperationAPIQuery                     = "api_query"
+	OperationAPIPreview                   = "api_preview"
+	OperationAgentQuery                   = "agent_query"
+	OperationPreviewWindow                = "preview_window"
+	OperationSemanticExplore              = "semantic_explore"
+	OperationDataExploreFilterSuggestions = "data_explore_filter_suggestions"
 
 	StatusSuccess  = "success"
 	StatusError    = "error"

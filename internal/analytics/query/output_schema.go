@@ -339,12 +339,20 @@ func deriveProjectionOutput(node planir.SortLimit, input map[string]derivedOutpu
 		switch strings.ToLower(strings.TrimSpace(projection.Mask)) {
 		case "":
 		case "null":
+			// NULL has no value type in the rendered SQL. Preserve the governed
+			// source type as the descriptor's contract while marking it nullable.
 			state.nullability = OutputNullable
 			state.provenance.transformation = "mask_null"
 		case "redact", "redacted":
+			// The renderer replaces every redacted value with a string literal,
+			// so the descriptor must describe that rendered value rather than the
+			// source column's type.
+			state.logicalType = "string"
 			state.nullability = OutputDefinitelyNonNull
 			state.provenance.transformation = "mask_redact"
 		case "zero":
+			// The renderer uses the integer literal 0 for this mask.
+			state.logicalType = "integer"
 			state.nullability = OutputDefinitelyNonNull
 			state.provenance.transformation = "mask_zero"
 		default:

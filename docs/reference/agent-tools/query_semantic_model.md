@@ -229,9 +229,15 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "additionalProperties": false,
             "properties": {
               "id": {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               "type": {
+                "enum": [
+                  "field",
+                  "metric"
+                ],
                 "type": "string"
               }
             },
@@ -245,6 +251,10 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "type": "string"
           },
           "kind": {
+            "enum": [
+              "dimension",
+              "metric"
+            ],
             "type": "string"
           },
           "label": {
@@ -298,9 +308,17 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
           "type": "string"
         },
         "source": {
+          "enum": [
+            "publish",
+            "refresh"
+          ],
           "type": "string"
         },
         "status": {
+          "enum": [
+            "current",
+            "stale"
+          ],
           "type": "string"
         }
       },

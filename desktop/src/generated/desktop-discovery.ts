@@ -7,7 +7,7 @@ export type DesktopAuthenticationMode = 'browser-session' | 'system-browser-pkce
 export type DesktopCapability = 'remote-web'
 
 export interface DesktopDiscoveryDocument {
-  schemaVersion: number
+  schemaVersion: 1
   canonicalOrigin: string
   instanceId: string
   displayName: string
@@ -19,7 +19,7 @@ export interface DesktopDiscoveryDocument {
 }
 
 export interface DesktopDiscoveryFailure {
-  schemaVersion: number
+  schemaVersion: 1
   kind: DesktopDiscoveryFailureKind
 }
 

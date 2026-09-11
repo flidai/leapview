@@ -163,6 +163,31 @@ func TestAuthoredLifecycleActionsUsePublishAndManageCapabilities(t *testing.T) {
 	}
 }
 
+func TestSemanticModelUseIsIndependentFromDashboardEdit(t *testing.T) {
+	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{}}
+	err := policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "editor", ProjectID: "project", DashboardID: "dashboard",
+		SemanticModel: "semantic-model", Target: service.AuthorizationTargetSemanticModel,
+		Action: authoring.AuthorizationActionUse,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.calls) != 1 || policy.calls[0].kind != "resource" || policy.calls[0].resource.Kind() != graph.KindSemanticModel || policy.calls[0].capability != access.CapabilityResourceUse {
+		t.Fatalf("authorization calls = %#v", policy.calls)
+	}
+
+	policy = &authorizationPolicy{projectAllowed: map[access.Capability]bool{access.CapabilityResourceEdit: true}}
+	err = policy.adapter(t).Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "editor", ProjectID: "project", DashboardID: "dashboard",
+		SemanticModel: "semantic-model", Target: service.AuthorizationTargetSemanticModel,
+		Action: authoring.AuthorizationActionUse,
+	})
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("missing model use capability error = %v", err)
+	}
+}
+
 func TestAuthorizePreservesDecisionErrorsAndRejectsInvalidContracts(t *testing.T) {
 	backendErr := errors.New("authorization backend unavailable")
 	policy := &authorizationPolicy{resourceAllowed: true, projectAllowed: map[access.Capability]bool{}, err: backendErr}

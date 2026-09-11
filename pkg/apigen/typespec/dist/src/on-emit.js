@@ -76,7 +76,7 @@ class IRBuilder {
             return { type: "boolean" };
         }
         if (type.kind === "Number") {
-            return { type: "integer" };
+            return { type: type.value % 1 === 0 ? "integer" : "number", const: type.value };
         }
         if (type.kind === "Intrinsic" && type.name === "unknown") {
             return {};

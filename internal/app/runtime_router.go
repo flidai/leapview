@@ -76,7 +76,11 @@ type capabilityRoutes struct {
 }
 
 type runtimeServices struct {
-	analyticsModule                *analyticsmodule.Module
+	analyticsModule *analyticsmodule.Module
+	// savedExplorationService is an explicit injected feature service. The
+	// runtime router never constructs a SQLite repository; production must
+	// inject a native repository-backed implementation when one exists.
+	savedExplorationService        analyticsmodule.SavedExplorationService
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -188,10 +192,11 @@ type httpPolicy struct {
 }
 
 type persistenceInputs struct {
-	agentSettings    agentmodule.Settings
-	agentPersistence *agentmodule.Persistence
-	servingStateRepo servingStateRepository
-	accessRepo       access.Repository
+	agentSettings              agentmodule.Settings
+	agentPersistence           *agentmodule.Persistence
+	servingStateRepo           servingStateRepository
+	accessRepo                 access.Repository
+	savedExplorationRepository analyticsmodule.SavedExplorationRepository
 	// refreshPersistence is the complete capability-owned refresh authority.
 	// Native composition injects this opaque bundle.
 	refreshPersistence *refreshmodule.Persistence
@@ -299,12 +304,20 @@ type capabilityAssemblyInputs struct {
 	Agent             *agentmodule.Service
 	ManagedDataModule *manageddatamodule.Module
 	AnalyticsModule   *analyticsmodule.Module
-	Authoring         *dashboardmodule.AuthoringApplication
-	DashboardAssets   dashboardmodule.Assets
-	Product           *adminmodule.ProductService
-	ProductStatus     adminmodule.ProductStatus
-	ProjectCatalog    *projectcatalog.Service
-	ProjectGraph      projecthttp.GraphReader
+	// SavedExplorationService is supplied by composition when a complete
+	// capability-owned repository is available. It is intentionally separate
+	// from AnalyticsModule so the router cannot manufacture a storage adapter.
+	SavedExplorationService analyticsmodule.SavedExplorationService
+	// SavedExplorationRepository is an explicit persistence port for test and
+	// non-production composition. Production normally supplies the fully built
+	// service from the PostgreSQL composition root.
+	SavedExplorationRepository analyticsmodule.SavedExplorationRepository
+	Authoring                  *dashboardmodule.AuthoringApplication
+	DashboardAssets            dashboardmodule.Assets
+	Product                    *adminmodule.ProductService
+	ProductStatus              adminmodule.ProductStatus
+	ProjectCatalog             *projectcatalog.Service
+	ProjectGraph               projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
@@ -510,6 +523,9 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	if capabilities.AgentPersistence == nil {
 		return errors.New("production runtime composition requires native agent persistence")
 	}
+	if savedExplorationNil(capabilities.SavedExplorationService) {
+		return errors.New("production runtime composition requires a native saved exploration service")
+	}
 	if data.RefreshPersistence == nil {
 		return errors.New("production runtime composition requires native refresh persistence")
 	}
@@ -652,6 +668,7 @@ func buildApplicationSurfaces(
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
+	runtime.savedExplorationService = capabilities.SavedExplorationService
 	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
@@ -750,6 +767,7 @@ func buildApplicationSurfaces(
 	routes.dashboardAuthoring = capabilities.Authoring
 	routes.releaseModule = capabilities.ReleaseModule
 	persistence.accessRepo = data.AccessRepo
+	persistence.savedExplorationRepository = capabilities.SavedExplorationRepository
 	moduleWorkflow.agent = capabilities.Agent
 	moduleWorkflow.agentConfig = workflow.AgentConfig
 	platform.auth = workflow.Auth
@@ -798,6 +816,7 @@ func buildApplicationSurfaces(
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, ActiveServingState: projectActiveServingState, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
+		DashboardAuthoring:   routes.dashboardAuthoring,
 		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
 		DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]string, error) {
 			if routes.dashboardModule == nil {
@@ -1105,6 +1124,29 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 		}
 	}
+	var apiDispatcher *apiGenDispatcher
+	canonicalAuditRecorder, _ := persistence.accessRepo.(access.CanonicalAuditRecorder)
+	savedExplorationWiring, err := configureSavedExploration(savedExplorationWiringInputs{
+		accessModule:            routes.accessModule,
+		auth:                    platform.auth,
+		assets:                  platform.assets,
+		resolveProjectID:        runtime.resolveProjectID,
+		instanceID:              storage.instanceID,
+		publicURL:               storage.publicURL,
+		runtime:                 runtime.runtimeHostModule,
+		admitter:                runtime.workloads,
+		analyticsModule:         runtime.analyticsModule,
+		savedExplorationService: runtime.savedExplorationService,
+		repository:              persistence.savedExplorationRepository,
+		auditRecorder:           canonicalAuditRecorder,
+		projectBrowser:          routes.projectBrowser,
+		ctx:                     ctx,
+	})
+	if err != nil {
+		return err
+	}
+	routes.accessModule = savedExplorationWiring.accessModule
+	runtime.savedExplorationService = savedExplorationWiring.savedExplorationService
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
@@ -1120,8 +1162,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
+		SavedExplorations: savedExplorationAPIGenConfig(runtime.savedExplorationService, routes.accessModule, platform.auth, func() analyticsmodule.QueryAuditRecorder {
+			if runtime.analyticsModule == nil {
+				return nil
+			}
+			return runtime.analyticsModule.QueryAuditRecorder()
+		}()),
 	}
-	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
 		return errors.New("application composition requires an explicit access module")
 	}
@@ -1363,6 +1410,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if persistence.requireNativeDashboard {
 			appearanceStore = routes.dashboardModule.AppearanceStore()
 		}
+	}
+	if routes.projectBrowser != nil && routes.dashboardModule != nil {
+		routes.projectBrowser.DashboardAuthoringCommand = dashboardmodule.DashboardAuthoringCommandBinding()
 	}
 	if routes.projectBrowser != nil && persistence.requireNativeDashboard {
 		// Native dashboard Build selects the opaque PostgreSQL appearance
@@ -1824,7 +1874,20 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}
-	platform.apiProtocol.SetReplayAuthorize(apiGenAuthorizer.AuthorizeReplay)
+	// Saved-exploration responses include authored specs. Their durable replay
+	// path therefore rechecks the feature service's current model/resource/
+	// project authorization, while every unrelated operation retains the
+	// generated generic replay policy.
+	savedReplayConfig := analyticsAPI.SavedExplorations
+	platform.apiProtocol.SetReplayAuthorize(func(r *http.Request) bool {
+		if analyticsmodule.IsSavedExplorationMutationRequest(r) {
+			if !apiGenAuthorizer.AuthorizeReplay(r) {
+				return false
+			}
+			return analyticsmodule.AuthorizeSavedExplorationMutationReplay(savedReplayConfig, r)
+		}
+		return apiGenAuthorizer.AuthorizeReplay(r)
+	})
 	appResponder := apiprotocol.TransportErrorResponder{Logger: platform.logger}
 	appAPIHandler, err := apiapigenruntime.Build(apiGenAuthorizer, func(operationID string, w http.ResponseWriter, r *http.Request) bool {
 		return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, appResponder, w, r)

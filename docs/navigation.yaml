@@ -244,6 +244,11 @@ sections:
         type: how-to
         summary: Move private dashboard drafts through development, review, and production with explicit ownership boundaries.
         source: articles/operate/dashboard-authoring.md
+      - slug: guides/operate/exploration-sharing-exports
+        title: Exploration links and exports
+        type: how-to
+        summary: Share access-controlled exploration state and download bounded CSV or Parquet results.
+        source: articles/operate/exploration-sharing-exports.md
       - slug: guides/operate/production-configuration
         title: Production configuration
         type: how-to

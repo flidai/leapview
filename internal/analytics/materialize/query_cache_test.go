@@ -513,7 +513,7 @@ func TestRuntimeSemanticRowsIncludeTotalCountsFilteredPopulationBeforePagination
 	require.True(t, result.TotalRowsKnown)
 	require.Equal(t, 3, result.TotalRows)
 	require.Equal(t, int64(2), result.Rows[0]["id"])
-	require.Equal(t, []dataquery.Column{{Name: "id"}}, result.Columns)
+	require.Equal(t, []dataquery.Column{{Name: "id", Type: dataquery.ColumnType{Kind: dataquery.ColumnTypeInteger, BitWidth: 64}}}, result.Columns)
 	if got := database.queries.Load(); got != 1 {
 		t.Fatalf("physical executions = %d, want one data query with an inline total", got)
 	}

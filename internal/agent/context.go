@@ -3,9 +3,12 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 const (
@@ -15,21 +18,28 @@ const (
 
 const MaxTurnReferences = 12
 
+const (
+	turnContextMaxBytes = int64(1 << 20)
+	turnContextMaxDepth = 32
+)
+
+var turnContextJSONOptions = strictjson.Options{MaxBytes: turnContextMaxBytes, MaxDepth: turnContextMaxDepth}
+
 // TurnContext is server-resolved product context for one user turn. It is
 // deliberately separate from Scope: Scope controls authorization, while this
 // value describes the dashboard state the user is asking about.
 type TurnContext struct {
-	Surface        string           `json:"surface"`
-	DashboardID    string           `json:"dashboardId,omitempty"`
-	DashboardTitle string           `json:"dashboardTitle,omitempty"`
-	PageID         string           `json:"pageId,omitempty"`
-	PageTitle      string           `json:"pageTitle,omitempty"`
-	ModelID        string           `json:"modelId,omitempty"`
-	DatasetID      string           `json:"datasetId,omitempty"`
-	Exploration    *DataExploration `json:"exploration,omitempty"`
-	Generation     int64            `json:"generation,omitempty"`
-	Filters        map[string]any   `json:"filters,omitempty"`
-	References     []TurnReference  `json:"references,omitempty"`
+	Surface        string                       `json:"surface"`
+	DashboardID    string                       `json:"dashboardId,omitempty"`
+	DashboardTitle string                       `json:"dashboardTitle,omitempty"`
+	PageID         string                       `json:"pageId,omitempty"`
+	PageTitle      string                       `json:"pageTitle,omitempty"`
+	ModelID        string                       `json:"modelId,omitempty"`
+	DatasetID      string                       `json:"datasetId,omitempty"`
+	Exploration    *exploration.ExplorationSpec `json:"exploration,omitempty"`
+	Generation     int64                        `json:"generation,omitempty"`
+	Filters        map[string]any               `json:"filters,omitempty"`
+	References     []TurnReference              `json:"references,omitempty"`
 }
 
 // UnmarshalJSON rejects the former client-selectable project field instead
@@ -38,7 +48,7 @@ type TurnContext struct {
 // compatibility path that lets callers select a different project.
 func (c *TurnContext) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	if err := strictjson.DecodeWithOptions(data, &fields, turnContextJSONOptions); err != nil {
 		return err
 	}
 	for key := range fields {
@@ -48,38 +58,11 @@ func (c *TurnContext) UnmarshalJSON(data []byte) error {
 	}
 	type turnContext TurnContext
 	var decoded turnContext
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	if err := strictjson.DecodeWithOptions(data, &decoded, turnContextJSONOptions); err != nil {
 		return err
 	}
 	*c = TurnContext(decoded)
 	return nil
-}
-
-type DataExploration struct {
-	Dimensions []string                `json:"dimensions"`
-	Metrics    []string                `json:"metrics"`
-	Filters    []DataExplorationFilter `json:"filters"`
-	Sort       []DataExplorationSort   `json:"sort"`
-	Time       *DataExplorationTime    `json:"time,omitempty"`
-	Limit      int64                   `json:"limit"`
-}
-
-type DataExplorationFilter struct {
-	Field    string   `json:"field"`
-	Operator string   `json:"operator"`
-	Values   []string `json:"values"`
-	Dataset  string   `json:"dataset,omitempty"`
-}
-
-type DataExplorationSort struct {
-	Field     string `json:"field"`
-	Direction string `json:"direction"`
-}
-
-type DataExplorationTime struct {
-	Field string `json:"field"`
-	Grain string `json:"grain"`
-	Alias string `json:"alias,omitempty"`
 }
 
 type TurnReference struct {
@@ -133,9 +116,6 @@ func (c TurnContext) normalized() TurnContext {
 	c.PageTitle = strings.TrimSpace(c.PageTitle)
 	c.ModelID = strings.TrimSpace(c.ModelID)
 	c.DatasetID = strings.TrimSpace(c.DatasetID)
-	if c.Exploration != nil {
-		c.Exploration = normalizeDataExploration(*c.Exploration)
-	}
 	refs := make([]TurnReference, 0, len(c.References))
 	seen := map[string]struct{}{}
 	for _, ref := range c.References {
@@ -179,9 +159,11 @@ func (c TurnContext) normalized() TurnContext {
 }
 
 // NormalizedDataExploration returns a bounded, canonical copy suitable for a
-// trusted turn context after the caller validates its semantic members.
-func (c TurnContext) NormalizedDataExploration() *DataExploration {
-	return c.normalized().Exploration
+// trusted turn context after the caller validates its semantic members. The
+// copy is made through the generated contract codec so malformed union
+// discriminators and unsupported variants cannot be silently accepted.
+func (c TurnContext) NormalizedDataExploration() (*exploration.ExplorationSpec, error) {
+	return normalizeDataExploration(c.Exploration)
 }
 
 func turnContextItems(context *TurnContext) []agentcore.ContextItem {
@@ -189,67 +171,41 @@ func turnContextItems(context *TurnContext) []agentcore.ContextItem {
 		return nil
 	}
 	normalized := context.normalized()
+	if normalized.Exploration != nil {
+		canonical, err := normalizeDataExploration(normalized.Exploration)
+		if err != nil {
+			return nil
+		}
+		normalized.Exploration = canonical
+	}
 	if normalized.Surface != dashboardTurnContextSurface && normalized.Surface != dataTurnContextSurface && (normalized.Surface != "chat" || len(normalized.References) == 0) {
 		return nil
 	}
 	return []agentcore.ContextItem{{Key: "leapview_context", Value: normalized}}
 }
 
-func normalizeDataExploration(value DataExploration) *DataExploration {
-	value.Dimensions = normalizedStrings(value.Dimensions, 64)
-	value.Metrics = normalizedStrings(value.Metrics, 64)
-	if value.Limit <= 0 {
-		value.Limit = 100
-	} else if value.Limit > 1000 {
-		value.Limit = 1000
+func normalizeDataExploration(value *exploration.ExplorationSpec) (*exploration.ExplorationSpec, error) {
+	if value == nil {
+		return nil, nil
 	}
-	filters := make([]DataExplorationFilter, 0, min(len(value.Filters), 32))
-	for _, filter := range value.Filters {
-		filter.Field = strings.TrimSpace(filter.Field)
-		filter.Operator = strings.ToLower(strings.TrimSpace(filter.Operator))
-		filter.Dataset = strings.TrimSpace(filter.Dataset)
-		filter.Values = normalizedStrings(filter.Values, 100)
-		if filter.Field != "" && filter.Operator != "" && len(filters) < 32 {
-			filters = append(filters, filter)
-		}
+	if err := exploration.ValidateShape(value); err != nil {
+		return nil, err
 	}
-	value.Filters = filters
-	sorts := make([]DataExplorationSort, 0, min(len(value.Sort), 8))
-	for _, sort := range value.Sort {
-		sort.Field = strings.TrimSpace(sort.Field)
-		sort.Direction = strings.ToLower(strings.TrimSpace(sort.Direction))
-		if sort.Field != "" && len(sorts) < 8 {
-			sorts = append(sorts, sort)
-		}
-	}
-	value.Sort = sorts
-	if value.Time != nil {
-		value.Time.Field = strings.TrimSpace(value.Time.Field)
-		value.Time.Grain = strings.ToLower(strings.TrimSpace(value.Time.Grain))
-		value.Time.Alias = strings.TrimSpace(value.Time.Alias)
-		if value.Time.Field == "" {
-			value.Time = nil
-		}
-	}
-	return &value
-}
 
-func normalizedStrings(values []string, limit int) []string {
-	result := make([]string, 0, min(len(values), limit))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-		if len(result) == limit {
-			break
-		}
+	// Marshal/Unmarshal performs a complete generated-contract round trip. In
+	// addition to making the result independent of caller-owned slices and
+	// pointers, this invokes every generated union decoder and therefore
+	// rejects unknown or malformed discriminators without dropping fields.
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode exploration spec: %w", err)
 	}
-	return result
+	var canonical exploration.ExplorationSpec
+	if err := strictjson.DecodeWithOptions(encoded, &canonical, turnContextJSONOptions); err != nil {
+		return nil, fmt.Errorf("decode exploration spec: %w", err)
+	}
+	if err := exploration.ValidateShape(&canonical); err != nil {
+		return nil, err
+	}
+	return &canonical, nil
 }
