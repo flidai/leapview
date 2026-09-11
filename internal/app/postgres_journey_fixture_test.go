@@ -346,14 +346,7 @@ func (f *PostgresJourneyFixture) assembleNativeDashboard(t *testing.T, options P
 		t.Fatalf("build PostgreSQL journey refresh persistence: %v", err)
 	}
 	f.RefreshPersistence = &persistence
-	reconciler, err := NewNativeDashboardPublicationReconciler(NativeDashboardPublicationActivationConfig{
-		Begin: f.RuntimePool, Publications: f.Graph.DashboardPublication, Project: f.Graph.Project,
-		Access: f.AccessModule, GenerationFence: f.Graph.DashboardGenerationFence,
-	})
-	if err != nil {
-		t.Fatalf("build PostgreSQL journey dashboard publication reconciler: %v", err)
-	}
-	f.DashboardPublicationReconciler = reconciler
+	f.DashboardPublicationReconciler = NewNativeDashboardPublicationReconciler()
 }
 
 // Request creates a route request with an explicit host and no ambient auth.

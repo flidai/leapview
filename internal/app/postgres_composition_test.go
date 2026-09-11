@@ -243,7 +243,7 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"RefreshSourceDigest: resolveRefreshSourceDigest",
 		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
 		"CanonicalCompletionCoordinator: canonicalCompletionCoordinator",
-		"CanonicalResultReconciler: canonicalResultReconciler",
+		"reconciler.Reconcile(completionCtx, graph.ServingState, candidate)",
 		"SCIMBearerToken: cfg.SCIMBearerToken",
 		"MetricsBearerToken: cfg.MetricsBearerToken",
 		"rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()",
@@ -259,6 +259,14 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 	}
 	if strings.Contains(source, "runtimeHost.ReconcileSealed(reconcileCtx, servingstate.ID(target.ActiveGenerationID))") {
 		t.Fatal("PostgreSQL refresh reconciliation still performs a post-commit runtime cutover")
+	}
+	validation := strings.Index(source, "reconciler.Reconcile(completionCtx, graph.ServingState, candidate)")
+	activation := strings.Index(source, "runtimeHost.ActivatePreparedContext(completionCtx, prepared, complete)")
+	if validation < 0 || activation < 0 || validation > activation {
+		t.Fatal("canonical refresh activation does not validate publication ownership before durable activation")
+	}
+	if strings.Contains(source, "CanonicalResultReconciler: canonicalResultReconciler") {
+		t.Fatal("canonical refresh retains post-commit publication ownership rejection")
 	}
 }
 

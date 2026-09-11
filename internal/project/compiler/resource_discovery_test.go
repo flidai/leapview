@@ -50,6 +50,8 @@ func TestDiscoverAuthoredResourcesRejectsLegacyAndRemovedEnvelopesAnywhere(t *te
 		"root project":   {path: "project.yaml", kind: "Project", want: "Project authoring was removed"},
 		"nested project": {path: "legacy/nested.yml", kind: "Project", want: "Project authoring was removed"},
 		"group":          {path: "access/group.yaml", kind: "Group", want: "was removed from analytics source"},
+		"role binding":   {path: "access/role-binding.yaml", kind: "RoleBinding", want: "was removed from analytics source"},
+		"grant":          {path: "access/grant.yaml", kind: "Grant", want: "was removed from analytics source"},
 		"publication":    {path: "publications/dashboard.yaml", kind: "DashboardPublication", want: "was removed from analytics source"},
 	}
 	for name, test := range tests {
