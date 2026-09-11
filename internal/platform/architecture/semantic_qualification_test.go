@@ -117,8 +117,8 @@ func TestSemanticQualificationMatrixCoversEveryRequirement(t *testing.T) {
 			t.Errorf("qualification matrix omits %s", id)
 		}
 	}
-	if got := [4]int{statusCounts["PASS"], statusCounts["PARTIAL"], statusCounts["FAIL"], statusCounts["NOT APPLICABLE"]}; got != [4]int{53, 47, 2, 0} {
-		t.Errorf("qualification status totals = %v, want [53 47 2 0]", got)
+	if got := [4]int{statusCounts["PASS"], statusCounts["PARTIAL"], statusCounts["FAIL"], statusCounts["NOT APPLICABLE"]}; got != [4]int{49, 51, 2, 0} {
+		t.Errorf("qualification status totals = %v, want [49 51 2 0]", got)
 	}
 	for id, want := range map[string]string{"VAL-11": "PARTIAL", "STR-08": "FAIL", "ENF-06": "FAIL"} {
 		if statuses[id] != want {
@@ -127,10 +127,12 @@ func TestSemanticQualificationMatrixCoversEveryRequirement(t *testing.T) {
 	}
 	for _, boundary := range []string{
 		"qualification boundary only; no production activation",
-		"Dashboard query execution",
-		"Explore/catalog projection",
+		"Request-bound dashboard query authorization",
+		"Explore protected catalog projection",
 		"agent/MCP semantic resource reads",
-		"Unsupported rollup/substitution",
+		"no external provider adapter is qualified",
+		"Complete cross-layer qualification remains **PARTIAL**",
+		"unsupported rollup/substitution",
 		"Audit persistence failure prevents protected admission or release",
 		"FAI-649 owns activation and cutover",
 	} {
