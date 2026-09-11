@@ -50,17 +50,49 @@ async function withDocumentFonts<T>(fonts: FakeFonts, callback: () => Promise<T>
   }
 }
 
-test('ECharts waits for the cue face before a deferred cue update draws', async () => {
-  let resolveLoad!: (faces: readonly unknown[]) => void
-  const fonts: FakeFonts = { check: () => true, load: () => new Promise((resolve) => { resolveLoad = resolve }) }
-  await withDocumentFonts(fonts, async () => {
+function deferredFontLoads(): {
+  fonts: FakeFonts
+  resolveCue: (faces: readonly unknown[]) => void
+  resolveBase: (faces: readonly unknown[]) => void
+  rejectBase: (error: Error) => void
+} {
+  let resolveCue!: (faces: readonly unknown[]) => void
+  let resolveBase!: (faces: readonly unknown[]) => void
+  let rejectBase!: (error: Error) => void
+  const cue = new Promise<readonly unknown[]>((resolve) => { resolveCue = resolve })
+  const base = new Promise<readonly unknown[]>((resolve, reject) => {
+    resolveBase = resolve
+    rejectBase = reject
+  })
+  return {
+    fonts: {
+      check: () => true,
+      load: (font) => font.includes("'LeapView Chart Cues'") ? cue : base,
+    },
+    resolveCue,
+    resolveBase,
+    rejectBase,
+  }
+}
+
+async function flushFontLoads(): Promise<void> {
+  await Promise.resolve()
+  await Promise.resolve()
+}
+
+test('ECharts waits for cue and base faces before a deferred cue update draws', async () => {
+  const deferred = deferredFontLoads()
+  await withDocumentFonts(deferred.fonts, async () => {
     const { handle, calls } = fakeHandle()
     const ordinary = ordinaryFixture()
     handle.mount(ordinary, defaultRendererContext)
     const pending = handle.update(cueFixture(), Change.Spec, defaultRendererContext)
+    await flushFontLoads()
+    expect(calls).toHaveLength(1)
+    deferred.resolveCue([{}])
     await Promise.resolve()
     expect(calls).toHaveLength(1)
-    resolveLoad([{}])
+    deferred.resolveBase([{}])
     await pending
     expect(calls).toHaveLength(2)
     expect(calls.at(-1)?.series[0].label.fontFamily).toBe("'LeapView Chart Cues', system-ui")
@@ -69,20 +101,20 @@ test('ECharts waits for the cue face before a deferred cue update draws', async 
 })
 
 test('ECharts drops a superseded cue update when a non-cue update wins', async () => {
-  let resolveLoad!: (faces: readonly unknown[]) => void
-  const fonts: FakeFonts = { check: () => true, load: () => new Promise((resolve) => { resolveLoad = resolve }) }
-  await withDocumentFonts(fonts, async () => {
+  const deferred = deferredFontLoads()
+  await withDocumentFonts(deferred.fonts, async () => {
     const { handle, calls } = fakeHandle()
     const ordinary = ordinaryFixture()
     handle.mount(ordinary, defaultRendererContext)
     const staleCue = handle.update(cueFixture(), Change.Spec, defaultRendererContext)
-    await Promise.resolve()
+    await flushFontLoads()
     const current = structuredClone(ordinary)
     current.dataRevision = 2
     current.dataState.dataRevision = 2
     await handle.update(current, Change.Data, defaultRendererContext)
     expect(calls).toHaveLength(2)
-    resolveLoad([{}])
+    deferred.resolveCue([{}])
+    deferred.resolveBase([{}])
     await staleCue
     expect(calls).toHaveLength(2)
     handle.dispose()
@@ -90,36 +122,51 @@ test('ECharts drops a superseded cue update when a non-cue update wins', async (
 })
 
 test('ECharts drops a deferred cue update after disposal', async () => {
-  let resolveLoad!: (faces: readonly unknown[]) => void
-  const fonts: FakeFonts = { check: () => true, load: () => new Promise((resolve) => { resolveLoad = resolve }) }
-  await withDocumentFonts(fonts, async () => {
+  const deferred = deferredFontLoads()
+  await withDocumentFonts(deferred.fonts, async () => {
     const { handle, calls } = fakeHandle()
     handle.mount(ordinaryFixture(), defaultRendererContext)
     const pending = handle.update(cueFixture(), Change.Spec, defaultRendererContext)
-    await Promise.resolve()
+    await flushFontLoads()
     handle.dispose()
-    resolveLoad([{}])
+    deferred.resolveCue([{}])
+    deferred.resolveBase([{}])
     await pending
     expect(calls).toHaveLength(1)
   })
 })
 
 test('a failed stale cue load does not reject or erase a newer non-cue render', async () => {
-  let rejectLoad!: (error: Error) => void
-  const fonts: FakeFonts = { check: () => false, load: () => new Promise((_, reject) => { rejectLoad = reject }) }
-  await withDocumentFonts(fonts, async () => {
+  const deferred = deferredFontLoads()
+  await withDocumentFonts(deferred.fonts, async () => {
     const { handle, calls } = fakeHandle()
     const ordinary = ordinaryFixture()
     handle.mount(ordinary, defaultRendererContext)
     const staleCue = handle.update(cueFixture(), Change.Spec, defaultRendererContext)
-    await Promise.resolve()
+    await flushFontLoads()
     const current = structuredClone(ordinary)
     current.dataRevision = 2
     current.dataState.dataRevision = 2
     await handle.update(current, Change.Data, defaultRendererContext)
-    rejectLoad(new Error('font unavailable'))
+    deferred.resolveCue([{}])
+    deferred.rejectBase(new Error('font unavailable'))
     await expect(staleCue).resolves.toBeUndefined()
     expect(calls).toHaveLength(2)
+    handle.dispose()
+  })
+})
+
+test('a current cue update reports a failed base font without drawing', async () => {
+  const deferred = deferredFontLoads()
+  await withDocumentFonts(deferred.fonts, async () => {
+    const { handle, calls } = fakeHandle()
+    handle.mount(ordinaryFixture(), defaultRendererContext)
+    const pending = handle.update(cueFixture(), Change.Spec, defaultRendererContext)
+    await flushFontLoads()
+    deferred.resolveCue([{}])
+    deferred.rejectBase(new Error('base font unavailable'))
+    await expect(pending).rejects.toThrow('chart base font failed to load')
+    expect(calls).toHaveLength(1)
     handle.dispose()
   })
 })

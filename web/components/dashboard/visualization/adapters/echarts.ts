@@ -10,7 +10,7 @@ import { hierarchyOption } from './echarts/hierarchy'
 import { polarOption } from './echarts/polar'
 import { pointCategoryRowIndexes, pointOption } from './echarts/point'
 import { proportionalCategories, proportionalCenterText, proportionalOption } from './echarts/proportional'
-import { proportionalCueFontNeeded, requireChartCueFont } from '../cue-font'
+import { proportionalCueFontNeeded, requireChartCueAndBaseFonts } from '../cue-font'
 import {
   captureEChartsViewState,
   echartsNavigationDefaults,
@@ -85,7 +85,7 @@ function seriesRowIndices(
 
 export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
-    if (proportionalCueFontNeeded(envelope)) await requireChartCueFont()
+    if (proportionalCueFontNeeded(envelope)) await requireChartCueAndBaseFonts(context.fontFamily)
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
     const chart = echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
@@ -151,7 +151,7 @@ export class EChartsHandle implements RendererHandle {
     const generation = ++this.updateGeneration
     if (proportionalCueFontNeeded(envelope)) {
       try {
-        await requireChartCueFont()
+        await requireChartCueAndBaseFonts(context.fontFamily)
       } catch (error) {
         if (this.disposed || generation !== this.updateGeneration) return
         throw error

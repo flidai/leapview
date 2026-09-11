@@ -3,6 +3,8 @@ import type { VisualizationConditionalFormat, VisualizationEnvelope, Visualizati
 export const CHART_CUE_FONT_FAMILY = 'LeapView Chart Cues'
 export const CHART_CUE_GLYPHS = '●■◆▲▼↑↓⚠'
 export const CHART_CUE_FONT_LOAD_TIMEOUT_MS = 5_000
+const CHART_LABEL_FONT_SAMPLE = 'Chart Value 0123'
+const CHART_LABEL_FONT_WEIGHTS = [400, 500, 600] as const
 
 type FontFaceSetLike = {
   check(font: string, text?: string): boolean
@@ -12,6 +14,7 @@ type FontFaceSetLike = {
 export type ChartCueFontReadiness = 'ready' | 'unavailable'
 
 const pendingLoads = new WeakMap<object, Promise<ChartCueFontReadiness>>()
+const pendingBaseLoads = new WeakMap<object, Map<string, Promise<ChartCueFontReadiness>>>()
 
 export function chartCueFontStack(fallback: string): string {
   const base = fallback.trim() || 'system-ui'
@@ -48,6 +51,43 @@ export async function requireChartCueFont(
   }
 }
 
+/**
+ * Load both faces used by a conditional pie or donut label before canvas
+ * measurement. The base stack may resolve through a system fallback, so its
+ * load result is checked without requiring a registered face.
+ */
+export async function requireChartCueAndBaseFonts(
+  fontFamily: string,
+  fonts: FontFaceSetLike | undefined = browserFontFaceSet(),
+  timeoutMs = CHART_CUE_FONT_LOAD_TIMEOUT_MS,
+): Promise<void> {
+  const [, base] = await Promise.all([
+    requireChartCueFont(fonts, timeoutMs),
+    waitForChartBaseFont(fonts, fontFamily, timeoutMs),
+  ])
+  if (base !== 'ready') throw new Error('chart base font failed to load')
+}
+
+export function waitForChartBaseFont(
+  fonts: FontFaceSetLike | undefined,
+  fontFamily: string,
+  timeoutMs = CHART_CUE_FONT_LOAD_TIMEOUT_MS,
+): Promise<ChartCueFontReadiness> {
+  if (!fonts) return Promise.resolve('unavailable')
+  const family = fontFamily.trim() || 'system-ui'
+  const loads = pendingBaseLoads.get(fonts) ?? new Map<string, Promise<ChartCueFontReadiness>>()
+  pendingBaseLoads.set(fonts, loads)
+  const existing = loads.get(family)
+  if (existing) return existing
+  let pending: Promise<ChartCueFontReadiness>
+  pending = loadChartBaseFont(fonts, family, timeoutMs).then((result) => {
+    if (result !== 'ready' && loads.get(family) === pending) loads.delete(family)
+    return result
+  })
+  loads.set(family, pending)
+  return pending
+}
+
 /** Only pie and donut labels can carry the conditional cue typography. */
 export function proportionalCueFontNeeded(envelope: VisualizationEnvelope): boolean {
   const spec = envelope.spec
@@ -76,6 +116,22 @@ async function loadChartCueFont(fonts: FontFaceSetLike, timeoutMs: number): Prom
   const load = Promise.resolve()
     .then(() => fonts.load(`400 12px '${CHART_CUE_FONT_FAMILY}'`, CHART_CUE_GLYPHS))
     .then((faces) => faces.length > 0 && fonts.check(`400 12px '${CHART_CUE_FONT_FAMILY}'`, CHART_CUE_GLYPHS) ? 'ready' as const : 'unavailable' as const)
+    .catch(() => 'unavailable' as const)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<ChartCueFontReadiness>((resolve) => {
+    timer = setTimeout(() => resolve('unavailable'), timeoutMs)
+  })
+  try {
+    return await Promise.race([load, timeout])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
+
+async function loadChartBaseFont(fonts: FontFaceSetLike, fontFamily: string, timeoutMs: number): Promise<ChartCueFontReadiness> {
+  const load = Promise.resolve()
+    .then(() => Promise.all(CHART_LABEL_FONT_WEIGHTS.map((weight) => fonts.load(`${weight} 12px ${fontFamily}`, CHART_LABEL_FONT_SAMPLE))))
+    .then(() => CHART_LABEL_FONT_WEIGHTS.every((weight) => fonts.check(`${weight} 12px ${fontFamily}`, CHART_LABEL_FONT_SAMPLE)) ? 'ready' as const : 'unavailable' as const)
     .catch(() => 'unavailable' as const)
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<ChartCueFontReadiness>((resolve) => {

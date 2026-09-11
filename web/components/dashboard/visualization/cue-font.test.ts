@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import { CHART_CUE_FONT_FAMILY, CHART_CUE_GLYPHS, chartCueFontStack, proportionalCueFontNeeded, requireChartCueFont, waitForChartCueFont } from './cue-font'
+import { CHART_CUE_FONT_FAMILY, CHART_CUE_GLYPHS, chartCueFontStack, proportionalCueFontNeeded, requireChartCueFont, waitForChartBaseFont, waitForChartCueFont } from './cue-font'
 import { defaultRendererContext } from './host-controller'
 import { echartsOption } from './adapters/echarts'
 import { proportionalFixture } from './adapters/echarts-test-fixtures'
@@ -59,6 +59,68 @@ test('cue font readiness is bounded when the browser font pipeline stalls', asyn
   const result = await waitForChartCueFont({ check: () => false, load: () => new Promise(() => {}) }, 10)
   expect(result).toBe('unavailable')
   expect(performance.now() - started).toBeLessThan(500)
+})
+
+test('base chart font readiness loads ordinary labels at rendered weights', async () => {
+  const loaded: string[] = []
+  const result = await waitForChartBaseFont({
+    check: (font) => font.includes('Inter Variable'),
+    load: async (font, text) => {
+      loaded.push(`${font}:${text}`)
+      return []
+    },
+  }, '"Inter Variable", system-ui')
+  expect(result).toBe('ready')
+  expect(loaded.map((font) => font.split(' ')[0])).toEqual(['400', '500', '600'])
+  expect(loaded.every((font) => font.endsWith(':Chart Value 0123'))).toBe(true)
+})
+
+test('base chart font readiness allows an empty system fallback result', async () => {
+  const result = await waitForChartBaseFont({ check: () => true, load: async () => [] }, 'system-ui')
+  expect(result).toBe('ready')
+})
+
+test('base chart font readiness keeps independent family cache keys', async () => {
+  let loads = 0
+  const fonts = { check: () => true, load: async () => { loads++; return [] } }
+  expect(await waitForChartBaseFont(fonts, 'family-a')).toBe('ready')
+  expect(await waitForChartBaseFont(fonts, 'family-a')).toBe('ready')
+  expect(await waitForChartBaseFont(fonts, 'family-b')).toBe('ready')
+  expect(loads).toBe(6)
+})
+
+test('base chart font readiness evicts rejected loads for retry', async () => {
+  let loads = 0
+  const fonts = {
+    check: () => true,
+    load: async () => {
+      loads++
+      if (loads <= 3) throw new Error('font unavailable')
+      return []
+    },
+  }
+  expect(await waitForChartBaseFont(fonts, 'retry-family')).toBe('unavailable')
+  expect(await waitForChartBaseFont(fonts, 'retry-family')).toBe('ready')
+  expect(loads).toBe(6)
+})
+
+test('base chart font readiness rejects a false post-load check', async () => {
+  expect(await waitForChartBaseFont({ check: () => false, load: async () => [] }, 'missing-family')).toBe('unavailable')
+})
+
+test('base chart font readiness evicts timed out loads for retry', async () => {
+  let blocked = true
+  const fonts = {
+    check: () => true,
+    load: () => blocked ? new Promise<readonly unknown[]>(() => {}) : Promise.resolve([]),
+  }
+  expect(await waitForChartBaseFont(fonts, 'slow-family', 10)).toBe('unavailable')
+  blocked = false
+  expect(await waitForChartBaseFont(fonts, 'slow-family', 10)).toBe('ready')
+})
+
+test('base chart font readiness is unavailable without a browser font set', async () => {
+  expect(await waitForChartBaseFont(undefined, 'system-ui')).toBe('unavailable')
 })
 
 test('cue font applicability is limited to conditional pie and donut labels', () => {

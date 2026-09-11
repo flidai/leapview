@@ -223,10 +223,11 @@ Row-level mark stroke variation is not part of the rendering contract; use
 
 Pie and donut icon cues use a bundled monochrome chart-cue font for stable
 circle, square, diamond, triangle, arrow, and warning glyph metrics. The
-renderer waits for that face before measuring cue-bearing canvas labels; if it
-cannot load, the visual reports its normal renderer error instead of drawing
-with fallback metrics. This is an implementation detail and does not change
-the visualization contract or authored formatter output.
+renderer waits for that face and the active chart text stack before measuring
+cue-bearing canvas labels; if either load fails, the visual reports its normal
+renderer error instead of drawing with fallback metrics. This is an
+implementation detail and does not change the visualization contract or
+authored formatter output.
 
 Decision-context field references use stable dataset and field identities. Gradient domains, rule order, null/default outcomes, series order, colors, scale domains, zero policies, units, and tick density are explicit in the compiled IR. Bound titles, subtitles, descriptions, summaries, reference values, and accessibility text recompute when filters or data revisions change and use authored fallbacks when governed data is empty.
 
