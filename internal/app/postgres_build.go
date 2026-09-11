@@ -516,11 +516,30 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		},
 		BuildRuntime: appruntimefactory.NewPostgresDashboardRuntimeBuilder(appruntimefactory.PostgresDashboardRuntimeConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment, MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes}),
 	})
+	reconciler := NewNativeDashboardPublicationReconciler()
+	resolveSealedActiveState := func(resolveCtx context.Context) (servingstate.ID, error) {
+		id, resolveErr := resolvePostgresSealedActiveState(resolveCtx, targetReader, instanceID)
+		if resolveErr != nil {
+			return "", resolveErr
+		}
+		claimedProject, found, claimErr := readClaim(resolveCtx)
+		if claimErr != nil {
+			return "", claimErr
+		}
+		if !found {
+			return "", errors.New("sealed activation dashboard publication ownership validation requires a claimed project")
+		}
+		candidate := deployment.Deployment{ServingIdentity: projectgraph.ServingIdentity{
+			ProjectID: claimedProject, Environment: string(environment), GenerationID: string(id),
+		}}
+		if validationErr := reconciler.Reconcile(resolveCtx, graph.ServingState, candidate); validationErr != nil {
+			return "", fmt.Errorf("validate sealed activation dashboard publication ownership: %w", validationErr)
+		}
+		return id, nil
+	}
 	err = withRuntimeHostStartupAdmission(ctx, workloadBundle.Controller, func(startupCtx context.Context) error {
 		var buildErr error
-		runtimeHost, buildErr = runtimehostmodule.Build(startupCtx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
-			return resolvePostgresSealedActiveState(ctx, targetReader, instanceID)
-		}})
+		runtimeHost, buildErr = runtimehostmodule.Build(startupCtx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: resolveSealedActiveState})
 		return buildErr
 	})
 	if err != nil {
@@ -578,7 +597,6 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	reconciler := NewNativeDashboardPublicationReconciler()
 	deliveryStartup, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 		TargetID:      instanceID,
 		Environment:   environment,
@@ -885,6 +903,12 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		if generation.GenerationID != result.NativeGenerationID || generation.TargetID != instanceID || generation.PlanID != result.PlanID || generation.CandidateID == "" {
 			return errors.New("canonical refresh generation has no exact native candidate binding")
 		}
+		candidate := deployment.Deployment{ServingIdentity: projectgraph.ServingIdentity{
+			ProjectID: job.Identity.ProjectID, Environment: job.Identity.Environment, GenerationID: result.ServingStateID,
+		}}
+		if err := reconciler.Reconcile(completionCtx, graph.ServingState, candidate); err != nil {
+			return fmt.Errorf("validate canonical refresh dashboard publication ownership: %w", err)
+		}
 		prepared, err := runtimeHost.PrepareSealedActivation(completionCtx, result.ServingStateID, generation.CandidateID)
 		if err != nil {
 			return fmt.Errorf("prepare canonical refresh runtime: %w", err)
@@ -894,26 +918,10 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		}
 		return nil
 	}
-	canonicalResultReconciler := func(reconcileCtx context.Context, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult) error {
-		if result.ServingStateID == "" || result.ServingStateID != result.NativeGenerationID {
-			return errors.New("canonical refresh result has no exact native serving generation")
-		}
-		activated := deployment.Deployment{
-			ServingIdentity: projectgraph.ServingIdentity{
-				ProjectID: job.Identity.ProjectID, Environment: job.Identity.Environment, GenerationID: result.ServingStateID,
-			},
-			PriorGenerationID:   job.Identity.GenerationID,
-			ActivationPrincipal: job.PrincipalID,
-		}
-		if err := reconciler.Reconcile(reconcileCtx, graph.ServingState, activated); err != nil {
-			return fmt.Errorf("reconcile canonical refresh dashboard publications: %w", err)
-		}
-		return nil
-	}
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
 	rateLimits.Enabled = cfg.RateLimitingEnabled()
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
-	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}, deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: additionalWorkers}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Bootstrap, AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, CanonicalResultReconciler: canonicalResultReconciler, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: production, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}, deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: additionalWorkers}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Bootstrap, AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: production, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {
 			return "", err

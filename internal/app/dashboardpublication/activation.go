@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/deployment"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -20,9 +19,9 @@ type ServingStateReader interface {
 	ByID(context.Context, servingstate.ID) (servingstate.State, error)
 }
 
-// ActivationReconciler is injected into runtime composition. It retains the
-// activation callback contract while enforcing that analytics deployments do
-// not acquire dashboard publication or sharing mutation authority.
+// ActivationReconciler is injected into runtime composition. Reconcile is an
+// admission check: callers must invoke it before committing activation so an
+// invalid analytics generation never becomes active.
 type ActivationReconciler interface {
 	Reconcile(context.Context, ServingStateReader, deployment.Deployment) error
 }
@@ -40,16 +39,16 @@ func NewNativeDashboardPublicationReconciler() *NativeDashboardPublicationReconc
 	return &NativeDashboardPublicationReconciler{}
 }
 
-// Reconcile validates the activated generation identity and rejects any
+// Reconcile validates the candidate generation identity and rejects any
 // embedded dashboard publication definition. Empty legacy snapshots are
 // tolerated as inert compatibility data; they never represent an instruction
 // to remove control-plane-owned publication state.
-func (r *NativeDashboardPublicationReconciler) Reconcile(ctx context.Context, states ServingStateReader, activated deployment.Deployment) error {
+func (r *NativeDashboardPublicationReconciler) Reconcile(ctx context.Context, states ServingStateReader, candidate deployment.Deployment) error {
 	if r == nil {
 		return errors.New("native dashboard publication deployment guard is not configured")
 	}
-	state, ok, err := loadActivatedDashboardPublications(ctx, states, activated)
-	if err != nil || !ok {
+	state, err := loadCandidateDashboardPublications(ctx, states, candidate)
+	if err != nil {
 		return err
 	}
 	raw := strings.TrimSpace(state.DashboardPublicationsJSON)
@@ -58,39 +57,30 @@ func (r *NativeDashboardPublicationReconciler) Reconcile(ctx context.Context, st
 	}
 	publications := make(map[string]json.RawMessage)
 	if err := json.Unmarshal([]byte(raw), &publications); err != nil {
-		return fmt.Errorf("decode activated dashboard publications for serving state %q: %w", state.ID, err)
+		return fmt.Errorf("decode candidate dashboard publications for serving state %q: %w", state.ID, err)
 	}
 	if len(publications) != 0 {
-		return fmt.Errorf("activated serving state %q contains dashboard publication definitions; publication and sharing state is control-plane owned", state.ID)
+		return fmt.Errorf("candidate serving state %q contains dashboard publication definitions; publication and sharing state is control-plane owned", state.ID)
 	}
 	return nil
 }
 
-// loadActivatedDashboardPublications loads and validates the generation
-// snapshot. The bool is false for a stale callback or an absent reader.
-func loadActivatedDashboardPublications(ctx context.Context, states ServingStateReader, activated deployment.Deployment) (servingstate.State, bool, error) {
+// loadCandidateDashboardPublications loads and validates the candidate
+// generation snapshot.
+func loadCandidateDashboardPublications(ctx context.Context, states ServingStateReader, candidate deployment.Deployment) (servingstate.State, error) {
 	if states == nil {
-		return servingstate.State{}, false, nil
+		return servingstate.State{}, errors.New("dashboard publication ownership validation requires a serving-state reader")
 	}
-	state, err := states.ByID(ctx, servingstate.ID(activated.ServingIdentity.GenerationID))
+	generationID := strings.TrimSpace(candidate.ServingIdentity.GenerationID)
+	if generationID == "" {
+		return servingstate.State{}, errors.New("dashboard publication ownership validation requires a serving generation identity")
+	}
+	state, err := states.ByID(ctx, servingstate.ID(generationID))
 	if err != nil {
-		return servingstate.State{}, false, fmt.Errorf("load activated serving state %q for dashboard publication ownership validation: %w", activated.ServingIdentity.GenerationID, err)
+		return servingstate.State{}, fmt.Errorf("load candidate serving state %q for dashboard publication ownership validation: %w", generationID, err)
 	}
-	if state.ID != servingstate.ID(activated.ServingIdentity.GenerationID) || state.ProjectID != activated.ServingIdentity.ProjectID || state.Environment != servingstate.Environment(activated.ServingIdentity.Environment) {
-		return servingstate.State{}, false, fmt.Errorf("activated serving state identity (%q, %q, %q) does not match deployment identity (%q, %q, %q)", state.ID, state.ProjectID, state.Environment, activated.ServingIdentity.GenerationID, activated.ServingIdentity.ProjectID, activated.ServingIdentity.Environment)
+	if state.ID != servingstate.ID(generationID) || state.ProjectID != candidate.ServingIdentity.ProjectID || state.Environment != servingstate.Environment(candidate.ServingIdentity.Environment) {
+		return servingstate.State{}, fmt.Errorf("candidate serving state identity (%q, %q, %q) does not match deployment identity (%q, %q, %q)", state.ID, state.ProjectID, state.Environment, generationID, candidate.ServingIdentity.ProjectID, candidate.ServingIdentity.Environment)
 	}
-	// AfterActivated callbacks may overlap a later cutover. A stale callback has
-	// no ownership decision to make for the newly active generation.
-	if activeReader, ok := states.(interface {
-		ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
-	}); ok {
-		current, _, currentErr := activeReader.ActiveArtifact(ctx, activated.ServingIdentity.ProjectID, servingstate.Environment(activated.ServingIdentity.Environment))
-		if currentErr == nil && current.ID != state.ID {
-			return servingstate.State{}, false, nil
-		}
-		if currentErr != nil && !errors.Is(currentErr, servingstate.ErrNotFound) {
-			return servingstate.State{}, false, fmt.Errorf("check active serving state before dashboard publication ownership validation: %w", currentErr)
-		}
-	}
-	return state, true, nil
+	return state, nil
 }

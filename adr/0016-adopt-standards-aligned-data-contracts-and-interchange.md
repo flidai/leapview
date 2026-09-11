@@ -762,7 +762,8 @@ receive production credentials by default.
   the six-kind authoring registry contains no user resource). Publication and
   sharing lifecycle remains behind its control-plane API, while
   `TestNativeDashboardPublicationDeploymentGuardRejectsControlPlaneMutation`
-  proves that an activated analytics generation cannot create or update it and
+  proves that an analytics generation carrying publication state is rejected
+  before durable activation and therefore cannot create or update it, while
   `TestNativeDashboardPublicationDeploymentGuardTreatsEmptySnapshotsAsInert`
   proves omission cannot delete it. The structural
   `TestAnalyticsDeploymentCannotOwnControlPlaneMutation` guard prevents the
