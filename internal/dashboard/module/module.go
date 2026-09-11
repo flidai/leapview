@@ -532,9 +532,7 @@ func (m *Module) Authoring() *dashboardauthoringapplication.Application {
 type PopularityLevel string
 
 const (
-	PopularityLow    PopularityLevel = "low"
-	PopularityMedium PopularityLevel = "medium"
-	PopularityHigh   PopularityLevel = "high"
+	PopularityHigh PopularityLevel = "high"
 )
 
 // Popularity ranks dashboard usage across the instance for a configured

@@ -183,12 +183,6 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	}, nil
 }
 
-// NewNativeCreatePlan is a concise constructor alias for application
-// composition code.
-func NewNativeCreatePlan(config NativeCreatePlanConfig) (*NativeCreatePlanCoordinator, error) {
-	return NewNativeCreatePlanCoordinator(config)
-}
-
 // BuildPlan deliberately fails closed. Implementing the module interface is
 // safe because no caller can mistake an unimplemented physical path for a
 // successful build result.

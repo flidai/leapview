@@ -492,12 +492,6 @@ func nativePhysicalBuildFactoryConfigured(factory NativePhysicalBuildEnvironment
 	return true
 }
 
-// RunNativePhysicalBuild is an explicit verb alias for callers that prefer a
-// command-style name.
-func RunNativePhysicalBuild(ctx context.Context, input NativePhysicalBuildInput, factory NativePhysicalBuildEnvironmentFactory) (NativePhysicalBuildEvidence, error) {
-	return BuildNativePhysical(ctx, input, factory)
-}
-
 func validateNativePhysicalBuildInput(input NativePhysicalBuildInput) (NativePhysicalBuildInput, []byte, string, error) {
 	return validateNativePhysicalBuildInputWithPolicy(input, time.Now().UTC(), deploymentnative.AttemptRunning, false)
 }

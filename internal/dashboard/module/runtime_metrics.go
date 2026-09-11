@@ -225,16 +225,6 @@ func (m runtimeMetrics) identityForLease(lease runtimehost.Lease) (projectgraph.
 	return identity, nil
 }
 
-type DynamicRuntimeMetricsOptions struct {
-	Provider                   runtimehost.Provider
-	ProjectID                  projectgraph.ResourceID
-	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
-}
-
-func NewDynamicRuntimeMetrics(options DynamicRuntimeMetricsOptions) Metrics {
-	return NewRuntimeMetrics(RuntimeMetricsOptions{Provider: options.Provider, ProjectID: options.ProjectID, PublishedCompilationReader: options.PublishedCompilationReader})
-}
-
 func (m runtimeMetrics) Catalog() dashboard.Catalog {
 	runtime, release, err := m.active(context.Background())
 	if err != nil {
@@ -640,15 +630,6 @@ func (m runtimeMetrics) PreviewSemantic(ctx context.Context, modelID string, req
 		return nil, fmt.Errorf("active runtime does not provide semantic query data")
 	}
 	return port.PreviewSemantic(ctx, modelID, request)
-}
-
-func (m runtimeMetrics) ExplainSemanticQuery(modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	value, ok := m.Planner(modelID)
-	planner, concrete := concretePlanner(value)
-	if !ok || !concrete {
-		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
-	}
-	return planner.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func (m runtimeMetrics) ExplainSemanticPreview(modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {

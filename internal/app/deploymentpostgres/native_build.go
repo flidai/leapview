@@ -284,11 +284,6 @@ func (c *NativeBuildCoordinator) CreatePlan(context.Context, deploymentmodule.Na
 	return deploymentmodule.NativeDeliveryPlan{}, deploymentmodule.ErrDeliveryInputUnavailable
 }
 
-// NewNativeBuild is a concise constructor alias.
-func NewNativeBuild(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
-	return NewNativeBuildCoordinator(config)
-}
-
 func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (_ deploymentmodule.NativeDeliveryBuild, resultErr error) {
 	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.managedData) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
