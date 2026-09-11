@@ -243,57 +243,58 @@ func TestTestExactExtensionAdmissionStagesOwnedArtifactWithCleanCache(t *testing
 // while they are moved beside their owners; production has no general
 // dependency bag.
 type assemblyConfig struct {
-	Database                *sql.DB
-	PlatformHealth          platformHealth
-	AgentSettings           agentmodule.Settings
-	AgentPersistence        *agentmodule.Persistence
-	ServingStateRepo        servingStateRepository
-	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
-	ReleaseModule           *releasemodule.Module
-	JobModule               *jobsmodule.Module
-	AccessRepo              access.Repository
-	MCPResource             mcpoauth.ResourceServer
-	AccessModule            *accessmodule.Module
-	Agent                   *agentmodule.Service
-	AgentConfig             agentmodule.ModelConfig
-	Auth                    *accessmodule.Auth
-	Reloader                runtimeReloader
-	DuckDBDir               string
-	DuckLakeCatalogPath     string
-	DuckLakeDataPath        string
-	DefaultEnvironment      string
-	SCIMBearerToken         string
-	MetricsBearerToken      string
-	AllowedHosts            []string
-	Assets                  staticasset.Resolver
-	RateLimits              apihttpmiddleware.RateLimitConfig
-	SecurityHeaders         apihttpmiddleware.SecurityHeadersConfig
-	RequestBodyLimit        apihttpmiddleware.RequestBodyLimitConfig
-	RequestLogging          bool
-	Logger                  *slog.Logger
-	Workload                workloadControl
-	JobLeaseTimeout         time.Duration
-	ManagedDataModule       *manageddatamodule.Module
-	DeploymentConfig        deploymentmodule.Config
-	ManagedDataTus          http.Handler
-	MCPOAuth                MCPOAuthConfig
-	PublicURL               string
-	DesktopDiscovery        desktopdiscovery.Config
-	RefreshPipelineClock    refreshmodule.Clock
-	RecoveryLifecycle       *refreshmodule.RecoveryLifecycle
-	RecoveryInterval        time.Duration
-	RuntimeHost             *runtimehostmodule.Module
-	ProjectID               projectgraph.ResourceID
-	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
-	ServingSnapshotResolver func(context.Context) (string, error)
-	AnalyticsModule         *analyticsmodule.Module
-	Authoring               *authoringapplication.Application
-	DashboardAssets         dashboardmodule.Assets
-	QueryAudit              *analyticsmodule.QueryAuditSurface
-	Product                 *adminmodule.ProductService
-	ProductStatus           adminmodule.ProductStatus
-	ProjectCatalog          *projectcatalog.Service
-	ProjectGraph            projecthttp.GraphReader
+	Database                   *sql.DB
+	PlatformHealth             platformHealth
+	AgentSettings              agentmodule.Settings
+	AgentPersistence           *agentmodule.Persistence
+	ServingStateRepo           servingStateRepository
+	ManagedDataResolver        runtimehostmodule.ManagedDataResolver
+	ReleaseModule              *releasemodule.Module
+	JobModule                  *jobsmodule.Module
+	AccessRepo                 access.Repository
+	MCPResource                mcpoauth.ResourceServer
+	AccessModule               *accessmodule.Module
+	Agent                      *agentmodule.Service
+	AgentConfig                agentmodule.ModelConfig
+	Auth                       *accessmodule.Auth
+	Reloader                   runtimeReloader
+	DuckDBDir                  string
+	DuckLakeCatalogPath        string
+	DuckLakeDataPath           string
+	DefaultEnvironment         string
+	SCIMBearerToken            string
+	MetricsBearerToken         string
+	AllowedHosts               []string
+	Assets                     staticasset.Resolver
+	RateLimits                 apihttpmiddleware.RateLimitConfig
+	SecurityHeaders            apihttpmiddleware.SecurityHeadersConfig
+	RequestBodyLimit           apihttpmiddleware.RequestBodyLimitConfig
+	RequestLogging             bool
+	Logger                     *slog.Logger
+	Workload                   workloadControl
+	JobLeaseTimeout            time.Duration
+	ManagedDataModule          *manageddatamodule.Module
+	DeploymentConfig           deploymentmodule.Config
+	ManagedDataTus             http.Handler
+	MCPOAuth                   MCPOAuthConfig
+	PublicURL                  string
+	DesktopDiscovery           desktopdiscovery.Config
+	RefreshPipelineClock       refreshmodule.Clock
+	RecoveryLifecycle          *refreshmodule.RecoveryLifecycle
+	RecoveryInterval           time.Duration
+	RuntimeHost                *runtimehostmodule.Module
+	ProjectID                  projectgraph.ResourceID
+	ProjectIDResolver          func(context.Context) (projectgraph.ResourceID, error)
+	ServingSnapshotResolver    func(context.Context) (string, error)
+	AnalyticsModule            *analyticsmodule.Module
+	SavedExplorationRepository analyticsmodule.SavedExplorationRepository
+	Authoring                  *authoringapplication.Application
+	DashboardAssets            dashboardmodule.Assets
+	QueryAudit                 *analyticsmodule.QueryAuditSurface
+	Product                    *adminmodule.ProductService
+	ProductStatus              adminmodule.ProductStatus
+	ProjectCatalog             *projectcatalog.Service
+	ProjectGraph               projecthttp.GraphReader
 
 	RefreshPersistence *refreshmodule.Persistence
 }
@@ -423,7 +424,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule, AgentPersistence: options.AgentPersistence,
 			AccessModule: options.AccessModule, Agent: options.Agent,
 			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule, Authoring: options.Authoring,
-			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
+			SavedExplorationRepository: options.SavedExplorationRepository,
+			DashboardAssets:            options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
 			ProjectCatalog: options.ProjectCatalog, ProjectGraph: options.ProjectGraph,
 		},
 		workflowAssemblyInputs{

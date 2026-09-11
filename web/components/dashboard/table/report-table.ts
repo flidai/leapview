@@ -245,7 +245,7 @@ export class ReportTable extends LitElement {
         var(--base-size-6)
         var(--base-size-8)
         var(--base-size-4)
-        var(--control-small-paddingInline-normal);
+        var(--control-small-paddingInline-normal, var(--base-size-8));
     }
 
     .toolbar::after {

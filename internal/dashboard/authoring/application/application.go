@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
@@ -44,6 +46,20 @@ type Application struct {
 	repository     authoring.Repository
 	authorizer     authoringservice.Authorizer
 	acquireRuntime sourceadapter.AcquireRuntime
+}
+
+// EncodeDashboardAuthoringCommandAuditMetadata uses the generated API audit
+// schema for browser and headless command adapters that share this source
+// capability. Repository persistence replaces placeholder identities with the
+// authoritative project/dashboard/draft values in its transaction.
+func EncodeDashboardAuthoringCommandAuditMetadata(project, dashboard, draft string, origin authoring.Origin) (string, error) {
+	return dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{
+		OperationId: "executeDashboardAuthoringCommand",
+		ProjectId:   project,
+		DashboardId: dashboard,
+		DraftId:     draft,
+		Origin:      string(origin),
+	})
 }
 
 // New validates the composition ports and builds the source adapter once.
@@ -122,7 +138,32 @@ func (a *Application) Execute(ctx context.Context, project projectgraph.Resource
 	if err != nil {
 		return authoringservice.Result{}, err
 	}
+	ctx = normalizeAuthoringAuditCapability(ctx, command)
 	return a.authoring.Execute(ctx, projectID, command)
+}
+
+// normalizeAuthoringAuditCapability binds durable audit evidence to the
+// command's declared action. Transport intents may carry a stale generic edit
+// capability (older browser callers did); the repository trigger must still
+// enforce publish/manage evidence for those lifecycle transitions.
+func normalizeAuthoringAuditCapability(ctx context.Context, command authoring.Command) context.Context {
+	intent, ok := authoring.AuditIntentFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	action, err := command.RequiredAction()
+	if err != nil {
+		return ctx
+	}
+	switch action {
+	case authoring.AuthorizationActionPublish:
+		intent.Capability = access.CapabilityResourcePublish
+	case authoring.AuthorizationActionArchive:
+		intent.Capability = access.CapabilityResourceManage
+	default:
+		intent.Capability = access.CapabilityResourceEdit
+	}
+	return authoring.WithAuditIntent(ctx, intent)
 }
 
 // List returns the governed dashboard catalog for one project. A provider

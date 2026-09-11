@@ -73,11 +73,36 @@ test('conditional formatting uses authored first-match rule order and redundant 
     style: { color: 'danger', icon: 'arrow_down' },
     outcome: 'default',
   })
+  expect(resolveConditionalFormat(format, ['value'], ['90.25'])).toEqual({
+    style: { color: 'warning', icon: 'circle' },
+    outcome: 'matched',
+  })
   expect(resolveConditionalFormat(format, ['value'], ['1e2'])).toEqual({
     style: { icon: 'warning' },
     outcome: 'invalid',
     diagnostic: 'conditional formatting "health-rules" expected a finite numeric value',
   })
+})
+
+test('numeric rules accept canonical Decimal transport strings', () => {
+  const format = {
+    id: 'variance-rules',
+    target: 'mark_fill',
+    field: { dataset: 'primary', field: 'variance' },
+    rule: {
+      kind: 'rules',
+      rules: [
+        { operator: 'greater_or_equal', value: 0, style: { color: 'success', icon: 'arrow_up' } },
+        { operator: 'less_than', value: 0, style: { color: 'danger', icon: 'arrow_down' } },
+      ],
+      nullStyle: { color: 'neutral', icon: 'square' },
+      defaultStyle: { color: 'neutral', icon: 'circle' },
+    },
+  } as VisualizationConditionalFormat
+
+  expect(resolveConditionalFormat(format, ['variance'], ['90029.70']).style.color).toBe('success')
+  expect(resolveConditionalFormat(format, ['variance'], ['-3150255.69']).style.color).toBe('danger')
+  expect(resolveConditionalFormat(format, ['variance'], ['1e3']).outcome).toBe('invalid')
 })
 
 test('bound-field formatting never interprets field values as renderer colors', () => {

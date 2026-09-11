@@ -37,10 +37,15 @@ test('development startup reuses the bounded CI fixture supply', async () => {
   expect(source).not.toContain('extensionsupply --out "$root"')
 })
 
-test('development MCP smoke queries an authored semantic metric', async () => {
+test('development MCP smoke resolves configurable authored semantic metrics', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
-  expect(source).toContain('metrics: [{field: "revenue"}]')
+  expect(source).toContain('local model_query="${LEAPVIEW_DEV_MCP_MODEL_QUERY:-sales}"')
+  expect(source).toContain('local metric_name="${LEAPVIEW_DEV_MCP_METRIC:-revenue}"')
+  expect(source).toContain('--arg query "$model_query"')
+  expect(source).toContain('--arg metric "$metric_name"')
+  expect(source).toContain('.result.structuredContent.items[0].ref.id as $model |')
+  expect(source).toContain('select(($model | type) == "string" and ($model | length) > 0) |')
   expect(source).not.toContain('metrics: [{field: "sales_orders.revenue"}]')
 })
 
@@ -122,10 +127,10 @@ test('browser QA uses canonical project resource IDs', async () => {
 
 test('data explorer recovery waits for the selection command to settle', async () => {
   const [source, helper] = await Promise.all([
-    readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),
+    readFile('scripts/datastar_lit_data_explorer_qa.ts', 'utf8'),
     readFile('scripts/data_explorer_readiness.ts', 'utf8'),
   ])
-  const recovery = source.slice(source.indexOf('async function verifyDataExplorerRecoveryActions'))
+  const recovery = source.slice(source.indexOf('export async function verifyDataExplorerRecoveryActions'))
   const object = recovery.indexOf("await firstObject.waitFor({ state: 'visible' })")
   const select = recovery.indexOf('await selectDataExplorerObject(page, firstObject)')
   const preview = recovery.indexOf("await preview.waitFor({ state: 'visible' })")
@@ -139,11 +144,25 @@ test('data explorer recovery waits for the selection command to settle', async (
   expect(select).toBeGreaterThan(object)
   expect(preview).toBeGreaterThan(select)
   expect(inject).toBeGreaterThan(preview)
+  expect(source).toContain("import { selectDataExplorerObject } from './data_explorer_readiness'")
   expect(arm).toBeGreaterThanOrEqual(0)
   expect(click).toBeGreaterThan(arm)
   expect(body).toBeGreaterThan(click)
   expect(helper).toContain("response.request().method() === 'POST'")
   expect(helper).toContain('if (!selectionResponse.ok())')
+})
+
+test('Data Explorer route QA covers Analyze accessibility and recovery states', async () => {
+  const [source, dataExplorerQA] = await Promise.all([
+    readFile('scripts/datastar_lit_route_qa.ts', 'utf8'),
+    readFile('scripts/datastar_lit_data_explorer_qa.ts', 'utf8'),
+  ])
+
+  expect(source).toContain("{ label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true }")
+  expect(source).toContain('await verifyDataExplorerKeyboardJourney()')
+  expect(source).toContain('await verifyDataExplorerRecoveryActions()')
+  expect(source).toContain('await verifyDataExplorerResponsiveLayout()')
+  expect(dataExplorerQA).toContain('explicit run action')
 })
 
 test('visual regression QA covers stable representative states, themes, and viewports', async () => {

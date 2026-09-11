@@ -582,7 +582,7 @@ class ChatThread extends LitElement {
 
   private renderArtifact(artifact: ChatArtifactSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
-    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>`
+    return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} conversation-id=${this.conversationId} .exploration=${artifact.exploration ?? undefined} .payload=${payload ?? null}></lv-visual-artifact>`
   }
 
   private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {

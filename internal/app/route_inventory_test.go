@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "8e708bc761e2822018a0605bf631eb4028b8c8f5a76977891b8c26d8f77214a4"
+	const expectedRouteContractDigest = "b3f4267b3633bb023ed5125e34fe4497271d08000689220bfc4f814986b6d4cc"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -158,6 +158,12 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "PROJECT_ADMIN"
+	case path == "/explore/dashboard-targets" || path == "/explore/dashboard-target/{dashboard}" || path == "/explore/add-to-dashboard":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/{dashboard}/pages/{page}/components/{component}/explore":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_USE"
 	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
@@ -179,7 +185,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_READ"
-	case path == "/explore" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
+	case path == "/explore" || path == "/explore/export" || path == "/explore/command" || path == "/explore/saved/{exploration}" || path == "/explore/saved/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
 	case path == "/pipelines/command":
@@ -205,8 +211,8 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 func apiOwner(tags []string) (string, bool) {
 	owners := map[string]string{
 		"Access": "access", "Current User": "access", "Service Principals": "access",
-		"Connections": "analytics",
-		"Agent":       "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
+		"Connections": "analytics", "Saved Explorations": "analytics",
+		"Agent": "agent", "BI": "dashboard", "Dashboards": "dashboard", "Publications": "dashboard",
 		"Deployments": "deployment", "Delivery": "deployment", "Managed Data": "manageddata", "Refresh": "refresh",
 		"Releases": "release", "Projects": "release",
 		"Instance": "platform", "System": "platform",
@@ -304,11 +310,17 @@ GET /dashboards/{dashboard}/edit
 GET /dashboards/{dashboard}/fork
 GET /dashboards/{dashboard}/export.yaml
 GET /dashboards/{dashboard}/pages/{page}
+GET /dashboards/{dashboard}/pages/{page}/components/{component}/explore
 GET /dashboards/{dashboard}/preview
 GET /dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt
 GET /embed/dashboards/{publicId}
 GET /embed/dashboards/{publicId}/pages/{page}
 GET /explore
+GET /explore/export
+GET /explore/dashboard-targets
+GET /explore/dashboard-target/{dashboard}
+POST /explore/add-to-dashboard
+GET /explore/saved/{exploration}
 GET /favicon.ico
 GET /healthz
 GET /login
@@ -357,6 +369,7 @@ GET /catalog/search
 GET /connections/search
 GET /dashboards/search
 POST /explore/command
+POST /explore/saved/command
 POST /dashboards/{dashboard}/archive
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter

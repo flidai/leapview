@@ -198,6 +198,7 @@ export class VisualizationHost extends LitElement {
     const metadata = this.envelope ? resolveVisualizationMetadata(this.envelope) : undefined
     const titleVisible = this.envelope?.spec.titleVisible !== false
     const showHeader = Boolean((header && titleVisible) || this.authoring)
+    const tableActions = this.hasTableActions()
     const showInitialLoading = !this.presented && !error
     const loadingLabel = `Loading ${header ?? 'visualization'}…`
     return html`<div class=${showHeader ? 'surface' : 'surface headerless'}>
@@ -215,7 +216,7 @@ export class VisualizationHost extends LitElement {
             ${this.visualActions()}
           </div>
         </header>
-      ` : html`<div class="headerless-actions" ?data-table-actions=${this.envelope?.spec.kind === 'table'}><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${this.envelope?.spec.kind === 'table' ? null : this.visualActions()}</div></div>`}
+      ` : html`<div class="headerless-actions" ?data-table-actions=${tableActions}><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}</div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -227,6 +228,11 @@ export class VisualizationHost extends LitElement {
       ${this.announcement ? html`<div class="announcement" role="status" aria-live="polite">${this.announcement}</div>` : null}
       ${error ? html`<div class="error" role="alert">${error}</div>` : null}
     </div>`
+  }
+
+  private hasTableActions(): boolean {
+    const kind = this.envelope?.spec.kind
+    return kind === 'table' || kind === 'matrix' || kind === 'pivot'
   }
 
   private requestMount(): void {

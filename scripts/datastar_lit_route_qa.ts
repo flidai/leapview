@@ -1,7 +1,11 @@
 import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
-import { selectDataExplorerObject } from './data_explorer_readiness'
+import {
+  verifyDataExplorerKeyboardJourney as runDataExplorerKeyboardJourney,
+  verifyDataExplorerRecoveryActions as runDataExplorerRecoveryActions,
+  verifyDataExplorerResponsiveLayout as runDataExplorerResponsiveLayout,
+} from './datastar_lit_data_explorer_qa'
 import { ensureDashboardVisualizationsMounted } from './dashboard_visualization_readiness'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
@@ -20,6 +24,7 @@ const routeQAScope = Bun.env.LEAPVIEW_ROUTE_QA_SCOPE?.trim() || 'all'
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const accessibilityRoutes: AccessibilityRoute[] = [
   { label: 'Insights', path: '/', root: 'lv-catalog-page', shell: true },
+  { label: 'Data Explorer', path: '/explore', root: 'lv-data-explorer', shell: true },
   { label: 'Sources', path: '/sources', root: 'lv-project-page', shell: true },
   { label: 'Dashboard', path: '/dashboards/dashboard:executive-sales/pages/overview', root: 'lv-dashboard-page', shell: true },
   { label: 'Visual Showcase', path: dashboardPath, root: 'lv-dashboard-page', shell: true },
@@ -48,6 +53,7 @@ try {
     console.log(`WCAG accessibility route QA passed for ${accessibilityRoutes.length} routes at ${baseURL}`)
   } else if (routeQAScope === 'keyboard') {
     await verifyKeyboardAccessibilityJourney()
+    await verifyDataExplorerKeyboardJourney()
     console.log(`Keyboard accessibility route QA passed at ${baseURL}`)
   } else if (routeQAScope === 'all') {
     for (const route of routes) {
@@ -56,9 +62,11 @@ try {
     await verifyWCAGAccessibilityRoutes()
     await verifySidebarCollapseToggle()
     await verifyKeyboardAccessibilityJourney()
+    await verifyDataExplorerKeyboardJourney()
     await verifyEChartsFirstNavigation()
     await verifyDashboardCommandDoesNotReopenUpdates()
     await verifyDataExplorerRecoveryActions()
+    await verifyDataExplorerResponsiveLayout()
     await verifyTableShowcase()
     await verifyFilterShowcase()
     await verifySpatialShowcaseMaps()
@@ -72,58 +80,13 @@ try {
 }
 
 async function verifyDataExplorerRecoveryActions(): Promise<void> {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  const messages = collectBlockingConsoleMessages(page)
-
-  try {
-    const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
-    if (!response?.ok()) throw new Error(`/explore recovery: status ${response?.status() ?? 'unknown'}`)
-    const explorer = page.locator('lv-data-explorer')
-    await explorer.waitFor()
-    // /explore opens in semantic-query mode. Preview recovery belongs to the
-    // browse mode of the same canonical route, so switch the typed command
-    // state before selecting a resource instead of clicking a hidden tree.
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { command: { mode: 'browse' } } })
-    })
-    await expect(explorer.locator('.route')).not.toHaveClass(/semantic/)
-
-    const preview = explorer.locator('lv-data-preview-table')
-    if (!await preview.isVisible()) {
-      const firstGroup = explorer.locator('details.resource-group').first()
-      await firstGroup.locator(':scope > summary').click()
-      const firstObject = firstGroup.locator('.object-button').first()
-      await firstObject.waitFor({ state: 'visible' })
-      await selectDataExplorerObject(page, firstObject)
-    }
-    await preview.waitFor({ state: 'visible' })
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-
-    const failure = preview.locator('[role="alert"]')
-    await expect(failure).toContainText('Qualification-injected preview failure.')
-    const retryRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Retry', exact: true }).click()
-    await retryRequest
-
-    await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
-    })
-    await expect(failure).toBeVisible()
-    const resetRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
-    await failure.getByRole('button', { name: 'Reset view', exact: true }).click()
-    const reset = await resetRequest
-    if (!reset.postData()?.includes('resetVersion')) {
-      throw new Error('/explore recovery reset did not send canonical reset state')
-    }
-    assertNoBlockingConsoleMessages('data explorer recovery', messages)
-  } finally {
-    await page.close()
-  }
+  await runDataExplorerRecoveryActions({
+    browser,
+    baseURL,
+    collectBlockingConsoleMessages,
+    assertNoBlockingConsoleMessages,
+    focusByTab,
+  })
 }
 
 async function verifySidebarCollapseToggle(): Promise<void> {
@@ -308,6 +271,26 @@ async function verifyKeyboardAccessibilityJourney(): Promise<void> {
   } finally {
     await page.close()
   }
+}
+
+async function verifyDataExplorerKeyboardJourney(): Promise<void> {
+  await runDataExplorerKeyboardJourney({
+    browser,
+    baseURL,
+    collectBlockingConsoleMessages,
+    assertNoBlockingConsoleMessages,
+    focusByTab,
+  })
+}
+
+async function verifyDataExplorerResponsiveLayout(): Promise<void> {
+  await runDataExplorerResponsiveLayout({
+    browser,
+    baseURL,
+    collectBlockingConsoleMessages,
+    assertNoBlockingConsoleMessages,
+    focusByTab,
+  })
 }
 
 async function focusByTab(page: Page, target: Locator, label: string, maximumTabs = 40): Promise<void> {

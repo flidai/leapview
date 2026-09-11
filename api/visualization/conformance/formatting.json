@@ -4,6 +4,7 @@
   {"locale":"en-US","format":{"kind":"number"},"value":null,"expected":"—"},
   {"locale":"pt-BR","format":{"kind":"number"},"value":null,"expected":"—"},
   {"locale":"en-US","format":{"kind":"currency","currency":"USD","minimumFractionDigits":2,"maximumFractionDigits":2},"value":1250,"expected":"$1,250.00"},
+  {"locale":"en-US","format":{"kind":"currency","currency":"USD","minimumFractionDigits":2,"maximumFractionDigits":2},"value":-1250,"expected":"-$1,250.00"},
   {"locale":"pt-BR","format":{"kind":"currency","currency":"BRL","minimumFractionDigits":2,"maximumFractionDigits":2},"value":1250.5,"expected":"R$ 1.250,50"},
   {"locale":"en-US","format":{"kind":"percent","minimumFractionDigits":1,"maximumFractionDigits":1},"value":0.125,"expected":"12.5%"},
   {"locale":"pt-BR","format":{"kind":"percent","minimumFractionDigits":1,"maximumFractionDigits":1},"value":0.125,"expected":"12,5%"},

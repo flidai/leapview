@@ -33,6 +33,7 @@ test('auto display units produce glanceable values at each magnitude', () => {
 
 test('display units compose with semantic currency and percent formats', () => {
   expect(formatDisplayValue('en-US', { kind: 'currency', currency: 'USD' }, 1_234_567, resolveDisplayUnit('auto', [1_234_567]))).toBe('$1.23M')
+  expect(formatDisplayValue('en-US', { kind: 'currency', currency: 'USD' }, -1_234_567, resolveDisplayUnit('auto', [-1_234_567]))).toBe('-$1.23M')
   expect(formatDisplayValue('en-US', { kind: 'percent' }, 0.63214, resolveDisplayUnit('auto', [63.214]))).toBe('63.2%')
 })
 

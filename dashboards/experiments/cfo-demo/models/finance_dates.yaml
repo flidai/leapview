@@ -1,0 +1,27 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:finance_dates
+  name: finance_dates
+  displayName: Finance Dates
+  description: Conformed reporting-date dimension shared by the finance facts.
+spec:
+  fields:
+    finance_date: {datatype: Date, label: Date}
+    finance_month: {datatype: String, label: Month}
+  definition:
+    type: sql
+    sql: |
+      SELECT DISTINCT
+        CAST(DATE '1899-12-30' + CAST(date_serial AS INTEGER) + INTERVAL '12 years' AS DATE) AS finance_date,
+        strftime(
+          CAST(DATE '1899-12-30' + CAST(date_serial AS INTEGER) + INTERVAL '12 years' AS DATE),
+          '%Y-%m'
+        ) AS finance_month
+      FROM source."finance.financials"
+  entities:
+    finance_date:
+      type: primary
+      fields: [finance_date]
+  grain:
+    entity: finance_date

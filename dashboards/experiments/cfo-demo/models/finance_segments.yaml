@@ -1,0 +1,22 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:finance_segments
+  name: finance_segments
+  displayName: Segments
+  description: Conformed customer-segment dimension shared by the finance facts.
+spec:
+  fields:
+    segment: {datatype: String, label: Segment}
+  definition:
+    type: sql
+    sql: |
+      SELECT DISTINCT trim(segment) AS segment
+      FROM source."finance.financials"
+      WHERE segment IS NOT NULL AND trim(segment) <> ''
+  entities:
+    segment:
+      type: primary
+      fields: [segment]
+  grain:
+    entity: segment

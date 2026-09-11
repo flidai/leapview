@@ -391,6 +391,59 @@ for (const viewport of [
   })
 }
 
+test('catalog keeps the dashboard identity visible while secondary columns scroll', async () => {
+  const page = await browser.newPage({ viewport: { width: 962, height: 891 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const list = root.querySelector('lv-entity-list') as HTMLElement
+      list.style.display = 'block'
+      list.style.width = '600px'
+      const region = root.querySelector('.entity-list-table-wrap') as HTMLElement
+      const table = region.querySelector('.entity-list-table') as HTMLElement
+      const identityHeader = root.querySelector('thead th:first-child') as HTMLElement
+      const identityCell = root.querySelector('.entity-list-table-row > th:first-child') as HTMLElement
+      const secondaryHeader = root.querySelector('thead th:nth-child(2)') as HTMLElement
+      region.scrollLeft = region.scrollWidth
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+
+      const regionRect = region.getBoundingClientRect()
+      const headerRect = identityHeader.getBoundingClientRect()
+      const cellRect = identityCell.getBoundingClientRect()
+      const secondaryRect = secondaryHeader.getBoundingClientRect()
+      return {
+        overflowDelta: Math.round(region.scrollWidth - table.getBoundingClientRect().width),
+        scrollLeft: region.scrollLeft,
+        headerPosition: getComputedStyle(identityHeader).position,
+        cellPosition: getComputedStyle(identityCell).position,
+        headerLeftDelta: Math.round(headerRect.left - regionRect.left),
+        cellLeftDelta: Math.round(cellRect.left - regionRect.left),
+        headerWithinRegion: headerRect.left >= regionRect.left && headerRect.right <= regionRect.right,
+        cellWithinRegion: cellRect.left >= regionRect.left && cellRect.right <= regionRect.right,
+        secondaryMovedBehindIdentity: secondaryRect.left < headerRect.right,
+      }
+    })
+
+    expect(state.scrollLeft).toBeGreaterThan(0)
+    expect(state).toEqual({
+      overflowDelta: 0,
+      scrollLeft: state.scrollLeft,
+      headerPosition: 'sticky',
+      cellPosition: 'sticky',
+      headerLeftDelta: 0,
+      cellLeftDelta: 0,
+      headerWithinRegion: true,
+      cellWithinRegion: true,
+      secondaryMovedBehindIdentity: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard tabs expose favorites and owned dashboards without hiding either from All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -874,6 +927,7 @@ test('date columns reveal exact localized date and time on hover and focus', asy
       const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
       expect(focusVisibility).toBe('visible')
     } finally {
+      await page.close()
       await context.close()
     }
   }

@@ -210,6 +210,9 @@ func matchesSchema(value any, schema ValueSchema) bool {
 		if !ok {
 			return false
 		}
+		if schema.MinItems != nil && len(items) < *schema.MinItems || schema.MaxItems != nil && len(items) > *schema.MaxItems {
+			return false
+		}
 		if schema.Items != nil {
 			for _, item := range items {
 				if !matchesSchema(item, *schema.Items) {
@@ -224,7 +227,8 @@ func matchesSchema(value any, schema ValueSchema) bool {
 }
 
 func matchesValueBounds(value float64, schema ValueSchema) bool {
-	return (schema.Minimum == nil || value >= *schema.Minimum) && (schema.Maximum == nil || value <= *schema.Maximum)
+	return (schema.Const == nil || value == *schema.Const) &&
+		(schema.Minimum == nil || value >= *schema.Minimum) && (schema.Maximum == nil || value <= *schema.Maximum)
 }
 
 func addValues(values url.Values, name string, value any, explode bool) error {

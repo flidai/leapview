@@ -1,0 +1,38 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:pnl_lines
+  name: pnl_lines
+  displayName: P&L Lines
+  description: Ordered chart-of-accounts dimension used by the P&L facts.
+spec:
+  fields:
+    line_order: {datatype: Integer, label: Line}
+    pnl_line: {datatype: String, label: P&L line}
+  definition:
+    type: sql
+    sql: |
+      WITH source_anchor AS (
+        SELECT 1 AS anchor
+        FROM source."finance.financials"
+        LIMIT 1
+      ),
+      lines AS (
+        SELECT 10 AS line_order, 'Net revenue' AS pnl_line
+        UNION ALL SELECT 20, 'Cost of goods sold'
+        UNION ALL SELECT 30, 'Gross profit'
+        UNION ALL SELECT 40, 'Sales and marketing'
+        UNION ALL SELECT 50, 'Operations'
+        UNION ALL SELECT 60, 'Research and development'
+        UNION ALL SELECT 70, 'General and administrative'
+        UNION ALL SELECT 80, 'EBITDA'
+      )
+      SELECT lines.line_order, lines.pnl_line
+      FROM lines
+      INNER JOIN source_anchor ON true
+  entities:
+    pnl_line:
+      type: primary
+      fields: [line_order]
+  grain:
+    entity: pnl_line

@@ -1269,6 +1269,7 @@ func dataQueryFields(fields []dataquery.Field) []semanticquery.Field {
 		out = append(out, semanticquery.Field{
 			Field: field.Field,
 			Alias: field.Alias,
+			Grain: field.Grain,
 		})
 	}
 	return out

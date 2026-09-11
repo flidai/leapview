@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 func transcriptFromMessages(conversationID string, messages []Message) []ChatTranscriptItem {
@@ -223,10 +225,11 @@ func toolArtifact(rawJSON string) (*ChatArtifact, ChatArtifactSignals) {
 		return nil, emptyChatArtifactSignals()
 	}
 	var payload struct {
-		Type    string         `json:"type"`
-		ID      string         `json:"id"`
-		Patch   map[string]any `json:"patch"`
-		Summary string         `json:"summary"`
+		Type        string          `json:"type"`
+		ID          string          `json:"id"`
+		Patch       map[string]any  `json:"patch"`
+		Summary     string          `json:"summary"`
+		Exploration json.RawMessage `json:"exploration"`
 	}
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return nil, emptyChatArtifactSignals()
@@ -240,7 +243,20 @@ func toolArtifact(rawJSON string) (*ChatArtifact, ChatArtifactSignals) {
 		return nil, emptyChatArtifactSignals()
 	}
 	mergeMap(signals.Visuals, visuals)
-	return &ChatArtifact{Type: payload.Type, ID: payload.ID, Summary: payload.Summary}, signals
+	var canonicalExploration *exploration.ExplorationSpec
+	if len(payload.Exploration) > 0 && string(payload.Exploration) != "null" {
+		var candidate exploration.ExplorationSpec
+		if err := strictjson.DecodeWithOptions(payload.Exploration, &candidate, turnContextJSONOptions); err == nil {
+			// Display content is durable and may have been authored by an older or
+			// untrusted producer. Normalize through the same bounded contract used
+			// for turn context before making the handoff available to the browser.
+			canonical, err := normalizeDataExploration(&candidate)
+			if err == nil {
+				canonicalExploration = canonical
+			}
+		}
+	}
+	return &ChatArtifact{Type: payload.Type, ID: payload.ID, Summary: payload.Summary, Exploration: canonicalExploration}, signals
 }
 
 func displayContentJSON(raw string) string {

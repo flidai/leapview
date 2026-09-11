@@ -140,6 +140,29 @@ func TestOptionDependencyFiltersRebindToQueriedDatasetWithoutSharingStateIdentit
 	}
 }
 
+func TestSemanticFilterDoesNotInheritDistinctOptionDataset(t *testing.T) {
+	definition := dashboardfilter.Definition{
+		Field:     "country",
+		ValueKind: dashboardfilter.ValueString,
+		Options: dashboardfilter.OptionSource{
+			Kind:    dashboardfilter.OptionSourceDistinct,
+			Dataset: "financial_performance",
+		},
+	}
+	expression := dashboardfilter.Expression{
+		Kind:     dashboardfilter.ExpressionSet,
+		Operator: dashboardfilter.OperatorIn,
+		Values:   []dashboardfilter.Value{{Kind: dashboardfilter.ValueString, Value: "France"}},
+	}
+	filters, err := semanticFiltersForExpression(definition, expression)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 1 || filters[0].Dataset != "" || filters[0].Field != "country" {
+		t.Fatalf("semantic filters = %#v, want conformed country predicate", filters)
+	}
+}
+
 func TestInteractiveDashboardFilterComposesWithSemanticNamedFilter(t *testing.T) {
 	definition := &dashboarddefinition.Definition{
 		FilterDefinitions: map[string]dashboardfilter.Definition{

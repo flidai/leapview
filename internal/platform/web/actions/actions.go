@@ -12,6 +12,13 @@ func Get(path string, signalPaths ...string) string {
 	return request("get", path, signalPaths, "")
 }
 
+// GetPathExpression issues a read-only request whose path is evaluated from
+// the current event. Callers must build the expression from encoded signal
+// values; it is kept separate from Get so static paths remain the default.
+func GetPathExpression(pathExpression string, signalPaths ...string) string {
+	return requestWithPathExpression("get", pathExpression, signalPaths, "")
+}
+
 // QueryPost is an explicitly non-mutating POST used for signal-backed search
 // and read-model commands whose payload is too rich for a query string.
 func QueryPost(path string, signalPaths ...string) string {
@@ -22,6 +29,14 @@ func QueryPost(path string, signalPaths ...string) string {
 // mutations must use CommandPost so they carry a generated operation ID.
 func EventPost(path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, "")
+}
+
+// EventPostWithCancellation dispatches a transient event with an explicit
+// browser-owned cancellation scope. Datastar's default scope is keyed only by
+// method and URL, which is too broad for endpoints that carry independent
+// lanes (for example, exploration runs and filter suggestions).
+func EventPostWithCancellation(path, requestCancellationExpression string, signalPaths ...string) string {
+	return requestWithPathExpressionAndHeadersAndCancellation("post", jsString(path), signalPaths, "window.LeapViewCommand.headers()", requestCancellationExpression)
 }
 
 func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
@@ -103,6 +118,10 @@ func requestWithPathExpression(method, pathExpression string, signalPaths []stri
 }
 
 func requestWithPathExpressionAndHeaders(method, pathExpression string, signalPaths []string, headers string) string {
+	return requestWithPathExpressionAndHeadersAndCancellation(method, pathExpression, signalPaths, headers, "")
+}
+
+func requestWithPathExpressionAndHeadersAndCancellation(method, pathExpression string, signalPaths []string, headers, requestCancellationExpression string) string {
 	options := "headers: " + headers
 	if len(signalPaths) > 0 {
 		patterns := make([]string, 0, len(signalPaths))
@@ -111,6 +130,9 @@ func requestWithPathExpressionAndHeaders(method, pathExpression string, signalPa
 		}
 		include := "/^(?:" + strings.Join(patterns, "|") + ")(?:[.]|$)/"
 		options = "filterSignals: {include: " + include + "}, " + options
+	}
+	if strings.TrimSpace(requestCancellationExpression) != "" {
+		options += ", requestCancellation: " + strings.TrimSpace(requestCancellationExpression)
 	}
 	return "@" + method + "(" + pathExpression + ", {" + options + "})"
 }

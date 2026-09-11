@@ -1,0 +1,22 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:finance_discount_bands
+  name: finance_discount_bands
+  displayName: Discount Bands
+  description: Discount-band dimension used by the financial-performance fact.
+spec:
+  fields:
+    discount_band: {datatype: String, label: Discount band}
+  definition:
+    type: sql
+    sql: |
+      SELECT DISTINCT trim(discount_band) AS discount_band
+      FROM source."finance.financials"
+      WHERE discount_band IS NOT NULL AND trim(discount_band) <> ''
+  entities:
+    discount_band:
+      type: primary
+      fields: [discount_band]
+  grain:
+    entity: discount_band

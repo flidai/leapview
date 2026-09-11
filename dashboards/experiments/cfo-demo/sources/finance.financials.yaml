@@ -1,0 +1,15 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:finance.financials
+  name: finance.financials
+  displayName: Microsoft Financial Sample
+  description: Public Microsoft sample data used as the actuals foundation for the fictional CFO demo.
+spec:
+  connection: finance_files
+  location:
+    type: path
+    path: financial-sample.csv
+    format: csv
+  schema:
+    mode: inferred

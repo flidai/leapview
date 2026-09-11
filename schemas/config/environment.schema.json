@@ -2392,6 +2392,20 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_MCP_METRIC": {
+      "default": "revenue",
+      "description": "Metric queried by the development MCP smoke check.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
+    "LEAPVIEW_DEV_MCP_MODEL_QUERY": {
+      "default": "sales",
+      "description": "Catalog search query used to select the semantic model for the development MCP smoke check.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_ONCE": {
       "default": "false",
       "description": "Stop the managed development server after one successful candidate publication and MCP smoke check.",

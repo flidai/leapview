@@ -81,13 +81,50 @@ func TestLoadInstanceUsesExactPublishedRevisionAndAuthorizesBeforeRevision(t *te
 	if *source.Document.Metadata.DisplayName != "Published title" || source.Provenance.Instance == nil || source.Provenance.Instance.PublishedRevision != f.published.Token() || f.repository.getRevisionIDs[0] != f.published.ID {
 		t.Fatalf("source/provenance = %#v/%#v", source.Document, source.Provenance)
 	}
-	if len(f.authorizer.requests) != 1 || f.authorizer.requests[0].Action != authoring.AuthorizationActionView {
+	if len(f.authorizer.requests) != 1 || f.authorizer.requests[0].Target != service.AuthorizationTargetAuthoredDashboard || f.authorizer.requests[0].OwnerPrincipalID != "owner" || f.authorizer.requests[0].Visibility != authoring.VisibilityPrivate || f.authorizer.requests[0].Action != authoring.AuthorizationActionView {
 		t.Fatalf("auth = %#v", f.authorizer.requests)
 	}
 	f = newSourceFixture(t)
 	f.authorizer.err = access.ErrForbidden
 	if _, err := f.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, "actor"); !errors.Is(err, access.ErrForbidden) || len(f.repository.getRevisionIDs) != 0 {
 		t.Fatalf("denied load err=%v revision reads=%v", err, f.repository.getRevisionIDs)
+	}
+}
+
+func TestLoadPublishedInstanceAppliesVisibilityPolicyBeforeRevisionRead(t *testing.T) {
+	tests := []struct {
+		name       string
+		actor      string
+		visibility authoring.Visibility
+		allow      bool
+	}{
+		{name: "private owner", actor: "owner", visibility: authoring.VisibilityPrivate, allow: true},
+		{name: "organization recipient", actor: "recipient", visibility: authoring.VisibilityOrganization, allow: true},
+		{name: "private outsider", actor: "outsider", visibility: authoring.VisibilityPrivate, allow: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSourceFixture(t)
+			fixture.lifecycle.Visibility = test.visibility
+			fixture.repository.lifecycle.Visibility = test.visibility
+			fixture.authorizer.allow = func(request service.AuthorizationRequest) error {
+				if request.Target != service.AuthorizationTargetAuthoredDashboard || request.OwnerPrincipalID != "owner" || request.Visibility != test.visibility || request.Action != authoring.AuthorizationActionView {
+					return errors.New("published source authorization omitted authored policy")
+				}
+				if !test.allow {
+					return access.ErrForbidden
+				}
+				return nil
+			}
+			source, err := fixture.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"}, test.actor)
+			if test.allow {
+				if err != nil || source.Provenance.Instance == nil || len(fixture.repository.getRevisionIDs) != 1 {
+					t.Fatalf("authorized published source = %#v err=%v revision reads=%v", source, err, fixture.repository.getRevisionIDs)
+				}
+			} else if !errors.Is(err, access.ErrForbidden) || len(fixture.repository.getRevisionIDs) != 0 {
+				t.Fatalf("denied published source err=%v revision reads=%v", err, fixture.repository.getRevisionIDs)
+			}
+		})
 	}
 }
 
@@ -116,6 +153,43 @@ func TestLoadProjectUsesOneLeaseAndNoFabricatedRevision(t *testing.T) {
 	}
 }
 
+func TestForkInstanceAuthorizesAuthoredSourceBeforeRevisionOrCreate(t *testing.T) {
+	fixture := newSourceFixture(t)
+	fixture.authorizer.allow = func(request service.AuthorizationRequest) error {
+		// A project-scoped reader is not automatically allowed to fork a private
+		// authored dashboard. The source policy must be checked separately.
+		if request.Target == service.AuthorizationTargetProjectDashboard {
+			return nil
+		}
+		if request.Target != service.AuthorizationTargetAuthoredDashboard || request.Action != authoring.AuthorizationActionView || request.OwnerPrincipalID != "owner" || request.SemanticModel != "sales_model" || request.Visibility != authoring.VisibilityPrivate {
+			return errors.New("fork source authorization omitted authored policy")
+		}
+		return access.ErrForbidden
+	}
+
+	_, err := fixture.adapter.Fork(t.Context(), sourceadapter.ForkRequest{
+		Source:         sourceadapter.SourceRef{Kind: sourceadapter.SourceInstance, ProjectID: "project", DashboardID: "sales"},
+		ActorID:        "outsider",
+		Title:          "Copied sales",
+		Slug:           "copied-sales",
+		Origin:         authoring.OriginUI,
+		IdempotencyKey: "fork-private-outsider",
+	})
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("private instance fork error = %v, want forbidden", err)
+	}
+	if len(fixture.repository.getRevisionIDs) != 0 || fixture.repository.createCalls != 0 {
+		t.Fatalf("denied fork touched source or target: revision reads=%v creates=%d", fixture.repository.getRevisionIDs, fixture.repository.createCalls)
+	}
+	if len(fixture.authorizer.requests) != 1 {
+		t.Fatalf("authorization requests = %#v, want one source VIEW", fixture.authorizer.requests)
+	}
+	request := fixture.authorizer.requests[0]
+	if request.Target != service.AuthorizationTargetAuthoredDashboard || request.Action != authoring.AuthorizationActionView || request.OwnerPrincipalID != "owner" || request.SemanticModel != "sales_model" || request.Visibility != authoring.VisibilityPrivate {
+		t.Fatalf("source authorization = %#v", request)
+	}
+}
+
 func TestProjectMissingSourceIsUnavailableAndAuthorizationPrecedesLease(t *testing.T) {
 	f := newSourceFixture(t)
 	f.runtime.source.Metadata.Name = "other"
@@ -134,6 +208,7 @@ type sourceRepository struct {
 	lifecycle      authoring.DashboardLifecycle
 	revisions      map[authoring.RevisionID]authoring.Revision
 	getRevisionIDs []authoring.RevisionID
+	createCalls    int
 }
 
 func (r *sourceRepository) Get(context.Context, graph.ResourceID, authoring.DashboardID) (authoring.DashboardLifecycle, error) {
@@ -147,8 +222,9 @@ func (r *sourceRepository) GetRevision(_ context.Context, _ graph.ResourceID, _ 
 	}
 	return value, nil
 }
-func (r *sourceRepository) Create(context.Context, authoring.CreateInput) (authoring.DashboardLifecycle, error) {
-	panic("unused")
+func (r *sourceRepository) Create(_ context.Context, input authoring.CreateInput) (authoring.DashboardLifecycle, error) {
+	r.createCalls++
+	return input.Lifecycle, nil
 }
 func (r *sourceRepository) List(context.Context, graph.ResourceID) ([]authoring.DashboardLifecycle, error) {
 	panic("unused")
@@ -178,10 +254,14 @@ func (r *sourceRepository) GetPublishedCompilation(context.Context, graph.Resour
 type sourceAuthorizer struct {
 	requests []service.AuthorizationRequest
 	err      error
+	allow    func(service.AuthorizationRequest) error
 }
 
 func (a *sourceAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
 	a.requests = append(a.requests, request)
+	if a.allow != nil {
+		return a.allow(request)
+	}
 	return a.err
 }
 

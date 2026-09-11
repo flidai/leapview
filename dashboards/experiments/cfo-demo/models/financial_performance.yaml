@@ -1,0 +1,144 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:financial_performance
+  name: financial_performance
+  displayName: Financial Performance Fact
+  description: Transaction-grain finance fact with conformed dimension keys and deterministic fictional planning measures.
+spec:
+  fields:
+    record_id: {datatype: String, label: Record ID}
+    finance_date: {datatype: Date, label: Date}
+    segment: {datatype: String, label: Segment key}
+    country: {datatype: String, label: Country key}
+    product: {datatype: String, label: Product key}
+    discount_band: {datatype: String, label: Discount band key}
+    scorecard_group: {datatype: String, label: View}
+    units_sold: {datatype: Decimal, label: Units sold}
+    gross_sales: {datatype: Decimal, label: Gross sales}
+    discounts: {datatype: Decimal, label: Discounts}
+    net_sales: {datatype: Decimal, label: Net revenue}
+    cogs: {datatype: Decimal, label: Cost of goods sold}
+    gross_profit: {datatype: Decimal, label: Gross profit}
+    budget_sales: {datatype: Decimal, label: Budget revenue}
+    budget_cogs: {datatype: Decimal, label: Budget COGS}
+    budget_gross_profit: {datatype: Decimal, label: Budget gross profit}
+    forecast_sales: {datatype: Decimal, label: Forecast revenue}
+    forecast_gross_profit: {datatype: Decimal, label: Forecast gross profit}
+    sales_marketing_expense: {datatype: Decimal, label: Sales and marketing}
+    operations_expense: {datatype: Decimal, label: Operations expense}
+    research_development_expense: {datatype: Decimal, label: Research and development}
+    general_admin_expense: {datatype: Decimal, label: General and administrative}
+    budget_sales_marketing_expense: {datatype: Decimal, label: Budget sales and marketing}
+    budget_operations_expense: {datatype: Decimal, label: Budget operations expense}
+    budget_research_development_expense: {datatype: Decimal, label: Budget research and development}
+    budget_general_admin_expense: {datatype: Decimal, label: Budget general and administrative}
+    ebitda: {datatype: Decimal, label: EBITDA}
+    budget_ebitda: {datatype: Decimal, label: Budget EBITDA}
+    forecast_ebitda: {datatype: Decimal, label: Forecast EBITDA}
+  definition:
+    type: sql
+    sql: |
+      WITH normalized AS (
+        SELECT
+          printf('FIN-%04d', CAST(row_number() OVER (
+            ORDER BY date_serial, country, segment, product, discount_band, gross_sales, discounts
+          ) AS INTEGER)) AS record_id,
+          CAST(DATE '1899-12-30' + CAST(date_serial AS INTEGER) + INTERVAL '12 years' AS DATE) AS finance_date,
+          trim(segment) AS segment,
+          trim(country) AS country,
+          trim(product) AS product,
+          trim(discount_band) AS discount_band,
+          CAST(units_sold AS DECIMAL(38,2)) AS units_sold,
+          CAST(round(gross_sales, 2) AS DECIMAL(38,2)) AS gross_sales,
+          CAST(round(discounts, 2) AS DECIMAL(38,2)) AS discounts,
+          CAST(round(net_sales, 2) AS DECIMAL(38,2)) AS net_sales,
+          CAST(round(cogs, 2) AS DECIMAL(38,2)) AS cogs,
+          CAST(round(profit, 2) AS DECIMAL(38,2)) AS gross_profit
+        FROM source."finance.financials"
+      ),
+      planned AS (
+        SELECT
+          record_id,
+          finance_date,
+          segment,
+          country,
+          product,
+          discount_band,
+          units_sold,
+          gross_sales,
+          discounts,
+          net_sales,
+          cogs,
+          gross_profit,
+          CAST(round(net_sales * CASE
+            WHEN segment = 'Channel Partners' THEN 0.95
+            WHEN segment = 'Midmarket' THEN 0.96
+            WHEN segment = 'Enterprise' THEN 1.04
+            WHEN segment = 'Small Business' THEN 1.055
+            WHEN segment = 'Government' THEN 1.06
+            ELSE 1.04
+          END, 2) AS DECIMAL(38,2)) AS budget_sales,
+          CAST(round(net_sales * CASE
+            WHEN product = 'Paseo' OR product = 'VTT' THEN 1.035
+            WHEN discount_band = 'High' THEN 0.99
+            ELSE 1.025
+          END, 2) AS DECIMAL(38,2)) AS forecast_sales,
+          CAST(round(net_sales * (0.025 + CASE WHEN discount_band = 'High' THEN 0.006 ELSE 0 END), 2) AS DECIMAL(38,2)) AS sales_marketing_expense,
+          CAST(round(net_sales * (0.014 + CASE WHEN country = 'France' OR country = 'Germany' THEN 0.004 ELSE 0 END), 2) AS DECIMAL(38,2)) AS operations_expense,
+          CAST(round(net_sales * 0.012, 2) AS DECIMAL(38,2)) AS research_development_expense,
+          CAST(round(net_sales * (0.010 + CASE WHEN segment = 'Government' THEN 0.003 ELSE 0 END), 2) AS DECIMAL(38,2)) AS general_admin_expense
+        FROM normalized
+      )
+      SELECT
+        record_id,
+        finance_date,
+        segment,
+        country,
+        product,
+        discount_band,
+        'Performance' AS scorecard_group,
+        units_sold,
+        gross_sales,
+        discounts,
+        net_sales,
+        cogs,
+        gross_profit,
+        budget_sales,
+        CAST(round(budget_sales * 0.86, 2) AS DECIMAL(38,2)) AS budget_cogs,
+        CAST(round(budget_sales * 0.14, 2) AS DECIMAL(38,2)) AS budget_gross_profit,
+        forecast_sales,
+        CAST(round(forecast_sales * CASE WHEN discount_band = 'High' THEN 0.125 ELSE 0.145 END, 2) AS DECIMAL(38,2)) AS forecast_gross_profit,
+        sales_marketing_expense,
+        operations_expense,
+        research_development_expense,
+        general_admin_expense,
+        CAST(round(budget_sales * 0.025, 2) AS DECIMAL(38,2)) AS budget_sales_marketing_expense,
+        CAST(round(budget_sales * 0.014, 2) AS DECIMAL(38,2)) AS budget_operations_expense,
+        CAST(round(budget_sales * 0.012, 2) AS DECIMAL(38,2)) AS budget_research_development_expense,
+        CAST(round(budget_sales * 0.010, 2) AS DECIMAL(38,2)) AS budget_general_admin_expense,
+        CAST(round(gross_profit - sales_marketing_expense - operations_expense - research_development_expense - general_admin_expense, 2) AS DECIMAL(38,2)) AS ebitda,
+        CAST(round((budget_sales * 0.14) - (budget_sales * 0.025) - (budget_sales * 0.014) - (budget_sales * 0.012) - (budget_sales * 0.010), 2) AS DECIMAL(38,2)) AS budget_ebitda,
+        CAST(round((forecast_sales * CASE WHEN discount_band = 'High' THEN 0.125 ELSE 0.145 END) - (forecast_sales * 0.025) - (forecast_sales * 0.014) - (forecast_sales * 0.012) - (forecast_sales * 0.010), 2) AS DECIMAL(38,2)) AS forecast_ebitda
+      FROM planned
+  entities:
+    financial_record:
+      type: primary
+      fields: [record_id]
+    finance_date:
+      type: foreign
+      fields: [finance_date]
+    segment:
+      type: foreign
+      fields: [segment]
+    country:
+      type: foreign
+      fields: [country]
+    product:
+      type: foreign
+      fields: [product]
+    discount_band:
+      type: foreign
+      fields: [discount_band]
+  grain:
+    entity: financial_record

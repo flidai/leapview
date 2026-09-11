@@ -298,10 +298,13 @@ func authorizeDashboardReportVisuals(ctx context.Context, metrics Metrics, dashb
 				}
 				authorizedModels[modelID] = true
 			}
-			continue
-		}
-		if err := authorizeDashboardSemanticField(scoped, metrics, modelID, definition.Dataset, definition.Field); err != nil {
+		} else if err := authorizeDashboardSemanticField(scoped, metrics, modelID, definition.Dataset, definition.Field); err != nil {
 			return err
+		}
+		if optionDataset := strings.TrimSpace(definition.Options.Dataset); optionDataset != "" && optionDataset != strings.TrimSpace(definition.Dataset) {
+			if err := authorizeDashboardSemanticField(scoped, metrics, modelID, optionDataset, definition.Field); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

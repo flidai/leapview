@@ -306,6 +306,22 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
+  .entity-list-table thead th:first-child,
+  .entity-list-table-row > th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--lv-bg-page);
+  }
+
+  .entity-list-table thead th:first-child {
+    z-index: 2;
+  }
+
+  .entity-list-table-row > th:first-child {
+    z-index: 1;
+    transition: background-color var(--motion-transition-stateChange);
+  }
+
   .entity-list-sort-button {
     display: inline-flex;
     max-width: 100%;
@@ -438,6 +454,11 @@ const entityListStyles = `
 
   .entity-list-table-row:hover,
   .entity-list-table-row:focus-within {
+    background: var(--lv-bg-control-hover);
+  }
+
+  .entity-list-table-row:hover > th:first-child,
+  .entity-list-table-row:focus-within > th:first-child {
     background: var(--lv-bg-control-hover);
   }
 
@@ -719,7 +740,7 @@ const entityListStyles = `
     z-index: var(--z-index-dropdown);
     top: calc(100% + var(--base-size-8));
     left: 50%;
-    display: inline-flex;
+    display: none;
     width: max-content;
     max-width: 16rem;
     align-items: center;
@@ -744,6 +765,7 @@ const entityListStyles = `
   .entity-list-popularity:focus .entity-list-hover-tooltip,
   .entity-list-datetime:hover .entity-list-hover-tooltip,
   .entity-list-datetime:focus .entity-list-hover-tooltip {
+    display: inline-flex;
     visibility: visible;
     opacity: 1;
   }

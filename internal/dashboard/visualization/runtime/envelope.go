@@ -371,6 +371,13 @@ func compiledWindowSchema(base ir.VisualizationSpecBase, datasetID string, table
 			fields[index] = field
 			continue
 		}
+		if field, ok := compiledFields[column.Metric]; ok {
+			field.ID = column.Key
+			field.Label = defaultText(column.Label, column.Key)
+			field.Grid = &ir.VisualizationGridFieldMetadata{Group: optional(column.Group), Metric: optional(column.Metric), ColumnValue: optional(column.ColumnValue), Formatting: tableFormatting(column.Formatting)}
+			fields[index] = field
+			continue
+		}
 		role := ir.VisualizationFieldRoleDimension
 		if column.Role == "row_header" && index == 0 {
 			role = ir.VisualizationFieldRoleIdentity

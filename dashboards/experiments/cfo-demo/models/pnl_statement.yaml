@@ -1,0 +1,77 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:pnl_statement
+  name: pnl_statement
+  displayName: P&L Statement Fact
+  description: P&L fact with one row per financial record and statement line.
+spec:
+  fields:
+    pnl_row_id: {datatype: String, label: P&L row ID}
+    finance_date: {datatype: Date, label: Date}
+    segment: {datatype: String, label: Segment key}
+    country: {datatype: String, label: Country key}
+    product: {datatype: String, label: Product key}
+    pnl_group: {datatype: String, label: Statement}
+    line_order: {datatype: Integer, label: Order}
+    actual_amount: {datatype: Decimal, label: Actual}
+    budget_amount: {datatype: Decimal, label: Budget}
+    forecast_amount: {datatype: Decimal, label: Forecast}
+    variance_amount: {datatype: Decimal, label: F/(U)}
+  definition:
+    type: sql
+    sql: |
+      WITH lines AS (
+        SELECT record_id, finance_date, segment, country, product, 10 AS line_order, net_sales AS actual_amount, budget_sales AS budget_amount, forecast_sales AS forecast_amount FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 20, cogs, budget_cogs, forecast_sales - forecast_gross_profit FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 30, gross_profit, budget_gross_profit, forecast_gross_profit FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 40, sales_marketing_expense, budget_sales_marketing_expense, forecast_sales * 0.025 FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 50, operations_expense, budget_operations_expense, forecast_sales * 0.014 FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 60, research_development_expense, budget_research_development_expense, forecast_sales * 0.012 FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 70, general_admin_expense, budget_general_admin_expense, forecast_sales * 0.010 FROM model.financial_performance
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 80, ebitda, budget_ebitda, forecast_ebitda FROM model.financial_performance
+      )
+      SELECT
+        record_id || '-' || CAST(line_order AS VARCHAR) AS pnl_row_id,
+        finance_date,
+        segment,
+        country,
+        product,
+        'Statement' AS pnl_group,
+        line_order,
+        CAST(round(actual_amount, 2) AS DECIMAL(38,2)) AS actual_amount,
+        CAST(round(budget_amount, 2) AS DECIMAL(38,2)) AS budget_amount,
+        CAST(round(forecast_amount, 2) AS DECIMAL(38,2)) AS forecast_amount,
+        CAST(round(CASE
+          WHEN line_order = 20 OR line_order = 40 OR line_order = 50 OR line_order = 60 OR line_order = 70 THEN budget_amount - actual_amount
+          ELSE actual_amount - budget_amount
+        END, 2) AS DECIMAL(38,2)) AS variance_amount
+      FROM lines
+  entities:
+    pnl_row:
+      type: primary
+      fields: [pnl_row_id]
+    finance_date:
+      type: foreign
+      fields: [finance_date]
+    segment:
+      type: foreign
+      fields: [segment]
+    country:
+      type: foreign
+      fields: [country]
+    product:
+      type: foreign
+      fields: [product]
+    pnl_line:
+      type: foreign
+      fields: [line_order]
+  grain:
+    entity: pnl_row
