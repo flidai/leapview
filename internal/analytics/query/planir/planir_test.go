@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestPlanIRAsAcceptsValuesPointersAndRejectsTypedNil(t *testing.T) {
+	want := AggregateMetrics{}
+	if got, ok := as[AggregateMetrics](want); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("as[AggregateMetrics](value) = %#v, %v", got, ok)
+	}
+	if got, ok := as[AggregateMetrics](&want); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("as[AggregateMetrics](pointer) = %#v, %v", got, ok)
+	}
+	var nilAggregate *AggregateMetrics
+	if got, ok := as[AggregateMetrics](nilAggregate); ok || !reflect.DeepEqual(got, AggregateMetrics{}) {
+		t.Fatalf("as[AggregateMetrics](typed nil) = %#v, %v", got, ok)
+	}
+	if _, ok := as[SortLimit](want); ok {
+		t.Fatal("as[SortLimit](aggregate) unexpectedly succeeded")
+	}
+}
+
 func validPlan() *Graph {
 	lineage := []PhysicalLineage{
 		{Logical: "id", Dataset: "orders", Field: "id"},

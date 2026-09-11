@@ -38,15 +38,15 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 	if err := graph.Validate(); err != nil {
 		return Rendered{}, err
 	}
-	if _, ok := asAggregate(graph.Nodes[graph.Output]); !ok {
-		if _, bundle := asBundle(graph.Nodes[graph.Output]); !bundle {
-			if _, stitch := asStitch(graph.Nodes[graph.Output]); !stitch {
-				if _, ratio := asRatio(graph.Nodes[graph.Output]); !ratio {
-					if _, derived := asDerived(graph.Nodes[graph.Output]); !derived {
-						if _, sortLimit := asSortLimit(graph.Nodes[graph.Output]); !sortLimit {
-							if _, spatial := asSpatialEnvelope(graph.Nodes[graph.Output]); !spatial {
-								if _, analytical := asAnalyticalEnvelope(graph.Nodes[graph.Output]); !analytical {
-									if _, totalRows := asTotalRows(graph.Nodes[graph.Output]); !totalRows {
+	if _, ok := as[AggregateMetrics](graph.Nodes[graph.Output]); !ok {
+		if _, bundle := as[BundleBranches](graph.Nodes[graph.Output]); !bundle {
+			if _, stitch := as[StitchAggregates](graph.Nodes[graph.Output]); !stitch {
+				if _, ratio := as[ComputeRatio](graph.Nodes[graph.Output]); !ratio {
+					if _, derived := as[ComputeDerived](graph.Nodes[graph.Output]); !derived {
+						if _, sortLimit := as[SortLimit](graph.Nodes[graph.Output]); !sortLimit {
+							if _, spatial := as[SpatialEnvelope](graph.Nodes[graph.Output]); !spatial {
+								if _, analytical := as[AnalyticalEnvelope](graph.Nodes[graph.Output]); !analytical {
+									if _, totalRows := as[TotalRows](graph.Nodes[graph.Output]); !totalRows {
 										return Rendered{}, fmt.Errorf("duckdb renderer supports AggregateMetrics output and post-aggregate/bundle outputs, got %s", graph.Nodes[graph.Output].Kind())
 									}
 								}
@@ -73,20 +73,20 @@ func RenderDuckDB(graph *Graph) (Rendered, error) {
 		}
 	}
 	output := graph.Nodes[graph.Output]
-	if _, ok := asBundle(output); ok {
+	if _, ok := as[BundleBranches](output); ok {
 		// renderNode already returns the complete UNION statement for an envelope.
 		sql += root
 		return Rendered{SQL: sql, Args: r.args, Columns: columns}, nil
 	}
-	if _, ok := asSortLimit(output); ok {
+	if _, ok := as[SortLimit](output); ok {
 		sql += root
-	} else if _, ok := asTotalRows(output); ok {
+	} else if _, ok := as[TotalRows](output); ok {
 		sql += root
-	} else if _, ok := asSpatialEnvelope(output); ok {
+	} else if _, ok := as[SpatialEnvelope](output); ok {
 		sql += root
-	} else if _, ok := asAnalyticalEnvelope(output); ok {
+	} else if _, ok := as[AnalyticalEnvelope](output); ok {
 		sql += root
-	} else if _, ok := asAggregate(output); ok && len(r.ctes) == 0 {
+	} else if _, ok := as[AggregateMetrics](output); ok && len(r.ctes) == 0 {
 		// Preserve the compact canonical form for a direct aggregate graph.
 		sql += root
 	} else {
@@ -134,7 +134,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 	case ScanDataset, *ScanDataset, SecurityBarrier, *SecurityBarrier, TraverseRelationship, *TraverseRelationship, FilterRows, *FilterRows:
 		return r.renderSource(id)
 	case AggregateMetrics, *AggregateMetrics:
-		n, ok := asAggregate(value)
+		n, ok := as[AggregateMetrics](value)
 		if !ok {
 			return "", nil, fmt.Errorf("aggregate node %q is nil", id)
 		}
@@ -206,13 +206,13 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		r.names[id] = name
 		return name, nodeColumns(node), nil
 	case StitchAggregates, *StitchAggregates:
-		n, ok := asStitch(value)
+		n, ok := as[StitchAggregates](value)
 		if !ok {
 			return "", nil, fmt.Errorf("stitch node %q is nil", id)
 		}
 		return r.renderStitch(id, n)
 	case ComputeRatio, *ComputeRatio:
-		n, ok := asRatio(value)
+		n, ok := as[ComputeRatio](value)
 		if !ok {
 			return "", nil, fmt.Errorf("ratio node %q is nil", id)
 		}
@@ -231,7 +231,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		}
 		return r.renderCompute(id, n.Input, n.Output, expr)
 	case ComputeDerived, *ComputeDerived:
-		n, ok := asDerived(value)
+		n, ok := as[ComputeDerived](value)
 		if !ok {
 			return "", nil, fmt.Errorf("derived node %q is nil", id)
 		}
@@ -251,35 +251,35 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		}
 		return r.renderComputed(id, child, columns, n.Output, expr)
 	case SortLimit, *SortLimit:
-		n, ok := asSortLimit(value)
+		n, ok := as[SortLimit](value)
 		if !ok {
 			return "", nil, fmt.Errorf("sort-limit node %q is nil", id)
 		}
 		return r.renderSortLimit(id, n, "")
 	case TotalRows, *TotalRows:
-		n, ok := asTotalRows(value)
+		n, ok := as[TotalRows](value)
 		if !ok {
 			return "", nil, fmt.Errorf("total-rows node %q is nil", id)
 		}
-		sortNode, ok := asSortLimit(r.graph.Nodes[n.Input])
+		sortNode, ok := as[SortLimit](r.graph.Nodes[n.Input])
 		if !ok {
 			return "", nil, fmt.Errorf("total-rows input %q is not a SortLimit", n.Input)
 		}
 		return r.renderSortLimit(id, sortNode, n.TotalField)
 	case BundleBranches, *BundleBranches:
-		n, ok := asBundle(value)
+		n, ok := as[BundleBranches](value)
 		if !ok {
 			return "", nil, fmt.Errorf("bundle node %q is nil", id)
 		}
 		return r.renderBundle(id, n)
 	case SpatialEnvelope, *SpatialEnvelope:
-		n, ok := asSpatialEnvelope(value)
+		n, ok := as[SpatialEnvelope](value)
 		if !ok {
 			return "", nil, fmt.Errorf("spatial envelope node %q is nil", id)
 		}
 		return r.renderSpatialEnvelope(id, n)
 	case AnalyticalEnvelope, *AnalyticalEnvelope:
-		n, ok := asAnalyticalEnvelope(value)
+		n, ok := as[AnalyticalEnvelope](value)
 		if !ok {
 			return "", nil, fmt.Errorf("analytical envelope node %q is nil", id)
 		}
@@ -293,9 +293,9 @@ func (r *duckRenderer) renderSortLimit(id string, n SortLimit, totalField string
 	var columns []string
 	from := ""
 	var source *sourceContext
-	if _, aggregate := asAggregate(r.graph.Nodes[n.Input]); !aggregate {
-		if _, stitch := asStitch(r.graph.Nodes[n.Input]); !stitch {
-			if _, computed := asComputeSource(r.graph.Nodes[n.Input]); !computed {
+	if _, aggregate := as[AggregateMetrics](r.graph.Nodes[n.Input]); !aggregate {
+		if _, stitch := as[StitchAggregates](r.graph.Nodes[n.Input]); !stitch {
+			if computed := isComputeSource(r.graph.Nodes[n.Input]); !computed {
 				ctx, sourceErr := r.source(n.Input)
 				if sourceErr != nil {
 					return "", nil, sourceErr
@@ -791,7 +791,7 @@ func (r *duckRenderer) renderBundle(id string, n BundleBranches) (string, []stri
 			unionColumns[column] = true
 		}
 		order := []string{}
-		if sortLimit, ok := asSortLimit(r.graph.Nodes[branch.Input]); ok {
+		if sortLimit, ok := as[SortLimit](r.graph.Nodes[branch.Input]); ok {
 			projectionNames := map[string]string{}
 			for _, projection := range sortLimit.Projection {
 				projectionNames[projection.Source] = projection.Name
@@ -895,114 +895,28 @@ func uniqueColumns(values []string) []string {
 	return out
 }
 
-func asAggregate(node Node) (AggregateMetrics, bool) {
-	switch value := node.(type) {
-	case AggregateMetrics:
+// as is the single PlanIR value assertion boundary. Plan construction uses
+// value nodes in most places, while callers may retain pointers during graph
+// assembly; accept both forms and reject typed nil pointers consistently.
+func as[T any](node Node) (T, bool) {
+	var zero T
+	switch value := any(node).(type) {
+	case T:
 		return value, true
-	case *AggregateMetrics:
+	case *T:
 		if value != nil {
 			return *value, true
 		}
 	}
-	return AggregateMetrics{}, false
-}
-func asStitch(node Node) (StitchAggregates, bool) {
-	switch value := node.(type) {
-	case StitchAggregates:
-		return value, true
-	case *StitchAggregates:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return StitchAggregates{}, false
-}
-func asRatio(node Node) (ComputeRatio, bool) {
-	switch value := node.(type) {
-	case ComputeRatio:
-		return value, true
-	case *ComputeRatio:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return ComputeRatio{}, false
-}
-func asDerived(node Node) (ComputeDerived, bool) {
-	switch value := node.(type) {
-	case ComputeDerived:
-		return value, true
-	case *ComputeDerived:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return ComputeDerived{}, false
-}
-func asSortLimit(node Node) (SortLimit, bool) {
-	switch value := node.(type) {
-	case SortLimit:
-		return value, true
-	case *SortLimit:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return SortLimit{}, false
-}
-func asTotalRows(node Node) (TotalRows, bool) {
-	switch value := node.(type) {
-	case TotalRows:
-		return value, true
-	case *TotalRows:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return TotalRows{}, false
-}
-func asComputeSource(node Node) (Node, bool) {
-	switch node.(type) {
-	case ComputeRatio, *ComputeRatio, ComputeDerived, *ComputeDerived:
-		return node, true
-	default:
-		return nil, false
-	}
-}
-func asBundle(node Node) (BundleBranches, bool) {
-	switch value := node.(type) {
-	case BundleBranches:
-		return value, true
-	case *BundleBranches:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return BundleBranches{}, false
+	return zero, false
 }
 
-func asSpatialEnvelope(node Node) (SpatialEnvelope, bool) {
-	switch value := node.(type) {
-	case SpatialEnvelope:
-		return value, true
-	case *SpatialEnvelope:
-		if value != nil {
-			return *value, true
-		}
+func isComputeSource(node Node) bool {
+	if _, ok := as[ComputeRatio](node); ok {
+		return true
 	}
-	return SpatialEnvelope{}, false
-}
-
-func asAnalyticalEnvelope(node Node) (AnalyticalEnvelope, bool) {
-	switch value := node.(type) {
-	case AnalyticalEnvelope:
-		return value, true
-	case *AnalyticalEnvelope:
-		if value != nil {
-			return *value, true
-		}
-	}
-	return AnalyticalEnvelope{}, false
+	_, ok := as[ComputeDerived](node)
+	return ok
 }
 
 func renderPredicate(predicate Predicate, args *[]any) (string, error) {

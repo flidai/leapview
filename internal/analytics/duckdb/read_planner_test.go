@@ -13,6 +13,60 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
+func TestPlanningColumnTypeAcceptsBoundedDuckDBTypes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty defaults", in: "", want: "VARCHAR"},
+		{name: "integer", in: "INTEGER", want: "INTEGER"},
+		{name: "decimal", in: "decimal(18, 2)", want: "DECIMAL(18,2)"},
+		{name: "varchar", in: "varchar(255)", want: "VARCHAR(255)"},
+		{name: "timestamp timezone", in: " timestamp   with time zone ", want: "TIMESTAMP WITH TIME ZONE"},
+		{name: "timestamp precision", in: "TIMESTAMP(6)", want: "TIMESTAMP(6)"},
+		{name: "array", in: "INTEGER[]", want: "INTEGER[]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := planningColumnType(test.in)
+			if err != nil {
+				t.Fatalf("planningColumnType(%q) error = %v", test.in, err)
+			}
+			if got != test.want {
+				t.Fatalf("planningColumnType(%q) = %q, want %q", test.in, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPlanningColumnTypeRejectsUntrustedOrUnboundedTypes(t *testing.T) {
+	for _, input := range []string{
+		"INTEGER; DROP TABLE source.orders",
+		"VARCHAR(0)",
+		"VARCHAR(1000001)",
+		"DECIMAL(39,2)",
+		"DECIMAL(18,19)",
+		"TIMESTAMP WITH TIME ZONE; SELECT 1",
+		"STRUCT(a INTEGER)",
+		"-- comment\nINTEGER",
+	} {
+		t.Run(input, func(t *testing.T) {
+			if got, err := planningColumnType(input); err == nil {
+				t.Fatalf("planningColumnType(%q) = %q, want rejection", input, got)
+			}
+		})
+	}
+}
+
+func TestCreatePlanningTableRejectsUntrustedPhysicalTypeBeforeDDL(t *testing.T) {
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	err := createPlanningTable(context.Background(), db, "source", "orders", []semanticmodel.ColumnSchema{{Name: "id", PhysicalType: "INTEGER); DROP TABLE source.orders;--"}})
+	if err == nil || !strings.Contains(err.Error(), "not an allowed DuckDB type") {
+		t.Fatalf("createPlanningTable() error = %v, want physical type rejection", err)
+	}
+}
+
 func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 	ctx := context.Background()
 	db := openPlanningRuntimeDB(t)

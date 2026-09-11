@@ -621,7 +621,7 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if !ok || input == nil {
 			return fmt.Errorf("input %q is unavailable", n.Input)
 		}
-		sortInput, ok := asSortLimit(input)
+		sortInput, ok := as[SortLimit](input)
 		if !ok {
 			return fmt.Errorf("input %q must be a SortLimit", n.Input)
 		}
@@ -1148,7 +1148,7 @@ func WithTotalRows(graph *Graph, totalField string) (*Graph, error) {
 	if err := graph.Validate(); err != nil {
 		return nil, err
 	}
-	sortNode, ok := asSortLimit(graph.Nodes[graph.Output])
+	sortNode, ok := as[SortLimit](graph.Nodes[graph.Output])
 	if !ok {
 		return nil, fmt.Errorf("total rows requires SortLimit output, got %s", graph.Nodes[graph.Output].Kind())
 	}
