@@ -4,8 +4,12 @@ import { explorationSpecFor } from './data-explorer-spec'
 
 const suggestionSequenceByClientID = new Map<string, number>()
 let fallbackDataExplorerClientID = ''
+let requestSequenceClock = 0
 let suggestionSequenceClock = 0
 let suggestionSequenceClockCounter = 0
+
+const dataExplorerRequestSequenceStorageKey = 'leapview-data-explorer-request-seq'
+const dataExplorerClientStorageKey = 'leapview-data-explorer-client'
 
 export type DataExploreExecutionState = 'idle' | 'pending' | 'running' | 'stopped'
 
@@ -37,17 +41,22 @@ export class DataExplorerClientState {
   private lastGoodDefaultView = 'table'
   private lastGoodSemanticViewsRequestSeq = 0
 
-  clientID(hydrated?: unknown): string {
-    const hydratedID = normalizedClientID(hydrated)
-    if (hydratedID) return hydratedID
-    if (this.generatedClientID) return this.generatedClientID
-    if (fallbackDataExplorerClientID) {
-      this.generatedClientID = fallbackDataExplorerClientID
-      return this.generatedClientID
-    }
-    const storageKey = 'leapview-data-explorer-client-id'
+  constructor(private readonly storage?: Storage) {}
+
+  private sessionStorage(): Storage | undefined {
+    if (this.storage) return this.storage
     try {
-      const stored = normalizedClientID(window.sessionStorage.getItem(storageKey))
+      return typeof window === 'undefined' ? undefined : window.sessionStorage
+    } catch {
+      return undefined
+    }
+  }
+
+  clientID(hydrated?: unknown): string {
+    if (this.generatedClientID) return this.generatedClientID
+    try {
+      const storage = this.sessionStorage()
+      const stored = normalizedClientID(storage?.getItem(dataExplorerClientStorageKey))
       if (stored) {
         this.generatedClientID = stored
         return stored
@@ -55,17 +64,67 @@ export class DataExplorerClientState {
     } catch {
       // Private browsing and embedded documents may deny session storage.
     }
+    const hydratedID = normalizedClientID(hydrated)
+    if (hydratedID) {
+      this.generatedClientID = hydratedID
+      try {
+        this.sessionStorage()?.setItem(dataExplorerClientStorageKey, hydratedID)
+      } catch {
+        // The component-local ID remains stable when session storage is denied.
+      }
+      return hydratedID
+    }
+    if (fallbackDataExplorerClientID) {
+      this.generatedClientID = fallbackDataExplorerClientID
+      return this.generatedClientID
+    }
     const random = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`
     this.generatedClientID = `explorer-${random}`
     fallbackDataExplorerClientID = this.generatedClientID
     try {
-      window.sessionStorage.setItem(storageKey, this.generatedClientID)
+      this.sessionStorage()?.setItem(dataExplorerClientStorageKey, this.generatedClientID)
     } catch {
       // The component-local ID remains stable for this mounted explorer.
     }
     return this.generatedClientID
+  }
+
+  /**
+   * Returns a monotonic semantic command sequence for this tab. A candidate
+   * from the current command is adopted when it is newer; otherwise the
+   * persisted clock advances it. A full-page navigation can restore requestSeq
+   * zero while the process-local lifecycle still remembers a higher request.
+   */
+  nextRequestSequence(clientID?: unknown, candidate?: unknown): number {
+    this.clientID(clientID)
+    let persisted = 0
+    try {
+      persisted = safeSequence(this.sessionStorage()?.getItem(dataExplorerRequestSequenceStorageKey))
+    } catch {
+      // The in-memory clock below still orders requests in this page.
+    }
+    const previous = Math.max(requestSequenceClock, persisted)
+    const requested = safeSequence(candidate)
+    if (requested > previous) {
+      requestSequenceClock = requested
+      try {
+        this.sessionStorage()?.setItem(dataExplorerRequestSequenceStorageKey, String(requested))
+      } catch {
+        // A component/process-local clock remains safe when session storage is denied.
+      }
+      return requested
+    }
+    if (previous >= Number.MAX_SAFE_INTEGER) throw new Error('data explorer request sequence exhausted')
+    const requestSeq = previous + 1
+    requestSequenceClock = requestSeq
+    try {
+      this.sessionStorage()?.setItem(dataExplorerRequestSequenceStorageKey, String(requestSeq))
+    } catch {
+      // A component/process-local clock remains safe when session storage is denied.
+    }
+    return requestSeq
   }
 
   invalidateSuggestions(): number {
@@ -80,8 +139,7 @@ export class DataExplorerClientState {
     const remembered = suggestionSequenceByClientID.get(id) ?? 0
     let persisted = 0
     try {
-      const value = Number(window.sessionStorage.getItem(storageKey))
-      if (Number.isSafeInteger(value) && value >= 0) persisted = value
+      persisted = safeSequence(this.sessionStorage()?.getItem(storageKey))
     } catch {
       // The component-local clock below still orders requests in this page.
     }
@@ -89,7 +147,7 @@ export class DataExplorerClientState {
     this.suggestionRequestSeq = requestSeq
     suggestionSequenceByClientID.set(id, requestSeq)
     try {
-      window.sessionStorage.setItem(storageKey, String(requestSeq))
+      this.sessionStorage()?.setItem(storageKey, String(requestSeq))
     } catch {
       // A timestamp-based token remains safe when session storage is denied.
     }
@@ -198,6 +256,11 @@ export class DataExplorerClientState {
     }
     return { views: currentViews, recommendedView: recommendedView || defaultView || 'table', defaultView: defaultView || 'table' }
   }
+}
+
+function safeSequence(value: unknown): number {
+  const sequence = typeof value === 'number' ? value : Number(value)
+  return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0
 }
 
 function isCacheableSemanticResponse(

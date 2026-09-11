@@ -489,7 +489,7 @@ test('data explorer emits configure, run, stop, and fresh rerun commands', async
       await new Promise((resolve) => setTimeout(resolve, 380))
       const configureAfterRunResponse = commands.at(-1)
       return {
-        configure: { action: configure?.action, nestedAction: configure?.explore?.action },
+        configure: { action: configure?.action, nestedAction: configure?.explore?.action, requestSeq: configure?.explore?.requestSeq },
         hasRunAfterConfigure,
         hasStopAfterConfigure,
         clientIDs: commands.map((command) => command.clientId),
@@ -499,7 +499,10 @@ test('data explorer emits configure, run, stop, and fresh rerun commands', async
         configureAfterRunResponse: { action: configureAfterRunResponse?.action, nestedAction: configureAfterRunResponse?.explore?.action },
       }
     })
-    expect(lifecycle.configure).toEqual({ action: 'configure', nestedAction: 'configure' })
+    expect(lifecycle.configure.action).toBe('configure')
+    expect(lifecycle.configure.nestedAction).toBe('configure')
+    expect(lifecycle.configure.requestSeq).toBeGreaterThan(0)
+    expect(lifecycle.run.requestSeq).toBeGreaterThan(lifecycle.configure.requestSeq)
     expect(lifecycle.hasRunAfterConfigure).toBe(true)
     expect(lifecycle.hasStopAfterConfigure).toBe(false)
     expect(lifecycle.clientIDs.length).toBe(5)
@@ -507,11 +510,10 @@ test('data explorer emits configure, run, stop, and fresh rerun commands', async
     expect(new Set(lifecycle.clientIDs).size).toBe(1)
     expect(lifecycle.run.action).toBe('run')
     expect(lifecycle.run.nestedAction).toBe('run')
-    expect(lifecycle.run.requestSeq).toBe(5)
     expect(lifecycle.run.runId).toBeTruthy()
-    expect(lifecycle.stop).toEqual({ action: 'stop', nestedAction: 'stop', requestSeq: 5, runId: lifecycle.run.runId })
+    expect(lifecycle.stop).toEqual({ action: 'stop', nestedAction: 'stop', requestSeq: lifecycle.run.requestSeq, runId: lifecycle.run.runId })
     expect(lifecycle.rerun.action).toBe('run')
-    expect(lifecycle.rerun.requestSeq).toBe(6)
+    expect(lifecycle.rerun.requestSeq).toBeGreaterThan(lifecycle.stop.requestSeq)
     expect(lifecycle.rerun.runId).not.toBe(lifecycle.run.runId)
     expect(lifecycle.configureAfterRunResponse).toEqual({ action: 'configure', nestedAction: 'configure' })
   } finally {

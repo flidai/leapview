@@ -3,6 +3,16 @@ import type { DataExploreResultSignal, DataExploreStatusSignal } from '../../gen
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DataExplorerClientState } from './data-explorer-client'
 import { emptyDataExploreCommand } from './data-explorer-spec'
+import { headers } from '../shared/command'
+
+function memoryStorage(): Storage {
+  const values = new Map<string, string>()
+  return {
+    get length() { return values.size }, clear: () => values.clear(),
+    getItem: (key) => values.get(key) ?? null, key: (index) => [...values.keys()][index] ?? null,
+    removeItem: (key) => values.delete(key), setItem: (key, value) => values.set(key, value),
+  }
+}
 
 const command = { ...emptyDataExploreCommand, requestSeq: 1, spec: { ...emptyDataExploreCommand.spec, modelId: 'sales', datasetId: 'orders' } }
 const successfulStatus: DataExploreStatusSignal = { loading: false, requestSeq: 1, stale: false, state: 'success' }
@@ -67,4 +77,88 @@ test('keeps result and view caches aligned after a higher-sequence stale respons
   )
   expect(failed.views.table).toBe(envelope)
   expect(state.semanticResult({ ...goodCommand, requestSeq: 12 }, result(12, [{ status: 'failed' }]), { loading: false, requestSeq: 12, stale: false, state: 'error', error: 'query failed' }, context).rows).toEqual([{ status: 'good' }])
+})
+
+test('preserves semantic sequence across same-tab navigation before Analyze configure', () => {
+  const storage = memoryStorage()
+  const clientID = 'same-tab-navigation'
+  const firstPage = new DataExplorerClientState(storage)
+  const retryRequestSeq = firstPage.nextRequestSequence(clientID, 0)
+  const resetRequestSeq = firstPage.nextRequestSequence(clientID, retryRequestSeq)
+  expect(resetRequestSeq).toBeGreaterThan(retryRequestSeq)
+
+  // A full page navigation remounts the component and hydrates the URL with a
+  // fresh command baseline, while sessionStorage retains the tab identity.
+  const navigatedPage = new DataExplorerClientState(storage)
+  const analyzeConfigureRequestSeq = navigatedPage.nextRequestSequence(clientID, 0)
+  expect(analyzeConfigureRequestSeq).toBeGreaterThan(resetRequestSeq)
+  expect(analyzeConfigureRequestSeq).not.toBe(0)
+})
+
+test('adopts an explicit command sequence without double incrementing it', () => {
+  const storage = memoryStorage()
+  const state = new DataExplorerClientState(storage)
+  const explicitRequestSeq = state.nextRequestSequence('explicit-sequence', 1000)
+
+  expect(explicitRequestSeq).toBe(1000)
+  expect(state.nextRequestSequence('explicit-sequence', 1001)).toBe(1001)
+  expect(state.nextRequestSequence('explicit-sequence', 0)).toBe(1002)
+})
+
+test('keeps suggestion sequencing independent from semantic command storage', () => {
+  const storage = memoryStorage()
+  const clientID = 'independent-lanes'
+  const state = new DataExplorerClientState(storage)
+  const semanticRequestSeq = state.nextRequestSequence(clientID, 4)
+  const suggestionRequestSeq = state.nextSuggestionSequence(clientID)
+
+  expect(suggestionRequestSeq).toBeGreaterThan(0)
+  expect(storage.getItem('leapview-data-explorer-request-seq')).toBe(String(semanticRequestSeq))
+  expect(state.nextRequestSequence(clientID, 0)).toBe(semanticRequestSeq + 1)
+})
+
+test('ignores malformed persisted semantic sequence values', () => {
+  const storage = memoryStorage()
+  const clientID = 'malformed-sequence'
+  storage.setItem('leapview-data-explorer-request-seq', 'not-a-sequence')
+  const state = new DataExplorerClientState(storage)
+
+  expect(state.nextRequestSequence(clientID, 0)).toBeGreaterThan(0)
+})
+
+test('keeps hydrated command and request-header identities aligned', () => {
+  const storage = memoryStorage()
+  const clientID = 'pre-existing-tab'
+  storage.setItem('leapview-data-explorer-client', clientID)
+  const target = globalThis as typeof globalThis & { sessionStorage?: Storage }
+  const previous = Object.getOwnPropertyDescriptor(target, 'sessionStorage')
+  Object.defineProperty(target, 'sessionStorage', { configurable: true, get: () => storage })
+  try {
+    const state = new DataExplorerClientState(storage)
+    expect(state.clientID()).toBe(clientID)
+    expect(headers()['X-LeapView-Data-Explorer-Client']).toBe(clientID)
+  } finally {
+    if (previous) Object.defineProperty(target, 'sessionStorage', previous)
+    else delete target.sessionStorage
+  }
+})
+
+test('falls back to the in-memory semantic clock when storage is unavailable', () => {
+  const storage = {
+    getItem: () => { throw new Error('storage unavailable') },
+    setItem: () => { throw new Error('storage unavailable') },
+  } as unknown as Storage
+  const state = new DataExplorerClientState(storage)
+  const first = state.nextRequestSequence('storage-failure', 2000)
+
+  expect(first).toBe(2000)
+  expect(state.nextRequestSequence('storage-failure', 0)).toBe(2001)
+})
+
+test('fails closed rather than repeating an exhausted safe sequence', () => {
+  const storage = memoryStorage()
+  storage.setItem('leapview-data-explorer-request-seq', String(Number.MAX_SAFE_INTEGER))
+  const state = new DataExplorerClientState(storage)
+
+  expect(() => state.nextRequestSequence('exhausted-sequence', 0)).toThrow('request sequence exhausted')
 })

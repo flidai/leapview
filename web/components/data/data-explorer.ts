@@ -1981,6 +1981,26 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       explore: current.explore ?? this.dataExplorer?.explore?.command,
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
     }, { ...partial, clientId })
+    // Semantic command sequences are durable for the tab, not for this
+    // component instance. A navigation can hydrate requestSeq back to zero
+    // while the server lifecycle still remembers a higher request. Suggestions
+    // intentionally stay on their independent lane and must not advance this
+    // sequence or cancel a semantic request. Stop keeps the addressed run's
+    // sequence so its server-side tombstone can acquire the response lease.
+    const suggestionAction = partial.explore?.action ?? partial.action
+    const suggestionCommand = partial.explore?.filterSuggestions !== undefined && suggestionAction === 'configure'
+    const commandAction = next.explore?.action ?? next.action
+    const stopCommand = commandAction === 'stop'
+    if (!suggestionCommand && !stopCommand) {
+      const hydratedSequence = Math.max(
+        current.requestSeq ?? 0,
+        next.requestSeq ?? 0,
+        next.explore?.requestSeq ?? 0,
+      )
+      const requestSeq = this.clientState.nextRequestSequence(clientId, hydratedSequence)
+      next.requestSeq = requestSeq
+      if (next.explore) next.explore.requestSeq = requestSeq
+    }
     // Any semantic draft/run/stop command supersedes in-flight suggestions.
     // This is a browser-side freshness guard for the interval before the
     // corresponding semantic request reaches the server.
