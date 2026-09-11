@@ -152,6 +152,85 @@ func TestDurablePromptRetryAfterActivationResponseLossConverges(t *testing.T) {
 	}
 }
 
+func TestDurablePromptRetryWhileWorkerResumesPreservesCompletionCAS(t *testing.T) {
+	ctx := context.Background()
+	store, base := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "active-retry@example.com")
+	conversation, err := base.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := jobsqlite.NewRepository(store.SQLDB())
+	repo := NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	workflow := func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
+		return jobs.WorkflowIntent{
+			Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)},
+			Job:   jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)},
+		}
+	}
+	unusedModel := agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{}, errors.New("unused")
+	})
+	input := agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same request", RequestID: "active-retry-key"}
+	first := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(unusedModel))
+	first.SetPromptWorkflow(workflow)
+	queued, err := first.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
+	if err != nil {
+		t.Fatalf("initial durable prompt: %v", err)
+	}
+	prepared, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := queue.Get(ctx, "agent:"+queued.RunID+":run")
+	if err != nil {
+		t.Fatalf("get durable job: %v", err)
+	}
+	job, ok, err := queue.ClaimByID(ctx, job.ID, jobplatform.WorkloadClassBackground, "worker-a", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim durable job: %#v ok=%v err=%v", job, ok, err)
+	}
+
+	worker := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "completed", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	worker.SetPromptWorkflow(workflow)
+	resumed, err := worker.ResumePrompt(ctx, input.Scope, conversation.ID, queued.RunID, "")
+	if err != nil {
+		t.Fatalf("resume active worker: %v", err)
+	}
+	resumed.SetDurableClaim(job.ID, job.Fence())
+
+	retryService := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(unusedModel))
+	retryService.SetPromptWorkflow(workflow)
+	retry, err := retryService.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if retry.RunID != queued.RunID {
+		t.Fatalf("retry run = %q, want %q", retry.RunID, queued.RunID)
+	}
+	afterRetry, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRetry.TranscriptRevision != prepared.TranscriptRevision || afterRetry.TranscriptJSON != prepared.TranscriptJSON {
+		t.Fatalf("retry changed prepared transcript: before=%d/%s after=%d/%s", prepared.TranscriptRevision, prepared.TranscriptJSON, afterRetry.TranscriptRevision, afterRetry.TranscriptJSON)
+	}
+
+	result, err := resumed.Complete(ctx, nil)
+	if err != nil {
+		t.Fatalf("complete resumed worker: %v", err)
+	}
+	if result.RunID != queued.RunID || result.Content != "completed" {
+		t.Fatalf("completed result = %#v, want run %q and content %q", result, queued.RunID, "completed")
+	}
+	run, err := repo.GetRun(ctx, owner.ID, conversation.ID, queued.RunID)
+	if err != nil || run.Status != agent.RunStatusCompleted {
+		t.Fatalf("run after completion = %#v err=%v", run, err)
+	}
+}
+
 func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 	ctx := context.Background()
 	store, base := openAgentRepo(t, ctx)

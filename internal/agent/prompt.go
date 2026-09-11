@@ -206,9 +206,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 						}
 					}
 				}
-				transcriptRevision, persistErr := s.persistTranscript(ctx, input, transcript, conversation.TranscriptRevision)
-				if persistErr != nil {
-					return nil, persistErr
+				transcriptRevision := conversation.TranscriptRevision
+				// A running run is durable evidence that preparation, including
+				// its transcript CAS, already committed. Rewriting the identical
+				// snapshot here would advance the revision and invalidate an
+				// active worker's completion CAS. Preparing runs still need the
+				// repair write before they can be activated.
+				if existing.Status == RunStatusPreparing {
+					var persistErr error
+					transcriptRevision, persistErr = s.persistTranscript(ctx, input, transcript, conversation.TranscriptRevision)
+					if persistErr != nil {
+						return nil, persistErr
+					}
 				}
 				if existing.Status == RunStatusPreparing {
 					unit, ok := s.repo.(RunWorkflowUnitOfWork)
