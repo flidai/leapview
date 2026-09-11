@@ -251,7 +251,7 @@ class LeapViewChatList extends LitElement {
       place-content: center;
       justify-items: center;
       gap: var(--base-size-8);
-      padding: var(--base-size-32, 32px) var(--base-size-16);
+      padding: var(--base-size-32) var(--base-size-16);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
       text-align: center;
@@ -259,8 +259,8 @@ class LeapViewChatList extends LitElement {
 
     .empty-icon {
       display: grid;
-      width: var(--base-size-40, 40px);
-      height: var(--base-size-40, 40px);
+      width: var(--base-size-40);
+      height: var(--base-size-40);
       place-items: center;
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -269,8 +269,8 @@ class LeapViewChatList extends LitElement {
     }
 
     .empty-icon svg {
-      width: var(--base-size-20, 20px);
-      height: var(--base-size-20, 20px);
+      width: var(--base-size-20);
+      height: var(--base-size-20);
     }
 
     .empty-title {

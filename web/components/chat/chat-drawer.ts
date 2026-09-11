@@ -398,7 +398,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	}
 
   private handleKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || !this.open) return
+    if (event.key !== 'Escape' || !this.open || event.defaultPrevented) return
     event.preventDefault()
     event.stopPropagation()
     this.closeDrawer()

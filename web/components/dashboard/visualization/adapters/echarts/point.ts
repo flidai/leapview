@@ -19,12 +19,6 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
     ? echartsLabelPolicy(envelope, spec.label.dataset, spec.presentation.labelPolicy, labelFormatter(envelope, spec.label, context), context)
     : { label: { show: false }, labelLayout: { hideOverlap: true } }
   const rows = dataset?.rows ?? []
-  if (rows.length > 18 && spec.presentation.labelPolicy.density === 'automatic' && spec.label) {
-    const pointLabel = labels.label as EChartsTranslation
-    const formatter = pointLabel.formatter as (params: { dataIndex?: number; value?: unknown[] }) => unknown
-    pointLabel.formatter = (params: { dataIndex?: number; value?: unknown[] }) =>
-      isPriorityDatum(envelope, spec.label!.dataset, params.dataIndex, spec.presentation.labelPolicy) ? formatter(params) : ''
-  }
   const baseLabelLayout = labels.labelLayout
   const labelLayout = typeof baseLabelLayout === 'function'
     ? (params: { dataIndex?: number }) => ({ ...baseLabelLayout(params), moveOverlap: 'shiftY' })
@@ -36,9 +30,9 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
   const markFill = pointMarkFill(envelope, context)
   const series = categoricalRef
     ? categories.length > 0
-      ? categories.map((category) => pointCategorySeries(envelope, spec, context, categoryColors, category, positionedLabels, markFill))
-      : [pointSeries(envelope, spec, positionedLabels, markFill)]
-    : [pointSeries(envelope, spec, positionedLabels, markFill)]
+      ? categories.map((category) => pointCategorySeries(envelope, spec, context, categoryColors, category, positionedLabels, markFill, rows.length))
+      : [pointSeries(envelope, spec, pointLabelsForSeries(envelope, spec, positionedLabels, rows.length), markFill)]
+    : [pointSeries(envelope, spec, pointLabelsForSeries(envelope, spec, positionedLabels, rows.length), markFill)]
   const option: EChartsTranslation = {
     grid: {
       left: 12 + (spec.presentation.legend === 'left' && spec.presentation.legendTitle !== undefined ? 72 : 0),
@@ -117,9 +111,11 @@ function pointCategorySeries(
   category: PointCategory,
   labels: EChartsTranslation,
   markFill: PointMarkFill | undefined,
+  rowCount: number,
 ): EChartsTranslation {
   const ref = spec.color!
   const datasetID = `dataset:point:${encodeURIComponent(category.key)}`
+  const seriesLabels = pointLabelsForSeries(envelope, spec, labels, rowCount, category.rowIndexes)
   return {
     id: `series:primary:point:${encodeURIComponent(category.key)}`,
     name: category.name,
@@ -132,8 +128,8 @@ function pointCategorySeries(
       color: pointCategoryColor(envelope, ref, context, categoryColors, category.value, markFill),
     },
     ...pointMarkSymbols(markFill),
-    ...labels,
-    label: { ...labels.label, position: 'top' },
+    ...seriesLabels,
+    label: { ...seriesLabels.label, position: 'top' },
     large: largePointMode(envelope, spec, markFill),
     largeThreshold: spec.presentation.largeThreshold,
     progressiveThreshold: spec.presentation.largeThreshold,
@@ -141,6 +137,33 @@ function pointCategorySeries(
     // the source row tuple after ECharts applies the category transform.
     __lv_source_row_indices: category.rowIndexes,
   }
+}
+
+type PointLabelParameters = { dataIndex?: number; value?: unknown[] }
+
+function pointLabelsForSeries(
+  envelope: VisualizationEnvelope,
+  spec: PointSpec,
+  labels: EChartsTranslation,
+  rowCount: number,
+  sourceRowIndexes?: readonly number[],
+): EChartsTranslation {
+  const label = { ...labels.label }
+  const sourceRowIndex = (dataIndex: number | undefined): number | undefined => {
+    if (!sourceRowIndexes) return dataIndex
+    return Number.isInteger(dataIndex) && dataIndex! >= 0 ? sourceRowIndexes[dataIndex!] : undefined
+  }
+  const labelLayout = sourceRowIndexes && typeof labels.labelLayout === 'function'
+    ? (params: { dataIndex?: number }) => labels.labelLayout({ ...params, dataIndex: sourceRowIndex(params.dataIndex) })
+    : labels.labelLayout
+  if (spec.label && spec.presentation.labelPolicy.density === 'automatic') {
+    if (rowCount > 18) {
+      const formatter = label.formatter as (params: PointLabelParameters) => unknown
+      label.formatter = (params: PointLabelParameters) =>
+        isPriorityDatum(envelope, spec.label!.dataset, sourceRowIndex(params.dataIndex), spec.presentation.labelPolicy) ? formatter(params) : ''
+    }
+  }
+  return { ...labels, label, labelLayout }
 }
 
 function pointCategoryDatasets(

@@ -117,7 +117,9 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       common.top = '8%'
       common.bottom = '8%'
     }
-    if (countHierarchyLeaves(data) > 16) {
+    const automaticCrowding = spec.presentation.labelPolicy.density === 'automatic'
+      && countVisibleHierarchyLeaves(data, spec.presentation.initialDepth) > 16
+    if (automaticCrowding) {
       const topLevelLabel = { ...(common.label ?? {}), show: common.label?.show !== false }
       common.label = { ...(common.label ?? {}), show: false }
       for (const node of data) node.label = topLevelLabel
@@ -158,6 +160,14 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     }
   }
   return { legend: legend(spec.presentation.legend, context), series: [common] }
+}
+
+function countVisibleHierarchyLeaves(nodes: HierarchyNode[], initialDepth: number | undefined, depth = 0): number {
+  const maxDepth = initialDepth === undefined ? 2 : initialDepth
+  if (maxDepth < 0) return countHierarchyLeaves(nodes)
+  return nodes.reduce((count, node) => count + (node.children?.length && depth < maxDepth
+    ? countVisibleHierarchyLeaves(node.children, maxDepth, depth + 1)
+    : 1), 0)
 }
 
 function countHierarchyLeaves(nodes: HierarchyNode[]): number {
