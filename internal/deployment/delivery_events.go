@@ -102,15 +102,6 @@ func validateDeliveryEventDetails(details map[string]any) error {
 	return nil
 }
 
-func DeliveryEventsEqual(left, right DeliveryEvent) bool {
-	if left.ID != right.ID || left.TargetID != right.TargetID || left.ProjectID != right.ProjectID || left.Environment != right.Environment || left.ActorID != right.ActorID || left.EventKind != right.EventKind || left.ObjectKind != right.ObjectKind || left.ObjectID != right.ObjectID || left.RequestDigest != right.RequestDigest || left.PlanDigest != right.PlanDigest || left.ResultDigest != right.ResultDigest || left.Outcome != right.Outcome || !left.CreatedAt.Equal(right.CreatedAt) {
-		return false
-	}
-	leftDetails, leftErr := json.Marshal(left.Details)
-	rightDetails, rightErr := json.Marshal(right.Details)
-	return leftErr == nil && rightErr == nil && string(leftDetails) == string(rightDetails)
-}
-
 var deliveryEventKinds = map[string]bool{
 	"plan_created": true, "plan_expired": true, "build_started": true, "build_transitioned": true, "build_artifact_bound": true,
 	"candidate_qualified": true, "candidate_sealed": true, "candidate_retired": true,
