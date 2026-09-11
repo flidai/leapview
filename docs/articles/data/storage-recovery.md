@@ -1891,3 +1891,88 @@ remain required before production enablement. Admission, publication, startup,
 physical restore, PITR and RPO/RTO measurement are outside this foundation.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Manifest v2 capture and signing qualification
+
+This bounded qualification composes durable provider observations, a complete
+managed closure, a source anchor, the canonical ManagedObservationManifest v2,
+a detached signer receipt, and the existing RecoverySet v3 persistence path.
+It qualifies evidence assembly and verification only; it does not change the
+existing admission, publication, startup, restore, or recovery contracts.
+
+### Evidence flow
+
+Durable managed-data observations begin with a successful S3 write response.
+The exact nonempty VersionID, profile identity, object key, size, SHA-256, and
+UTC capture time are persisted in the managed-data PostgreSQL owner. Capture
+reads the authoritative revision projection and resolves each file through an
+explicit provider-profile binding. It then reads the stored observation and
+replays that exact provider version, checking profile/account/endpoint/region/
+bucket/prefix, returned VersionID, size, and fetched-byte digest. Latest-object
+lookup, ETags, and post-write discovery cannot supply evidence.
+
+The qualification source is intentionally instance-global: it captures every
+ready managed revision in the control database under a PostgreSQL lock. An
+independent policy resolver must authorize that complete provider-free
+revision membership, its closure digest, the recovery-set identity, provider
+profiles, authority registry, trust generation, worker fence, and deadline.
+This prevents the capture worker from selecting its own scope or trust roots.
+
+The verified revision/path membership is sorted into the provider-free managed
+closure and its domain-separated digest. The capture service combines that
+digest and the independently configured provider-profile digest with the
+normalized existing recovery frontier to build and hash the source anchor.
+The anchor digest is necessarily bound after PostgreSQL supplies the capture
+restore point and WAL position; the resolver authorizes membership before that
+capture rather than attempting to predict those source-owned values.
+Manifest v2 then emits strict canonical bytes containing the set and anchor
+identities, capture interval, closure, complete revision/file membership, and
+the exact provider observations. Its capture record commits to the receipt
+core digest. The final manifest digest is computed only after that core is
+fixed; a detached signer receives the domain-separated receipt payload and
+returns the Ed25519 signature. A trusted clock supplies verification time, and
+the service re-resolves the independently owned policy immediately before
+signing; a changed/revoked generation, fence, deadline, scope, profile, or key
+fails closed. The authority registry checks authority/key identity, algorithm,
+validity interval, revocation, and allowed provider-profile digest before the
+evidence graph is accepted. Private keys remain behind the signer callback and
+are not stored in capture results or recovery evidence.
+
+The existing RecoverySet v3 persistence adapter fetches every canonical
+payload by its configured exact-version locator, repeats canonical, domain,
+profile, closure, anchor, manifest, receipt, and authority checks, and then
+atomically stores the immutable evidence graph and prepared set association in
+PostgreSQL. The transaction performs no provider I/O. A separate connection
+can read back the same exact payloads and reverify them under independently
+resolved trust.
+
+This slice follows the current `CreateSet3` bundle, where the capture core is
+embedded in the detached receipt and committed by its domain digest. It does
+not add the separately located capture-core transport entry described by the
+frozen transport design; that representation must be reconciled explicitly
+before production evidence upload is enabled.
+
+### Deterministic and failure behavior
+
+Identical already-captured source facts and construction inputs produce
+identical canonical documents and frontier commitment; collection ordering is
+normalized without mutating the source. Exact retries of those saved documents
+through `CreateSet3` are idempotent. A fresh PostgreSQL capture creates a new
+restore point and must use a new set/capture identity; it is not a retry.
+Missing observations,
+incomplete closure, profile or namespace substitution, wrong or unavailable
+versions, size/digest mismatches, stale capture boundaries, malformed
+canonical bytes, invalid or revoked authority, signer errors, and signature or
+binding mismatches fail closed with bounded categories. No latest fallback,
+partial success, conflicting replacement, or dangling RecoverySet v3
+association is accepted.
+
+### Limitations
+
+This qualification does not establish provider retention, restart durability of
+the source system, PostgreSQL restore or PITR, physical provider recovery,
+production signer/key deployment, or RPO/RTO. It also does not grant admission,
+startup, publication, or activation authority. Standalone capture-core payload
+transport remains unresolved as noted above. Signed evidence does not prove physical disaster recovery.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
