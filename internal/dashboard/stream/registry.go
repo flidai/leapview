@@ -53,10 +53,6 @@ func NewRegistryWithTTL(orphanTTL time.Duration) *Registry {
 	return NewRegistryWithLimits(orphanTTL, DefaultRegistryMaxEntries)
 }
 
-func NewRegistryWithMaxEntries(maxEntries int) *Registry {
-	return NewRegistryWithLimits(5*time.Minute, maxEntries)
-}
-
 // NewRegistryWithLimits creates a registry with a bounded number of stream
 // entries. Ensure evicts the oldest orphan deterministically before rejecting
 // a request when all retained entries are active.

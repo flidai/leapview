@@ -680,12 +680,6 @@ func (r *Repository) CompleteUpload(ctx context.Context, in manageddata.Complete
 	}
 	return completeUploadTx(ctx, db, in)
 }
-func (r *Repository) CompleteUploadTx(ctx context.Context, tx Tx, in manageddata.CompleteUploadInput) (manageddata.Revision, error) {
-	if tx == nil {
-		return manageddata.Revision{}, ErrInvalid
-	}
-	return completeUploadTx(ctx, tx, in)
-}
 func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploadInput) (manageddata.Revision, error) {
 	if in.SessionID == "" {
 		return manageddata.Revision{}, ErrInvalid

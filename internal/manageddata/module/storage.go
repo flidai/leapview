@@ -333,8 +333,6 @@ func (m *Module) HasFinalizeJobs() bool { return m.finalizer != nil }
 
 func (m *Module) SupportsS3Multipart() bool { return m != nil && m.multipart != nil }
 
-func (m *Module) Materializer() manageddata.RevisionMaterializer { return m.materializer }
-
 type BindingValidation interface {
 	AfterArtifactValidation(context.Context, servingstate.State, servingstate.Validation) error
 	ValidateServingStatePins(context.Context, projectgraph.ServingIdentity, map[projectgraph.ResourceID]string) error
@@ -583,13 +581,6 @@ func newManagedDataS3Store(ctx context.Context, cfg ProductConfig, recorders ...
 		return nil, err
 	}
 	return newS3BlobStoreWithObservation(ctx, cfg, cfg.S3Prefix, profile, observationRecorder)
-}
-
-// NewS3BlobStore constructs a content-addressed store that shares the managed
-// data S3 connection settings but uses an independent key prefix. Independent
-// prefixes keep each capability's reachability and garbage collection isolated.
-func NewS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (storage.BlobStore, error) {
-	return newS3BlobStore(ctx, cfg, prefix)
 }
 
 func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*manageds3.Store, error) {

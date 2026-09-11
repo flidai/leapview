@@ -143,16 +143,8 @@ func (c Config) AzureConfigured() bool {
 	return c.AzureClientID != "" && c.AzureSecret != "" && c.AzureCallbackURL != ""
 }
 
-func (c Config) AzurePartiallyConfigured() bool {
-	return c.AzureClientID != "" || c.AzureSecret != "" || c.AzureCallbackURL != "" || c.AzureTenant != ""
-}
-
 func (c Config) OIDCConfigured() bool {
 	return c.OIDCIssuerURL != "" && c.OIDCClientID != "" && c.OIDCSecret != "" && c.OIDCCallbackURL != ""
-}
-
-func (c Config) OIDCPartiallyConfigured() bool {
-	return c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCSecret != "" || c.OIDCCallbackURL != "" || c.OIDCScopes != ""
 }
 
 func (c Config) OIDCScopesList() []string {

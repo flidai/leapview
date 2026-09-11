@@ -375,13 +375,6 @@ type RetentionRoot struct {
 	CreatedAt, UpdatedAt                       time.Time
 }
 
-type ReconciliationEvidence struct {
-	EvidenceID                                               int64
-	ProjectID, Environment, ObjectKey, ObservedState, Action string
-	Evidence                                                 json.RawMessage
-	ObservedAt                                               time.Time
-}
-
 func boundedJSON(v json.RawMessage, max int) ([]byte, error) {
 	if len(v) == 0 {
 		v = []byte(`{}`)
@@ -514,24 +507,4 @@ func (r *Repository) TransitionRetentionRoot(ctx context.Context, id, target str
 		return RetentionRoot{}, ErrConflict
 	}
 	return r.RetentionRootByID(ctx, id)
-}
-
-func (r *Repository) RecordReconciliationEvidence(ctx context.Context, evidence ReconciliationEvidence) (ReconciliationEvidence, error) {
-	db, err := requireDB(r)
-	if err != nil {
-		return ReconciliationEvidence{}, err
-	}
-	if evidence.ProjectID == "" || evidence.Environment == "" || evidence.ObjectKey == "" || evidence.Action == "" {
-		return ReconciliationEvidence{}, ErrInvalid
-	}
-	b, err := boundedObject(evidence.Evidence, 65536)
-	if err != nil {
-		return ReconciliationEvidence{}, err
-	}
-	row, err := manageddb.New(db).InsertReconciliationEvidence(ctx, manageddb.InsertReconciliationEvidenceParams{ProjectID: evidence.ProjectID, Environment: evidence.Environment, ObjectKey: evidence.ObjectKey, ObservedState: evidence.ObservedState, Action: evidence.Action, Evidence: b})
-	if err != nil {
-		return evidence, err
-	}
-	evidence.EvidenceID, evidence.ProjectID, evidence.Environment, evidence.ObjectKey, evidence.ObservedState, evidence.Action, evidence.Evidence, evidence.ObservedAt = row.EvidenceID, row.ProjectID, row.Environment, row.ObjectKey, row.ObservedState, row.Action, append([]byte(nil), row.Evidence...), row.ObservedAt.Time
-	return evidence, nil
 }

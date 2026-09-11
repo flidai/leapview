@@ -60,12 +60,6 @@ func (m *Maintenance) PruneUploadSessions(ctx context.Context, before time.Time,
 	return m.pruneUploadSessions(ctx, mDB(m), before, limit)
 }
 
-// PruneUploadSessionsTx executes one bounded batch on a caller-owned
-// transaction and does not commit or roll back it.
-func (m *Maintenance) PruneUploadSessionsTx(ctx context.Context, tx Tx, before time.Time, limit int) (int64, error) {
-	return m.pruneUploadSessions(ctx, tx, before, limit)
-}
-
 func (m *Maintenance) pruneUploadSessions(ctx context.Context, db MaintenanceDBTX, before time.Time, limit int) (int64, error) {
 	if m == nil || db == nil {
 		return 0, ErrInvalid

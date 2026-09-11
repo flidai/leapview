@@ -119,11 +119,6 @@ type DashboardComponentResponse struct {
 	FilterID    string                       `json:"filterId,omitempty"`
 }
 
-type DashboardComponentListResponse struct {
-	Items []DashboardComponentResponse `json:"items"`
-	Page  PageInfo                     `json:"page"`
-}
-
 type DashboardPageResponse struct {
 	ID          string                       `json:"id"`
 	Title       string                       `json:"title"`
