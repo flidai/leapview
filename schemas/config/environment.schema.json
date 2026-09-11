@@ -407,35 +407,16 @@
       "x-error-message": "production serve requires OIDC auth env vars, Azure auth env vars, LEAPVIEW_LOCAL_AUTH, or LEAPVIEW_API_TOKEN_ONLY_AUTH"
     },
     {
-      "description": "Production requires a CSRF key with at least 32 characters.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_PRODUCTION": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_PRODUCTION"
-        ]
+      "description": "A CSRF key must contain at least 32 characters.",
+      "properties": {
+        "LEAPVIEW_CSRF_KEY": {
+          "minLength": 32
+        }
       },
-      "then": {
-        "properties": {
-          "LEAPVIEW_CSRF_KEY": {
-            "minLength": 32
-          }
-        },
-        "required": [
-          "LEAPVIEW_CSRF_KEY"
-        ]
-      },
-      "x-error-message": "production serve requires LEAPVIEW_CSRF_KEY with at least 32 characters"
+      "required": [
+        "LEAPVIEW_CSRF_KEY"
+      ],
+      "x-error-message": "serve requires LEAPVIEW_CSRF_KEY with at least 32 characters"
     },
     {
       "description": "Production requires a metrics bearer token with at least 32 characters.",
@@ -2316,7 +2297,7 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_CSRF_KEY": {
-      "description": "Key used for CSRF protection and OAuth state cookies; production requires at least 32 characters.",
+      "description": "Key used for CSRF protection and OAuth state cookies; requires at least 32 characters.",
       "type": "string",
       "writeOnly": true,
       "x-lifecycle": "supported",

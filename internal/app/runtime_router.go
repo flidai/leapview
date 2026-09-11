@@ -1756,7 +1756,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
@@ -1795,7 +1795,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if len(resources) == 0 {
 				// Unknown/new resources require an explicit target-owned role;
 				// a grant on an unrelated graph object must never widen scope.
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
 		},

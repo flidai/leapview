@@ -136,7 +136,16 @@ type OIDCProviderConfig struct {
 	Scopes       []string
 }
 
-func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
+var ErrInvalidCSRFKey = errors.New("CSRF key must contain at least 32 bytes")
+
+// NewAuth constructs the authentication authority only with an explicitly
+// configured CSRF key. Authentication state must never be made usable with a
+// deterministic fallback derived from an empty or short configuration value.
+func NewAuth(repo access.Repository, cfg AuthConfig) (*Auth, error) {
+	csrfSecret, err := csrfKey(cfg.CSRFKey)
+	if err != nil {
+		return nil, err
+	}
 	auth := &Auth{
 		repo:             repo,
 		sessions:         repo,
@@ -167,7 +176,7 @@ func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
 		auth.configured = registry.Configured()
 	}
 	auth.csrf = csrf.Protect(
-		csrfKey(cfg.CSRFKey),
+		csrfSecret,
 		csrf.CookieName(auth.csrfCookie),
 		csrf.Path("/"),
 		csrf.Secure(cfg.CookieSecure),
@@ -180,9 +189,9 @@ func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
 			http.Error(w, csrf.FailureReason(r).Error(), http.StatusForbidden)
 		})),
 	)
-	auth.stateKey = derivedSecret(cfg.CSRFKey, "oidc-state")
+	auth.stateKey = derivedSecret(csrfSecret, "oidc-state")
 	auth.enabled = true
-	return auth
+	return auth, nil
 }
 
 func (a *Auth) acceptsPublicBearer(r *http.Request) bool {
@@ -769,14 +778,12 @@ func bearerToken(r *http.Request) string {
 	return fields[1]
 }
 
-func csrfKey(value string) []byte {
-	if len(value) >= 32 {
-		return []byte(value)[:32]
+func csrfKey(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if len([]byte(value)) < 32 {
+		return nil, ErrInvalidCSRFKey
 	}
-	seed := access.PrincipalIDForEmail("csrf:" + value)
-	key := make([]byte, 32)
-	copy(key, []byte(seed))
-	return key
+	return []byte(value)[:32], nil
 }
 
 func (a *Auth) oidcStateCookie(state, nonce string) *http.Cookie {
@@ -932,9 +939,8 @@ func (a *Auth) decodeOIDCState(value string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-func derivedSecret(secret, purpose string) []byte {
-	base := csrfKey(secret)
-	sum := sha256.Sum256(append([]byte("leapview:"+purpose+":"), base...))
+func derivedSecret(secret []byte, purpose string) []byte {
+	sum := sha256.Sum256(append([]byte("leapview:"+purpose+":"), secret...))
 	return sum[:]
 }
 

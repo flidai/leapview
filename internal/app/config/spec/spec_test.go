@@ -145,6 +145,7 @@ func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 	}
 
 	valid := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                        "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_MANAGED_DATA_BACKEND":            "local",
 		"LEAPVIEW_MANAGED_DATA_DIR":                "/var/lib/leapview/managed-data",
 		"LEAPVIEW_MANAGED_DATA_MAX_FILES":          100,

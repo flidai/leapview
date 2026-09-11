@@ -111,6 +111,7 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 		t.Fatal("partial Infisical configuration was accepted")
 	}
 	complete := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                          "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_INFISICAL_BASE_URL":                "https://infisical.example.com",
 		"LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID":     "machine-client",
 		"LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET": "bootstrap-secret",
@@ -127,6 +128,7 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 
 func TestObjectStoreRuntimeConfigurationIsComplete(t *testing.T) {
 	base := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                                "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_OBJECT_STORE_BACKEND":                    "s3",
 		"LEAPVIEW_OBJECT_STORE_S3_BUCKET":                  "leapview-objects",
 		"LEAPVIEW_OBJECT_STORE_S3_REGION":                  "eu-west-1",
@@ -261,6 +263,13 @@ func TestValidateProductionAuthRequiresCSRFKey(t *testing.T) {
 	cfg := Config{Production: true, APITokenOnlyAuth: true}
 	if err := cfg.ValidateProductionAuth(); err == nil {
 		t.Fatal("expected missing CSRF key to fail production auth validation")
+	}
+}
+
+func TestValidateRequiresCSRFKeyOutsideProduction(t *testing.T) {
+	cfg := withAnalyticalTestDefaults(Config{CSRFKey: "short"})
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_CSRF_KEY") {
+		t.Fatalf("non-production short CSRF key validation error = %v", err)
 	}
 }
 

@@ -12,7 +12,7 @@
       "id": "access.transactional-mutations",
       "owner": "access",
       "kind": "administrative-audit",
-      "events": ["principal", "group", "grant", "policy", "token", "session", "SCIM mutation"],
+      "events": ["principal", "group", "grant", "policy", "token", "session", "SCIM mutation", "service_principal.created", "service_principal.updated", "service_principal.deleted", "service_principal_secret.created", "service_principal_secret.revoked"],
       "guarantee": "transactional",
       "failureBehavior": "The mutation and one or more audit rows roll back together.",
       "implementation": [
@@ -23,7 +23,7 @@
         "internal/admin/personalsettings/service.go"
       ],
       "contractSources": ["internal/access/access.go", "api/typespec/access.tsp", "api/typespec/current_user.tsp"],
-      "evidence": ["internal/access/sqlite/repository_test.go", "internal/access/sqlite/authoring_auth_test.go"]
+      "evidence": ["internal/access/sqlite/repository_test.go", "internal/access/sqlite/authoring_auth_test.go", "internal/admin/settings/commands_test.go"]
     },
     {
       "id": "access.authentication-observations",
