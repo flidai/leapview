@@ -11,35 +11,6 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tsp = join(root, "node_modules", "@typespec", "compiler", "cmd", "tsp.js");
 
 describe("APIGen TypeSpec array constraints", () => {
-  it("emits numeric literal constants and array item bounds", async () => {
-    const doc = await compileSource(`
-      using Http;
-
-      @service(#{ title: "Constrained Contract API" })
-      namespace ConstrainedContractAPI;
-
-      model ExplorationSpec {
-        schemaVersion: 1;
-        @maxItems(100)
-        dimensions: string[];
-      }
-
-      @route("/exploration")
-      @get
-      op getExploration(): ExplorationSpec;
-    `);
-
-    expect(doc.schemas.ExplorationSpec.properties.schemaVersion.schema).toEqual({
-      type: "integer",
-      const: 1,
-    });
-    expect(doc.schemas.ExplorationSpec.properties.dimensions.schema).toEqual({
-      type: "array",
-      items: { type: "string" },
-      max_items: 100,
-    });
-  });
-
   it("emits minimum and maximum array item constraints", async () => {
     const doc = await compileSource(`
       using Http;

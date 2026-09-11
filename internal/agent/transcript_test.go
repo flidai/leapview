@@ -57,38 +57,6 @@ func TestTranscriptFormatsJSONToolAndArtifactResults(t *testing.T) {
 	}
 }
 
-func TestTranscriptCarriesCanonicalVisualExploration(t *testing.T) {
-	transcript := transcriptFromMessages("conv_1", []Message{{
-		ID: "tool_artifact", Role: MessageRoleTool, ToolCallID: "call_visual", ToolName: "query_visual",
-		ContentJSON: `{"display_content":{"type":"bar","id":"agent_visual_1","patch":{"visuals":{"agent_visual_1":{}}},"exploration":{"schemaVersion":1,"modelId":"commerce","dimensions":[],"metrics":[{"field":"revenue"}],"filters":[],"sort":[],"limit":100}}}`,
-	}})
-	if len(transcript) != 1 || transcript[0].Artifact == nil || transcript[0].Artifact.Exploration == nil {
-		t.Fatalf("artifact exploration missing: %#v", transcript)
-	}
-	if got := transcript[0].Artifact.Exploration.ModelID; got != "commerce" {
-		t.Fatalf("artifact exploration model = %q, want commerce", got)
-	}
-}
-
-func TestTranscriptDropsInvalidCanonicalVisualExploration(t *testing.T) {
-	for _, exploration := range []string{
-		`{"schemaVersion":1,"modelId":"commerce","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100,"unexpected":true}`,
-		`{"schemaVersion":99,"modelId":"commerce","dimensions":[],"metrics":[],"filters":[],"sort":[],"limit":100}`,
-		`{"schemaVersion":1,"modelId":"commerce","dimensions":[{"field":1}],"metrics":[],"filters":[],"sort":[],"limit":100}`,
-	} {
-		transcript := transcriptFromMessages("conv_1", []Message{{
-			ID: "tool_artifact", Role: MessageRoleTool, ToolCallID: "call_visual", ToolName: "query_visual",
-			ContentJSON: `{"display_content":{"type":"bar","id":"agent_visual_1","patch":{"visuals":{"agent_visual_1":{}}},"exploration":` + exploration + `}}`,
-		}})
-		if len(transcript) != 1 || transcript[0].Artifact == nil {
-			t.Fatalf("artifact missing for invalid metadata: %#v", transcript)
-		}
-		if transcript[0].Artifact.Exploration != nil {
-			t.Fatalf("invalid artifact exploration was exposed: %#v", transcript[0].Artifact.Exploration)
-		}
-	}
-}
-
 func TestTranscriptPrefersTypedCodeDisplayForExportResult(t *testing.T) {
 	transcript := transcriptFromMessages("conv_1", []Message{{
 		ID: "tool_export", Role: MessageRoleTool, ToolCallID: "call_export", ToolName: "export_dashboard_yaml",

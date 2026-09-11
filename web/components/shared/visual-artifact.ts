@@ -1,16 +1,12 @@
-import { LitElement, css, html, nothing } from 'lit'
+import { LitElement, css, html } from 'lit'
 import { property } from 'lit/decorators.js'
-import type { ExplorationSpec } from '../../generated/exploration'
 import type { VisualizationEnvelope } from '../../generated/visualization'
-import { visualArtifactExploreHref } from './visual-artifact-explore'
 import '../dashboard/visualization/host'
 
 class VisualArtifact extends LitElement {
   @property() type: string = ''
   @property({ attribute: 'artifact-id' }) artifactId = ''
   @property({ attribute: false }) payload?: VisualizationEnvelope
-  @property({ attribute: false }) exploration?: ExplorationSpec
-  @property({ attribute: 'conversation-id' }) conversationId = ''
 
   static styles = css`
     :host {
@@ -26,8 +22,7 @@ class VisualArtifact extends LitElement {
     }
 
     .artifact {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      display: block;
       width: 100%;
       height: 100%;
       min-width: 0;
@@ -38,33 +33,10 @@ class VisualArtifact extends LitElement {
       box-shadow: var(--shadow-resting-small);
     }
 
-    /* Without an action row, the content is the first grid child. Keep it in
-       the full-height track instead of leaving the second track empty. */
-    .artifact:not(.has-actions) {
-      grid-template-rows: minmax(0, 1fr);
-    }
-
     lv-visualization-host {
       display: block;
       width: 100%;
       height: 100%;
-    }
-
-    .actions {
-      display: flex;
-      justify-content: flex-end;
-      padding: var(--lv-space-sm);
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .explore-action {
-      color: var(--lv-fg-accent);
-      font: var(--lv-type-body);
-    }
-
-    .content {
-      min-width: 0;
-      min-height: 0;
     }
 
     .state {
@@ -86,11 +58,9 @@ class VisualArtifact extends LitElement {
     if (!this.payload) {
       return this.renderState('Artifact data is unavailable.')
     }
-    const exploreHref = visualArtifactExploreHref(this.exploration, this.conversationId)
     return html`
-      <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}${exploreHref ? ' has-actions' : ''}`}>
-        ${exploreHref ? html`<div class="actions"><a class="explore-action" href=${exploreHref}>Explore visual</a></div>` : nothing}
-        <div class="content"><lv-visualization-host .envelope=${this.payload}></lv-visualization-host></div>
+      <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
+        <lv-visualization-host .envelope=${this.payload}></lv-visualization-host>
       </div>
     `
   }

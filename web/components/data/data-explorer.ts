@@ -1,24 +1,19 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, Columns3, Database, Filter, Play, Plus, RotateCcw, Search, Sigma, Square, SquareCheckBig, X } from 'lucide'
+import { ChevronRight, Code2, Columns3, Database, Eye, Filter, Play, Plus, RotateCcw, Search, Server, Sigma, Square, SquareCheckBig, Table2, X } from 'lucide'
 import type {
   AgentReferenceSignal,
   DataExploreCommand,
   DataExploreDatasetSignal,
   DataExploreFieldSignal,
-  DataExploreResultSignal,
+  DataExploreFilterSignal,
   DataExploreSignal,
   DataExplorerCommand,
-  DataExplorerDashboardSignal,
   DataExplorerObjectSignal,
   DataExplorerPageSignal,
   DataExplorerSignal,
   DataPreviewSignal,
-  SavedExplorationStateSignal,
 } from '../../generated/signals'
-import type { ExplorationSpec } from '../../generated/exploration'
-import type { VisualizationEnvelope, VisualizationWindowRequest } from '../../generated/visualization'
-import type { OptimisticInteractionCommand } from '../dashboard/interaction-selection'
 import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
@@ -29,53 +24,15 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
-  prepareExplorationRun,
-  prepareExplorationStop,
-  toggleVisibleColumns,
-} from './data-explorer-controller'
-import {
-  datasetGrainLabel,
-  emptyDataExploreCommand,
   exploreContextMatchesObject,
   fieldColumnID,
-  fieldLabel,
-  filterOperator,
-  filterValues,
-  localPreviewDimensions,
-  makeExplorationFilter,
   objectDatasetID,
-  explorationRunValidation,
-  removeExplorationField,
-  explorationSortsWithoutField,
-  explorationSpecFor,
-} from './data-explorer-spec'
+  toggleVisibleColumns,
+} from './data-explorer-controller'
 import { dataExplorerURL } from './data-explorer-url'
-import { exploreReturnLink } from './explore-return'
-import { iconForLayer, label } from './data-explorer-object-labels'
-import { DataExplorerClientState } from './data-explorer-client'
-import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
-import { filterObjects, objectColumnMatchesSearch } from './data-explorer-search'
-import { groupObjectsBySemanticModel, type ResourceGroup } from './data-explorer-groups'
-import {
-  emptySavedExplorations,
-  renderSavedExplorations,
-  SavedExplorationTracker,
-  type SavedExplorationCurrent,
-  type SavedExplorationVisibility,
-  savedExplorationStyles,
-  synchronizeSavedExplorationURL,
-  updateSavedExplorationURL,
-} from './data-explorer-saved'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
-import './data-explorer-query-controls'
-import './data-explorer-results'
-import './data-explorer-dashboard-picker'
-import { type ExplorationInteractionMode } from './data-explorer-drill'
-import { handleDataExploreInteraction, handleDataExploreWindowRequest } from './data-explorer-window'
-import { releaseDataExplorerTransport } from './data-explorer-transport'
-import { dataExplorerResultStyles, renderExploreFailure } from './data-explorer-result-styles'
 
 const emptyPreview: DataPreviewSignal = {
   columns: [],
@@ -83,8 +40,6 @@ const emptyPreview: DataPreviewSignal = {
   availableRows: 0,
   chunkSize: 100,
   rowHeight: 32,
-  loading: false,
-  stale: false,
   resetVersion: 0,
   blocks: {},
   totalRowLabel: 'Unknown',
@@ -99,14 +54,18 @@ const emptyExplorer: DataExplorerSignal = {
   selectedObject: undefined,
   preview: emptyPreview,
   explore: {
-    command: emptyDataExploreCommand,
-    views: {}, recommendedView: 'table', defaultView: 'table',
+    command: { semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} },
     semanticModels: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
-    status: { loading: false, stale: false, requestSeq: 0, state: 'idle' },
   },
-  command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: emptyDataExploreCommand },
+  command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
   warnings: [],
+}
+
+type ResourceGroup = {
+  id: string
+  title: string
+  objects: DataExplorerObjectSignal[]
 }
 
 type ExplorerColumn = { key: string, label?: string }
@@ -114,6 +73,8 @@ type ExplorerColumn = { key: string, label?: string }
 class DataExplorerPage extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) embedded = false
   @state() private search = ''
+  @state() private fieldSearch = ''
+  @state() private showSQL = false
   @state() private filterField = ''
   @state() private filterOperator = 'equals'
   @state() private filterValue = ''
@@ -122,42 +83,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private exploreVisibleColumns: string[] = []
-  @state() private exploreExecutionState: 'idle' | 'pending' | 'running' | 'stopped' = 'idle'
-  @state() private exploreTransportFailure: BrowserCommandFailure | null = null
-  @state() private exploreInteractionError = ''
-  private exploreTransportAction: 'run' | 'stop' | null = null
-  @state() private savedTitle = ''
-  @state() private savedDuplicateTitle = ''
-  @state() private savedVisibility: SavedExplorationVisibility = 'private'
-  @state() private savedVisibilityOverride: SavedExplorationVisibility | undefined
-  @state() private savedShareStatus = ''
-  @state() private savedShareFallbackURL = ''
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
-  private filterSuggestionTimer = 0
-  private latestExploreRequestSeq = 0
   private agentStateInitialized = false
   private agentRestoreDispatched = false
   private restoredAgentConversationId = ''
-  private initialURLCanonicalized = false
   private browserResizeCleanup?: () => void
   private readonly agentStateController = new DataExplorerAgentStateController()
   private readonly panelController = new DataExplorerPanelController()
   private readonly queryController = new DataExplorerQueryController()
   private readonly selectionController = new DataExplorerSelectionController()
-  private readonly clientState = new DataExplorerClientState()
-  private readonly savedExplorationTracker = new SavedExplorationTracker({
-    onBaselineChanged: (current) => {
-      this.savedDuplicateTitle = ''
-      this.savedVisibilityOverride = current ? (current.visibility === 'organization' ? 'organization' : 'private') : undefined
-      this.savedShareStatus = ''
-      this.savedShareFallbackURL = ''
-    },
-    onDirty: () => this.dispatchEvent(new CustomEvent('lv-saved-exploration-dirty', { bubbles: true, composed: true })),
-  })
 
-  static styles = [dataExplorerResultStyles, css`
+  static styles = css`
     :host {
       display: block;
       min-width: 0;
@@ -233,51 +171,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
-    }
-
-    .return-link {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-decoration: none;
-      white-space: nowrap;
-    }
-
-    .return-link:hover,
-    .return-link:focus-visible {
-      color: var(--lv-fg-default);
-      text-decoration: underline;
-    }
-
-    .mode-switch {
-      display: inline-flex;
-      align-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
-      padding: var(--base-size-2);
-    }
-
-    .mode-switch-button {
-      min-height: calc(var(--control-small-size) - var(--base-size-4));
-      border: 0;
-      border-radius: calc(var(--lv-radius-default) - 1px);
-      background: transparent;
-      color: var(--lv-fg-muted);
-      padding: 0 var(--base-size-8);
-      cursor: pointer;
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .mode-switch-button[aria-pressed="true"] {
-      background: var(--lv-bg-accent-muted);
-      color: var(--lv-fg-accent);
-    }
-
-    .mode-switch-button:hover,
-    .mode-switch-button:focus-visible {
-      color: var(--lv-fg-default);
-      outline: 0;
     }
 
     .header-columns {
@@ -477,7 +370,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       padding: var(--base-size-12);
     }
 
-    .selectors label {
+    .selectors label,
+    .filter-editor label {
       display: grid;
       gap: var(--base-size-4);
       color: var(--lv-fg-muted);
@@ -485,7 +379,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-medium);
     }
 
-    select {
+    select,
+    .filter-editor input {
       min-width: 0;
       height: var(--control-medium-size);
       border: var(--lv-border-default);
@@ -797,8 +692,24 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       background: var(--lv-bg-app);
     }
 
+    .semantic-result {
+      display: grid;
+      min-width: 0;
+      min-height: 0;
+      grid-template-rows: auto auto auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
     .explore-main {
       grid-template-rows: auto auto minmax(0, 1fr) auto;
+    }
+
+    .query-bar {
+      display: grid;
+      gap: var(--base-size-8);
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-12) var(--base-size-16);
+      background: var(--lv-bg-app);
     }
 
     .query-row {
@@ -841,6 +752,60 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-accent);
     }
 
+    .filter-editor {
+      display: grid;
+      grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(12rem, 2fr) auto;
+      gap: var(--base-size-8);
+      align-items: end;
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-12) var(--base-size-16);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .result-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--base-size-8);
+      align-items: center;
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-8) var(--base-size-16);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .result-error {
+      color: var(--lv-fg-danger);
+    }
+
+    .result-failure {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--base-size-8);
+    }
+
+    lv-data-explore-table {
+      min-height: 0;
+    }
+
+    .diagnostics {
+      display: grid;
+      max-height: 16rem;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      overflow: auto;
+      border-top: var(--lv-border-muted);
+      background: var(--lv-bg-app);
+    }
+
+    .diagnostic-block {
+      min-width: 0;
+      padding: var(--base-size-12) var(--base-size-16);
+    }
+
+    .diagnostic-block + .diagnostic-block {
+      border-left: var(--lv-border-muted);
+    }
+
     .icon-button {
       display: inline-grid;
       width: var(--control-medium-size);
@@ -875,8 +840,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       width: auto;
     }
 
-    ${savedExplorationStyles}
-
     .content {
       display: grid;
       min-width: 0;
@@ -888,7 +851,8 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       min-height: 0;
     }
 
-    .schema-view {
+    .schema-view,
+    .query-view {
       min-width: 0;
       min-height: 0;
       overflow: auto;
@@ -959,6 +923,36 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
     }
 
+    .query-heading {
+      display: flex;
+      align-items: center;
+      gap: var(--base-size-8);
+      margin-bottom: var(--base-size-8);
+      font: var(--lv-type-section-title);
+    }
+
+    .query-copy {
+      margin-bottom: var(--base-size-16);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body);
+    }
+
+    .query-code {
+      overflow: auto;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      padding: var(--base-size-16);
+    }
+
+    .sql-panel {
+      max-height: 14rem;
+      overflow: auto;
+      border-top: var(--lv-border-muted);
+      background: var(--lv-bg-panel);
+      padding: var(--base-size-12) var(--base-size-16);
+    }
+
     pre {
       margin: 0;
       white-space: pre-wrap;
@@ -1001,20 +995,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         width: auto !important;
       }
 
+      .filter-editor,
+      .diagnostics {
+        grid-template-columns: 1fr;
+      }
     }
-  `]
-
-  private readonly handleDatastarFetch = (event: Event) => {
-    const actionInFlight = this.exploreTransportAction
-    const executionActive = this.exploreExecutionState === 'running' || this.exploreExecutionState === 'pending'
-    if ((!executionActive && !actionInFlight) || !ownsBrowserCommandFetch(this, event)) return
-    const failure = browserCommandFailure(event, actionInFlight === 'stop' ? 'Exploration stop' : 'Exploration run')
-    if (!failure) return
-    this.exploreExecutionState = 'idle'
-    this.exploreTransportAction = null
-    this.exploreTransportFailure = failure
-    this.requestUpdate()
-  }
+  `
 
   connectedCallback(): void {
     if (!this.agentStateInitialized) {
@@ -1023,27 +1009,19 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.restoredAgentConversationId = stored.conversationId
       this.agentStateInitialized = true
     }
-    if (typeof window !== 'undefined') window.addEventListener('popstate', this.handleHistoryPopState)
-    if (typeof document !== 'undefined') document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     super.connectedCallback()
   }
 
   disconnectedCallback(): void {
     window.clearTimeout(this.exploreTimer)
-    window.clearTimeout(this.filterSuggestionTimer)
-    releaseDataExplorerTransport(this.clientState.clientID(this.dataExplorer.command?.clientId))
     this.browserResizeCleanup?.()
-    if (typeof window !== 'undefined') window.removeEventListener('popstate', this.handleHistoryPopState)
-    if (typeof document !== 'undefined') document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
     super.disconnectedCallback()
   }
 
   updated(): void {
-    this.canonicalizeInitialURL()
-    const observedExploreRequestSeq = this.dataExplorer.explore?.command?.requestSeq ?? 0
-    if (observedExploreRequestSeq > this.latestExploreRequestSeq) this.latestExploreRequestSeq = observedExploreRequestSeq
     const selectedKey = this.dataExplorer.selectedKey ?? ''
     if (this.selectionController.observe(selectedKey)) {
+      this.showSQL = false
       requestAnimationFrame(() => {
         this.renderRoot.querySelector<HTMLElement>('.object-button.is-selected')?.scrollIntoView({ block: 'nearest' })
       })
@@ -1061,9 +1039,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     }
     if (this.optimisticExplore && (this.dataExplorer.explore?.command?.requestSeq ?? 0) >= this.optimisticExplore.requestSeq) {
       this.optimisticExplore = null
-      this.exploreTransportAction = null
-      if (this.exploreExecutionState !== 'stopped') this.exploreExecutionState = 'idle'
-      if (!this.embedded) updateSavedExplorationURL(this.dataExplorer.command, 'replace', this.savedExplorations)
+      if (!this.embedded) replaceDataExplorerURL(this.dataExplorer.command)
     }
     const agent = this.signal<{ activeConversationId?: string } | null>('agent', null)
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
@@ -1076,14 +1052,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       this.agentRestoreDispatched = true
       emitDomainEvent(this, domainEvents.chatRestore, { conversationId: this.restoredAgentConversationId })
     }
-    const saved = this.savedExplorations
-    // A saved-state patch can arrive while a query command is still in flight.
-    // Keep the optimistic URL until the matching explorer response is observed;
-    // otherwise a metadata-only save update can revert the authored query.
-    if (!this.optimisticExplore) {
-      synchronizeSavedExplorationURL(this.dataExplorer.command, saved, this.embedded, Object.prototype.hasOwnProperty.call(this.signals, 'savedExplorations'))
-    }
-    this.savedExplorationTracker.observe(saved, this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec)
   }
 
   get page(): DataExplorerPageSignal | null {
@@ -1094,14 +1062,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return this.signal<DataExplorerSignal>('dataExplorer', emptyExplorer)
   }
 
-  get savedExplorations(): SavedExplorationStateSignal {
-    return this.signal<SavedExplorationStateSignal>('savedExplorations', emptySavedExplorations)
-  }
-
-  get dashboardAuthoring(): DataExplorerDashboardSignal {
-    return this.signal<DataExplorerDashboardSignal>('dataExplorerDashboard', { enabled: false, targets: [] })
-  }
-
   render() {
     const page = this.page
     const explorer = this.dataExplorer ?? emptyExplorer
@@ -1110,23 +1070,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const filtered = filterObjects(explorer.objects ?? [], this.search)
     const grouped = groupObjectsBySemanticModel(filtered, explorer.explore?.semanticModels ?? [])
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
-    // Governed result tables expose their own shared table column chooser.
-    // Keep the route-level chooser for raw browse previews only; showing both
-    // would leave a second control that cannot change the IR envelope.
-    const columns = semanticActive ? [] : this.headerColumns(explorer, false)
+    const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
-    const savedExplorations = this.savedExplorations
-    const returnLink = exploreReturnLink()
     return html`
       <section class=${`route${semanticActive ? ' semantic' : ''}${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} aria-label="Data Explorer">
         <header class="header">
           <h1>${page?.title ?? 'Data Explorer'}</h1>
           <div class="header-actions">
-            ${returnLink ? html`<a class="return-link" href=${returnLink.href}>${returnLink.label}</a>` : nothing}
-            <div class="mode-switch" role="group" aria-label="Data view">
-              <button type="button" class="mode-switch-button mode-button" aria-pressed=${String(!semanticActive)} @click=${() => this.setMode('browse', selected)}>Rows</button>
-              <button type="button" class="mode-switch-button mode-button" aria-pressed=${String(semanticActive)} @click=${() => this.setMode('explore', selected)}>Analyze</button>
-            </div>
             ${columns.length ? html`
               <details class="header-columns">
                 <summary title="Choose visible columns" aria-label="Choose visible columns">
@@ -1154,27 +1104,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             ${agentEnabled ? html`<button type="button" class="icon-button ask-button" aria-label="Ask about this data" aria-expanded=${String(this.agentDrawerOpen)} title="Ask about this data" @click=${() => this.setAgentDrawerOpen(!this.agentDrawerOpen)}>${agentIcon()}<span>Ask</span></button>` : nothing}
           </div>
         </header>
-        ${renderSavedExplorations(savedExplorations, {
-          savedTitle: () => this.savedTitle,
-          savedDuplicateTitle: () => this.savedDuplicateTitle,
-          savedVisibility: () => this.savedVisibility,
-          currentSavedVisibility: (current: SavedExplorationCurrent) => this.savedVisibilityOverride ?? (current.visibility === 'organization' ? 'organization' : 'private'),
-          activeSpec: () => this.optimisticExplore?.spec ?? this.dataExplorer.explore?.command?.spec ?? emptyExplorer.explore.command.spec,
-          onSavedTitleInput: (value) => this.savedTitle = value,
-          onDuplicateTitleInput: (value) => this.savedDuplicateTitle = value,
-          onSavedVisibilityInput: (value) => this.savedVisibility = value,
-          onCurrentSavedVisibilityInput: (value) => this.savedVisibilityOverride = value,
-          shareStatus: () => this.savedShareStatus,
-          shareFallbackURL: () => this.savedShareFallbackURL,
-          onShareStatus: (message, fallbackURL = '') => {
-            this.savedShareStatus = message
-            this.savedShareFallbackURL = fallbackURL
-          },
-          onCommand: (command) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-command', { bubbles: true, composed: true, detail: command })),
-          onReopen: (current) => this.dispatchEvent(new CustomEvent('lv-saved-exploration-reopen', {
-            bubbles: true, composed: true, detail: { explorationId: current.id, includeArchived: current.status === 'archived' },
-          })),
-        })}
         <div
           class=${`explorer${this.browserCollapsed ? ' browser-collapsed' : ''}`}
         >
@@ -1246,97 +1175,197 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     `
   }
 
+  private renderExplore(exploreSignal: DataExploreSignal) {
+    const explore = exploreSignal ?? emptyExplorer.explore
+    const command = this.optimisticExplore ?? explore.command
+    const selectedSemanticModel = explore.semanticModels.find((model) => model.id === command.semanticModelId) ?? explore.selectedSemanticModel
+    const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
+    const selectedDataset = datasets.find((dataset) => dataset.id === command.datasetId) ?? explore.selectedDataset
+    const queryFields = new Set([...command.dimensions, ...command.metrics])
+    const visibleFields = (explore.fields ?? []).filter((field) => {
+      const query = this.fieldSearch.trim().toLowerCase()
+      return !query || [field.label, field.id, field.datasetId, field.description, field.type]
+        .some((value) => String(value ?? '').toLowerCase().includes(query))
+    })
+    const fieldGroups = groupExploreFields(visibleFields)
+    const result = explore.result
+    const hasQuery = command.dimensions.length > 0 || command.metrics.length > 0 || Boolean(command.time)
+    return html`
+      <div class="explorer">
+        <aside class="browser explore-browser" aria-label="Semantic fields">
+          <div class="selectors">
+            <label>Semantic model
+              <select .value=${command.semanticModelId ?? ''} @change=${(event: Event) => this.changeExploreSemanticModel((event.target as HTMLSelectElement).value, explore)}>
+                ${(explore.semanticModels ?? []).map((model) => html`<option value=${model.id}>${model.title}</option>`)}
+              </select>
+            </label>
+            <label>Starting dataset
+              <select .value=${command.datasetId ?? ''} @change=${(event: Event) => this.emitExplore({ ...command, datasetId: (event.target as HTMLSelectElement).value }, true)}>
+                ${datasets.map((dataset) => html`<option value=${dataset.id}>${dataset.title}</option>`)}
+              </select>
+            </label>
+          </div>
+          <label class="search">
+            <span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span>
+            <input
+              type="search"
+              .value=${this.fieldSearch}
+              @input=${(event: Event) => this.fieldSearch = (event.target as HTMLInputElement).value}
+              placeholder="Search fields"
+              autocomplete="off"
+            />
+          </label>
+          <div class="field-groups">
+            ${fieldGroups.length ? fieldGroups.map((group) => html`
+              <details class="field-group" open>
+                <summary>
+                  <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
+                  <span aria-hidden="true">${lucideIcon(group.kind === 'metric' ? Code2 : Table2, { size: 14 })}</span>
+                  <span>${group.label}</span>
+                  <em>${group.fields.length}</em>
+                </summary>
+                <div class="object-list">
+                  ${group.fields.map((field) => html`
+                    <div class="field-row">
+                      <button
+                        type="button"
+                        class=${queryFields.has(field.id) ? 'field-button is-selected' : 'field-button'}
+                        title=${field.description || field.id}
+                        @click=${() => this.toggleExploreField(field, command)}
+                      >
+                        <span aria-hidden="true">${queryFields.has(field.id) ? lucideIcon(X, { size: 14 }) : lucideIcon(Plus, { size: 14 })}</span>
+                        <span><strong>${field.label}</strong><small>${field.datasetId} · ${field.type || field.kind}</small></span>
+                      </button>
+                      ${field.kind === 'dimension' ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => this.openFilter(field)}>${lucideIcon(Filter, { size: 14 })}</button>` : nothing}
+                    </div>
+                  `)}
+                </div>
+              </details>
+            `) : html`<p class="empty">No semantic fields match this search.</p>`}
+          </div>
+        </aside>
+        <main class="main explore-main" aria-label="Semantic exploration">
+          <section class="query-bar" aria-label="Exploration query">
+            <div class="query-row">
+              <span class="query-label">Fields</span>
+              <div class="selection-shelf">
+                ${command.dimensions.map((id) => this.renderQueryChip(id, 'dimension', explore.fields, command))}
+                ${command.metrics.map((id) => this.renderQueryChip(id, 'metric', explore.fields, command))}
+                ${!queryFields.size ? html`<span class="empty">Choose dimensions and metrics from the field picker.</span>` : nothing}
+              </div>
+              <div class="query-actions">
+                <button type="button" class="text-button" title="Run now" @click=${() => this.emitExplore(command, true)}>${lucideIcon(Play, { size: 14 })} Run</button>
+                <button type="button" class="icon-button" title="Reset exploration" aria-label="Reset exploration" @click=${() => this.resetExplore(command)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
+                <button type="button" class="icon-button" title="Toggle query details" aria-label="Toggle query details" @click=${() => this.showSQL = !this.showSQL}>${lucideIcon(Code2, { size: 16 })}</button>
+              </div>
+            </div>
+            <div class="query-row">
+              <span class="query-label">Filters</span>
+              <div class="filter-pills">
+                ${command.filters.map((filter, index) => html`
+                  <button type="button" class="chip" title="Remove filter" @click=${() => this.removeExploreFilter(index, command)}>
+                    ${fieldLabel(filter.field, explore.fields)} ${filter.operator.replaceAll('_', ' ')} ${filter.values.join(', ')} ${lucideIcon(X, { size: 12 })}
+                  </button>
+                `)}
+                ${!command.filters.length ? html`<span class="empty">No filters</span>` : nothing}
+              </div>
+              <label>Rows
+                <select .value=${String(command.limit)} @change=${(event: Event) => this.emitExplore({ ...command, limit: Number((event.target as HTMLSelectElement).value) })}>
+                  ${[50, 100, 250, 500, 1000].map((limit) => html`<option value=${limit}>${limit}</option>`)}
+                </select>
+              </label>
+            </div>
+          </section>
+          ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
+          <div class="result-meta" aria-live="polite">
+            <span><strong>${selectedSemanticModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
+            ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
+            ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
+            ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
+            ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
+          </div>
+          ${hasQuery
+            ? html`<lv-data-explore-table
+                .command=${command}
+                .result=${result}
+                .visibleColumns=${this.exploreVisibleColumns}
+                @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
+              ></lv-data-explore-table>`
+            : html`<p class="empty">Select at least one dimension or metric to run a governed exploration.</p>`}
+          ${this.showSQL ? html`<section class="diagnostics" aria-label="Query details">
+            <div class="diagnostic-block"><h3>Generated SQL</h3><pre>${result.sql || 'Run an exploration to inspect generated SQL.'}</pre></div>
+            <div class="diagnostic-block"><h3>Query plan</h3><pre>${result.plan || 'No query plan is available.'}</pre></div>
+          </section>` : nothing}
+        </main>
+      </div>
+    `
+  }
+
   private renderQueryChip(id: string, kind: 'dimension' | 'metric', fields: DataExploreFieldSignal[], command: DataExploreCommand) {
     return html`<button type="button" class=${`chip ${kind}`} title="Remove field" @click=${() => this.removeExploreField(id, kind, command)}>
       ${fieldLabel(id, fields)} ${lucideIcon(X, { size: 12 })}
     </button>`
   }
 
-  private renderExecutionState(command: DataExploreCommand, result: DataExploreSignal['result'], status?: DataExploreSignal['status'], rawError?: string) {
-    const expected = Math.max(command.requestSeq ?? 0, this.latestExploreRequestSeq)
-    const actual = Math.max(result.requestSeq ?? 0, status?.requestSeq ?? 0)
-    if (status?.state === 'cancelled' || this.exploreExecutionState === 'stopped') {
-      return html`<span class="execution-state" role="status">Run stopped; draft is preserved</span>`
-    }
-    if (rawError || result.error || status?.error || status?.state === 'error') return html`<span class="execution-state" data-state="error" role="status">${status?.error || rawError || 'Query failed'}</span>`
-    if (status?.loading || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running') {
-      const progress = status?.progressPercent === undefined ? '' : ` ${Math.round(status.progressPercent)}%`
-      return html`<span class="execution-state" role="status">${status?.message || (this.exploreExecutionState === 'pending' ? 'Waiting to run…' : 'Running exploration…')}${progress}</span>`
-    }
-    if (status?.stale || status?.state === 'stale' || expected > actual) {
-      return html`<span class="execution-state" data-state="stale" role="status">Results are stale — run to refresh</span>`
-    }
-    return nothing
+  private renderExploreFailure(error: string, command: DataExploreCommand) {
+    return html`
+      <span class="result-failure" role="alert">
+        <span class="result-error">${error}</span>
+        <button type="button" class="text-button" @click=${() => this.emitExplore(command, true)}>Retry</button>
+        <button type="button" class="text-button" @click=${() => this.resetExplore(command)}>Reset query</button>
+      </span>
+    `
   }
 
-  private handleExploreSpecChange(event: CustomEvent<ExplorationSpec>, command: DataExploreCommand): void {
-    this.emitExplore(event.detail, this.optimisticExplore ?? command)
+  private renderFilterEditor(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
+    return html`<section class="filter-editor" aria-label="Add filter">
+      <label>Field<input .value=${fieldLabel(this.filterField, fields)} disabled /></label>
+      <label>Condition
+        <select .value=${this.filterOperator} @change=${(event: Event) => {
+          this.filterOperator = this.panelController.setFilterOperator((event.target as HTMLSelectElement).value).filterOperator
+        }}>
+          <option value="equals">Equals</option>
+          <option value="in">Is one of</option>
+          <option value="contains">Contains</option>
+          <option value="not_contains">Does not contain</option>
+          <option value="starts_with">Starts with</option>
+          <option value="greater_than_or_equal">At least</option>
+          <option value="less_than">Less than</option>
+          <option value="is_null">Is null</option>
+          <option value="is_not_null">Is not null</option>
+        </select>
+      </label>
+      <label>Value<input .value=${this.filterValue} ?disabled=${this.filterOperator === 'is_null' || this.filterOperator === 'is_not_null'} @input=${(event: Event) => {
+        this.filterValue = this.panelController.setFilterValue((event.target as HTMLInputElement).value).filterValue
+      }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.applyExploreFilter(command) }} /></label>
+      <div class="query-actions">
+        <button type="button" class="text-button" @click=${() => this.closeFilter()}>Cancel</button>
+        <button type="button" class="text-button" @click=${() => this.applyExploreFilter(command)}>Apply</button>
+      </div>
+    </section>`
   }
 
-  private handleExploreFilterOpen(event: CustomEvent<string>, command: DataExploreCommand): void {
-    const field = this.dataExplorer.explore.fields.find((candidate) => candidate.id === event.detail)
-    if (!field || field.kind !== 'dimension' || field.compatible === false) return
-    this.openFilter(field)
-    this.requestFilterSuggestions(this.optimisticExplore ?? command, '')
-  }
-
-  private handleExploreFilterChange(
-    event: CustomEvent<{ action: 'apply' | 'cancel' | 'operator' | 'value'; operator?: string; value?: string }>,
-    command: DataExploreCommand,
-  ): void {
-    const detail = event.detail
-    if (detail.action === 'cancel') {
-      this.closeFilter()
-      return
-    }
-    if (detail.action === 'operator') {
-      this.filterOperator = this.panelController.setFilterOperator(detail.operator ?? 'equals').filterOperator
-      return
-    }
-    if (detail.action === 'value') {
-      this.filterValue = this.panelController.setFilterValue(detail.value ?? '').filterValue
-      this.requestFilterSuggestions(this.optimisticExplore ?? command, this.filterValue)
-      return
-    }
-    this.applyExploreFilter(this.optimisticExplore ?? command)
-  }
-
-  private setMode(mode: 'browse' | 'explore', selectedObject?: DataExplorerObjectSignal) {
+  private setMode(mode: 'browse' | 'explore') {
     const current = this.dataExplorer?.command ?? emptyExplorer.command
     if (current.mode === mode) return
-    if (mode === 'browse') this.latestExploreRequestSeq = 0
-    if (mode === 'explore') {
-      const currentExplore = this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command
-      const currentSpec = explorationSpecFor(currentExplore)
-      if (currentSpec.modelId || !selectedObject) {
-        const explore = { ...currentExplore, action: 'configure' as const }
-        this.emitCommand({ mode, action: 'configure', explore })
-        return
-      }
-      const datasetID = objectDatasetID(selectedObject)
-      const dimensions = localPreviewDimensions(selectedObject, this.dataExplorer.explore.fields ?? [])
-      const explore: DataExploreCommand = {
-        ...currentExplore,
-        spec: {
-          ...currentSpec,
-          modelId: selectedObject.semanticModelId ?? '',
-          datasetId: datasetID,
-          dimensions: dimensions.map((field) => ({ field })),
-          metrics: [],
-          filters: [],
-          sort: [],
-        },
-        columnWidths: {},
-      }
-      this.emitCommand({ mode, action: 'configure', explore: { ...explore, action: 'configure' } })
-      return
-    }
-    const baseExplore = this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command
-    const explore = { ...baseExplore, action: undefined }
-    this.emitCommand({ mode, action: undefined, explore })
-    this.optimisticExplore = null
-    this.exploreExecutionState = 'idle'
-    this.exploreTransportFailure = null
+    this.showSQL = false
+    this.emitCommand({ mode, explore: this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command })
+  }
+
+  private changeExploreSemanticModel(semanticModelId: string, explore: DataExploreSignal) {
+    const model = explore.semanticModels.find((candidate) => candidate.id === semanticModelId)
+    const current = this.optimisticExplore ?? explore.command
+    this.emitExplore({
+      ...current, semanticModelId, datasetId: model?.datasets?.[0]?.id ?? '', dimensions: [], metrics: [], filters: [], sort: [],
+    }, true)
+  }
+
+  private toggleExploreField(field: DataExploreFieldSignal, command: DataExploreCommand) {
+    if (field.compatible === false && !field.rebaseDatasetId) return
+    const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
+    const values = command[key]
+    const next = values.includes(field.id) ? values.filter((id) => id !== field.id) : [...values, field.id]
+    this.emitExplore({ ...command, [key]: next, sort: command.sort.filter((sort) => sort.field !== field.id) })
   }
 
   private toggleUnifiedField(
@@ -1359,44 +1388,33 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const fallbackDimensions = (baseObject.columns ?? []).map((column) => `${objectDatasetID(baseObject)}.${column.key}`)
     const command: DataExploreCommand = activeCommand ? current : {
       ...current,
-      spec: {
-        ...explorationSpecFor(current),
-        modelId: baseObject.semanticModelId ?? '',
-        datasetId: objectDatasetID(baseObject),
-        dimensions: baseDimensions.length ? baseDimensions.map((field) => ({ field })) : fallbackDimensions.map((field) => ({ field })),
-        metrics: [],
-        filters: [],
-        sort: [],
-      },
+      semanticModelId: baseObject.semanticModelId ?? '',
+      datasetId: objectDatasetID(baseObject),
+      dimensions: baseDimensions.length ? baseDimensions : fallbackDimensions,
+      metrics: [],
+      filters: [],
+      sort: [],
       columnWidths: {},
     }
     const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
-    const spec = explorationSpecFor(command)
+    const values = command[key] ?? []
     const selectedByDefault = !activeCommand && field.kind !== 'metric' && field.datasetId === objectDatasetID(baseObject)
-    const values = spec[key] ?? []
-    const selectedNow = values.some((value) => value.field === field.id) || selectedByDefault
-    const next = selectedNow ? values.filter((value) => value.field !== field.id) : [...values, { field: field.id }]
-    this.emitExplore({ ...spec, [key]: next, sort: explorationSortsWithoutField(spec, field.id) }, command)
+    const selectedNow = values.includes(field.id) || selectedByDefault
+    const next = selectedNow ? values.filter((id) => id !== field.id) : [...values, field.id]
+    this.emitExplore({ ...command, [key]: next, sort: (command.sort ?? []).filter((sort) => sort.field !== field.id) })
   }
 
   private removeExploreField(id: string, kind: 'dimension' | 'metric', command: DataExploreCommand) {
-    this.emitExplore(removeExplorationField(explorationSpecFor(command), id, kind), command)
+    const key = kind === 'metric' ? 'metrics' : 'dimensions'
+    this.emitExplore({ ...command, [key]: command[key].filter((field) => field !== id), sort: command.sort.filter((sort) => sort.field !== id) })
   }
 
   private resetExplore(command: DataExploreCommand) {
     this.closeFilter()
-    const current = this.optimisticExplore ?? command
-    this.emitExplore(
-      { ...explorationSpecFor(current), dimensions: [], metrics: [], filters: [], sort: [], time: undefined },
-      { ...current, columnWidths: {} },
-      undefined,
-      true,
-    )
+    this.emitExplore({ ...command, dimensions: [], metrics: [], filters: [], sort: [], time: undefined, columnWidths: {} }, true)
   }
 
   private openFilter(field: DataExploreFieldSignal) {
-    window.clearTimeout(this.filterSuggestionTimer)
-    this.clientState.invalidateSuggestions()
     const state = this.panelController.openFilter(field.id)
     this.filterField = state.filterField
     this.filterOperator = state.filterOperator
@@ -1404,8 +1422,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private closeFilter() {
-    window.clearTimeout(this.filterSuggestionTimer)
-    this.clientState.invalidateSuggestions()
     const state = this.panelController.closeFilter()
     this.filterField = state.filterField
     this.filterOperator = state.filterOperator
@@ -1419,139 +1435,36 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       ? this.filterValue.split(',').map((value) => value.trim()).filter(Boolean)
       : []
     if (needsValue && !values.length) return
-    const field = this.dataExplorer.explore.fields.find((candidate) => candidate.id === this.filterField)
-    const spec = explorationSpecFor(command)
-    const hasMultiRootMetric = spec.metrics.some((metric) => {
-      const metricField = this.dataExplorer.explore.fields.find((candidate) => candidate.id === metric.field)
-      return metricField?.kind === 'metric' && !metricField.datasetId.trim()
-    })
-    const filterScope = hasMultiRootMetric ? undefined : spec.datasetId
-    const filter = makeExplorationFilter(field ?? this.filterField, this.filterOperator, values, field?.type, filterScope)
-    if (!filter) return
+    const filter: DataExploreFilterSignal = { field: this.filterField, operator: this.filterOperator, values }
     this.closeFilter()
-    this.emitExplore({ ...spec, filters: [...spec.filters.filter((current) => current.field !== filter.field), filter] }, command)
+    this.emitExplore({ ...command, filters: [...command.filters.filter((current) => current.field !== filter.field), filter] })
   }
 
-  private removeExploreFilter(index: number, command: DataExploreCommand) { const spec = explorationSpecFor(command)
-    this.emitExplore({ ...spec, filters: spec.filters.filter((_, current) => current !== index) }, command)
+  private removeExploreFilter(index: number, command: DataExploreCommand) {
+    this.emitExplore({ ...command, filters: command.filters.filter((_, current) => current !== index) })
   }
 
-  private emitExplore(
-    next: Partial<ExplorationSpec>,
-    baseCommand?: DataExploreCommand,
-    filterSuggestions?: NonNullable<DataExploreCommand['filterSuggestions']>,
-    immediate = false,
-  ) {
+  private emitExplore(next: DataExploreCommand, immediate = false) {
     window.clearTimeout(this.exploreTimer)
-    const current = baseCommand ?? this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
+    const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
     const command = this.queryController.explore(current, next, immediate)
-    command.action = 'configure'
-    if (filterSuggestions) command.filterSuggestions = filterSuggestions
-    else delete command.filterSuggestions
-    this.optimisticExplore = command; this.exploreTransportFailure = null
-    // A configure event only updates the authored draft. Keep Run available
-    // until the user explicitly starts execution; the server may receive this
-    // command after the debounce window, but it is not a query run.
-    this.exploreExecutionState = 'idle'
-    if (!this.embedded && !filterSuggestions && command.spec.modelId.trim()) {
-      updateSavedExplorationURL({ ...this.dataExplorer.command, mode: 'explore', explore: command }, 'replace', this.savedExplorations)
-    }
-    const dispatch = () => this.emitCommand({ action: 'configure', mode: 'explore', explore: command })
+    this.optimisticExplore = command
+    if (!this.embedded) replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
+    const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
     if (immediate) dispatch()
     else this.exploreTimer = window.setTimeout(dispatch, 320)
   }
 
-  private requestFilterSuggestions(command: DataExploreCommand, search: string): void {
-    if (!this.filterField) return
-    window.clearTimeout(this.filterSuggestionTimer)
-    const requestSeq = this.nextFilterSuggestionRequestSeq()
-    const suggestionCommand: DataExploreCommand = {
-      ...command,
-      action: 'configure',
-      // Suggestions are a read-only side lane. Keep the authored query's
-      // request sequence unchanged so typing never cancels a running query.
-      filterSuggestions: { field: this.filterField, limit: 50, search: search.trim(), suggestionRequestSeq: requestSeq },
-    }
-    this.filterSuggestionTimer = window.setTimeout(() => {
-      if (!this.clientState.isSuggestionCurrent(requestSeq)) return
-      this.emitCommand({ action: 'configure', mode: 'explore', explore: suggestionCommand })
-    }, 180)
-  }
-
-  private nextFilterSuggestionRequestSeq(): number {
-    return this.clientState.nextSuggestionSequence(this.dataExplorer?.command?.clientId)
-  }
-
-  private runExplore(command: DataExploreCommand): void {
-    window.clearTimeout(this.exploreTimer)
-    const spec = explorationSpecFor(command)
-    if (explorationRunValidation(spec, this.dataExplorer.explore.fields).length) return
-    const runID = this.clientState.nextRunID()
-    const runCommand = prepareExplorationRun(command)
-    this.exploreTransportAction = 'run'
-    this.exploreExecutionState = 'running'
-    this.exploreTransportFailure = null
-    this.optimisticExplore = runCommand
-    if (!this.embedded) updateSavedExplorationURL({ ...this.dataExplorer.command, mode: 'explore', explore: runCommand }, 'push', this.savedExplorations)
-    this.emitCommand({ action: 'run', mode: 'explore', runId: runID, explore: runCommand })
-  }
-
-  private stopExplore(command: DataExploreCommand): void {
-    window.clearTimeout(this.exploreTimer)
-    const stopCommand = prepareExplorationStop(command)
-    const runID = this.clientState.runID()
-    this.clientState.clearRunID()
-    this.exploreTransportAction = 'stop'
-    this.exploreExecutionState = 'stopped'
-    this.optimisticExplore = stopCommand
-    this.emitCommand({ action: 'stop', mode: 'explore', runId: runID, explore: stopCommand })
-  }
-
-  private handleExploreInteraction(
-    event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>,
-    command: DataExploreCommand,
-    fields: readonly DataExploreFieldSignal[],
-    grainFields: readonly string[],
-  ): void {
-    handleDataExploreInteraction(event, command, fields, grainFields, {
-      setError: (message) => { this.exploreInteractionError = message },
-      clearError: () => { this.exploreInteractionError = '' },
-      run: (spec, source) => { const next = this.queryController.explore(source, spec); next.action = 'configure'; this.runExplore(next) },
-      emit: (spec, source) => this.emitExplore(spec, source, undefined, true),
-    })
-  }
-
-  private handleExploreWindowRequest(
-    event: CustomEvent<VisualizationWindowRequest>,
-    command: DataExploreCommand,
-    views: Record<string, VisualizationEnvelope>,
-    result: DataExploreResultSignal,
-  ): void {
-    handleDataExploreWindowRequest(event, command, views, result, {
-      setError: (message) => { this.exploreInteractionError = message; this.requestUpdate() },
-      clearError: () => { this.exploreInteractionError = '' },
-      run: (spec, source) => { const next = this.queryController.explore(source, spec); next.action = 'configure'; this.runExplore(next) },
-    })
-  }
-
-  private handleExploreTableCommand(detail: Partial<ExplorationSpec> | Pick<DataExploreCommand, 'columnWidths'>, command: DataExploreCommand): void {
-    if (Object.prototype.hasOwnProperty.call(detail, 'columnWidths')) {
-      this.emitCommand({ explore: { ...command, columnWidths: (detail as Pick<DataExploreCommand, 'columnWidths'>).columnWidths } })
-      return
-    }
-    this.emitExplore(detail as Partial<ExplorationSpec>, command)
-  }
-
   private agentSuggestions(explorer: DataExplorerSignal): AgentReferenceSignal[] {
-    const command = this.optimisticExplore ?? explorer.explore.command; const spec = explorationSpecFor(command)
+    const command = this.optimisticExplore ?? explorer.explore.command
     const context = this.page?.context
     const projectId = context?.projectId ?? ''
     const generationId = context?.generationId ?? ''
-    const semanticModelId = spec.modelId ?? ''
-    const datasetId = spec.datasetId ?? ''
+    const semanticModelId = command.semanticModelId ?? ''
+    const datasetId = command.datasetId ?? ''
     if (!projectId || !generationId || !semanticModelId || !datasetId) return []
     const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
-    const href = dataExplorerURL({ mode: 'explore', objectKey: '', explore: command, count: 100, limit: 100, offset: 0, start: 0, sort: {}, requestSeq: command.requestSeq, resetVersion: command.resetVersion })
+    const href = `/explore?mode=explore&semanticModel=${encodeURIComponent(semanticModelId)}&dataset=${encodeURIComponent(datasetId)}`
     return [{
       reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
       name: dataset?.title ?? datasetId,
@@ -1676,7 +1589,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       const duplicateTitle = (titleCounts.get(object.title.trim().toLowerCase()) ?? 0) > 1
       const displayTitle = duplicateTitle && object.semanticModelId ? `${object.semanticModelId}.${object.title}` : object.title
       const columnMatch = objectColumnMatchesSearch(object, this.search)
-      const command = this.optimisticExplore ?? explore.command; const spec = explorationSpecFor(command)
+      const command = this.optimisticExplore ?? explore.command
       const contextMatches = exploreContextMatchesObject(command, object)
       const semanticFields = contextMatches
         ? (explore.fields ?? []).filter((field) => field.datasetId === objectDatasetID(object))
@@ -1696,10 +1609,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       })
       const metrics = semanticFields.filter((field) => field.kind === 'metric')
       const fields = [...dimensions, ...metrics]
-      const queryFields = new Set([
-        ...(spec.dimensions ?? []).map((field) => field.field),
-        ...(spec.metrics ?? []).map((field) => field.field),
-      ])
+      const queryFields = new Set([...(command.dimensions ?? []), ...(command.metrics ?? [])])
       return html`
         <details class="object-node" data-column-match=${String(columnMatch)}>
           <summary
@@ -1719,14 +1629,14 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               const rebaseable = !compatible && Boolean(field.rebaseDatasetId)
               const selectable = compatible || rebaseable
               const relationshipPath = field.relationshipPath ?? []
-              const fieldSelected = semanticActive
-                ? contextMatches && compatible && queryFields.has(field.id)
+              const fieldSelected = compatible && semanticActive && contextMatches
+                ? queryFields.has(field.id)
                 : selected && field.kind !== 'metric'
               const compatibilityTitle = compatible
                 ? relationshipPath.length
                   ? `Related through ${relationshipPath.join(' → ')}`
                   : field.description || field.id
-                : field.compatibilityReason || `Not compatible with ${spec.datasetId || objectDatasetID(object)}`
+                : field.compatibilityReason || `Not compatible with ${command.datasetId || objectDatasetID(object)}`
               return html`
               <div class=${`${field.kind === 'metric' ? 'column-item metric-field' : 'column-item'}${selectable ? '' : ' is-unavailable'}${rebaseable ? ' is-rebaseable' : ''}`} title=${compatibilityTitle}>
                 <button
@@ -1744,10 +1654,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   <code>${compatible ? field.kind === 'metric' ? 'metric' : relationshipPath.length ? 'related' : field.type || '' : rebaseable ? 'changes grain' : 'unavailable'}</code>
                 </button>
                 ${field.kind === 'dimension' && compatible && semanticActive && contextMatches
-                  ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => {
-                      this.openFilter(field)
-                      this.requestFilterSuggestions(this.optimisticExplore ?? explore.command, '')
-                    }}>${lucideIcon(Filter, { size: 13 })}</button>`
+                  ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => this.openFilter(field)}>${lucideIcon(Filter, { size: 13 })}</button>`
                   : nothing}
               </div>
             `})}
@@ -1772,23 +1679,12 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private renderExploreSelected(object: DataExplorerObjectSignal, exploreSignal: DataExploreSignal) {
     const explore = exploreSignal ?? emptyExplorer.explore
     const command = this.optimisticExplore ?? explore.command
-    const spec = explorationSpecFor(command)
-    const dashboardAuthoring = this.dashboardAuthoring
-    const selectedSemanticModel = (explore.semanticModels ?? []).find((model) => model.id === spec.modelId) ?? explore.selectedSemanticModel
+    const selectedSemanticModel = explore.semanticModels.find((model) => model.id === command.semanticModelId) ?? explore.selectedSemanticModel
     const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
-    const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
-    const queryFields = new Set([...(spec.dimensions ?? []).map((field) => field.field), ...(spec.metrics ?? []).map((field) => field.field)])
-    const rawResult = explore.result ?? emptyExplorer.explore.result; const result = this.clientState.semanticResult(command, rawResult, explore.status, this.page?.context, this.exploreExecutionState)
-    const presentation = this.clientState.semanticViews(command, rawResult, explore.views, explore.recommendedView, explore.defaultView, explore.status, this.page?.context, this.exploreExecutionState)
-    const status = explore.status
-    const suggestionSignal = explore.filterSuggestions && this.clientState.isSuggestionCurrentOrNewer(explore.filterSuggestions.suggestionRequestSeq)
-      ? explore.filterSuggestions
-      : undefined
-    const hasQuery = queryFields.size > 0 || Boolean(spec.time)
-    const runValidation = explorationRunValidation(spec, explore.fields)
-    const runDisabled = runValidation.length > 0
-    const exploreError = rawResult.error || explore.status?.error || this.exploreTransportFailure?.message || (explore.status?.state === 'error' ? 'Query failed' : '')
-    const exploreRunning = status?.loading === true || this.exploreExecutionState === 'pending' || this.exploreExecutionState === 'running'
+    const selectedDataset = datasets.find((dataset) => dataset.id === command.datasetId) ?? explore.selectedDataset
+    const queryFields = new Set([...(command.dimensions ?? []), ...(command.metrics ?? [])])
+    const result = explore.result
+    const hasQuery = queryFields.size > 0 || Boolean(command.time)
     return html`
       <div class="content" aria-label="Data exploration">
         <section class="semantic-result" aria-label="Governed result table">
@@ -1796,75 +1692,74 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <div class="query-row">
                 <span class="query-label">Fields</span>
                 <div class="selection-shelf">
-                  ${(spec.dimensions ?? []).map((field) => this.renderQueryChip(field.field, 'dimension', explore.fields, command))}
-                  ${(spec.metrics ?? []).map((field) => this.renderQueryChip(field.field, 'metric', explore.fields, command))}
+                  ${(command.dimensions ?? []).map((id) => this.renderQueryChip(id, 'dimension', explore.fields, command))}
+                  ${(command.metrics ?? []).map((id) => this.renderQueryChip(id, 'metric', explore.fields, command))}
                   ${!queryFields.size ? html`<span class="empty">Select fields from the expanded Models.</span>` : nothing}
                 </div>
                 <div class="query-actions">
-                  ${exploreRunning
-                    ? html`<button type="button" class="text-button" title="Stop the pending exploration" @click=${() => this.stopExplore(command)}>${lucideIcon(X, { size: 14 })} Stop</button>`
-                    : html`<button type="button" class="text-button" title=${runDisabled ? runValidation.join(' ') : 'Run exploration'} ?disabled=${runDisabled} @click=${() => this.runExplore(command)}>${lucideIcon(Play, { size: 14 })} Run</button>`}
+                  <button type="button" class="text-button" title="Run now" @click=${() => this.emitExplore(command, true)}>${lucideIcon(Play, { size: 14 })} Run</button>
                   <button type="button" class="icon-button" title="Return to all table columns" aria-label="Return to all table columns" @click=${() => this.selectObject(object)}>${lucideIcon(RotateCcw, { size: 16 })}</button>
-                  <lv-data-explorer-dashboard-picker .state=${dashboardAuthoring} .spec=${spec}></lv-data-explorer-dashboard-picker>
                 </div>
               </div>
               <div class="query-row">
                 <span class="query-label">Filters</span>
                 <div class="filter-pills">
-                  ${(spec.filters ?? []).map((filter, index) => html`
+                  ${(command.filters ?? []).map((filter, index) => html`
                     <button type="button" class="chip" title="Remove filter" @click=${() => this.removeExploreFilter(index, command)}>
-                      ${fieldLabel(filter.field, explore.fields)} ${filterOperator(filter).replaceAll('_', ' ')} ${filterValues(filter).join(', ')} ${lucideIcon(X, { size: 12 })}
+                      ${fieldLabel(filter.field, explore.fields)} ${filter.operator.replaceAll('_', ' ')} ${filter.values.join(', ')} ${lucideIcon(X, { size: 12 })}
                     </button>
                   `)}
-                  ${!spec.filters?.length ? html`<span class="empty">No filters</span>` : nothing}
+                  ${!command.filters?.length ? html`<span class="empty">No filters</span>` : nothing}
                 </div>
                 <label>Rows
-                  <select .value=${String(spec.limit)} @change=${(event: Event) => this.emitExplore({ ...spec, limit: Number((event.target as HTMLSelectElement).value) }, command)}>
+                  <select .value=${String(command.limit)} @change=${(event: Event) => this.emitExplore({ ...command, limit: Number((event.target as HTMLSelectElement).value) })}>
                     ${[50, 100, 250, 500, 1000].map((limit) => html`<option value=${limit}>${limit}</option>`)}
                   </select>
                 </label>
               </div>
             </section>
-            <lv-data-explorer-query-controls
-              .command=${command}
-              .fields=${explore.fields}
-              .suggestions=${suggestionSignal}
-              .filterField=${this.filterField}
-              .filterOperator=${this.filterOperator}
-              .filterValue=${this.filterValue}
-              @lv-data-explorer-spec-change=${(event: CustomEvent<ExplorationSpec>) => this.handleExploreSpecChange(event, command)}
-              @lv-data-explorer-filter-open=${(event: CustomEvent<string>) => this.handleExploreFilterOpen(event, command)}
-              @lv-data-explorer-filter-change=${(event: CustomEvent<{ action: 'apply' | 'cancel' | 'operator' | 'value'; operator?: string; value?: string }>) => this.handleExploreFilterChange(event, command)}
-            ></lv-data-explorer-query-controls>
-            <section class="result-notices" aria-label="Query status">
-              ${this.renderExecutionState(command, result, status, rawResult.error || this.exploreTransportFailure?.message)}
-              ${exploreError ? renderExploreFailure(exploreError, runValidation.length === 0, () => this.runExplore(command), () => this.resetExplore(command)) : nothing}
-              ${this.exploreInteractionError ? html`<p class="result-error" role="alert">${this.exploreInteractionError}</p>` : nothing}
-            </section>
-            <section class="result-body" aria-label="Result body">
-              ${hasQuery
-                ? html`<lv-data-explorer-results
-                    .command=${command}
-                    .result=${result}
-                    .status=${status}
-                    .views=${presentation.views}
-                    .recommendedView=${presentation.recommendedView}
-                    .selectedDataset=${selectedDataset ? { id: selectedDataset.id, title: selectedDataset.title, grainEntity: selectedDataset.grainEntity, grainLabel: datasetGrainLabel(selectedDataset) } : undefined}
-                    .executionState=${this.exploreExecutionState}
-                    aria-busy=${String(exploreRunning)}
-                    @lv-data-explore-interaction=${(event: CustomEvent<{ command: OptimisticInteractionCommand; mode: ExplorationInteractionMode }>) => this.handleExploreInteraction(event, command, explore.fields, selectedDataset?.grainFields ?? [])}
-                    @lv-visualization-window-request=${(event: CustomEvent<VisualizationWindowRequest>) => this.handleExploreWindowRequest(event, command, presentation.views, result)}
-                  ></lv-data-explorer-results>`
-                : exploreError ? nothing : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
-            </section>
+            ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
+            <div class="result-meta" aria-live="polite">
+              <span><strong>${selectedSemanticModel?.title ?? label(command.semanticModelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
+              ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
+              ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
+              ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
+              ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
+            </div>
+            ${hasQuery
+              ? html`<lv-data-explore-table
+                  .command=${command}
+                  .result=${result}
+                  .visibleColumns=${this.exploreVisibleColumns}
+                  @lv-data-explore-table-command=${(event: CustomEvent<Partial<DataExploreCommand>>) => this.emitExplore({ ...command, ...event.detail })}
+                ></lv-data-explore-table>`
+              : html`<p class="empty">Select at least one field to build a governed result table.</p>`}
         </section>
       </div>
     `
   }
 
+  private renderExploreQueryDetails(object: DataExplorerObjectSignal, explore: DataExploreSignal, command: DataExploreCommand) {
+    const result = explore.result
+    return html`
+      <section class="query-view" aria-label="Query details">
+        <dl class="metadata-grid">
+          <div class="metadata-card"><dt>Query target</dt><dd>${label(command.semanticModelId)} / ${label(command.datasetId)}</dd></div>
+          <div class="metadata-card"><dt>Fields</dt><dd>${command.dimensions.length + command.metrics.length}</dd></div>
+          <div class="metadata-card"><dt>Filters</dt><dd>${command.filters.length}</dd></div>
+          <div class="metadata-card"><dt>Rows returned</dt><dd>${result.rowsReturned}</dd></div>
+        </dl>
+        <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
+        <p class="query-copy">This is the governed query generated from the selected fields, relationships, filters, and metrics.</p>
+        <pre class="query-code">${result.sql || 'Select fields to generate a query.'}</pre>
+        ${result.plan ? html`<h3 class="query-heading">Query plan</h3><pre class="query-code">${result.plan}</pre>` : nothing}
+        ${object.description ? html`<p class="query-copy">${object.description}</p>` : nothing}
+      </section>
+    `
+  }
+
   private selectObject(object: DataExplorerObjectSignal): void {
     this.optimisticExplore = null
-    this.latestExploreRequestSeq = 0
     this.closeFilter()
     const currentExplore = this.dataExplorer?.explore?.command ?? emptyExplorer.explore.command
     const datasetID = objectDatasetID(object)
@@ -1872,20 +1767,17 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const semanticActive = this.dataExplorer?.command?.mode === 'explore'
     const explore: DataExploreCommand = {
       ...currentExplore,
-      action: semanticActive ? 'configure' : undefined,
-      spec: {
-        ...explorationSpecFor(currentExplore),
-        modelId: object.semanticModelId ?? '',
-        datasetId: datasetID,
-        dimensions: localDimensions.map((field) => ({ field })),
-        metrics: [],
-        filters: [],
-        sort: [],
-      },
+      semanticModelId: object.semanticModelId ?? '',
+      datasetId: datasetID,
+      dimensions: localDimensions,
+      metrics: [],
+      filters: [],
+      sort: [],
+      requestSeq: 0,
+      resetVersion: 0,
       columnWidths: {},
     }
     this.emitCommand({
-      action: semanticActive ? 'configure' : undefined,
       mode: semanticActive ? 'explore' : 'browse',
       explore,
       objectKey: object.key,
@@ -1909,76 +1801,193 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     if (!selected || this.dataExplorer.command?.mode === 'explore' || this.optimisticExplore) this.selectObject(object)
   }
 
+  private renderSchema(object: DataExplorerObjectSignal, columns: NonNullable<DataExplorerObjectSignal['columns']>) {
+    return html`
+      <section class="schema-view" aria-label="Schema">
+        <dl class="metadata-grid">
+          <div class="metadata-card"><dt>Data layer</dt><dd>${layerLabel(object.layer)}</dd></div>
+          <div class="metadata-card"><dt>Project generation</dt><dd>${label(this.page?.context?.projectId)} · ${label(this.page?.context?.generationId)}</dd></div>
+          <div class="metadata-card"><dt>Semantic Model</dt><dd>${label(object.semanticModelId)}</dd></div>
+          <div class="metadata-card"><dt>Grain</dt><dd>${object.grain ? label(object.grain) : 'Not declared'}</dd></div>
+          ${object.description ? html`<div class="metadata-card"><dt>Description</dt><dd>${object.description}</dd></div>` : nothing}
+        </dl>
+        <table class="schema-table">
+          <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Key</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            ${columns.map((column) => html`
+              <tr>
+                <td><code>${column.label || column.key}</code>${column.label !== column.key ? html`<div class="schema-muted">${column.key}</div>` : nothing}</td>
+                <td><code>${column.type || '—'}</code></td>
+                <td>${column.nullable === undefined ? 'Unknown' : column.nullable ? 'Yes' : 'No'}</td>
+                <td>${column.primaryKey ? 'Primary key' : '—'}</td>
+                <td><code>${column.defaultValue || '—'}</code></td>
+                <td class=${column.description ? '' : 'schema-muted'}>${column.description || 'No description'}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+      </section>
+    `
+  }
+
+  private renderQueryDetails(object: DataExplorerObjectSignal, preview: DataPreviewSignal) {
+    return html`
+      <section class="query-view" aria-label="Query details">
+        <dl class="metadata-grid">
+          <div class="metadata-card"><dt>Query target</dt><dd>${queryTargetLabel(object)}</dd></div>
+          <div class="metadata-card"><dt>Rows</dt><dd>${label(preview.totalRowLabel || object.rowCountLabel)}</dd></div>
+          <div class="metadata-card"><dt>Sort</dt><dd>${preview.sort?.column ? `${preview.sort.column} ${preview.sort.direction || 'ascending'}` : 'Source order'}</dd></div>
+        </dl>
+        <h3 class="query-heading">${lucideIcon(Code2, { size: 17 })} Generated SQL</h3>
+        <p class="query-copy">This is the governed query executed for the current preview. Sorting and pagination are applied by the explorer.</p>
+        <pre class="query-code">${preview.sql || 'No SQL is available for this preview.'}</pre>
+      </section>
+    `
+  }
+
   private emitCommand(partial: Partial<DataExplorerCommand>) {
     const current = this.dataExplorer?.command ?? emptyExplorer.command
-    const hydratedClientID = typeof current.clientId === 'string' ? current.clientId.trim() : ''
-    const partialClientID = typeof partial.clientId === 'string' ? partial.clientId.trim() : ''
-    const clientId = partialClientID || this.clientState.clientID(hydratedClientID)
     const next = this.queryController.command({
       ...current,
-      clientId,
       explore: current.explore ?? this.dataExplorer?.explore?.command,
       objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
-    }, { ...partial, clientId })
-    // Semantic command sequences are durable for the tab, not for this
-    // component instance. A navigation can hydrate requestSeq back to zero
-    // while the server lifecycle still remembers a higher request. Suggestions
-    // intentionally stay on their independent lane and must not advance this
-    // sequence or cancel a semantic request. Stop keeps the addressed run's
-    // sequence so its server-side tombstone can acquire the response lease.
-    const suggestionAction = partial.explore?.action ?? partial.action
-    const suggestionCommand = partial.explore?.filterSuggestions !== undefined && suggestionAction === 'configure'
-    const commandAction = next.explore?.action ?? next.action
-    const stopCommand = commandAction === 'stop'
-    if (!suggestionCommand && !stopCommand) {
-      const hydratedSequence = Math.max(
-        current.requestSeq ?? 0,
-        next.requestSeq ?? 0,
-        next.explore?.requestSeq ?? 0,
-      )
-      const requestSeq = this.clientState.nextRequestSequence(clientId, hydratedSequence)
-      next.requestSeq = requestSeq
-      if (next.explore) next.explore.requestSeq = requestSeq
-    }
-    // Any semantic draft/run/stop command supersedes in-flight suggestions.
-    // This is a browser-side freshness guard for the interval before the
-    // corresponding semantic request reaches the server.
-    if (partial.explore && partial.explore.filterSuggestions === undefined) this.clientState.invalidateSuggestions()
-    if (!this.embedded) {
-      const action = partial.action ?? next.action
-      const exploreAction = partial.explore?.action ?? next.explore?.action
-      const modeChange = partial.mode !== undefined
-      const browseSelection = partial.objectKey !== undefined && next.mode !== 'explore'
-      const explicitRun = action === 'run' || exploreAction === 'run'
-      const transientConfigure = exploreAction === 'configure'
-      if (explicitRun || modeChange || browseSelection) {
-        updateSavedExplorationURL(next, 'push', this.savedExplorations)
-      } else if (!transientConfigure && partial.explore !== undefined && next.mode !== 'explore') {
-        updateSavedExplorationURL(next, 'push', this.savedExplorations)
-      }
+    }, partial)
+    if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
+      replaceDataExplorerURL(next)
     }
     this.dispatchEvent(new CustomEvent('lv-data-explorer-command', { bubbles: true, composed: true, detail: next }))
   }
+}
 
-  private canonicalizeInitialURL(): void {
-    if (this.embedded || this.initialURLCanonicalized || this.optimisticExplore) return
-    if (!Object.prototype.hasOwnProperty.call(this.signals, 'dataExplorer')) return
-    this.initialURLCanonicalized = true
-    updateSavedExplorationURL(this.dataExplorer.command, 'replace', this.savedExplorations)
+function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
+  const datasetID = objectDatasetID(object)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === datasetID)
+  const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
+  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${datasetID}.${column.key}`)
+  const seen = new Set(ordered)
+  for (const field of localFields) {
+    if (!seen.has(field.id)) ordered.push(field.id)
   }
+  return ordered
+}
 
-  /**
-   * Let the canonical server updates route decode and hydrate history entries.
-   * Posting the old in-memory command here would execute the wrong entry and
-   * would make a Back/Forward action execute twice.
-   */
-  private readonly handleHistoryPopState = (): void => {
-    if (this.embedded || typeof window === 'undefined') return
-    window.clearTimeout(this.exploreTimer)
-    this.optimisticExplore = null
-    this.closeFilter()
-    window.location.reload()
+function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return objects
+  return objects.filter((object) => objectSearchValues(object)
+    .some((value) => value.toLowerCase().includes(normalized)))
+}
+
+function objectSearchValues(object: DataExplorerObjectSignal): string[] {
+  return [
+    object.title,
+    object.description,
+    object.layer,
+    object.resourceId,
+    object.semanticModelId,
+    object.datasetId,
+    ...(object.columns ?? []).flatMap((column) => [column.key, column.label, column.type, column.description]),
+  ].map((value) => String(value ?? ''))
+}
+
+function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: string): boolean {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return false
+  return (object.columns ?? []).some((column) => [column.key, column.label, column.type, column.description]
+    .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
+}
+
+function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
+  const groups = new Map<string, ResourceGroup>()
+  const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
+  for (const object of objects) {
+    if (object.layer === 'source') continue
+    const id = object.semanticModelId || object.layer
+    if (!groups.has(id)) {
+      groups.set(id, { id, title: modelTitles.get(id) || object.semanticModelId || 'Data objects', objects: [] })
+    }
+    groups.get(id)!.objects.push(object)
   }
+  return Array.from(groups.values()).filter((group) => group.objects.length > 0)
+}
+
+type ExploreFieldGroup = {
+  id: string
+  kind: 'dimension' | 'metric'
+  label: string
+  fields: DataExploreFieldSignal[]
+}
+
+function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup[] {
+  const groups = new Map<string, ExploreFieldGroup>()
+  for (const field of fields) {
+    const crossDatasetMetric = field.kind === 'metric' && !field.datasetId
+    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.datasetId}:${field.kind}`
+    if (!groups.has(id)) {
+      groups.set(id, {
+        id,
+        kind: field.kind,
+        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.datasetId)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
+        fields: [],
+      })
+    }
+    groups.get(id)!.fields.push(field)
+  }
+  return Array.from(groups.values())
+}
+
+function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
+  return fields.find((field) => field.id === id)?.label ?? label(id)
+}
+
+function datasetGrainLabel(dataset: DataExploreDatasetSignal): string {
+  const fields = dataset.grainFields ?? []
+  return fields.length ? `${dataset.grainEntity} (${fields.join(', ')})` : dataset.grainEntity
+}
+
+function replaceDataExplorerURL(command: DataExplorerCommand) {
+  if (typeof window === 'undefined') return
+  const next = dataExplorerURL(command)
+  if (window.location.pathname + window.location.search !== next) {
+    window.history.replaceState({}, '', next)
+  }
+}
+
+function iconForLayer(layer: string): any {
+  switch (layer) {
+    case 'source':
+      return Server
+    case 'semantic_view':
+      return Eye
+    case 'model':
+      return Table2
+    default:
+      return Database
+  }
+}
+
+function layerLabel(layer: string): string {
+  switch (layer) {
+    case 'source':
+      return 'Source'
+    case 'model':
+      return 'Model'
+    case 'semantic_view':
+      return 'Semantic view'
+    default:
+      return label(layer)
+  }
+}
+
+function queryTargetLabel(object: DataExplorerObjectSignal): string {
+  const target = object.source || object.datasetId || object.title
+  const model = object.semanticModelId ? `${object.semanticModelId} · ` : ''
+  return `${layerLabel(object.layer)} · ${model}${target}`
+}
+
+function label(value: unknown): string {
+  if (value == null || value === '') return '-'
+  return String(value)
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)

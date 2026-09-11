@@ -2889,15 +2889,9 @@
                   "additionalProperties": false,
                   "properties": {
                     "id": {
-                      "maxLength": 200,
-                      "minLength": 1,
                       "type": "string"
                     },
                     "type": {
-                      "enum": [
-                        "field",
-                        "metric"
-                      ],
                       "type": "string"
                     }
                   },
@@ -2911,10 +2905,6 @@
                   "type": "string"
                 },
                 "kind": {
-                  "enum": [
-                    "dimension",
-                    "metric"
-                  ],
                   "type": "string"
                 },
                 "label": {
@@ -2968,17 +2958,9 @@
                 "type": "string"
               },
               "source": {
-                "enum": [
-                  "publish",
-                  "refresh"
-                ],
                 "type": "string"
               },
               "status": {
-                "enum": [
-                  "current",
-                  "stale"
-                ],
                 "type": "string"
               }
             },
