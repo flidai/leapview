@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -252,6 +253,14 @@ func captureProviderObservationInventory(ctx context.Context, queries *manageddb
 }
 
 func captureProviderObservationRevision(ctx context.Context, queries *manageddb.Queries, row manageddb.ListProviderObservationRevisionsRow) (capturedProjectionRevision, int, error) {
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return capturedProjectionRevision{}, 0, fmt.Errorf("%w: revision %q has invalid project identity: %v", ErrInvalid, row.RevisionID, err)
+	}
+	collectionID, err := projectgraph.NewResourceID(row.CollectionID)
+	if err != nil {
+		return capturedProjectionRevision{}, 0, fmt.Errorf("%w: revision %q has invalid collection identity: %v", ErrInvalid, row.RevisionID, err)
+	}
 	if _, err := manageddata.ParseRevisionID(row.RevisionID); err != nil {
 		return capturedProjectionRevision{}, 0, fmt.Errorf("%w: revision %q has invalid identity: %v", ErrInvalid, row.RevisionID, err)
 	}
@@ -310,7 +319,7 @@ func captureProviderObservationRevision(ctx context.Context, queries *manageddb.
 	if len(observed) != len(manifestByPath) {
 		return capturedProjectionRevision{}, 0, fmt.Errorf("%w: ready revision %q contains duplicate or missing file paths", ErrInvalid, row.RevisionID)
 	}
-	return capturedProjectionRevision{RevisionID: row.RevisionID, ManifestDigest: row.Digest, Files: observed}, len(observed), nil
+	return capturedProjectionRevision{ProjectID: projectID.String(), CollectionID: collectionID.String(), RevisionID: row.RevisionID, ManifestDigest: row.Digest, Files: observed}, len(observed), nil
 }
 
 func providerObservationRevisionBytes(revision capturedProjectionRevision) int {
@@ -318,7 +327,7 @@ func providerObservationRevisionBytes(revision capturedProjectionRevision) int {
 	// rounded up. Six bytes per source byte covers JSON \u00XX escaping, so
 	// this guard rejects before accumulating beyond the bounded source
 	// document even when source keys contain escapable characters.
-	n := 6*(len(revision.RevisionID)+len(revision.ManifestDigest)) + 128
+	n := 6*(len(revision.ProjectID)+len(revision.CollectionID)+len(revision.RevisionID)+len(revision.ManifestDigest)) + 128
 	for _, file := range revision.Files {
 		n += 6*(len(file.Path)+len(file.SHA256)+len(file.StorageKey)) + 128
 	}

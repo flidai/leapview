@@ -86,6 +86,16 @@ func TestProviderObservationCaptureQualification(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	projection, err := managed.CaptureManagedProjection(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.Revisions) != 1 {
+		t.Fatalf("captured projection revisions = %#v", projection.Revisions)
+	}
+	if got := projection.Revisions[0]; got.ProjectID != collection.ProjectID.String() || got.CollectionID != collection.ID.String() || got.RevisionID != "revision_observation" {
+		t.Fatalf("captured revision identity = %#v, want project=%q collection=%q revision=%q", got, collection.ProjectID, collection.ID, "revision_observation")
+	}
 
 	first, err := Capture(ctx, managed)
 	if err != nil {

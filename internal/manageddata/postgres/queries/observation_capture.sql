@@ -18,11 +18,13 @@ WHERE singleton = true;
 SELECT current_setting('fsync')::text AS fsync;
 
 -- name: ListProviderObservationRevisions :many
-SELECT revision_id, digest, manifest::text AS manifest, file_count, size_bytes
-FROM managed_data.revision
-WHERE status = 'ready'
-  AND revision_id > sqlc.arg(after_revision_id)
-ORDER BY revision_id
+SELECT c.project_id, c.collection_id,
+       r.revision_id, r.digest, r.manifest::text AS manifest, r.file_count, r.size_bytes
+FROM managed_data.revision AS r
+JOIN managed_data.collection AS c ON c.collection_id = r.collection_id
+WHERE r.status = 'ready'
+  AND r.revision_id > sqlc.arg(after_revision_id)
+ORDER BY r.revision_id
 LIMIT sqlc.arg(page_size);
 
 -- name: ListProviderObservationRevisionFiles :many

@@ -1,6 +1,21 @@
 package manageddata
 
-import "context"
+import (
+	"context"
+
+	"github.com/flidai/leapview/internal/manageddata/storage"
+)
+
+// ProviderVersionObservation is the managed-data owner's immutable provider
+// fact. The alias keeps recovery composition on the managed-data contract
+// boundary instead of importing its storage adapter package directly.
+type ProviderVersionObservation = storage.ProviderVersionObservation
+
+// ValidateProviderVersionObservation preserves the single validation owner
+// for provider facts exposed through this contract boundary.
+func ValidateProviderVersionObservation(observation ProviderVersionObservation) error {
+	return storage.ValidateProviderVersionObservation(observation)
+}
 
 // CapturedProjection is the trusted source-side result of a managed-data
 // capture. It contains only facts obtained from the managed-data authority;
@@ -16,6 +31,8 @@ type CapturedProjection struct {
 }
 
 type CapturedProjectionRevision struct {
+	ProjectID      string
+	CollectionID   string
 	RevisionID     string
 	ManifestDigest string
 	Files          []CapturedProjectionFile

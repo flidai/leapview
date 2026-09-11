@@ -485,6 +485,27 @@ func (s *Store) verifyVersion(ctx context.Context, expected storage.Blob, key, v
 	return storage.Blob{SHA256: digest, Size: written, URI: s.blobURI(key)}, nil
 }
 
+// VerifyExact replays one durable write-time observation through this store's
+// trusted S3 client and profile. It always supplies the captured VersionID to
+// both provider calls and verifies the returned version, size, and SHA-256
+// bytes. The observation cannot select credentials, endpoint, or bucket.
+func (s *Store) VerifyExact(ctx context.Context, observation storage.ProviderVersionObservation) error {
+	if s == nil || s.profile == nil {
+		return fmt.Errorf("%w: exact provider verification requires a trusted profile", storage.ErrProviderVersion)
+	}
+	if err := storage.ValidateProviderVersionObservation(observation); err != nil {
+		return err
+	}
+	if observation.Profile != *s.profile || observation.Profile.Bucket != s.bucket || observation.Profile.Namespace != s.prefix {
+		return fmt.Errorf("%w: provider observation does not match trusted S3 profile", storage.ErrObservationConflict)
+	}
+	if observation.ObjectKey != s.blobKey(observation.SHA256) {
+		return fmt.Errorf("%w: provider observation key does not match its content identity", storage.ErrObservationConflict)
+	}
+	_, err := s.verifyVersion(ctx, storage.Blob{SHA256: observation.SHA256, Size: observation.Size}, observation.ObjectKey, observation.VersionID)
+	return err
+}
+
 func (s *Store) captureWriteVersion(versionID, operation string) (string, time.Time, error) {
 	if strings.EqualFold(versionID, "null") || strings.EqualFold(versionID, "latest") {
 		versionID = ""
