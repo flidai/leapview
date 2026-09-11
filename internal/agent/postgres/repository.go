@@ -384,7 +384,7 @@ func (r *Repository) ListConversationsPage(ctx context.Context, principal string
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
 }
 
 func (r *Repository) GetConversation(ctx context.Context, principal, id string) (agent.Conversation, error) {
@@ -601,7 +601,7 @@ func (r *Repository) ListMessagesPage(ctx context.Context, principal, conversati
 	for _, row := range rows {
 		out = append(out, mapMessageList(row))
 	}
-	return pageByID(out, page, func(v agent.Message) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Message) string { return v.ID }), nil
 }
 
 func (r *Repository) CreateRun(ctx context.Context, input agent.RunInput) (agent.Run, error) {
@@ -909,14 +909,7 @@ func (r *Repository) VerifyRunLease(ctx context.Context, runID, jobID string, fe
 	if r.jobs == nil {
 		return nil
 	}
-	job, err := r.jobs.Get(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
-		return errors.New("stale durable job claim")
-	}
-	return nil
+	return agent.VerifyRunLease(ctx, runID, jobID, fence, r.jobs.Get)
 }
 
 func (r *Repository) FinishRun(ctx context.Context, input agent.RunFinish) (agent.Run, error) {
@@ -973,7 +966,7 @@ func (r *Repository) ListRunsPage(ctx context.Context, principal, conversation s
 	for _, row := range rows {
 		out = append(out, mapRun(row))
 	}
-	return pageByID(out, page, func(v agent.Run) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Run) string { return v.ID }), nil
 }
 func (r *Repository) GetRun(ctx context.Context, principal, conversation, runID string) (agent.Run, error) {
 	principal, err := principalID(principal)
@@ -1150,7 +1143,7 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 	if err != nil {
 		return err
 	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
+	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !agent.LeaseUnexpired(job.LeaseExpiresAt) {
 		return errors.New("stale durable job claim")
 	}
 	return nil
@@ -1282,42 +1275,6 @@ func jsonEquivalent(left, right string) bool {
 		return left == right
 	}
 	return reflect.DeepEqual(a, b)
-}
-func pageByID[T any](rows []T, page agent.Page, id func(T) string) []T {
-	limit := page.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
-	start := 0
-	if after := strings.TrimSpace(page.After); after != "" {
-		start = len(rows)
-		for i, row := range rows {
-			if id(row) == after {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(rows) {
-		return []T{}
-	}
-	end := start + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return append([]T(nil), rows[start:end]...)
-}
-func leaseUnexpired(v string) bool {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, v); err == nil {
-			return parsed.After(time.Now())
-		}
-	}
-	return false
 }
 func newID(prefix string) string { return prefix + "_" + newSecret()[:24] }
 func newUUIDv7() (string, error) {

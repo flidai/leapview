@@ -863,10 +863,8 @@ func (r *SQLRunRepository) LatestTargetRun(ctx context.Context, scope refreshrun
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	if len(runs) == 0 {
-		return refreshrun.RunRecord{}, false, nil
-	}
-	return runs[0], true, nil
+	latest, ok := refreshrun.LatestRecord(runs)
+	return latest, ok, nil
 }
 
 func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {

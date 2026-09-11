@@ -224,7 +224,7 @@ func (r *Repository) ListConversationsPage(ctx context.Context, principalID stri
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
 }
 
 func (r *Repository) GetConversation(ctx context.Context, principalID, conversationID string) (agent.Conversation, error) {
@@ -489,7 +489,7 @@ func (r *Repository) ListMessagesPage(ctx context.Context, principalID, conversa
 	for _, row := range rows {
 		out = append(out, mapMessage(row))
 	}
-	return pageByID(out, page, func(row agent.Message) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Message) string { return row.ID }), nil
 }
 
 func (r *Repository) CreateRun(ctx context.Context, input agent.RunInput) (agent.Run, error) {
@@ -776,28 +776,7 @@ func (r *Repository) VerifyRunLease(ctx context.Context, runID, jobID string, fe
 	if r.events == nil {
 		return nil
 	}
-	job, err := r.events.Get(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID ||
-		job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
-		return fmt.Errorf("stale durable job claim")
-	}
-	return nil
-}
-
-func leaseUnexpired(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.After(time.Now())
-		}
-	}
-	return false
+	return agent.VerifyRunLease(ctx, runID, jobID, fence, r.events.Get)
 }
 
 func (r *Repository) FinishRun(ctx context.Context, input agent.RunFinish) (agent.Run, error) {
@@ -858,7 +837,7 @@ func (r *Repository) ListRunsPage(ctx context.Context, principalID, conversation
 	for _, row := range rows {
 		out = append(out, mapRun(row))
 	}
-	return pageByID(out, page, func(row agent.Run) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Run) string { return row.ID }), nil
 }
 
 func (r *Repository) GetRun(ctx context.Context, principalID, conversationID, runID string) (agent.Run, error) {
@@ -1121,32 +1100,6 @@ func validRunStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func pageByID[T any](rows []T, page agent.Page, id func(T) string) []T {
-	limit := page.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
-	start := 0
-	after := strings.TrimSpace(page.After)
-	if after != "" {
-		start = len(rows)
-		for i, row := range rows {
-			if id(row) == after {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(rows) {
-		return []T{}
-	}
-	end := start + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return append([]T(nil), rows[start:end]...)
 }
 
 func newID(prefix string) string {

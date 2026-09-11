@@ -800,10 +800,8 @@ func (p *postgresRunPersistence) LatestTargetRun(ctx context.Context, scope refr
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	if len(runs) == 0 {
-		return refreshrun.RunRecord{}, false, nil
-	}
-	return runs[0], true, nil
+	latest, ok := refreshrun.LatestRecord(runs)
+	return latest, ok, nil
 }
 
 func (p *postgresRunPersistence) LatestSuccessfulTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
