@@ -463,6 +463,13 @@ func validateEndpoint(endpoint EndpointConfig) error {
 	return nil
 }
 
+// ValidateEndpointConfig applies the target-binding endpoint contract without
+// constructing or mutating a binding. Local authoring profile validation uses
+// this boundary before any target identity or credential reference exists.
+func ValidateEndpointConfig(endpoint EndpointConfig) error {
+	return validateEndpoint(endpoint)
+}
+
 func cloneEndpoint(endpoint EndpointConfig) EndpointConfig {
 	result := endpoint
 	if endpoint.Options != nil {
