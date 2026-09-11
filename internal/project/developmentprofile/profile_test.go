@@ -63,7 +63,7 @@ profiles:
         credentials:
           none: true
 `)
-	selected, err := Load(LoadOptions{
+	selected, err := loadProfile(LoadOptions{
 		CheckoutRoot: root, SourceRoot: filepath.Join(root, "dashboards"), ProfileFile: file,
 		Connections: map[string]LogicalConnection{
 			"warehouse":    {ID: "connection_warehouse", ConnectorKind: "postgres"},
@@ -106,15 +106,15 @@ profiles:
     connections: {}
 `)
 
-	selected, err := Load(LoadOptions{CheckoutRoot: checkout, InvocationDirectory: invocation})
+	selected, err := loadProfile(LoadOptions{CheckoutRoot: checkout, InvocationDirectory: invocation})
 	if err != nil || selected.File != defaultFile || selected.ProfileName != "local" {
 		t.Fatalf("default selection = %#v, %v", selected, err)
 	}
-	selected, err = Load(LoadOptions{CheckoutRoot: checkout, InvocationDirectory: invocation, ProfileFile: "chosen.yaml"})
+	selected, err = loadProfile(LoadOptions{CheckoutRoot: checkout, InvocationDirectory: invocation, ProfileFile: "chosen.yaml"})
 	if err != nil || selected.File != explicitFile {
 		t.Fatalf("explicit selection = %#v, %v", selected, err)
 	}
-	selected, err = Load(LoadOptions{CheckoutRoot: checkout, ProfileName: "prod"})
+	selected, err = loadProfile(LoadOptions{CheckoutRoot: checkout, ProfileName: "prod"})
 	if err != nil || selected.File != defaultFile || selected.ProfileName != "prod" {
 		t.Fatalf("prod remained-local selection = %#v, %v", selected, err)
 	}
@@ -122,17 +122,17 @@ profiles:
 
 func TestLoadAllowsMissingDefaultOnlyWithoutExternalBindings(t *testing.T) {
 	root := t.TempDir()
-	selected, err := Load(LoadOptions{CheckoutRoot: root, Connections: map[string]LogicalConnection{
+	selected, err := loadProfile(LoadOptions{CheckoutRoot: root, Connections: map[string]LogicalConnection{
 		"fixture": {ID: "connection_fixture", ConnectorKind: "managed"},
 	}})
 	if err != nil || len(selected.Connections) != 0 {
 		t.Fatalf("fixture selection = %#v, %v", selected, err)
 	}
-	_, err = Load(LoadOptions{CheckoutRoot: root, Connections: map[string]LogicalConnection{
+	_, err = loadProfile(LoadOptions{CheckoutRoot: root, Connections: map[string]LogicalConnection{
 		"warehouse": {ID: "connection_warehouse", ConnectorKind: "postgres"},
 	}})
 	assertDiagnostic(t, err, "profile.setup_required", "")
-	_, err = Load(LoadOptions{CheckoutRoot: root, ProfileFile: "missing.yaml"})
+	_, err = loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: "missing.yaml"})
 	assertDiagnostic(t, err, "profile.file", "")
 }
 
@@ -142,7 +142,7 @@ func TestLoadRejectsProfileFlagsForRemoteDevelopment(t *testing.T) {
 		{CheckoutRoot: root, RemoteTarget: "https://staging.example.com", ProfileFile: "profile.yaml"},
 		{CheckoutRoot: root, RemoteTarget: "https://staging.example.com", ProfileName: "local"},
 	} {
-		_, err := Load(options)
+		_, err := loadProfile(options)
 		assertDiagnostic(t, err, "profile.remote_conflict", "")
 	}
 }
@@ -154,14 +154,14 @@ func TestLoadRejectsProfileInsidePortableSourceRootAfterSymlinkResolution(t *tes
 		t.Fatal(err)
 	}
 	inside := writeNamedProfile(t, filepath.Join(source, "profile.yaml"), validEmptyProfile)
-	_, err := Load(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: inside})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: inside})
 	assertDiagnostic(t, err, "profile.portable_source", "")
 
 	link := filepath.Join(checkout, "linked-profile.yaml")
 	if err := os.Symlink(inside, link); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Load(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: link})
+	_, err = loadProfile(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: link})
 	assertDiagnostic(t, err, "profile.portable_source", "")
 
 	external := writeProfile(t, t.TempDir(), validEmptyProfile)
@@ -169,8 +169,19 @@ func TestLoadRejectsProfileInsidePortableSourceRootAfterSymlinkResolution(t *tes
 	if err := os.Symlink(external, escape); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Load(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: escape})
+	_, err = loadProfile(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: escape})
 	assertDiagnostic(t, err, "profile.portable_source", "")
+}
+
+func TestLoadRequiresSourceRootForExplicitProfile(t *testing.T) {
+	checkout := t.TempDir()
+	file := writeProfile(t, checkout, validEmptyProfile)
+
+	_, err := Load(LoadOptions{CheckoutRoot: checkout, ProfileFile: file})
+	assertDiagnostic(t, err, "profile.source", "")
+
+	_, err = Load(LoadOptions{CheckoutRoot: checkout, SourceRoot: filepath.Join(checkout, "missing"), ProfileFile: file})
+	assertDiagnostic(t, err, "profile.source", "")
 }
 
 func TestLoadRejectsDefaultProfileSymlinkOutsideCheckout(t *testing.T) {
@@ -184,10 +195,10 @@ func TestLoadRejectsDefaultProfileSymlinkOutsideCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Load(LoadOptions{CheckoutRoot: checkout})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: checkout})
 	assertDiagnostic(t, err, "profile.checkout_escape", "")
 
-	selected, err := Load(LoadOptions{CheckoutRoot: checkout, ProfileFile: external})
+	selected, err := loadProfile(LoadOptions{CheckoutRoot: checkout, ProfileFile: external})
 	if err != nil || selected.File != external {
 		t.Fatalf("explicit external selection = %#v, %v", selected, err)
 	}
@@ -216,7 +227,7 @@ func TestLoadRejectsStrictDocumentViolations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			file := writeProfile(t, root, test.document)
-			_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file})
+			_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file})
 			assertDiagnostic(t, err, test.code, "")
 		})
 	}
@@ -231,7 +242,7 @@ profiles:
   broken:
     target: prod
 `)
-	_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file})
 	assertDiagnostic(t, err, "profile.field_unknown", "")
 }
 
@@ -246,7 +257,7 @@ func TestLoadRejectsConnectionAndEndpointViolations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			file := writeProfile(t, root, postgresProfile(test.connection, "host: analytics.internal", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE"))
-			_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
+			_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
 			assertDiagnostic(t, err, test.code, "")
 		})
 	}
@@ -258,8 +269,16 @@ func TestLoadRejectsConnectionAndEndpointViolations(t *testing.T) {
 		{"unknown connector option", "options:\n            data_path: /tmp/data", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.option_unknown"},
 		{"secret option", "options:\n            password: exposed", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.option_unknown"},
 		{"URL userinfo", "objectScope: 's3://user:password@bucket/path'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"opaque URL userinfo", "objectScope: 's3:user:password@bucket?mode=fast'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"encoded opaque URL userinfo", "objectScope: 's3:user%3Apassword%40bucket?mode=fast'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"relative URL userinfo", "objectScope: 'bucket/user:password@host?mode=fast'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"host username", "host: 'user@analytics.internal'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"URL secret query", "objectScope: 's3://bucket/path?access_key=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"relative URL secret query", "objectScope: 'bucket/path?token=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"opaque URL secret query", "objectScope: 's3:bucket/path?password=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"compound access key query", "objectScope: 's3://bucket/path?access_key_id=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"connection string query", "objectScope: 's3://bucket/path?connection_string=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"malformed URL query", "objectScope: 's3://bucket/path?mode=fast;ignored=value'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"URL secret fragment", "objectScope: 's3://bucket/path#token=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"invalid port", "port: 70000", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint"},
 		{"inline credentials", "host: analytics.internal", "password: exposed", "profile.field_unknown"},
@@ -271,16 +290,30 @@ func TestLoadRejectsConnectionAndEndpointViolations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			file := writeProfile(t, root, postgresProfile("warehouse", test.endpoint, test.credentials))
-			_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
+			_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
 			assertDiagnostic(t, err, test.code, "exposed")
 		})
+	}
+}
+
+func TestLoadAllowsNonSecretEndpointQuery(t *testing.T) {
+	for _, endpoint := range []string{
+		"objectScope: 's3://bucket/path?region=us-east-1'",
+		"objectScope: 's3://bucket/path@version'",
+		"objectScope: 's3://bucket/path?owner=foo@bar'",
+	} {
+		root := t.TempDir()
+		file := writeProfile(t, root, postgresProfile("warehouse", endpoint, "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE"))
+		if _, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()}); err != nil {
+			t.Fatalf("Load() rejected non-secret endpoint %q: %v", endpoint, err)
+		}
 	}
 }
 
 func TestLoadRejectsManagedConnectionEntries(t *testing.T) {
 	root := t.TempDir()
 	file := writeProfile(t, root, postgresProfile("fixture", "objectScope: fixture", "none: true"))
-	_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: map[string]LogicalConnection{
+	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: map[string]LogicalConnection{
 		"fixture": {ID: "connection_fixture", ConnectorKind: "managed", Access: semanticmodel.ConnectionAccessPublic},
 	}})
 	assertDiagnostic(t, err, "profile.connection_managed", "")
@@ -292,19 +325,19 @@ func TestLoadRejectsOversizedAndInvalidUTF8Documents(t *testing.T) {
 	if err := os.WriteFile(file, make([]byte, MaxDocumentBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file})
 	assertDiagnostic(t, err, "profile.size", "")
 	if err := os.WriteFile(file, []byte{0xff, 0xfe}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Load(LoadOptions{CheckoutRoot: root, ProfileFile: file})
+	_, err = loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file})
 	assertDiagnostic(t, err, "profile.encoding", "")
 }
 
 func TestDiagnosticsNeverIncludeRejectedSecretValues(t *testing.T) {
 	root := t.TempDir()
 	file := writeProfile(t, root, postgresProfile("warehouse", "host: analytics.internal", "password: unmistakable-secret-value"))
-	_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
 	assertDiagnostic(t, err, "profile.field_unknown", "unmistakable-secret-value")
 }
 
@@ -344,6 +377,16 @@ func writeNamedProfile(t *testing.T, path, contents string) string {
 
 func postgresCatalog() map[string]LogicalConnection {
 	return map[string]LogicalConnection{"warehouse": {ID: "connection_warehouse", ConnectorKind: "postgres"}}
+}
+
+func loadProfile(options LoadOptions) (Selected, error) {
+	if strings.TrimSpace(options.SourceRoot) == "" {
+		options.SourceRoot = filepath.Join(options.CheckoutRoot, "dashboards")
+	}
+	if err := os.MkdirAll(options.SourceRoot, 0o755); err != nil {
+		return Selected{}, err
+	}
+	return Load(options)
 }
 
 func postgresProfile(name, endpoint, credentials string) string {

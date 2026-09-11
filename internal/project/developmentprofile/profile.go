@@ -79,8 +79,9 @@ func CatalogFromManifest(manifest projectmanifest.ResourceManifest) (map[string]
 }
 
 // LoadOptions are local-only selection inputs. ProfileFile is explicit when
-// non-empty; otherwise the checkout-scoped default is selected. RemoteTarget
-// exists solely to reject mixing local profile flags with remote development.
+// non-empty and requires a verified SourceRoot; otherwise the checkout-scoped
+// default is selected. RemoteTarget exists solely to reject mixing local
+// profile flags with remote development.
 type LoadOptions struct {
 	CheckoutRoot        string
 	InvocationDirectory string
@@ -214,6 +215,9 @@ func resolveSelection(options LoadOptions) (string, string, bool, error) {
 	if strings.TrimSpace(options.RemoteTarget) != "" && (explicit || options.ProfileName != "") {
 		return "", "", false, diagnostic("profile selection", "", "profile.remote_conflict", "local profile flags cannot be combined with remote development", nil)
 	}
+	if explicit && strings.TrimSpace(options.SourceRoot) == "" {
+		return "", "", false, diagnostic("profile selection", "", "profile.source", "portable analytics source root is required for an explicit profile", nil)
+	}
 	file := filepath.Join(checkoutRoot, DefaultRelativePath)
 	if explicit {
 		file = options.ProfileFile
@@ -236,6 +240,9 @@ func resolveSelection(options LoadOptions) (string, string, bool, error) {
 		}
 		if pathWithin(filepath.Clean(sourceRoot), file) {
 			return "", "", false, diagnostic(file, "", "profile.portable_source", "profile files cannot be selected from inside the portable analytics source root", nil)
+		}
+		if _, sourceErr := canonicalDirectory(sourceRoot); sourceErr != nil {
+			return "", "", false, diagnostic(file, "", "profile.source", "portable analytics source root cannot be verified", nil)
 		}
 	}
 	return file, profileName, explicit, nil
@@ -281,7 +288,7 @@ func readProfileFile(path string, options LoadOptions, explicit bool) ([]byte, s
 			sourceRoot = filepath.Join(checkoutRoot, sourceRoot)
 		}
 		canonicalSource, sourceErr := filepath.EvalSymlinks(sourceRoot)
-		if sourceErr != nil && !errors.Is(sourceErr, os.ErrNotExist) {
+		if sourceErr != nil && (explicit || !errors.Is(sourceErr, os.ErrNotExist)) {
 			return nil, "", diagnostic(path, "", "profile.source", "portable analytics source root cannot be verified", nil)
 		}
 		if sourceErr == nil && pathWithin(canonicalSource, canonical) {
@@ -621,7 +628,8 @@ func hasSecretBearingURL(endpoint connectionadmin.EndpointConfig) bool {
 		if strings.ContainsAny(value, "\r\n\x00") {
 			return true
 		}
-		if !strings.Contains(value, "://") && !strings.HasPrefix(value, "//") {
+		uriLike := strings.ContainsAny(value, "?#") || strings.Contains(value, "://") || strings.HasPrefix(value, "//")
+		if !uriLike {
 			at := strings.LastIndexByte(value, '@')
 			if at >= 0 && (candidate.host || strings.Contains(value[:at], ":")) {
 				return true
@@ -632,7 +640,23 @@ func hasSecretBearingURL(endpoint connectionadmin.EndpointConfig) bool {
 		if err != nil || parsed.User != nil {
 			return true
 		}
-		for key := range parsed.Query() {
+		opaque, err := url.PathUnescape(parsed.Opaque)
+		if err != nil {
+			return true
+		}
+		if at := strings.LastIndexByte(opaque, '@'); at >= 0 && strings.Contains(opaque[:at], ":") {
+			return true
+		}
+		if parsed.Scheme == "" && parsed.Host == "" {
+			if at := strings.LastIndexByte(parsed.Path, '@'); at >= 0 && strings.Contains(parsed.Path[:at], ":") {
+				return true
+			}
+		}
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			return true
+		}
+		for key := range query {
 			normalized := strings.ToLower(key)
 			if secretShapedName(normalized) {
 				return true
@@ -648,7 +672,7 @@ func hasSecretBearingURL(endpoint connectionadmin.EndpointConfig) bool {
 func secretShapedName(value string) bool {
 	normalized := strings.NewReplacer("_", "", "-", "", ".", "").Replace(value)
 	switch normalized {
-	case "privatekey", "accesskey", "apikey", "accesstoken", "refreshtoken":
+	case "privatekey", "accesskey", "accesskeyid", "apikey", "accesstoken", "refreshtoken", "connectionstring":
 		return true
 	}
 	for _, part := range strings.FieldsFunc(value, func(char rune) bool {

@@ -15,6 +15,6 @@ func TestLoadRejectsFIFOWithoutOpeningIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Load(LoadOptions{CheckoutRoot: root, ProfileFile: path})
+	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: path})
 	assertDiagnostic(t, err, "profile.file_type", "")
 }
