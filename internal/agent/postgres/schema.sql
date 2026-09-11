@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS agent.conversations (
     status          text NOT NULL CHECK (status IN ('active', 'archived')),
     metadata_json   jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata_json) = 'object' AND octet_length(metadata_json::text) <= 1048576),
     transcript_json jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(transcript_json) = 'array' AND octet_length(transcript_json::text) <= 1048576),
+    transcript_revision bigint NOT NULL DEFAULT 1 CHECK (transcript_revision > 0),
     created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
     archived_at     timestamptz,

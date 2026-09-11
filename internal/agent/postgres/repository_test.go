@@ -34,6 +34,38 @@ func agentPostgresTestRepo(t *testing.T, suffix string) (*pgxpool.Pool, *Reposit
 	return pool, NewRepository(pool)
 }
 
+func TestPostgreSQL18TranscriptCASIncrementsAndRejectsStaleWriter(t *testing.T) {
+	_, repo := agentPostgresTestRepo(t, "transcript_cas")
+	ctx := t.Context()
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.TranscriptRevision != 1 {
+		t.Fatalf("initial transcript revision = %d, want 1", conversation.TranscriptRevision)
+	}
+	updated, err := repo.UpdateConversationTranscript(ctx, "owner", conversation.ID, `[{"role":"user","content":"new"}]`, conversation.TranscriptRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TranscriptRevision != 2 {
+		t.Fatalf("updated transcript revision = %d, want 2", updated.TranscriptRevision)
+	}
+	if _, err := repo.UpdateConversationTranscript(ctx, "owner", conversation.ID, `[{"role":"user","content":"stale"}]`, conversation.TranscriptRevision); !errors.Is(err, agent.ErrTranscriptConflict) {
+		t.Fatalf("stale transcript update = %v, want ErrTranscriptConflict", err)
+	}
+	current, err := repo.GetConversation(ctx, "owner", conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.TranscriptRevision != 2 || current.TranscriptJSON != updated.TranscriptJSON {
+		t.Fatalf("stale writer changed conversation = %#v, want revision 2 and newer transcript", current)
+	}
+	if next, err := repo.UpdateConversationTranscript(ctx, "owner", conversation.ID, `[]`, updated.TranscriptRevision); err != nil || next.TranscriptRevision != 3 {
+		t.Fatalf("next transcript update = %#v, err=%v", next, err)
+	}
+}
+
 func TestPostgreSQL18AgentCRUDScopingAndMessageSequence(t *testing.T) {
 	_, repo := agentPostgresTestRepo(t, "crud")
 	ctx := t.Context()

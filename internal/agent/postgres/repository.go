@@ -528,10 +528,13 @@ func (r *Repository) UpdateDefaultConversationTitle(ctx context.Context, princip
 	return out, err
 }
 
-func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal, id, transcript string) (agent.Conversation, error) {
+func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal, id, transcript string, expectedRevision int64) (agent.Conversation, error) {
 	normalized, err := normalizedJSONArray(transcript)
 	if err != nil {
 		return agent.Conversation{}, err
+	}
+	if expectedRevision <= 0 {
+		return agent.Conversation{}, errors.New("transcript revision must be positive")
 	}
 	principal, err = principalID(principal)
 	if err != nil {
@@ -539,8 +542,14 @@ func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal
 	}
 	var out agent.Conversation
 	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
-		row, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(normalized), ID: id, PrincipalID: principal})
+		row, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(normalized), ExpectedTranscriptRevision: expectedRevision, ID: id, PrincipalID: principal})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				current, getErr := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
+				if getErr == nil && current.Status == agent.ConversationStatusActive {
+					return agent.ErrTranscriptConflict
+				}
+			}
 			return err
 		}
 		domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, "agent.conversation.updated", []byte(`{"status":"active"}`))
@@ -762,7 +771,7 @@ func (r *Repository) FinishRunWorkflow(ctx context.Context, input agent.RunFinis
 	return out, transitioned, err
 }
 
-func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcript string, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
+func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcript string, expectedTranscriptRevision int64, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
 	if r.workflow == nil {
 		return nil, false, errors.New("agent workflow recorder is required")
 	}
@@ -773,6 +782,9 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 	transcript, err = normalizedJSONArray(transcript)
 	if err != nil {
 		return nil, false, err
+	}
+	if expectedTranscriptRevision <= 0 {
+		return nil, false, errors.New("transcript revision must be positive")
 	}
 	principal, err := principalID(input.PrincipalID)
 	if err != nil {
@@ -814,7 +826,10 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 			}
 			out = append(out, mapMessage(row))
 		}
-		if _, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(transcript), ID: input.ConversationID, PrincipalID: principal}); err != nil {
+		if _, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(transcript), ExpectedTranscriptRevision: expectedTranscriptRevision, ID: input.ConversationID, PrincipalID: principal}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return agent.ErrTranscriptConflict
+			}
 			return err
 		}
 		if _, err := q.FinishAgentRun(ctx, agentdb.FinishAgentRunParams{Status: input.Status, StopReason: input.StopReason, InputTokens: input.InputTokens, OutputTokens: input.OutputTokens, TotalTokens: input.TotalTokens, Error: input.Error, MetadataJson: []byte(metadata), ID: input.RunID, ConversationID: input.ConversationID, PrincipalID: principal}); err != nil {
@@ -1154,19 +1169,19 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 func mapConversation(row any) agent.Conversation {
 	switch v := row.(type) {
 	case agentdb.CreateAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.GetAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.ListAgentConversationsRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.ArchiveAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.UpdateAgentConversationTitleRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.UpdateAgentConversationTranscriptRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.UpdateDefaultAgentConversationTitleRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, TranscriptRevision: v.TranscriptRevision, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	default:
 		return agent.Conversation{}
 	}
