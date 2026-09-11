@@ -898,6 +898,18 @@ class LeapViewSidebar extends LitElement {
         min-height: 100svh;
         max-height: 100svh;
         overflow: visible;
+        transition: none;
+      }
+
+      :host([data-mobile-open]),
+      :host([data-collapsed][data-mobile-open]) {
+        position: fixed;
+        z-index: var(--z-index-sidebar);
+        inset: 0;
+        width: 100vw;
+        height: 100svh;
+        min-height: 100svh;
+        max-height: 100svh;
       }
 
       aside,
@@ -1007,6 +1019,7 @@ class LeapViewSidebar extends LitElement {
         border: 0;
         background: var(--lv-modal-backdrop);
         cursor: pointer;
+        touch-action: none;
         opacity: 0;
         pointer-events: none;
         transition: opacity var(--motion-transition-stateChange), visibility var(--motion-transition-stateChange);
@@ -1039,6 +1052,8 @@ class LeapViewSidebar extends LitElement {
       }
 
       aside[data-mobile-open] nav {
+        background: var(--bgColor-inset, Canvas);
+        opacity: 1;
         pointer-events: auto;
         transform: translateX(0);
         visibility: visible;
@@ -1180,6 +1195,7 @@ class LeapViewSidebar extends LitElement {
     if (this.config.area) this.setAttribute('data-area', this.config.area)
     else this.removeAttribute('data-area')
     this.syncCollapsedState()
+    this.toggleAttribute('data-mobile-open', this.isMobileViewport && this.mobileOpen)
   }
 
   private syncCollapsedState(): void {
@@ -1335,7 +1351,7 @@ class LeapViewSidebar extends LitElement {
             ${icon('expand')}
           </button>
         </div>
-        <div class="sidebar-content" ?inert=${collapsed && !this.peeking}>
+        <div class="sidebar-content" ?inert=${collapsed && !this.peeking && !this.isMobileViewport}>
         <header class="brand">
           <div class="brand-row">
             ${this.config.admin && this.config.primaryAction ? html`

@@ -4,6 +4,7 @@ import { ChevronRight, FileText, LayoutDashboard, LayoutPanelTop, Waypoints, Wre
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { lucideIcon } from '../shared/lucide-icons'
+import { agentIcon } from './agent-icon'
 import { referenceHierarchy, referenceIcon, referenceKindLabel } from './reference'
 import '../shared/code-block'
 import '../shared/markdown-view'
@@ -43,6 +44,7 @@ class ChatThread extends LitElement {
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
   @state() private expandedToolCalls = new Set<string>()
   private scrollFrame = 0
+  private shouldAutoScroll = true
 
   static styles = css`
     :host {
@@ -86,24 +88,79 @@ class ChatThread extends LitElement {
     }
 
     .alert {
-      display: grid;
-      gap: var(--lv-space-sm);
-      align-content: center;
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
+      border-color: var(--lv-line-danger-muted);
+      background: var(--lv-bg-danger-muted);
       padding: var(--lv-chat-thread-padding);
-      color: var(--lv-fg-muted);
+      color: var(--lv-fg-default);
       font: var(--lv-type-body);
+      text-align: left;
+    }
+
+    .stack.is-empty {
+      min-height: 100%;
+      place-content: center;
+    }
+
+    .empty-state {
+      display: grid;
+      justify-items: center;
+      gap: var(--lv-space-sm);
+      padding: var(--lv-space-lg);
+      color: var(--lv-fg-muted);
       text-align: center;
     }
 
-    .alert {
-      border-color: var(--lv-line-danger-muted);
-      background: var(--lv-bg-danger-muted);
-      color: var(--lv-fg-default);
-      text-align: left;
+    .empty-icon {
+      display: grid;
+      width: var(--base-size-40, 40px);
+      height: var(--base-size-40, 40px);
+      place-items: center;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
     }
+
+    .empty-icon svg {
+      width: var(--base-size-20, 20px);
+      height: var(--base-size-20, 20px);
+    }
+
+    .empty-title {
+      color: var(--lv-fg-default);
+      font: var(--lv-type-section-title);
+    }
+
+    .empty-detail {
+      max-width: 24rem;
+      font: var(--lv-type-secondary);
+    }
+
+    .working {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      gap: var(--lv-space-sm);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-secondary);
+    }
+
+    .working-dots {
+      display: inline-flex;
+      gap: var(--lv-space-2xs);
+    }
+
+    .working-dots i {
+      width: var(--base-size-4);
+      height: var(--base-size-4);
+      border-radius: 50%;
+      background: currentColor;
+      animation: working-pulse 1.2s ease-in-out infinite;
+    }
+
+    .working-dots i:nth-child(2) { animation-delay: 120ms; }
+    .working-dots i:nth-child(3) { animation-delay: 240ms; }
 
     .message {
       display: grid;
@@ -423,6 +480,11 @@ class ChatThread extends LitElement {
       }
     }
 
+    @keyframes working-pulse {
+      0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-2px); }
+    }
+
     @media (max-width: 720px) {
       .scroll {
         padding: var(--lv-chat-thread-padding-compact);
@@ -432,13 +494,24 @@ class ChatThread extends LitElement {
 
   render() {
     const transcript = this.resolvedTranscript
+    const unavailable = !this.status.enabled && transcript.length === 0
+    const empty = transcript.length === 0 && !this.status.running
+    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && item.status === 'running')
 
     return html`
       <div class="thread">
-        <div class="scroll">
-          <div class="stack">
-            ${this.status.error ? html`<div class="alert">${this.status.error}</div>` : nothing}
+        <div class="scroll" @scroll=${this.onScroll}>
+          <div class=${`stack${empty ? ' is-empty' : ''}`}>
+            ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
+            ${!unavailable && this.status.error ? html`<div class="alert" role="alert">${this.status.error}</div>` : nothing}
+            ${empty && !unavailable ? this.renderEmptyState('Start a conversation') : nothing}
             ${groupTranscript(transcript).map((unit) => this.renderUnit(unit))}
+            ${showWorking ? html`
+              <div class="working" role="status" aria-live="polite">
+                <span>Working</span>
+                <span class="working-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+              </div>
+            ` : nothing}
           </div>
         </div>
       </div>
@@ -446,7 +519,7 @@ class ChatThread extends LitElement {
   }
 
   protected firstUpdated() {
-    this.scheduleScrollToBottom()
+    this.scheduleScrollToBottom(true)
   }
 
   protected updated(changed: Map<string, unknown>) {
@@ -469,14 +542,31 @@ class ChatThread extends LitElement {
     return hasKeys(this.visuals) ? this.visuals : this.visualsAttribute
   }
 
-  private scheduleScrollToBottom() {
+  private scheduleScrollToBottom(force = false) {
+    if (!force && !this.shouldAutoScroll) return
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0
       const scroll = this.renderRoot.querySelector<HTMLElement>('.scroll')
       if (!scroll) return
       scroll.scrollTop = scroll.scrollHeight
+      this.shouldAutoScroll = true
     })
+  }
+
+  private onScroll = (event: Event): void => {
+    const scroll = event.currentTarget as HTMLElement
+    this.shouldAutoScroll = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80
+  }
+
+  private renderEmptyState(title: string, detail = '') {
+    return html`
+      <div class="empty-state" role="status">
+        <span class="empty-icon" aria-hidden="true">${agentIcon()}</span>
+        <strong class="empty-title">${title}</strong>
+        ${detail ? html`<span class="empty-detail">${detail}</span>` : nothing}
+      </div>
+    `
   }
 
   private renderUnit(unit: ChatRenderUnit) {
@@ -492,7 +582,7 @@ class ChatThread extends LitElement {
 				<div class="bubble plain user-turn-bubble">
 					<div class="turn-references" aria-label="Context for this message">
 						${references.map((reference) => {
-							const hierarchy = referenceHierarchy(reference).join(' › ')
+							const hierarchy = referenceHierarchy(reference).join(' / ')
 							const kind = referenceKindLabel(reference.reference.kind)
 							const tooltip = [reference.name, hierarchy, kind].filter(Boolean).join(' · ')
 							return html`

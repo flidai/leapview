@@ -241,7 +241,7 @@ class LeapViewProductSearch extends LitElement {
               @input=${this.inputChanged}
               @keydown=${this.inputKeydown}
             >
-            <kbd aria-hidden="true">⌘K</kbd>
+            <kbd aria-hidden="true">Ctrl+K</kbd>
           </label>
           <div id="product-search-results" class="results" role="listbox" aria-label="Search results" aria-busy=${String(this.loading)}>
             ${this.results.map((result, index) => html`
@@ -270,8 +270,8 @@ class LeapViewProductSearch extends LitElement {
             ` : null}
           </div>
           <footer class="search-help" aria-hidden="true">
-            <span>↑↓ Navigate</span>
-            <span>↵ Open</span>
+            <span>Arrow keys Navigate</span>
+            <span>Enter Open</span>
             <span>Esc Close</span>
           </footer>
         </div>

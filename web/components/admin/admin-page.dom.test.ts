@@ -653,7 +653,7 @@ test('mobile entity lists advertise horizontal table scrolling while desktop sta
     })
     expect(mobile).toEqual({
       role: 'region', label: 'Scrollable Members table', tabIndex: '0',
-      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
+      hint: 'Swipe horizontally to see more columns', hintDisplay: 'block',
     })
   } finally {
     await page.close()

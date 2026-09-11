@@ -141,7 +141,7 @@ test('mobile record tables expose a horizontal-scroll affordance without changin
     })
     expect(mobile).toEqual({
       role: 'region', label: 'Scrollable table', tabIndex: '0',
-      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
+      hint: 'Swipe horizontally to see more columns', hintDisplay: 'block',
     })
   } finally {
     await page.close()
@@ -400,7 +400,7 @@ test('compact record table keeps metadata dense and scalar placeholders muted', 
       }
     })
     expect(sorted.sortedIndicatorOpacity).toBe('1')
-    expect(sorted.sortedIndicatorText).toBe('↑')
+    expect(sorted.sortedIndicatorText).toBe('')
   } finally {
     await page.close()
   }

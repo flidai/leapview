@@ -4,7 +4,7 @@ import { categoryIdentity } from './category-colors'
 import { escapeHTML, formatField, inlineDataset, legend, type EChartsTranslation } from './common'
 import { echartsLabelPolicy } from './label-policy'
 
-type HierarchyNode = { name: string; value?: unknown; __lv_dataset: string; __lv_row_index: number; __lv_synthetic?: boolean; children?: HierarchyNode[] }
+type HierarchyNode = { name: string; value?: unknown; __lv_dataset: string; __lv_row_index: number; __lv_synthetic?: boolean; children?: HierarchyNode[]; label?: EChartsTranslation }
 
 export function hierarchyOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
   const spec = envelope.spec
@@ -37,8 +37,13 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       }]
     })
     const graphCircular = spec.mark === 'graph' && spec.presentation.layout === 'circular'
+    const verticalSankey = spec.mark === 'sankey' && spec.presentation.orientation === 'vertical'
     const nodes = spec.mark === 'sankey'
-      ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({ name, displayName }))
+      ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({
+          name,
+          displayName,
+          ...(verticalSankey && name.startsWith('target:') ? { label: { position: 'bottom', rotate: 45, distance: 5, align: 'left' } } : {}),
+        }))
       : graphCircular
         ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({ name, displayName }))
         : layeredGraphNodes(links)
@@ -52,7 +57,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
         const link = params.data
         if (!link || link.source === undefined || link.target === undefined) return ''
         const value = formatField(envelope, spec.value, link.value, context)
-        return `${escapeHTML(String(link.sourceLabel ?? link.source))} → ${escapeHTML(String(link.targetLabel ?? link.target))}: ${escapeHTML(value)}`
+        return `${escapeHTML(String(link.sourceLabel ?? link.source))} to ${escapeHTML(String(link.targetLabel ?? link.target))}: ${escapeHTML(value)}`
       } },
     }
     if (spec.mark === 'graph') {
@@ -69,7 +74,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       if (graphCircular) {
         series.center = ['50%', '52%']
         series.zoom = 0.76
-        series.labelLayout = { moveOverlap: 'shiftY' }
+        series.labelLayout = withLabelMove(series.labelLayout, 'shiftY')
       }
       if (spec.presentation.focus === 'adjacency') series.emphasis = { focus: 'adjacency' }
     } else {
@@ -78,9 +83,9 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       series.left = spec.presentation.orientation === 'horizontal' ? '4%' : '3%'
       series.right = spec.presentation.orientation === 'horizontal' ? '30%' : '21%'
       series.top = '8%'
-      series.bottom = '8%'
+      series.bottom = verticalSankey ? '18%' : '8%'
       series.nodeWidth = 18
-      series.label = { ...(series.label ?? {}), width: 96 }
+      series.label = { ...(series.label ?? {}), width: 56, overflow: 'truncate', ellipsis: '…', fontSize: 11 }
       series.itemStyle = { borderColor: context.colors.surface, borderWidth: 1 }
     }
     return {
@@ -112,6 +117,12 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       common.top = '8%'
       common.bottom = '8%'
     }
+    if (countHierarchyLeaves(data) > 16) {
+      const topLevelLabel = { ...(common.label ?? {}), show: common.label?.show !== false }
+      common.label = { ...(common.label ?? {}), show: false }
+      for (const node of data) node.label = topLevelLabel
+      common.leaves = { ...(common.leaves ?? {}), label: { ...(common.leaves?.label ?? {}), show: false } }
+    }
   }
   if (spec.mark === 'treemap') {
     common.breadcrumb = { show: spec.presentation.breadcrumb }
@@ -141,12 +152,22 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       fontSize: 10,
       fontWeight: 600,
       lineHeight: 13,
+      minAngle: 8,
       textBorderColor: context.colors.surface,
       textBorderWidth: 2,
     }
-    common.labelLayout = { hideOverlap: false }
   }
   return { legend: legend(spec.presentation.legend, context), series: [common] }
+}
+
+function countHierarchyLeaves(nodes: HierarchyNode[]): number {
+  return nodes.reduce((count, node) => count + (node.children?.length ? countHierarchyLeaves(node.children) : 1), 0)
+}
+
+function withLabelMove(layout: EChartsTranslation, moveOverlap: 'shiftY'): EChartsTranslation {
+  return typeof layout === 'function'
+    ? (params: { dataIndex?: number }) => ({ ...layout(params), moveOverlap })
+    : { ...layout, moveOverlap }
 }
 
 export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] {

@@ -444,6 +444,47 @@ test('catalog keeps the dashboard identity visible while secondary columns scrol
   }
 })
 
+test('mobile catalog keeps a wide table inside its horizontal scroll region', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      list.columns = [
+        { id: 'name', label: 'Dashboard', width: '360px' },
+        { id: 'dataModel', label: 'Data model', width: '240px' },
+        { id: 'owner', label: 'Owner', width: '180px' },
+        { id: 'updated', label: 'Updated', width: '180px' },
+        { id: 'actions', label: 'Actions', width: '120px', align: 'right', sortable: false, render: 'actions' },
+      ]
+      list.minWidth = '72rem'
+      await list.updateComplete
+      const wrap = list.querySelector('.entity-list-table-wrap') as HTMLElement
+      const table = list.querySelector('.entity-list-table') as HTMLElement
+      wrap.scrollLeft = wrap.scrollWidth
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        bodyWidth: document.body.scrollWidth,
+        viewportWidth: window.innerWidth,
+        wrapperClientWidth: wrap.clientWidth,
+        wrapperScrollWidth: wrap.scrollWidth,
+        tableScrollWidth: table.scrollWidth,
+        scrollLeft: wrap.scrollLeft,
+      }
+    })
+
+    expect(state.documentWidth).toBeLessThanOrEqual(state.viewportWidth)
+    expect(state.bodyWidth).toBeLessThanOrEqual(state.viewportWidth)
+    expect(state.wrapperScrollWidth).toBeGreaterThan(state.wrapperClientWidth)
+    expect(state.tableScrollWidth).toBeGreaterThan(state.wrapperClientWidth)
+    expect(state.scrollLeft).toBeGreaterThan(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard tabs expose favorites and owned dashboards without hiding either from All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

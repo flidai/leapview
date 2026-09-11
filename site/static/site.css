@@ -1800,10 +1800,6 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding: var(--base-size-2) var(--base-size-8);
 }
 
-.site-workflow-valid::before {
-  content: "✓ ";
-}
-
 .site-workflow-artifact pre {
   min-width: 0;
   overflow: auto;
@@ -2221,19 +2217,10 @@ lv-site-search:not(:defined) > .site-search-active-input {
 .site-interface-points li {
   position: relative;
   border-top: var(--lv-border-muted);
-  padding: var(--base-size-12) 0 var(--base-size-12) var(--base-size-24);
+  padding: var(--base-size-12) 0;
   color: var(--lv-fg-muted);
   font-size: var(--text-body-size-small);
   line-height: var(--base-text-lineHeight-normal);
-}
-
-.site-interface-points li::before {
-  position: absolute;
-  top: var(--base-size-12);
-  left: var(--base-size-4);
-  color: var(--lv-fg-accent);
-  content: "✓";
-  font-weight: var(--base-text-weight-semibold);
 }
 
 .site-interface-link {

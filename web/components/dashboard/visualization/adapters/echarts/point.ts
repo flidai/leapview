@@ -5,7 +5,7 @@ import { applyDecisionContext } from './cartesian'
 import { hideCartesianAxes } from './cartesian-presentation'
 import { conditionalItemColor } from './conditional-color'
 import { resolveConditionalFormat, type ConditionalFormatResult } from '../../conditional-format'
-import { echartsLabelPolicy } from './label-policy'
+import { echartsLabelPolicy, isPriorityDatum } from './label-policy'
 import { categoryIdentity, type CategoryColorRegistry } from './category-colors'
 import { parseDecimal } from '../../decimal'
 
@@ -18,15 +18,27 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
   const labels = spec.label
     ? echartsLabelPolicy(envelope, spec.label.dataset, spec.presentation.labelPolicy, labelFormatter(envelope, spec.label, context), context)
     : { label: { show: false }, labelLayout: { hideOverlap: true } }
+  const rows = dataset?.rows ?? []
+  if (rows.length > 18 && spec.presentation.labelPolicy.density === 'automatic' && spec.label) {
+    const pointLabel = labels.label as EChartsTranslation
+    const formatter = pointLabel.formatter as (params: { dataIndex?: number; value?: unknown[] }) => unknown
+    pointLabel.formatter = (params: { dataIndex?: number; value?: unknown[] }) =>
+      isPriorityDatum(envelope, spec.label!.dataset, params.dataIndex, spec.presentation.labelPolicy) ? formatter(params) : ''
+  }
+  const baseLabelLayout = labels.labelLayout
+  const labelLayout = typeof baseLabelLayout === 'function'
+    ? (params: { dataIndex?: number }) => ({ ...baseLabelLayout(params), moveOverlap: 'shiftY' })
+    : { ...baseLabelLayout, moveOverlap: 'shiftY' }
+  const positionedLabels = { ...labels, labelLayout }
   const categoricalRef = spec.colorScale?.kind === 'categorical' ? spec.color : undefined
   const categories = categoricalRef ? pointCategories(envelope, categoricalRef) : []
   if (categoricalRef) categoryColors.register(envelope, categoricalRef, categories.map((category) => category.value))
   const markFill = pointMarkFill(envelope, context)
   const series = categoricalRef
     ? categories.length > 0
-      ? categories.map((category) => pointCategorySeries(envelope, spec, context, categoryColors, category, labels, markFill))
-      : [pointSeries(envelope, spec, labels, markFill)]
-    : [pointSeries(envelope, spec, labels, markFill)]
+      ? categories.map((category) => pointCategorySeries(envelope, spec, context, categoryColors, category, positionedLabels, markFill))
+      : [pointSeries(envelope, spec, positionedLabels, markFill)]
+    : [pointSeries(envelope, spec, positionedLabels, markFill)]
   const option: EChartsTranslation = {
     grid: {
       left: 12 + (spec.presentation.legend === 'left' && spec.presentation.legendTitle !== undefined ? 72 : 0),

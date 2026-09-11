@@ -1,6 +1,6 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Search, Send, X } from 'lucide'
+import { AtSign, Search, Send, X } from 'lucide'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
@@ -128,7 +128,48 @@ class ChatComposer extends LitElement {
       grid-row: 1;
       min-height: var(--lv-control-medium);
       align-items: center;
+      gap: var(--lv-space-xs);
       justify-content: flex-end;
+    }
+
+    .context-button {
+      display: inline-grid;
+      width: var(--lv-button-height, var(--lv-control-medium));
+      height: var(--lv-button-height, var(--lv-control-medium));
+      min-width: var(--lv-button-height, var(--lv-control-medium));
+      place-items: center;
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      background: transparent;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .context-button svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .context-button:hover:not(:disabled),
+    .context-button:focus-visible {
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
+    }
+
+    .context-button:focus-visible {
+      outline: var(--focus-outline, var(--lv-border-default));
+      outline-offset: var(--focus-outline-offset, var(--lv-space-xs));
+    }
+
+    .context-button:disabled {
+      color: var(--lv-fg-muted);
+      cursor: not-allowed;
+      opacity: var(--base-opacity-50, 0.5);
+    }
+
+    :host([hide-context-action]) .context-button {
+      display: none;
     }
 
 		.mention-picker {
@@ -335,6 +376,7 @@ class ChatComposer extends LitElement {
         min-height: calc(var(--lv-control-large) + var(--lv-space-xs));
       }
 
+      .context-button,
       .send-button {
         --lv-button-height: calc(var(--lv-control-large) + var(--lv-space-xs));
       }
@@ -392,6 +434,20 @@ class ChatComposer extends LitElement {
     this.resizeTextarea()
   }
 
+  public setDraft(value: string): void {
+    this.draft = value
+    this.mentionIndex = 0
+    this.mentionSearchPending = false
+    this.lastSearchQuery = null
+    void this.updateComplete.then(() => {
+      const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(value.length, value.length)
+      this.resizeTextarea(textarea)
+    })
+  }
+
   render() {
     const blocked = this.disabled || this.pending
 		const activeMention = this.activeMention()
@@ -401,7 +457,7 @@ class ChatComposer extends LitElement {
     return html`
       <form @submit=${this.submit}>
 			${activeMention ? html`
-				<div class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
+				<div id="chat-context-options" class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
 					${mentionGroups.pinned.length > 0 ? html`
 						<div class="mention-group" role="group" aria-label="On this page">
 							<div class="mention-section-label">On this page</div>
@@ -440,12 +496,28 @@ class ChatComposer extends LitElement {
             .value=${this.draft}
             ?disabled=${this.disabled}
             aria-label=${this.placeholder.replace(/\.{3}$/, '') || 'Ask about dashboards, metrics, or models'}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded=${String(Boolean(activeMention))}
+            aria-controls=${activeMention ? 'chat-context-options' : nothing}
+            aria-activedescendant=${activeMention && mentions.length > 0 ? this.mentionOptionID(this.mentionIndex) : nothing}
             placeholder=${this.placeholder}
             rows="1"
             @input=${this.input}
             @keydown=${this.keydown}
           ></textarea>
           <div class="actions">
+            <button
+              class="context-button"
+              type="button"
+              aria-label="Add context"
+              title="Add context"
+              ?disabled=${blocked || referenceLimitReached}
+              @click=${this.openContextPicker}
+            >
+              ${lucideIcon(AtSign)}
+            </button>
             <button
 						class="send-button"
               type="submit"
@@ -505,6 +577,24 @@ class ChatComposer extends LitElement {
 		this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
 	}
 
+	private openContextPicker = (): void => {
+		if (this.disabled || this.pending || this.referenceLimitReached()) return
+		const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
+		if (!textarea) return
+		const caret = textarea.selectionStart ?? this.draft.length
+		const prefix = this.draft.slice(0, caret)
+		const suffix = this.draft.slice(caret)
+		const separator = prefix.length > 0 && !/\s$/.test(prefix) ? ' ' : ''
+		const nextCaret = prefix.length + separator.length + 1
+		this.draft = `${prefix}${separator}@${suffix}`
+		textarea.value = this.draft
+		textarea.focus()
+		textarea.setSelectionRange(nextCaret, nextCaret)
+		this.mentionIndex = 0
+		this.requestMentionSearch('')
+		this.resizeTextarea(textarea)
+	}
+
   private submit(event: Event) {
     event.preventDefault()
     this.dispatchSubmit()
@@ -550,9 +640,10 @@ class ChatComposer extends LitElement {
 
 	private renderMentionOption(reference: ChatContextReference, index: number) {
 						const kindLabel = referenceKindLabel(reference.reference.kind)
-		const hierarchy = referenceHierarchy(reference).join(' › ')
+		const hierarchy = referenceHierarchy(reference).join(' / ')
 		return html`
 			<button
+				id=${this.mentionOptionID(index)}
 				type="button"
 				class="mention-option"
 				role="option"
@@ -570,6 +661,10 @@ class ChatComposer extends LitElement {
 				</span>
 			</button>
 		`
+	}
+
+	private mentionOptionID(index: number): string {
+		return `chat-context-option-${index}`
 	}
 
 	private selectMention(reference: ChatContextReference | undefined) {

@@ -648,6 +648,7 @@ spec:
       description: Shows flow from order status to delivery-speed bucket.
       presentation:
         type: hierarchy
+        nodeGap: 18
     delivery_distribution:
       type: boxplot
       query:
@@ -821,6 +822,12 @@ spec:
       description: Shows each month contribution to total revenue.
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     delivery_histogram:
       type: histogram
       query:
@@ -833,6 +840,12 @@ spec:
       description: Buckets order volume by delivery duration.
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     status_radar:
       type: radar
       query:
@@ -1923,6 +1936,12 @@ spec:
       title: Monthly order contribution
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     revenue_waterfall_labeled:
       type: waterfall
       query:
@@ -1956,6 +1975,12 @@ spec:
       title: Revenue histogram
       presentation:
         type: cartesian
+        labels:
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
+          tooltipFallback: true
     review_histogram:
       type: histogram
       query:
@@ -1968,10 +1993,10 @@ spec:
       presentation:
         type: cartesian
         labels:
-          density: automatic
-          priority: [selected, anomaly, threshold]
-          maxCharacters: 12
-          minimumSpacing: 6
+          density: hidden
+          priority: []
+          maxCharacters: 24
+          minimumSpacing: 0
           tooltipFallback: true
     delivery_radar:
       type: radar
@@ -2334,6 +2359,17 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: true
+        conditionalFormatting:
+        - id: orders-heat
+          target: cell_background
+          field: order_count
+          rule:
+            kind: gradient
+            minimum: 0
+            maximum: 5000
+            low: {color: neutral}
+            high: {color: accent}
+            nullStyle: {color: neutral}
   pages:
   - id: overview
     title: Overview
@@ -2418,15 +2454,15 @@ spec:
       placement:
         column: 1
         row: 1
-        columnSpan: 5
+        columnSpan: 4
         rowSpan: 7
       type: visual
       visual: interaction_state_order_map
     - id: interaction-kpi
       placement:
-        column: 6
+        column: 5
         row: 1
-        columnSpan: 3
+        columnSpan: 4
         rowSpan: 2
       type: visual
       visual: total_orders
@@ -2440,9 +2476,9 @@ spec:
       visual: orders
     - id: interaction-faceted
       placement:
-        column: 6
+        column: 5
         row: 3
-        columnSpan: 3
+        columnSpan: 4
         rowSpan: 5
       type: visual
       visual: state_status_column
@@ -2450,15 +2486,15 @@ spec:
       placement:
         column: 1
         row: 8
-        columnSpan: 5
+        columnSpan: 4
         rowSpan: 7
       type: visual
       visual: customer_point_map
     - id: interaction-table
       placement:
-        column: 6
+        column: 5
         row: 8
-        columnSpan: 7
+        columnSpan: 8
         rowSpan: 7
       type: visual
       visual: orders_table

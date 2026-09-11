@@ -448,7 +448,7 @@ class SiteSearch extends DatastarLit(LitElement) {
       <button class="trigger" type="button" aria-label="Search documentation" aria-keyshortcuts="/ Meta+K Control+K" @click=${this.openDialog}>
         ${lucideIcon(Search, { size: 16, strokeWidth: 2 })}
         <span>Search</span>
-        <kbd aria-hidden="true">⌘K</kbd>
+        <kbd aria-hidden="true">Ctrl+K</kbd>
       </button>
       <dialog aria-labelledby="site-search-title" @click=${this.closeFromBackdrop}>
         <div class="panel" role="search">

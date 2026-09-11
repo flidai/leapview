@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { MoreHorizontal, Search } from 'lucide'
+import { MessageSquareText, Plus, Search } from 'lucide'
 import type { ChatConversationSummary } from '../../generated/signals'
 import { jsonAttribute } from '../shared/json-attribute'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -8,6 +8,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 class LeapViewChatList extends LitElement {
   @property({ converter: jsonAttribute<ChatConversationSummary[]>([]) }) conversations: ChatConversationSummary[] = []
   @property({ attribute: 'active-conversation-id' }) activeConversationId = ''
+  @property({ type: Boolean, attribute: 'agent-enabled' }) agentEnabled = false
   @state() private search = ''
 
   static styles = css`
@@ -101,6 +102,17 @@ class LeapViewChatList extends LitElement {
       font: var(--lv-type-body);
       font-weight: var(--base-text-weight-medium);
       box-shadow: var(--lv-button-shadow-resting, none);
+      gap: var(--base-size-8);
+      cursor: pointer;
+    }
+
+    .new-chat-link[disabled] {
+      border-color: var(--lv-line-muted);
+      background: var(--lv-bg-control);
+      color: var(--lv-fg-muted);
+      cursor: not-allowed;
+      box-shadow: none;
+      opacity: 0.72;
     }
 
     .new-chat-link:hover,
@@ -223,51 +235,6 @@ class LeapViewChatList extends LitElement {
       transition: opacity var(--duration-fast) var(--ease-lv);
     }
 
-    .row-actions {
-      position: absolute;
-      z-index: 2;
-      inset-block: 0;
-      right: 0;
-      display: flex;
-      align-items: center;
-      padding-right: var(--base-size-8);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity var(--duration-fast) var(--ease-lv);
-    }
-
-    tbody tr:hover .date,
-    tbody tr:focus-within .date {
-      opacity: 0;
-    }
-
-    tbody tr:hover .row-actions,
-    tbody tr:focus-within .row-actions {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .options-button {
-      display: grid;
-      width: var(--lv-button-height, var(--control-medium-size));
-      height: var(--lv-button-height, var(--control-medium-size));
-      place-items: center;
-      border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
-      color: var(--lv-button-invisible-icon-rest, var(--lv-fg-muted));
-      cursor: pointer;
-      padding: 0;
-    }
-
-    .options-button:hover,
-    .options-button:focus-visible {
-      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-muted)));
-      background: var(--lv-button-invisible-bg-hover, var(--lv-bg-hover));
-      color: var(--lv-fg-default);
-      outline: 0;
-    }
-
     svg {
       width: var(--base-size-16);
       height: var(--base-size-16);
@@ -279,9 +246,42 @@ class LeapViewChatList extends LitElement {
     }
 
     .empty {
-      padding: var(--base-size-16) 0;
+      display: grid;
+      min-height: min(26rem, calc(100svh - 9rem));
+      place-content: center;
+      justify-items: center;
+      gap: var(--base-size-8);
+      padding: var(--base-size-32, 32px) var(--base-size-16);
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
+      text-align: center;
+    }
+
+    .empty-icon {
+      display: grid;
+      width: var(--base-size-40, 40px);
+      height: var(--base-size-40, 40px);
+      place-items: center;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-muted);
+    }
+
+    .empty-icon svg {
+      width: var(--base-size-20, 20px);
+      height: var(--base-size-20, 20px);
+    }
+
+    .empty-title {
+      color: var(--lv-fg-default);
+      font: var(--lv-type-section-title);
+    }
+
+    .empty-detail {
+      max-width: 28rem;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-secondary);
     }
 
     @media (max-width: 640px) {
@@ -315,15 +315,17 @@ class LeapViewChatList extends LitElement {
     const visible = query
       ? conversations.filter((conversation) => conversationTitle(conversation).toLocaleLowerCase().includes(query))
       : conversations
-    const empty = query ? 'No matching chats.' : 'No chats yet.'
+    const empty = query ? 'No matching chats' : 'No chats yet'
 
     return html`
       <section class="shell" aria-label="Chat history">
         <div class="header">
           <h2>Chats</h2>
-          <a class="new-chat-link" href="/chats/new">New chat</a>
+          ${this.agentEnabled
+            ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
+            : html`<button class="new-chat-link" type="button" disabled title="Agent is not configured">${lucideIcon(Plus)}<span>New chat</span></button>`}
         </div>
-        <label class="toolbar">
+        ${conversations.length > 0 ? html`<label class="toolbar">
           <span class="search-icon" aria-hidden="true">${lucideIcon(Search)}</span>
           <input
             class="search"
@@ -335,8 +337,14 @@ class LeapViewChatList extends LitElement {
             .value=${this.search}
             @input=${this.onSearchInput}
           >
-        </label>
-        ${visible.length === 0 ? html`<span class="empty">${empty}</span>` : html`
+        </label>` : null}
+        ${visible.length === 0 ? html`
+          <div class="empty" role="status">
+            <span class="empty-icon" aria-hidden="true">${lucideIcon(MessageSquareText)}</span>
+            <strong class="empty-title">${empty}</strong>
+            ${!query && !this.agentEnabled ? html`<span class="empty-detail">Agent is not configured.</span>` : null}
+          </div>
+        ` : html`
           <div class="table-wrap">
             <table>
               <thead>
@@ -356,7 +364,7 @@ class LeapViewChatList extends LitElement {
 
   private renderRow(conversation: ChatConversationSummary) {
     const title = conversationTitle(conversation)
-    const href = `/chats/${conversation.id}`
+    const href = `/chats/${encodeURIComponent(conversation.id)}`
     return html`
       <tr data-active=${String(conversation.id === this.activeConversationId)}>
         <td class="primary-cell">
@@ -365,11 +373,6 @@ class LeapViewChatList extends LitElement {
             <span class="title">${title}</span>
             <time class="date" datetime=${conversation.updatedAt}>${conversation.updatedAt ? shortDate(conversation.updatedAt) : ''}</time>
           </div>
-          <div class="row-actions">
-            <button class="options-button" type="button" aria-label=${`More options for ${title}`} @click=${(event: Event) => this.emitOptions(event, conversation)}>
-              ${lucideIcon(MoreHorizontal)}
-            </button>
-          </div>
         </td>
       </tr>
     `
@@ -377,16 +380,6 @@ class LeapViewChatList extends LitElement {
 
   private onSearchInput = (event: Event): void => {
     this.search = (event.target as HTMLInputElement).value
-  }
-
-  private emitOptions(event: Event, conversation: ChatConversationSummary): void {
-    event.preventDefault()
-    event.stopPropagation()
-    this.dispatchEvent(new CustomEvent('lv-chat-list-options', {
-      detail: { conversationId: conversation.id },
-      bubbles: true,
-      composed: true,
-    }))
   }
 }
 

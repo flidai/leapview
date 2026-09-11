@@ -236,14 +236,10 @@ export class MapSelectionControl {
       item.setAttribute('role', 'option')
       item.setAttribute('aria-selected', String(option.selected))
       item.tabIndex = index === this.#activeIndex ? 0 : -1
-      const marker = document.createElement('span')
-      marker.textContent = option.selected ? '✓' : ''
-      marker.setAttribute('aria-hidden', 'true')
-      marker.style.cssText = 'width:14px;color:var(--lv-fg-link,#0969da);font-weight:var(--base-text-weight-semibold)'
       const label = document.createElement('span')
       label.textContent = option.label
       label.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'
-      item.append(marker, label)
+      item.append(label)
       item.style.cssText = `display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 8px;border-radius:5px;outline:none;${option.selected ? 'background:var(--lv-bg-accent-muted,var(--lv-bg-control-hover,#ddf4ff));color:var(--lv-fg-default,#1f2328);box-shadow:inset 3px 0 var(--lv-line-accent,#0969da);font-weight:var(--base-text-weight-medium)' : ''}`
       this.#listbox.append(item)
     })

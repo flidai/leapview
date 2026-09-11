@@ -1,8 +1,10 @@
 import { css, html, nothing } from 'lit'
+import { ArrowLeft } from 'lucide'
+import { lucideIcon } from './lucide-icons'
 
 export const entityDetailStyles = css`
   .detail-surface { display: grid; min-width: 0; gap: 0; }
-  .back-link { width: fit-content; margin-bottom: var(--base-size-24); color: var(--lv-fg-muted); text-decoration: none; }
+  .back-link { display: inline-flex; width: fit-content; align-items: center; gap: var(--base-size-6); margin-bottom: var(--base-size-24); color: var(--lv-fg-muted); text-decoration: none; }
   .back-link:hover { color: var(--lv-fg-default); text-decoration: none; }
   .detail-header { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-24); padding: var(--base-size-8) 0 var(--base-size-32); border-bottom: var(--lv-border-muted); }
   .identity { display: flex; min-width: 0; align-items: center; gap: var(--base-size-12); }
@@ -61,7 +63,7 @@ export function renderEntityDetail(options: EntityDetailOptions) {
   const avatarClass = options.avatarTreatment === 'plain' ? 'avatar avatar-plain' : 'avatar'
   return html`<section class="detail-surface" aria-label=${options.label}>
     ${options.feedback || nothing}
-    <a class="back-link" href=${options.backHref}>← ${options.backLabel}</a>
+    <a class="back-link" href=${options.backHref}>${lucideIcon(ArrowLeft, { size: 16, strokeWidth: 2 })}<span>${options.backLabel}</span></a>
     <header class="detail-header">
       <div class="identity">
         <span class=${avatarClass} aria-hidden="true">${options.avatar}</span>

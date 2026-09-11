@@ -197,7 +197,7 @@ export function axis(
     axisLine: { lineStyle: { color: context.colors.grid } },
     axisTick: { lineStyle: { color: context.colors.grid } },
     splitLine: { lineStyle: { color: context.colors.grid } },
-    axisLabel: { color: context.colors.muted, formatter: (value: unknown) => resolvedType === 'value'
+    axisLabel: { color: context.colors.muted, hideOverlap: true, formatter: (value: unknown) => resolvedType === 'value'
       ? formatDisplayField(envelope, ref, value, context, displayUnit)
       : resolvedType === 'time' ? formatAxisDate(envelope, ref, value, context, policy?.dateUnit) : formatField(envelope, ref, value, context) },
     nameTextStyle: { color: context.colors.muted },

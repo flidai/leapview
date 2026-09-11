@@ -63,7 +63,7 @@ export function truncateVisualizationLabel(value: string, maxCharacters: number,
   return `${segments.slice(0, Math.max(1, maxCharacters - 1)).join('')}…`
 }
 
-function isPriorityDatum(
+export function isPriorityDatum(
   envelope: VisualizationEnvelope,
   datasetID: string,
   rowIndex: number | undefined,
