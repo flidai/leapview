@@ -5,7 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesspolicy "github.com/flidai/leapview/internal/access/policy"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -138,7 +141,7 @@ func TestBootstrapAPIGenDecision(t *testing.T) {
 		{name: "exact claim delivery candidate status allowed", operation: "getDeliveryCandidateStatus", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim source retention allowed", operation: "retainProjectCandidateSource", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim role binding create allowed", operation: "createProjectRoleBinding", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
-		{name: "exact claim role binding list denied", operation: "listProjectRoleBindings", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
+		{name: "exact claim role binding list allowed", operation: "listProjectRoleBindings", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery plan allowed", operation: "createDeliveryPlan", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery build allowed", operation: "buildDeliveryPlan", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery publish allowed", operation: "publishDeliveryCandidate", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
@@ -182,6 +185,102 @@ func TestBootstrapAPIGenDecisionUsesCanonicalTargetPointer(t *testing.T) {
 	}
 	if got != (accessmodule.APIGenBootstrapDecision{Handled: false}) {
 		t.Fatalf("bootstrap decision = %#v, want active canonical target to close bootstrap", got)
+	}
+}
+
+func TestBootstrapAPIGenDecisionKeepsLegacyEmptyAuthorizationGenerationOpen(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	identity, err := projectgraph.NewServingIdentity(project, "prod", "generation_active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := tusRuntime{project: project, lease: tusLease{identity: identity, snapshot: snapshot}}
+	claim := bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: "prod"}}
+	target := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
+		TargetID: "target_demo", ProjectID: project.String(), Environment: "prod", ActiveGenerationID: identity.GenerationID,
+	}}
+	for _, operation := range []string{"createProjectRoleBinding", "listProjectRoleBindings", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, bootstrapStateStoreFake{}, claim, "prod", operation, project, target, "target_demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}) {
+				t.Fatalf("bootstrap decision = %#v, want legacy empty authorization generation to remain narrowly open", got)
+			}
+		})
+	}
+}
+
+func TestHasActiveBootstrapServingStateDoesNotTreatPartialAuthorizationAsLegacyEmpty(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	identity, err := projectgraph.NewServingIdentity(project, "prod", "generation_active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "model_orders", Kind: projectgraph.KindModel, Name: "orders"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef("model_orders", projectgraph.KindModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := access.NewCanonicalGrant(graph, subject, resource, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		grants   []accesssnapshot.Grant
+		policies []accesssnapshot.DataPolicy
+	}{
+		{name: "grant", grants: []accesssnapshot.Grant{{ID: "grant_read", Canonical: grant}}},
+		{name: "data policy", policies: []accesssnapshot.DataPolicy{{
+			ID: "policy_rows", Resource: resource, PolicyType: accesspolicy.TypeRowFilter,
+			ExpressionJSON: `{"filters":[{"groups":[{"filters":[{"field":"tenant_id","operator":"in","values":["demo"]}]}]}]}`,
+		}}},
+	}
+	target := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
+		TargetID: "target_demo", ProjectID: project.String(), Environment: "prod", ActiveGenerationID: identity.GenerationID,
+	}}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, test.grants, test.policies)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime := tusRuntime{project: project, lease: tusLease{identity: identity, snapshot: snapshot}}
+			active, err := hasActiveBootstrapServingState(context.Background(), runtime, bootstrapStateStoreFake{}, "prod", target, "target_demo", project.String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !active {
+				t.Fatal("partial authorization snapshot was treated as a legacy-empty bootstrap generation")
+			}
+			decision, err := bootstrapAPIGenDecision(
+				context.Background(), runtime, bootstrapStateStoreFake{}, bootstrapClaimStoreFake{err: errors.New("claim must not be read")},
+				"prod", "planProjectCandidateSynchronization", project, target, "target_demo",
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decision != (accessmodule.APIGenBootstrapDecision{Handled: false}) {
+				t.Fatalf("candidate source decision = %#v, want active snapshot authorization", decision)
+			}
+		})
 	}
 }
 

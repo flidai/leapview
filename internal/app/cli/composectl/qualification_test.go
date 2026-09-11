@@ -72,48 +72,45 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 	}
 	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
 	roleBindings := []access.RoleBinding{
-		{ID: "qualification-administrator-" + administratorID, Name: "Qualification administrator", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
+		{ID: "project-bootstrap-owner", Name: "Project bootstrap owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
 		{ID: "qualification-reviewer-" + reviewerID, Name: "Qualification reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
 	}
 	firstDigest, err := access.AuthorizationPolicyDigest(scope, roleBindings[:1])
 	require.NoError(t, err)
 	finalDigest, err := access.AuthorizationPolicyDigest(scope, roleBindings)
 	require.NoError(t, err)
-	type expectedRequest struct {
-		id, name, subjectID, idempotencyKey, digest string
-		revision                                    int64
-	}
-	expected := []expectedRequest{
-		{id: roleBindings[0].ID, name: roleBindings[0].Name, subjectID: administratorID, idempotencyKey: "qualification-policy-administrator-" + administratorID, revision: 0, digest: firstDigest},
-		{id: roleBindings[1].ID, name: roleBindings[1].Name, subjectID: reviewerID, idempotencyKey: "qualification-policy-reviewer-" + reviewerID, revision: 1, digest: finalDigest},
-	}
-	requestIndex := 0
+	getCount, postCount := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method == http.MethodGet {
+			getCount++
 			if request.URL.EscapedPath() != "/api/v1/projects/project:test/role-bindings" || request.URL.Query().Get("limit") != "200" {
 				t.Errorf("role-binding policy request = %s %s", request.Method, request.URL.String())
 			}
 			response.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
-				Items: []qualificationRoleBindingResponse{
+			items := []qualificationRoleBindingResponse{{ID: roleBindings[0].ID, Name: roleBindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 1, PolicyDigest: firstDigest}}
+			revision, digest := int64(1), firstDigest
+			if getCount == 2 {
+				items = []qualificationRoleBindingResponse{
 					{ID: roleBindings[0].ID, Name: roleBindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
 					{ID: roleBindings[1].ID, Name: roleBindings[1].Name, SubjectType: "principal", SubjectID: reviewerID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
-				},
-				TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation", PolicyRevision: 2, PolicyDigest: finalDigest,
+				}
+				revision, digest = 2, finalDigest
+			}
+			_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
+				Items: items, TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation", PolicyRevision: revision, PolicyDigest: digest,
 			})
 			return
 		}
-		if requestIndex >= len(expected) {
-			t.Errorf("unexpected role-binding request %d", requestIndex+1)
+		postCount++
+		if postCount > 1 {
+			t.Errorf("unexpected role-binding request %d", postCount)
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		item := expected[requestIndex]
-		requestIndex++
 		if request.Method != http.MethodPost || request.URL.EscapedPath() != "/api/v1/projects/project:test/role-bindings" {
 			t.Errorf("role-binding request = %s %s", request.Method, request.URL.EscapedPath())
 		}
-		if request.Header.Get("Authorization") != "Bearer qualification-token" || request.Header.Get("Idempotency-Key") != item.idempotencyKey {
+		if request.Header.Get("Authorization") != "Bearer qualification-token" || request.Header.Get("Idempotency-Key") != "qualification-policy-reviewer-"+reviewerID {
 			t.Errorf("role-binding request headers are incomplete")
 		}
 		var body struct {
@@ -130,16 +127,16 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 			response.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if body.ID != item.id || body.Name != item.name || body.SubjectType != "principal" || body.SubjectID != item.subjectID ||
-			body.Role != string(access.ProjectRoleAdmin) || body.ExpectedRevision == nil || *body.ExpectedRevision != item.revision || body.Capabilities != nil {
+		if body.ID != roleBindings[1].ID || body.Name != roleBindings[1].Name || body.SubjectType != "principal" || body.SubjectID != reviewerID ||
+			body.Role != string(access.ProjectRoleAdmin) || body.ExpectedRevision == nil || *body.ExpectedRevision != 1 || body.Capabilities != nil {
 			t.Errorf("role-binding request body = %+v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
 		response.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(response).Encode(qualificationRoleBindingResponse{
-			ID: item.id, Name: item.name, SubjectType: "principal", SubjectID: item.subjectID,
+			ID: roleBindings[1].ID, Name: roleBindings[1].Name, SubjectType: "principal", SubjectID: reviewerID,
 			Role: string(access.ProjectRoleAdmin), Capabilities: capabilities,
-			PolicyRevision: item.revision + 1, PolicyDigest: item.digest,
+			PolicyRevision: 2, PolicyDigest: finalDigest,
 		}); err != nil {
 			t.Errorf("encode role-binding response: %v", err)
 		}
@@ -150,9 +147,51 @@ func TestBootstrapQualificationRoleBindingsUsesPublicCASAPI(t *testing.T) {
 		t.Context(), server.Client(), server.URL, "project:test", "evaluation", "qualification-token", administratorID, reviewerID,
 	)
 	require.NoError(t, err)
-	require.Equal(t, len(expected), requestIndex)
+	require.Equal(t, 2, getCount)
+	require.Equal(t, 1, postCount)
 	require.EqualValues(t, 2, revision)
-	require.Equal(t, expected[1].digest, digest)
+	require.Equal(t, finalDigest, digest)
+}
+
+func TestBootstrapQualificationRoleBindingsReusesExistingReviewer(t *testing.T) {
+	administratorID := "10000000-0000-4000-8000-000000000001"
+	reviewerID := "10000000-0000-4000-8000-000000000002"
+	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
+	capabilities := make([]string, len(wantCapabilities))
+	for index, capability := range wantCapabilities {
+		capabilities[index] = string(capability)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
+	bindings := []access.RoleBinding{
+		{ID: "project-bootstrap-owner", Name: "Project bootstrap owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
+		{ID: "qualification-reviewer-" + reviewerID, Name: "Qualification reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
+	}
+	digest, err := access.AuthorizationPolicyDigest(scope, bindings)
+	require.NoError(t, err)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet {
+			t.Errorf("unexpected replay mutation %s", request.Method)
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
+			Items: []qualificationRoleBindingResponse{
+				{ID: bindings[0].ID, Name: bindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: "admin", Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: digest},
+				{ID: bindings[1].ID, Name: bindings[1].Name, SubjectType: "principal", SubjectID: reviewerID, Role: "admin", Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: digest},
+			},
+			TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, PolicyRevision: 2, PolicyDigest: digest,
+		})
+	}))
+	defer server.Close()
+
+	revision, gotDigest, err := bootstrapQualificationRoleBindings(
+		t.Context(), server.Client(), server.URL, "project:test", "evaluation", "qualification-token",
+		administratorID, reviewerID,
+	)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, revision)
+	require.Equal(t, digest, gotDigest)
 }
 
 func TestBootstrapQualificationRoleBindingsRejectsMalformedPolicyEvidence(t *testing.T) {
@@ -163,13 +202,12 @@ func TestBootstrapQualificationRoleBindingsRejectsMalformedPolicyEvidence(t *tes
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		response.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(response).Encode(qualificationRoleBindingResponse{
-			ID:          "qualification-administrator-10000000-0000-4000-8000-000000000001",
-			Name:        "Qualification administrator",
-			SubjectType: "principal", SubjectID: "10000000-0000-4000-8000-000000000001",
-			Role: string(access.ProjectRoleAdmin), Capabilities: capabilities,
-			PolicyRevision: 1, PolicyDigest: "sha256:not-a-digest",
+		_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
+			Items: []qualificationRoleBindingResponse{{
+				ID: "project-bootstrap-owner", Name: "Project bootstrap owner", SubjectType: "principal", SubjectID: "10000000-0000-4000-8000-000000000001",
+				Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 1, PolicyDigest: "sha256:not-a-digest",
+			}},
+			TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation", PolicyRevision: 1, PolicyDigest: "sha256:not-a-digest",
 		})
 	}))
 	defer server.Close()
@@ -179,57 +217,6 @@ func TestBootstrapQualificationRoleBindingsRejectsMalformedPolicyEvidence(t *tes
 		"10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002",
 	)
 	require.ErrorContains(t, err, "invalid policy digest")
-}
-
-func TestBootstrapQualificationRoleBindingsRejectsSemanticallyWrongPolicyDigest(t *testing.T) {
-	administratorID := "10000000-0000-4000-8000-000000000001"
-	reviewerID := "10000000-0000-4000-8000-000000000002"
-	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	capabilities := make([]string, len(wantCapabilities))
-	for index, capability := range wantCapabilities {
-		capabilities[index] = string(capability)
-	}
-	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation"}
-	roleBindings := []access.RoleBinding{
-		{ID: "qualification-administrator-" + administratorID, Name: "Qualification administrator", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: administratorID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
-		{ID: "qualification-reviewer-" + reviewerID, Name: "Qualification reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: reviewerID}, Role: access.ProjectRoleAdmin, Capabilities: wantCapabilities},
-	}
-	firstDigest, err := access.AuthorizationPolicyDigest(scope, roleBindings[:1])
-	require.NoError(t, err)
-	finalDigest, err := access.AuthorizationPolicyDigest(scope, roleBindings)
-	require.NoError(t, err)
-	wrongDigest := "sha256:" + strings.Repeat("f", 64)
-	requestIndex := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		if request.Method == http.MethodGet {
-			_ = json.NewEncoder(response).Encode(qualificationRoleBindingListResponse{
-				Items: []qualificationRoleBindingResponse{
-					{ID: roleBindings[0].ID, Name: roleBindings[0].Name, SubjectType: "principal", SubjectID: administratorID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
-					{ID: roleBindings[1].ID, Name: roleBindings[1].Name, SubjectType: "principal", SubjectID: reviewerID, Role: string(access.ProjectRoleAdmin), Capabilities: capabilities, PolicyRevision: 2, PolicyDigest: finalDigest},
-				},
-				TargetID: "target:test", ProjectID: "project:test", Environment: "evaluation", PolicyRevision: 2, PolicyDigest: finalDigest,
-			})
-			return
-		}
-		requestIndex++
-		digest := firstDigest
-		if requestIndex == 2 {
-			digest = wrongDigest
-		}
-		response.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(response).Encode(qualificationRoleBindingResponse{
-			ID: roleBindings[requestIndex-1].ID, Name: roleBindings[requestIndex-1].Name,
-			SubjectType: "principal", SubjectID: roleBindings[requestIndex-1].Subject.ID, Role: string(access.ProjectRoleAdmin),
-			Capabilities: capabilities, PolicyRevision: int64(requestIndex), PolicyDigest: digest,
-		})
-	}))
-	defer server.Close()
-
-	_, _, err = bootstrapQualificationRoleBindings(
-		t.Context(), server.Client(), server.URL, "project:test", "evaluation", "qualification-token", administratorID, reviewerID,
-	)
-	require.ErrorContains(t, err, "policy identity does not match role-binding result")
 }
 
 func TestValidateQualificationAuthoringPolicyEvidenceFailsClosed(t *testing.T) {

@@ -325,7 +325,7 @@ func isBootstrapAPIGenOperation(operationID string) bool {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"createProjectRoleBinding":
+		"createProjectRoleBinding", "listProjectRoleBindings":
 		return true
 	default:
 		return false

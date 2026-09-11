@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,10 @@ func authorizationPolicyUpgradeDB(t *testing.T) *pgxpool.Pool {
 }
 
 func seedAuthorizationPolicyUpgradeFixture(t *testing.T, db *pgxpool.Pool) {
+	seedAuthorizationPolicyUpgradeFixtureWithPolicy(t, db, `{"roleBindings":{"binding-owner":{"id":"binding-owner","name":"Existing owner","role":"owner","subject":{"kind":"principal","principalId":"70000000-0000-0000-0000-000000000001"}}}}`)
+}
+
+func seedAuthorizationPolicyUpgradeFixtureWithPolicy(t *testing.T, db *pgxpool.Pool, policyJSON string) {
 	t.Helper()
 	ctx := t.Context()
 	targets := deploymentpostgres.New(db)
@@ -115,7 +120,6 @@ VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,'artifacts/upgrade',$7,$8,$9,$1
 VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,1,1,'upgrade-test','committed',$6,clock_timestamp())`, authorizationPolicyUpgradePublicationID, authorizationPolicyUpgradeTargetID, authorizationPolicyUpgradeGenerationID, authorizationPolicyUpgradeCandidateID, authorizationPolicyUpgradeSealID, requestDigest)
 	exec(`INSERT INTO delivery.delivery_active_pointer(target_id,generation_id,publication_id)
 VALUES($1,$2::uuid,$3::uuid)`, authorizationPolicyUpgradeTargetID, authorizationPolicyUpgradeGenerationID, authorizationPolicyUpgradePublicationID)
-	policyJSON := `{"roleBindings":{"binding-owner":{"id":"binding-owner","name":"Existing owner","role":"owner","subject":{"kind":"principal","principalId":"70000000-0000-0000-0000-000000000001"}}}}`
 	exec(`INSERT INTO serving_state.bundle(generation_id,project_id,environment,artifact_id,artifact_digest,compiled_graph_digest,artifact_format,artifact_locator,storage_security_domain,artifact_content_type,artifact_metadata_digest,manifest_json,project_digest,access_policy_json,dashboard_publications_json,dashboard_appearances_json,size_bytes,created_by)
 VALUES($1::uuid,$2,$3,'artifact-'||substr($4,8),$4,$5,'tar.gz','serving-artifacts/'||substr($4,8)||'.tar.gz','upgrade-runtime','application/gzip',$6,'{}'::jsonb,$7,$8::jsonb,'{}'::jsonb,'{}'::jsonb,1,'upgrade-test')`, authorizationPolicyUpgradeGenerationID, authorizationPolicyUpgradeProjectID, authorizationPolicyUpgradeEnvironment, artifactDigest, graphDigest, authorizationPolicyUpgradeDigest('6'), authorizationPolicyUpgradeDigest('7'), policyJSON)
 }
@@ -163,6 +167,43 @@ func TestInitializeActiveTargetAuthorizationPolicyImportsExactActiveScope(t *tes
 	}
 	if revisionCount != 1 {
 		t.Fatalf("policy history rows = %d, want 1", revisionCount)
+	}
+}
+
+func TestInitializeActiveTargetAuthorizationPolicyLeavesLegacyEmptyPolicyUninitialized(t *testing.T) {
+	db := authorizationPolicyUpgradeDB(t)
+	seedAuthorizationPolicyUpgradeFixtureWithPolicy(t, db, `{}`)
+	targets := deploymentpostgres.New(db)
+	states := servingstatepostgres.New(db)
+	scope := access.AuthorizationPolicyScope{TargetID: authorizationPolicyUpgradeTargetID, ProjectID: authorizationPolicyUpgradeProjectID, Environment: authorizationPolicyUpgradeEnvironment}
+	policies, err := accesspostgres.NewAuthorizationPolicyRepository(db, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := func(ctx context.Context) (accesspostgres.Tx, error) { return db.Begin(ctx) }
+	if err := appaccesspostgres.InitializeActiveTargetAuthorizationPolicy(t.Context(), begin, targets, states, policies, authorizationPolicyUpgradeTargetID, authorizationPolicyUpgradeEnvironment); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := policies.AuthorizationPolicy(t.Context(), scope); !errors.Is(err, access.ErrAuthorizationPolicyNotFound) {
+		t.Fatalf("empty legacy policy initialization error = %v, want policy to remain absent for explicit bootstrap", err)
+	}
+	const principalID = "70000000-0000-0000-0000-000000000009"
+	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, principalID); err != nil {
+		t.Fatalf("create bootstrap principal: %v", err)
+	}
+	binding := access.RoleBinding{
+		ID: "project-bootstrap-owner", Name: "Project bootstrap owner",
+		Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID},
+		Role:    access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}
+	policy, err := policies.UpsertAuthorizationRoleBinding(t.Context(), access.AuthorizationRoleBindingInput{
+		Scope: scope, Binding: binding, ExpectedRevision: 0, IdempotencyKey: "project-bootstrap-owner-" + principalID,
+	})
+	if err != nil {
+		t.Fatalf("establish bootstrap policy: %v", err)
+	}
+	if policy.Revision != 1 || len(policy.RoleBindings) != 1 || policy.RoleBindings[0].ID != binding.ID {
+		t.Fatalf("bootstrap policy = %+v, want owner binding at revision 1", policy)
 	}
 }
 

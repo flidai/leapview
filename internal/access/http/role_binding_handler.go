@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	stdhttp "net/http"
-	"net/url"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
@@ -167,16 +166,11 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 	}
 	for _, row := range policy.RoleBindings {
 		if row.ID == binding.ID {
-			w.Header().Set("Location", projectRoleBindingLocation(chi.URLParam(r, "project"), row.ID))
 			writeJSON(w, stdhttp.StatusCreated, roleBindingDTO(row, policy))
 			return
 		}
 	}
 	writeJSONError(w, errors.New("created authorization role binding is missing from policy"), stdhttp.StatusInternalServerError)
-}
-
-func projectRoleBindingLocation(project, bindingID string) string {
-	return "/api/v1/projects/" + url.PathEscape(project) + "/role-bindings/" + url.PathEscape(bindingID)
 }
 
 func writeAuthorizationPolicyError(w stdhttp.ResponseWriter, err error) {

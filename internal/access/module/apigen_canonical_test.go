@@ -1685,6 +1685,9 @@ func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t 
 	if !isBootstrapAPIGenOperation("createProjectRoleBinding") {
 		t.Fatal("role binding creation is not bootstrap-authorized")
 	}
+	if !isBootstrapAPIGenOperation("listProjectRoleBindings") {
+		t.Fatal("role binding policy verification is not bootstrap-authorized")
+	}
 	for _, operation := range []string{
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
@@ -1693,7 +1696,7 @@ func TestAPIGenBootstrapAllowlistIncludesCandidateSourceAndManagedDataStaging(t 
 			t.Errorf("managed-data operation %q is not bootstrap-authorized", operation)
 		}
 	}
-	for _, operation := range []string{"listProjectRoleBindings", "listManagedDataRevisions", "getManagedDataRevision", "getActiveManagedDataRevision", "listManagedDataUploadSessions", "listManagedDataUploadSessionEvents", "getDashboard"} {
+	for _, operation := range []string{"listManagedDataRevisions", "getManagedDataRevision", "getActiveManagedDataRevision", "listManagedDataUploadSessions", "listManagedDataUploadSessionEvents", "getDashboard"} {
 		if isBootstrapAPIGenOperation(operation) {
 			t.Errorf("unrelated operation %q is bootstrap-authorized", operation)
 		}

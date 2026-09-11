@@ -68,6 +68,14 @@ func InitializeActiveTargetAuthorizationPolicy(
 	if err != nil {
 		return err
 	}
+	if len(bindings) == 0 {
+		// Native generations created before target-owned policy governance carry
+		// the canonical empty document. Do not turn that absence into revision one:
+		// bootstrap-project must still be able to establish the claiming principal
+		// as the first administrator. The bootstrap authorizer keeps this exact
+		// legacy state narrowly open until a policy-bearing generation is active.
+		return nil
+	}
 	if _, err := accesspg.InitializeAuthorizationPolicyFromServingPolicyTx(ctx, tx, scope, target.ActiveGenerationID, bindings); err != nil {
 		return fmt.Errorf("initialize target authorization policy from active generation: %w", err)
 	}

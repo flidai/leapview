@@ -977,7 +977,11 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
 alias ListProjectRoleBindingsOK = OkJson<RoleBindingListResponse>;
-alias CreateProjectRoleBindingCreated = CreatedJson<RoleBindingResponse>;
+
+model CreateProjectRoleBindingCreated {
+  ...Response<201>;
+  ...Body<RoleBindingResponse>;
+}
 
 @tag("Access")
 @summary("List target-owned project role bindings")

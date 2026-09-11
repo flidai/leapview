@@ -79,8 +79,8 @@ func TestCreateProjectRoleBindingDerivesCapabilitiesAndBindsServerScope(t *testi
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if got, want := recorder.Header().Get("Location"), "/api/v1/projects/project_demo/role-bindings/binding-1"; got != want {
-		t.Fatalf("Location = %q, want %q", got, want)
+	if got := recorder.Header().Get("Location"); got != "" {
+		t.Fatalf("Location = %q, want no unresolvable item URL", got)
 	}
 	if repo.writerCalls != 1 {
 		t.Fatalf("writer calls = %d, want 1", repo.writerCalls)
@@ -120,12 +120,6 @@ func TestCreateProjectRoleBindingDerivesCapabilitiesAndBindsServerScope(t *testi
 	}
 	if payload["targetId"] != "target-server" || payload["environment"] != "prod" || payload["role"] != "viewer" {
 		t.Fatalf("audit metadata = %#v", metadata)
-	}
-}
-
-func TestProjectRoleBindingLocationEscapesResourceIdentifiers(t *testing.T) {
-	if got, want := projectRoleBindingLocation("project_demo", "binding/one?two"), "/api/v1/projects/project_demo/role-bindings/binding%2Fone%3Ftwo"; got != want {
-		t.Fatalf("Location = %q, want %q", got, want)
 	}
 }
 
