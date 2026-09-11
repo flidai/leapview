@@ -33,7 +33,10 @@ func NewContentBlobStore(ctx context.Context, config ProductConfig, localDirecto
 		blobs, err = managedfilesystem.New(filepath.Clean(localDirectory))
 	case "s3":
 		config.S3Prefix = strings.Trim(strings.TrimSpace(s3Prefix), "/")
-		blobs, err = newManagedDataS3Store(ctx, config)
+		// Content assets share S3 connectivity but are not managed-data
+		// revision members. Keep the managed-data observation profile and
+		// recorder scoped to the revision store.
+		blobs, err = newS3BlobStore(ctx, config, config.S3Prefix)
 	default:
 		return nil, fmt.Errorf("content-blob backend must be local or s3")
 	}

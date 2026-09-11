@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -184,6 +185,12 @@ type ProductConfig struct {
 	S3Endpoint        string
 	S3Bucket          string
 	S3Prefix          string
+	// S3ObservationProfileID and S3ObservationAccount identify the trusted
+	// provider profile used to persist exact write-version observations. They
+	// are non-secret configuration and are required for production S3 managed
+	// data because production has no separate recovery-capture toggle.
+	S3ObservationProfileID string
+	S3ObservationAccount   string
 }
 
 type ServingStateReader interface {
@@ -243,7 +250,14 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	repository := cfg.Persistence.repository
 	var transitions manageddata.UploadTransitionPort
 	transitions, _ = any(repository).(manageddata.UploadTransitionPort)
-	services, err := newManagedDataStorage(ctx, cfg.Product)
+	if err := validateManagedDataObservationConfiguration(cfg.Product, cfg.Production); err != nil {
+		return nil, err
+	}
+	var observationRecorder storage.ProviderVersionObservationRecorder
+	if cfg.Persistence.native != nil && (cfg.Production || managedDataObservationProfileConfigured(cfg.Product)) {
+		observationRecorder = cfg.Persistence.native
+	}
+	services, err := newManagedDataStorage(ctx, cfg.Product, observationRecorder)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +462,7 @@ func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
 	}
 }
 
-func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataStorage, error) {
+func newManagedDataStorage(ctx context.Context, cfg ProductConfig, recorders ...storage.ProviderVersionObservationRecorder) (managedDataStorage, error) {
 	root, err := filepath.Abs(strings.TrimSpace(cfg.Dir))
 	if err != nil || strings.TrimSpace(cfg.Dir) == "" {
 		return managedDataStorage{}, fmt.Errorf("%w: managed-data directory is required", storage.ErrInvalid)
@@ -458,6 +472,10 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 	}
 
 	var result managedDataStorage
+	var observationRecorder storage.ProviderVersionObservationRecorder
+	if len(recorders) > 0 {
+		observationRecorder = recorders[0]
+	}
 	switch strings.TrimSpace(cfg.Backend) {
 	case "local":
 		blobs, err := managedfilesystem.New(filepath.Join(root, "objects"))
@@ -482,7 +500,7 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 		}
 		result.blobs, result.transport, result.tusEngine, result.materializer, result.tus = blobs, transport, engine, blobs, capacityProtectedTus(handler, capacity)
 	case "s3":
-		store, err := newManagedDataS3Store(ctx, cfg)
+		store, err := newManagedDataS3Store(ctx, cfg, observationRecorder)
 		if err != nil {
 			return managedDataStorage{}, err
 		}
@@ -555,8 +573,16 @@ func capacityProtectedTus(next http.Handler, capacity *maintenance.CapacityCheck
 	})
 }
 
-func newManagedDataS3Store(ctx context.Context, cfg ProductConfig) (*manageds3.Store, error) {
-	return newS3BlobStore(ctx, cfg, cfg.S3Prefix)
+func newManagedDataS3Store(ctx context.Context, cfg ProductConfig, recorders ...storage.ProviderVersionObservationRecorder) (*manageds3.Store, error) {
+	var observationRecorder storage.ProviderVersionObservationRecorder
+	if len(recorders) > 0 {
+		observationRecorder = recorders[0]
+	}
+	profile, err := managedDataS3ObservationProfile(cfg, cfg.S3Prefix)
+	if err != nil {
+		return nil, err
+	}
+	return newS3BlobStoreWithObservation(ctx, cfg, cfg.S3Prefix, profile, observationRecorder)
 }
 
 // NewS3BlobStore constructs a content-addressed store that shares the managed
@@ -567,6 +593,10 @@ func NewS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (stor
 }
 
 func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*manageds3.Store, error) {
+	return newS3BlobStoreWithObservation(ctx, cfg, prefix, nil, nil)
+}
+
+func newS3BlobStoreWithObservation(ctx context.Context, cfg ProductConfig, prefix string, profile *storage.ProviderProfileIdentity, recorder storage.ProviderVersionObservationRecorder) (*manageds3.Store, error) {
 	loadOptions := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(strings.TrimSpace(cfg.S3Region))}
 	if cfg.S3AccessKeyID != "" {
 		provider := credentials.NewStaticCredentialsProvider(
@@ -587,9 +617,79 @@ func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*man
 		}
 	})
 	return manageds3.New(client, awss3.NewPresignClient(client), manageds3.Config{
-		Bucket: cfg.S3Bucket,
-		Prefix: prefix,
+		Bucket: cfg.S3Bucket, Prefix: prefix,
+		ObservationProfile: profile, ObservationRecorder: recorder,
 	})
+}
+
+func managedDataObservationProfileConfigured(cfg ProductConfig) bool {
+	return strings.TrimSpace(cfg.S3ObservationProfileID) != "" || strings.TrimSpace(cfg.S3ObservationAccount) != ""
+}
+
+func validateManagedDataObservationConfiguration(cfg ProductConfig, production bool) error {
+	if !production || strings.TrimSpace(cfg.Backend) != "s3" {
+		return nil
+	}
+	profile, err := managedDataS3ObservationProfile(cfg, cfg.S3Prefix)
+	if err != nil {
+		return fmt.Errorf("validate managed-data S3 observation profile: %w", err)
+	}
+	if profile == nil {
+		return fmt.Errorf("%w: production managed-data S3 requires an observation profile", storage.ErrProviderVersion)
+	}
+	return nil
+}
+
+func managedDataS3ObservationProfile(cfg ProductConfig, prefix string) (*storage.ProviderProfileIdentity, error) {
+	profileID := strings.TrimSpace(cfg.S3ObservationProfileID)
+	account := strings.TrimSpace(cfg.S3ObservationAccount)
+	if profileID == "" && account == "" {
+		return nil, nil
+	}
+	if profileID == "" || account == "" {
+		return nil, fmt.Errorf("%w: S3 observation profile ID and account are both required", storage.ErrProviderVersion)
+	}
+	region := strings.TrimSpace(cfg.S3Region)
+	bucket := strings.TrimSpace(cfg.S3Bucket)
+	namespace := strings.Trim(prefix, "/")
+	endpoint, err := managedDataS3ObservationEndpoint(cfg.S3Endpoint, region)
+	if err != nil {
+		return nil, err
+	}
+	profile := storage.ProviderProfileIdentity{
+		ProfileID: profileID, Implementation: "s3", AccountIdentity: account,
+		Endpoint: endpoint, Region: region, Bucket: bucket, Namespace: namespace,
+	}
+	if err := storage.ValidateProviderProfileIdentity(profile); err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+func managedDataS3ObservationEndpoint(raw, region string) (string, error) {
+	endpoint := strings.TrimSpace(raw)
+	if endpoint == "" {
+		if region == "" {
+			return "", fmt.Errorf("%w: S3 observation profile requires a region", storage.ErrProviderVersion)
+		}
+		return "https://s3." + region + ".amazonaws.com", nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.User != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("%w: S3 observation endpoint must be a credential-free absolute URL", storage.ErrProviderVersion)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%w: S3 observation endpoint must use HTTP(S)", storage.ErrProviderVersion)
+	}
+	if parsed.Path == "/" {
+		parsed.Path = ""
+	}
+	if parsed.Path != "" {
+		return "", fmt.Errorf("%w: S3 observation endpoint must be an origin", storage.ErrProviderVersion)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Host = strings.ToLower(parsed.Host)
+	return parsed.String(), nil
 }
 
 func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, cleanupAcker control.CleanupAcker, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {

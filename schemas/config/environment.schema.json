@@ -1444,6 +1444,65 @@
       "x-error-message": "production managed-data S3 custom endpoints must use HTTPS"
     },
     {
+      "description": "Production managed-data S3 writes require an explicit provider observation profile.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_PRODUCTION": {
+                "enum": [
+                  "1",
+                  "t",
+                  "T",
+                  "true",
+                  "TRUE",
+                  "True"
+                ]
+              }
+            },
+            "required": [
+              "LEAPVIEW_PRODUCTION"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_BACKEND"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"
+            ]
+          }
+        ]
+      },
+      "x-error-message": "production managed-data S3 requires LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT and LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"
+    },
+    {
       "description": "Managed-data S3 credentials are either omitted or configured as a complete key pair.",
       "if": {
         "properties": {
@@ -2685,6 +2744,18 @@
     },
     "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": {
       "description": "Optional S3-compatible endpoint URL.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT": {
+      "description": "Non-secret provider account identity used to bind managed-data S3 write observations.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID": {
+      "description": "Non-secret stable provider profile identity used to bind managed-data S3 write observations.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
