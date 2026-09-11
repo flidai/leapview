@@ -778,6 +778,56 @@ test('fit width never exposes a horizontal canvas scrollbar when vertical scroll
   }
 })
 
+test('canvas dropdown popovers follow the authored report zoom scale', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem('leapview-report-layout:/', 'desktop')
+      localStorage.setItem('leapview-report-zoom:/', 'custom')
+      localStorage.setItem('leapview-report-zoom-scale:/', '0.5')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+
+    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const canvas = element.shadowRoot.querySelector('lv-report-canvas') as any
+      const slicer = element.shadowRoot.querySelector('lv-slicer') as any
+      await Promise.all([canvas.updateComplete, slicer.updateComplete])
+      const leaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      await leaf.updateComplete
+      const trigger = leaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLElement
+      trigger.click()
+      await leaf.updateComplete
+      await new Promise(requestAnimationFrame)
+      const popover = leaf.shadowRoot.querySelector('.dropdown-popover') as HTMLElement
+      const triggerRect = trigger.getBoundingClientRect()
+      const popoverRect = popover.getBoundingClientRect()
+      const surface = canvas.shadowRoot.querySelector('.surface') as HTMLElement
+      return {
+        canvasScale: Number(surface.dataset.scale),
+        triggerScale: triggerRect.width / trigger.offsetWidth,
+        popoverScale: popoverRect.width / popover.offsetWidth,
+        popoverTransform: popover.style.transform,
+        visualGap: popoverRect.top - triggerRect.bottom,
+      }
+    })
+
+    expect(result.canvasScale).toBe(0.5)
+    expect(result.triggerScale).toBeCloseTo(0.5)
+    expect(result.popoverScale).toBeCloseTo(result.triggerScale)
+    expect(result.popoverTransform).toBe('scale(0.5)')
+    expect(result.visualGap).toBeCloseTo(2)
+  } finally {
+    await page.evaluate(() => {
+      localStorage.removeItem('leapview-report-layout:/')
+      localStorage.removeItem('leapview-report-zoom:/')
+      localStorage.removeItem('leapview-report-zoom-scale:/')
+    }).catch(() => undefined)
+    await page.close()
+  }
+})
+
 test('bottom report toolbar separates layout, fit actions, and zoom presets on compact screens', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
@@ -1584,10 +1634,13 @@ test('dashboard agent drawer carries page context and explicit visual references
         askActionRow: ask.assignedSlot?.parentElement?.className,
         kpiAskActionRow: kpiAsk.assignedSlot?.parentElement?.className,
         tableAskActionRow: tableAsk.assignedSlot?.parentElement?.className,
+        tableAskLeft: tableAsk.getBoundingClientRect().left,
         tableAskRight: tableAsk.getBoundingClientRect().right,
         tableExpandLeft: tableExpand.getBoundingClientRect().left,
         tableExpandRight: tableExpand.getBoundingClientRect().right,
         tableOptionsLeft: tableOptions.getBoundingClientRect().left,
+        tableOptionsRight: tableOptions.getBoundingClientRect().right,
+        tableRight: reportTable.getBoundingClientRect().right,
         askPressed: ask.getAttribute('aria-pressed'),
         askUsesAgentIcon: ask.querySelector('svg')?.innerHTML === agentIconMarkup
           && drawer.shadowRoot.querySelector('.title svg')?.innerHTML === agentIconMarkup,
@@ -1608,8 +1661,10 @@ test('dashboard agent drawer carries page context and explicit visual references
       chartAction: 'Expand chart',
       tableHasExpand: false,
     })
+    expect(visualActionsAtRest.tableAskRight).toBeLessThanOrEqual(visualActionsAtRest.tableExpandLeft)
     expect(visualActionsAtRest.tableExpandLeft - visualActionsAtRest.tableAskRight).toBeGreaterThanOrEqual(4)
     expect(visualActionsAtRest.tableExpandRight).toBeLessThanOrEqual(visualActionsAtRest.tableOptionsLeft)
+    expect(visualActionsAtRest.tableRight - visualActionsAtRest.tableOptionsRight).toBe(8)
 
     await page.locator('lv-dashboard-visual-frame[data-visual-id="orders_chart"]').hover()
     const visualActionsOnHover = await page.locator('lv-dashboard-page').evaluate((element: any) => {
@@ -3241,6 +3296,10 @@ test('searchable multi-select dropdowns filter options, preserve multiple values
       await leaf.updateComplete
       const popover = root.querySelector<HTMLElement>('.dropdown-popover')!
       const search = root.querySelector<HTMLInputElement>('.dropdown-search input')!
+      const clear = root.querySelector<HTMLButtonElement>('.dropdown-clear')!
+      const initialClearDisabled = clear.disabled
+      const optionFontSize = getComputedStyle(root.querySelector<HTMLElement>('.dropdown-option')!).fontSize
+      const triggerFontSize = getComputedStyle(trigger).fontSize
       search.value = 'rio'
       search.dispatchEvent(new Event('input', { bubbles: true }))
       await leaf.updateComplete
@@ -3253,15 +3312,20 @@ test('searchable multi-select dropdowns filter options, preserve multiple values
       root.querySelector<HTMLInputElement>('input[aria-label="Sao Paulo"]')!.click()
       await leaf.updateComplete
       const selectedSummary = root.querySelector('.dropdown-value')?.textContent?.trim()
-      root.querySelector<HTMLInputElement>('input[aria-label="All State"]')!.click()
+      const clearDisabledWithSelection = clear.disabled
+      clear.click()
       await leaf.updateComplete
       return {
         expanded: trigger.getAttribute('aria-expanded'),
         popupRole: popover.getAttribute('role'),
         popupOpen: popover.matches(':popover-open'),
         popupPosition: getComputedStyle(popover).position,
+        optionFontSize,
+        triggerFontSize,
         filtered,
         selectedSummary,
+        initialClearDisabled,
+        clearDisabledWithSelection,
         mutations: mutations.map(item => item.expression),
         clearedSummary: root.querySelector('.dropdown-value')?.textContent?.trim(),
       }
@@ -3270,14 +3334,64 @@ test('searchable multi-select dropdowns filter options, preserve multiple values
     expect(state.popupRole).toBe('dialog')
     expect(state.popupOpen).toBe(true)
     expect(state.popupPosition).toBe('fixed')
-    expect(state.filtered).toEqual(['All', 'Rio de Janeiro'])
+    expect(state.optionFontSize).toBe('14px')
+    expect(state.optionFontSize).toBe(state.triggerFontSize)
+    expect(state.filtered).toEqual(['Rio de Janeiro'])
     expect(state.selectedSummary).toBe('2 selected')
+    expect(state.initialClearDisabled).toBe(true)
+    expect(state.clearDisabledWithSelection).toBe(false)
     expect(state.mutations).toEqual([
       { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'RJ' }] },
       { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'RJ' }, { kind: 'string', value: 'SP' }] },
       { kind: 'unfiltered' },
     ])
     expect(state.clearedSummary).toBe('All')
+  } finally {
+    await page.close()
+  }
+})
+
+test('clicking an open dropdown trigger closes the popover', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.id = 'dropdown-toggle-regression'
+      leaf.definition = {
+        id: 'country', label: 'Country', field: 'orders.country', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: { kind: 'static', limit: 2, values: [
+          { value: { kind: 'string', value: 'US' }, label: 'United States' },
+          { value: { kind: 'string', value: 'FR' }, label: 'France' },
+        ] },
+        format: {},
+      }
+      leaf.binding = {
+        key: 'fb_country', id: 'country', filter: 'country', scope: 'page', pageID: 'overview',
+        default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+        readerEditable: true, paneVisible: true, paneOrder: 0, paneLabel: 'Country',
+        targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'dropdown', search: true, selectAll: true,
+        showCounts: false, showSummary: true, compact: false,
+      }
+      document.body.append(leaf)
+      await leaf.updateComplete
+    })
+
+    const leaf = page.locator('#dropdown-toggle-regression')
+    const trigger = leaf.locator('.dropdown-trigger')
+    const popover = leaf.locator('.dropdown-popover')
+    await trigger.click()
+    expect(await popover.evaluate((element) => element.matches(':popover-open'))).toBe(true)
+    expect(await trigger.getAttribute('aria-expanded')).toBe('true')
+
+    await trigger.click()
+    expect(await popover.evaluate((element) => element.matches(':popover-open'))).toBe(false)
+    expect(await trigger.getAttribute('aria-expanded')).toBe('false')
   } finally {
     await page.close()
   }
@@ -3398,12 +3512,11 @@ test('closed dynamic dropdowns defer dependency refresh until they are focused a
     })
     expect(requests).toEqual({
       retained: [
-        { label: 'All', selected: false },
         { label: 'AC', selected: true },
       ],
       afterOpen: 1,
       afterDependencyChange: 1,
-      whileDeferred: ['All', 'AC'],
+      whileDeferred: ['AC'],
       afterRefocus: 2,
     })
   } finally {

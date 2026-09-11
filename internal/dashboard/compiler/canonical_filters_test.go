@@ -351,6 +351,20 @@ func TestCompileCanonicalDistinctOptionsRebindDependencyToQueriedDataset(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	segmentDefinition := compiled.Definitions["segment"]
+	if segmentDefinition.Dataset != "" {
+		t.Fatalf("segment predicate dataset = %q, want conformed semantic scope", segmentDefinition.Dataset)
+	}
+	if segmentDefinition.Options.Dataset != "customers" {
+		t.Fatalf("segment option dataset = %q, want customers", segmentDefinition.Options.Dataset)
+	}
+	statusDefinition := compiled.Definitions["status"]
+	if statusDefinition.Dataset != "" {
+		t.Fatalf("status predicate dataset = %q, want conformed semantic scope", statusDefinition.Dataset)
+	}
+	if statusDefinition.Options.Dataset != "orders" {
+		t.Fatalf("status option dataset = %q, want orders", statusDefinition.Options.Dataset)
+	}
 	deps := compiled.Bindings["status"].OptionDependencies
 	if len(deps) != 1 || deps[0].ID != "segment" || deps[0].Scope != "report" {
 		t.Fatalf("status option dependencies = %#v", deps)

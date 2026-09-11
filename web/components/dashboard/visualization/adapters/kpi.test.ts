@@ -107,6 +107,19 @@ test('KPI current, comparison, goal, and absolute delta share one display unit',
   expect(state.accessibleSummary).toContain('Current $1,234,567.00.')
 })
 
+test('KPI absolute percent delta is expressed in percentage points', () => {
+  const input = envelope(0.14229, 0.14, null)
+  if (input.spec.kind !== 'kpi') throw new Error('test fixture must be a KPI')
+  input.spec.presentation.delta = 'absolute'
+  input.spec.datasets[0]!.fields[0]!.format = { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }
+  input.spec.datasets[1]!.fields[0]!.format = { kind: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 }
+
+  const state = resolveKPIState(input, defaultRendererContext)
+  expect(state.currentText).toBe('14.2%')
+  expect(state.comparisonText).toBe('14%')
+  expect(state.deltaText).toBe('+0.2 pp')
+})
+
 test('KPI direction is author-defined rather than inferred from the sign', () => {
   const input = envelope(110, 100, 120)
   if (input.spec.kind !== 'kpi') throw new Error('test fixture must be a KPI')

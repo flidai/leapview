@@ -1154,7 +1154,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       case 'visual': {
         const visual = this.visualFor(component)
         if (!visual) return this.missingPayload('visual')
-        return html`<lv-visualization-host defer-mount .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
+        return html`<lv-visualization-host
+          defer-mount
+          .envelope=${visual}
+          .openVisualFocus=${this.openVisualFocus}
+        >${this.renderAskAction(askReference, referenced)}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`

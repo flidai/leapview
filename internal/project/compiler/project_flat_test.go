@@ -973,10 +973,10 @@ func TestCompileProjectGraphExecutiveSalesFilterControls(t *testing.T) {
 	if !ok {
 		t.Fatal("compiled Executive Sales omitted state filter definition")
 	}
-	if definition.Field != "state" || definition.Dataset != "sales_orders" {
-		t.Fatalf("compiled state filter field/dataset = %q/%q, want state/sales_orders", definition.Field, definition.Dataset)
+	if definition.Field != "state" || definition.Dataset != "" {
+		t.Fatalf("compiled state filter field/predicate dataset = %q/%q, want state with conformed scope", definition.Field, definition.Dataset)
 	}
-	if definition.Options.Kind != dashboardfilter.OptionSourceDistinct || definition.Options.Limit != 50 {
+	if definition.Options.Kind != dashboardfilter.OptionSourceDistinct || definition.Options.Dataset != "sales_orders" || definition.Options.Limit != 50 {
 		t.Fatalf("compiled state filter options = %#v, want distinct limit 50", definition.Options)
 	}
 	binding, ok := dashboard.FilterBindings["state"]

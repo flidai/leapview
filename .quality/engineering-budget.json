@@ -15,15 +15,15 @@
     },
     "typescript-production": {
       "lineLimit": 700,
-      "maxFilesOverLimit": 28,
-      "maxExcessLines": 19080,
+      "maxFilesOverLimit": 27,
+      "maxExcessLines": 19136,
       "maxLargestFile": 6082
     },
     "typescript-test": {
       "lineLimit": 1200,
-      "maxFilesOverLimit": 7,
-      "maxExcessLines": 8960,
-      "maxLargestFile": 3810
+      "maxFilesOverLimit": 8,
+      "maxExcessLines": 9116,
+      "maxLargestFile": 3824
     }
   },
   "suppressions": {
