@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/internal/semanticvalue"
 )
 
@@ -389,16 +390,7 @@ func lowerHex(value string) bool {
 }
 
 func isNilInterface(value any) bool {
-	if value == nil {
-		return true
-	}
-	rv := reflect.ValueOf(value)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(value)
 }
 
 type storedClaim struct {

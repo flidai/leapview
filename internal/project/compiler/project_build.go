@@ -3,6 +3,7 @@ package compiler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -422,15 +423,7 @@ func semanticRelationshipEndpointUnique(tables map[string]semanticmodel.Table, d
 }
 
 func sameOrderedFields(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func semanticRelationshipEndpointTuple(tables map[string]semanticmodel.Table, datasets map[string]semanticmodel.SemanticDatasetSpec, endpoint semanticmodel.RelationshipEndpointSpec) (string, []string, error) {
@@ -590,13 +583,5 @@ func sortedSetKeys(values map[string]struct{}) []string {
 }
 
 func sameStringList(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -211,14 +211,5 @@ func pruneAuditEvents(ctx context.Context, db DBTX, class RetentionClass, before
 }
 
 func isNilMaintenanceDB(db DBTX) bool {
-	if db == nil {
-		return true
-	}
-	v := reflect.ValueOf(db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(db)
 }

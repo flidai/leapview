@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -159,16 +160,7 @@ func (r *Repository) DB() DBTX {
 func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 func nativeDBConfigured(db DBTX) bool {
-	if db == nil {
-		return false
-	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 // WithTx returns a repository bound to a caller-owned transaction. Methods
@@ -1095,15 +1087,7 @@ func sameRunIdentity(r Run, in RunInput) bool {
 	return slicesEqual(r.MatchingScheduleIDs, in.MatchingScheduleIDs) && slicesEqual(r.MaterializationScope, in.MaterializationScope)
 }
 func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 func (r *Repository) CreateRun(ctx context.Context, in RunInput) (Run, error) {
 	var out Run

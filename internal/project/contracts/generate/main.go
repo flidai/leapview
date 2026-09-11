@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -516,15 +517,7 @@ func sameStrings(left, right []string) bool {
 	right = append([]string(nil), right...)
 	sort.Strings(left)
 	sort.Strings(right)
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func emit(profiles []profile) string {

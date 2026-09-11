@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -739,16 +739,7 @@ func requireDB(r *Repository) (DBTX, error) {
 }
 
 func nativeDBConfigured(db DBTX) bool {
-	if db == nil {
-		return false
-	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 func uuidID(value, label string, generate bool) (string, error) {

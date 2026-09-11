@@ -10,11 +10,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -240,16 +240,7 @@ func NewApprovalAuthority(repository *Repository, options ApprovalAuthorityOptio
 // Treat those as absent so a fail-closed authority cannot panic while writing
 // an approval mutation.
 func approvalPortPresent(port any) bool {
-	if port == nil {
-		return false
-	}
-	value := reflect.ValueOf(port)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(port)
 }
 
 func (a *ApprovalAuthority) Request(ctx context.Context, input ApprovalRequestInput) (ApprovalRequest, error) {

@@ -10,13 +10,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"reflect"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	postgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	"github.com/flidai/leapview/internal/recoveryset/successor"
 )
@@ -235,11 +235,7 @@ func (r *Reader) ReadExact(ctx context.Context, locator postgres.ValidatedLocato
 }
 
 func nilClient(client Client) bool {
-	if client == nil {
-		return true
-	}
-	value := reflect.ValueOf(client)
-	return value.Kind() == reflect.Pointer && value.IsNil()
+	return platformtypednil.IsNil(client)
 }
 
 func classifyProviderError(ctx context.Context, err error) error {

@@ -21,6 +21,7 @@ import (
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	"github.com/flidai/leapview/internal/manageddata"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	project "github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -451,31 +452,11 @@ func validateAdmissionProvenanceInput(input release.ProvenanceInput, admission G
 }
 
 func configuredManagedDataBindingAdmission(authority NativeManagedDataBindingAdmission) bool {
-	if authority == nil {
-		return false
-	}
-	v := reflect.ValueOf(authority)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if v.IsNil() {
-			return false
-		}
-	}
-	return true
+	return !platformtypednil.IsNil(authority)
 }
 
 func configuredCandidateProvenanceAdmission(authority NativeCandidateProvenanceAdmission) bool {
-	if authority == nil {
-		return false
-	}
-	v := reflect.ValueOf(authority)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if v.IsNil() {
-			return false
-		}
-	}
-	return authority.Configured()
+	return !platformtypednil.IsNil(authority) && authority.Configured()
 }
 
 func admissionEvidenceConflict(kind string) error {

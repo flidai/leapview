@@ -17,10 +17,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
+
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
@@ -679,16 +680,7 @@ func (c *RetentionCoordinator) listMaintenanceSnapshots(ctx context.Context, mai
 }
 
 func nilRetentionSession(session RetentionCatalogSession) bool {
-	if session == nil {
-		return true
-	}
-	v := reflect.ValueOf(session)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(session)
 }
 
 func (c *RetentionCoordinator) validate(in RetentionMaintenanceRequest) error {

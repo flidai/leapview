@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -627,15 +628,7 @@ func rejectUnsupportedMetricExtensions(metric Metric) error {
 }
 
 func sameFields(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func importRelationship(result *semanticmodel.Model, value Relationship) error {

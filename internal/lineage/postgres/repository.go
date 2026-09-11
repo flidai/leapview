@@ -16,12 +16,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	lineagedb "github.com/flidai/leapview/internal/lineage/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
@@ -188,16 +188,10 @@ func New(db DB) *Repository { return &Repository{db: db} }
 // Configured reports whether the repository has a native database handle.
 // Schema readiness remains the migration/lifecycle owner's responsibility.
 func (r *Repository) Configured() bool {
-	if r == nil || r.db == nil {
+	if r == nil || platformtypednil.IsNil(r.db) {
 		return false
 	}
-	v := reflect.ValueOf(r.db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !v.IsNil()
-	default:
-		return true
-	}
+	return true
 }
 
 // FromGraph projects the validated rootless compiler graph into the canonical

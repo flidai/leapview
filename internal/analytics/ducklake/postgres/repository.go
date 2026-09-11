@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -855,13 +856,11 @@ func validMarkerQuarantineReason(reason MarkerQuarantineReason) bool {
 func sameMarkerQuarantine(got MarkerQuarantine, in MarkerQuarantineInput, canonicalEvidenceJSON string) bool {
 	if got.PhysicalPoolID != in.PhysicalPoolID || got.CatalogID != in.CatalogID || got.AttemptID != in.AttemptID ||
 		got.RequestDigest != in.RequestDigest || got.PlanDigest != in.PlanDigest || got.Reason != in.Reason ||
-		got.ObservedMarkerDigest != in.ObservedMarkerDigest || len(got.ObservedSnapshotIDs) != len(in.ObservedSnapshotIDs) {
+		got.ObservedMarkerDigest != in.ObservedMarkerDigest {
 		return false
 	}
-	for i := range got.ObservedSnapshotIDs {
-		if got.ObservedSnapshotIDs[i] != in.ObservedSnapshotIDs[i] {
-			return false
-		}
+	if !slices.Equal(got.ObservedSnapshotIDs, in.ObservedSnapshotIDs) {
+		return false
 	}
 	return evidenceEqual(got.Evidence, canonicalEvidenceJSON)
 }

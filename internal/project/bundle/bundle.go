@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -268,15 +269,7 @@ func resourceIDsByKind(graph projectgraph.ProjectGraph, kind projectgraph.Kind) 
 }
 
 func equalStringSlices(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func newManifest(sourceBundle projectartifact.SourceBundle, compiled []byte, sourceFiles map[string][]byte) Manifest {

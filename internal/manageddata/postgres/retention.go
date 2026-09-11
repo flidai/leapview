@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"context"
-	"reflect"
 	"time"
 
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -25,16 +25,10 @@ func (*Maintenance) PostgreSQLMaintenanceAuthority() {}
 // Configured reports whether the facade retains its caller-owned maintenance
 // database handle.
 func (m *Maintenance) Configured() bool {
-	if m == nil || m.db == nil {
+	if m == nil || platformtypednil.IsNil(m.db) {
 		return false
 	}
-	value := reflect.ValueOf(m.db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return true
 }
 
 // MarkUploadCleanupComplete records cleanup evidence through the separately

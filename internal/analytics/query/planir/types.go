@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,15 +101,7 @@ type Grain struct {
 func (g Grain) empty() bool { return len(g.Fields) == 0 && g.TimeGrain == "" }
 
 func (g Grain) equal(other Grain) bool {
-	if g.TimeGrain != other.TimeGrain || len(g.Fields) != len(other.Fields) {
-		return false
-	}
-	for i := range g.Fields {
-		if g.Fields[i] != other.Fields[i] {
-			return false
-		}
-	}
-	return true
+	return g.TimeGrain == other.TimeGrain && slices.Equal(g.Fields, other.Fields)
 }
 
 // Field and Metric are the typed names available after a node. Type is a

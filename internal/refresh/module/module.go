@@ -14,6 +14,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -225,7 +226,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	if config.Production {
 		publication, ok := persistence.Publication.(*postgresPublicationPersistence)
-		if !ok || publication == nil || isNilPostgresCapability(publication.nativeFinalizer) {
+		if !ok || publication == nil || platformtypednil.IsNil(publication.nativeFinalizer) {
 			return nil, errors.New("production refresh module requires a native finalizer")
 		}
 	}

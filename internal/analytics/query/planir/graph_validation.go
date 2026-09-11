@@ -3,6 +3,7 @@ package planir
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -1081,27 +1082,11 @@ func containsRouteEdge(routes []RelationshipRoute, target RelationshipPath) bool
 }
 
 func sameJoinKeys(a, b []JoinKey) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func sameOrdered(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func sameStrings(a, b []string) bool {
@@ -1116,12 +1101,7 @@ func sameFields(a, b []Field) bool {
 	left, right := append([]Field(nil), a...), append([]Field(nil), b...)
 	sort.Slice(left, func(i, j int) bool { return left[i].Name < left[j].Name })
 	sort.Slice(right, func(i, j int) bool { return right[i].Name < right[j].Name })
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func sameMetrics(a, b []Metric) bool {
@@ -1131,12 +1111,7 @@ func sameMetrics(a, b []Metric) bool {
 	left, right := append([]Metric(nil), a...), append([]Metric(nil), b...)
 	sort.Slice(left, func(i, j int) bool { return left[i].Name < left[j].Name })
 	sort.Slice(right, func(i, j int) bool { return right[i].Name < right[j].Name })
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 // operation wrapping the existing SortLimit output. The input graph is never

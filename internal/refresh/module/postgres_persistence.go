@@ -15,6 +15,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshoperation "github.com/flidai/leapview/internal/refresh/operation"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -119,7 +120,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 	if config.PublicationIdentityResolver == nil {
 		return Persistence{}, ErrPublicationIdentityUnavailable
 	}
-	if isNilPostgresCapability(config.Jobs) {
+	if platformtypednil.IsNil(config.Jobs) {
 		return Persistence{}, errors.New("PostgreSQL canonical jobs authority is required")
 	}
 	queueAuthority, queueOK := config.Jobs.(postgresQueueAuthority)
@@ -652,15 +653,7 @@ func deterministicChildRunID(rootID, targetID string) string {
 }
 
 func sameStringSlice(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func (p *postgresRunPersistence) CreateRun(ctx context.Context, input refreshrun.RunInput) (refreshrun.RunRecord, error) {
