@@ -116,8 +116,14 @@ func containsSQL(s, token string) bool {
 }
 
 func TestPostgresUploadRevisionAndBindings(t *testing.T) {
-	p, maintenance, _, _ := openManagedDataTestPool(t)
+	p, maintenance, db, _ := openManagedDataTestPool(t)
 	r := New(p)
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	retentionAuthority := New(admin)
 	projectID := projectgraph.ResourceID("project_demo")
 	connID := projectgraph.ResourceID("connection_orders")
 	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.collection(collection_id,project_id,connection_id,name,status,archived_at,request_digest) VALUES ('collection_forged','project_demo','connection_forged','Forged','archived',clock_timestamp(),'sha256:0000000000000000000000000000000000000000000000000000000000000000')`); err == nil {
@@ -269,17 +275,20 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,state,evidence) VALUES ('root_wrong_project','project_other','prod','revision_orders','live','{"source":"test"}')`); err == nil {
 		t.Fatal("retention root accepted cross-project revision")
 	}
+	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,state,evidence) VALUES ('root_pretended_expired','project_demo','prod','revision_orders','expired','{"source":"test"}')`); err == nil {
+		t.Fatal("retention root accepted a pre-expired root")
+	}
 	root, err := r.RecordRetentionRoot(t.Context(), RetentionRoot{RootID: "root_revision", ProjectID: "project_demo", Environment: "prod", RevisionID: rev.ID.String(), State: "live", Evidence: json.RawMessage(`{"source":"test"}`)})
 	if err != nil || root.RevisionID != rev.ID.String() {
 		t.Fatalf("valid retention root: %v %#v", err, root)
 	}
-	if root, err = r.TransitionRetentionRoot(t.Context(), "root_revision", "retiring"); err != nil || root.State != "retiring" {
+	if root, err = retentionAuthority.TransitionRetentionRoot(t.Context(), "root_revision", "retiring"); err != nil || root.State != "retiring" {
 		t.Fatalf("retention live->retiring: %v %#v", err, root)
 	}
-	if root, err = r.TransitionRetentionRoot(t.Context(), "root_revision", "expired"); err != nil || root.State != "expired" {
+	if root, err = retentionAuthority.TransitionRetentionRoot(t.Context(), "root_revision", "expired"); err != nil || root.State != "expired" {
 		t.Fatalf("retention retiring->expired: %v %#v", err, root)
 	}
-	if root, err = r.TransitionRetentionRoot(t.Context(), "root_revision", "expired"); err != nil || root.State != "expired" {
+	if root, err = retentionAuthority.TransitionRetentionRoot(t.Context(), "root_revision", "expired"); err != nil || root.State != "expired" {
 		t.Fatalf("retention exact terminal replay: %v %#v", err, root)
 	}
 	if _, err := p.Exec(t.Context(), `UPDATE managed_data.retention_root SET revision_id='revision_other' WHERE root_id='root_revision'`); err == nil {
@@ -522,6 +531,112 @@ func TestPostgresReachabilityStableSnapshotAndRollback(t *testing.T) {
 	}
 	if after, err := source.Snapshot(t.Context()); err != nil || after.Generation != initial.Generation {
 		t.Fatalf("snapshot after rollback = %#v, %v", after, err)
+	}
+}
+
+func TestPostgresReachabilityRetentionRootLifecycle(t *testing.T) {
+	p, _, db, _ := openManagedDataTestPool(t)
+	r := New(p)
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	retentionAuthority := New(admin)
+	source, err := NewReachabilitySource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_retention_reachability", ProjectID: "project_retention_reachability", ConnectionID: "connection_retention_reachability", Name: "Retention reachability",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	manifest := manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 3, SHA256: digest}}}
+	session, err := r.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+		ID: "upload_retention_reachability", CollectionID: c.ID, Manifest: manifest,
+		StorageBackend: "s3", StagingPrefix: "uploads/retention-reachability", ExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := r.CompleteUpload(t.Context(), manageddata.CompleteUploadInput{
+		SessionID: session.ID,
+		Files:     []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "objects/retention-reachability.parquet"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := source.Snapshot(t.Context())
+	if err != nil || len(before.SHA256s) != 1 || before.SHA256s[0] != digest {
+		t.Fatalf("reachability before root = %#v, error = %v", before, err)
+	}
+	root, err := r.RecordRetentionRoot(t.Context(), RetentionRoot{
+		RootID: "root_retention_reachability", ProjectID: "project_retention_reachability", Environment: "prod", RevisionID: revision.ID.String(),
+		Evidence: json.RawMessage(`{"source":"test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.State != "live" {
+		t.Fatalf("new retention root state = %q, want live", root.State)
+	}
+	live, err := source.Snapshot(t.Context())
+	if err != nil || len(live.SHA256s) != 1 || live.SHA256s[0] != digest {
+		t.Fatalf("reachability with live root = %#v, error = %v", live, err)
+	}
+	if live.Generation == before.Generation {
+		t.Fatalf("retention root insert did not advance reachability epoch: before=%d after=%d", before.Generation, live.Generation)
+	}
+
+	retiring, err := retentionAuthority.TransitionRetentionRoot(t.Context(), root.RootID, "retiring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retiring.State != "retiring" {
+		t.Fatalf("retiring root state = %q", retiring.State)
+	}
+	retiringSnapshot, err := source.Snapshot(t.Context())
+	if err != nil || len(retiringSnapshot.SHA256s) != 1 || retiringSnapshot.SHA256s[0] != digest {
+		t.Fatalf("reachability with retiring root = %#v, error = %v", retiringSnapshot, err)
+	}
+
+	// A second admitted generation retains the same immutable revision. Expiring
+	// one generation must not release bytes still rooted by the other.
+	if _, err := r.RecordRetentionRoot(t.Context(), RetentionRoot{
+		RootID: "root_retention_reachability_replacement", ProjectID: "project_retention_reachability", Environment: "prod", RevisionID: revision.ID.String(),
+		Evidence: json.RawMessage(`{"source":"replacement-test"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retentionAuthority.TransitionRetentionRoot(t.Context(), root.RootID, "expired"); err != nil {
+		t.Fatal(err)
+	}
+	stillRetained, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stillRetained.SHA256s) != 1 || stillRetained.SHA256s[0] != digest {
+		t.Fatalf("reachability with one expired root = %#v, want digest retained by replacement root", stillRetained.SHA256s)
+	}
+	if _, err := retentionAuthority.TransitionRetentionRoot(t.Context(), "root_retention_reachability_replacement", "retiring"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retentionAuthority.TransitionRetentionRoot(t.Context(), "root_retention_reachability_replacement", "expired"); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(expired.SHA256s) != 0 {
+		t.Fatalf("reachability with all roots expired = %#v, want no digests", expired.SHA256s)
+	}
+	if expired.Generation <= stillRetained.Generation {
+		t.Fatalf("retention root expiry did not advance reachability epoch: retained=%d expired=%d", stillRetained.Generation, expired.Generation)
 	}
 }
 

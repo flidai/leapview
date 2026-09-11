@@ -7,10 +7,158 @@ import (
 
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	"github.com/flidai/leapview/internal/manageddata"
+	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
+	"github.com/flidai/leapview/internal/release"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestManagedDataRootFollowsGenerationRetirementAndExpiry(t *testing.T) {
+	p := generationAdmissionDB(t)
+	applyManagedDataSchemaForRetentionTest(t, p)
+	managedRepository := manageddatapostgres.New(p)
+	collection, err := managedRepository.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_admission_retention", ProjectID: "project_admission", ConnectionID: "connection-admission", Name: "Admission retention",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	manifest := manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 3, SHA256: digest}}}
+	session, err := managedRepository.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+		ID: "upload_admission_retention", CollectionID: collection.ID, Manifest: manifest,
+		StorageBackend: "s3", StagingPrefix: "uploads/admission-retention", ExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := managedRepository.CompleteUpload(t.Context(), manageddata.CompleteUploadInput{
+		SessionID: session.ID,
+		Files:     []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "objects/admission-retention.parquet"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	input := validGenerationAdmissionInput(t)
+	input.ManagedDataPins = []release.ManagedDataPin{{ConnectionID: "connection-admission", RevisionID: revision.Digest}}
+	input.Provenance.Plan.ManagedDataPins = append([]release.ManagedDataPin(nil), input.ManagedDataPins...)
+	delivery := deploymentnative.New(p)
+	seedGenerationAdmission(t, delivery, input)
+	managedAdmission, err := NewNativeManagedDataBindingAdmission(managedRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rebuild the capability with the production managed-data admission port;
+	// this keeps delivery generation creation and root recording in one caller
+	// transaction, exactly as the process composition does.
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, managedAdmission, releasepostgres.New(p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capability.CompleteBuildAndAdmit(t.Context(), input); err != nil {
+		t.Fatalf("admit generation with managed-data root: %v", err)
+	}
+	// The candidate root shares the generation tuple but is a different
+	// lifecycle kind. Expiring this preview-only root must not transition the
+	// managed serving-generation root.
+	if _, err := p.Exec(t.Context(), `UPDATE delivery.delivery_retention_root SET expires_at=clock_timestamp()-interval '1 second' WHERE root_id=$1::uuid`, input.Generation.CandidateID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.RetireRetentionRoot(t.Context(), input.Generation.CandidateID); err != nil {
+		t.Fatalf("retire candidate delivery root: %v", err)
+	}
+	if _, err := delivery.ExpireRetentionRoot(t.Context(), input.Generation.CandidateID); err != nil {
+		t.Fatalf("expire candidate delivery root: %v", err)
+	}
+	managedRootID := nativeManagedDataRetentionRootID(servingIdentityForNativeBinding("project_admission", "prod", input.Generation.GenerationID), collection.ID.String())
+	if _, err := managedRepository.RecordRetentionRoot(t.Context(), manageddatapostgres.RetentionRoot{
+		RootID: "managed-data-non-serving-root", ProjectID: "project_admission", Environment: "prod", RevisionID: revision.ID.String(),
+		Evidence: []byte(`{"kind":"non-serving","generation_id":"` + input.Generation.GenerationID + `"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	managedRoot, err := managedRepository.RetentionRootByID(t.Context(), managedRootID)
+	if err != nil || managedRoot.State != "live" {
+		t.Fatalf("managed root after candidate expiry = %#v, error = %v, want live", managedRoot, err)
+	}
+
+	rootID := "a5a5a5a5-a5a5-45a5-85a5-a5a5a5a5a5a5"
+	if _, err := delivery.CreateRetentionRoot(t.Context(), deploymentnative.DeliveryRetentionRoot{
+		RootID: rootID, TargetID: input.Generation.TargetID, CandidateID: input.Generation.CandidateID,
+		GenerationID: input.Generation.GenerationID, SnapshotSealID: input.Seal.SealID, RootKind: "generation", State: "live",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source, err := manageddatapostgres.NewReachabilitySource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := source.Snapshot(t.Context())
+	if err != nil || len(before.SHA256s) != 1 || before.SHA256s[0] != digest {
+		t.Fatalf("managed reachability before generation retirement = %#v, error = %v", before, err)
+	}
+	if _, err := delivery.RetireRetentionRoot(t.Context(), rootID); err != nil {
+		t.Fatalf("retire delivery generation root: %v", err)
+	}
+	retiring, err := managedRepository.RetentionRootByID(t.Context(), managedRootID)
+	if err != nil || retiring.State != "retiring" {
+		t.Fatalf("managed root after generation retirement = %#v, error = %v", retiring, err)
+	}
+	retiringSnapshot, err := source.Snapshot(t.Context())
+	if err != nil || len(retiringSnapshot.SHA256s) != 1 || retiringSnapshot.SHA256s[0] != digest {
+		t.Fatalf("managed reachability while generation retiring = %#v, error = %v", retiringSnapshot, err)
+	}
+	if _, err := delivery.ExpireRetentionRoot(t.Context(), rootID); err != nil {
+		t.Fatalf("expire delivery generation root: %v", err)
+	}
+	expired, err := managedRepository.RetentionRootByID(t.Context(), managedRootID)
+	if err != nil || expired.State != "expired" {
+		t.Fatalf("managed root after generation expiry = %#v, error = %v", expired, err)
+	}
+	nonServing, err := managedRepository.RetentionRootByID(t.Context(), "managed-data-non-serving-root")
+	if err != nil || nonServing.State != "live" {
+		t.Fatalf("non-serving managed root after generation expiry = %#v, error = %v, want live", nonServing, err)
+	}
+	after, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.SHA256s) != 1 || after.SHA256s[0] != digest {
+		t.Fatalf("managed reachability after serving generation expiry = %#v, want digest retained by non-serving root", after.SHA256s)
+	}
+	if _, err := managedRepository.TransitionRetentionRoot(t.Context(), "managed-data-non-serving-root", "retiring"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := managedRepository.TransitionRetentionRoot(t.Context(), "managed-data-non-serving-root", "expired"); err != nil {
+		t.Fatal(err)
+	}
+	final, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(final.SHA256s) != 0 {
+		t.Fatalf("managed reachability after all roots expire = %#v, want no digests", final.SHA256s)
+	}
+}
+
+func applyManagedDataSchemaForRetentionTest(t *testing.T, p *pgxpool.Pool) {
+	t.Helper()
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manageddatapostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // Delivery owns retention-root transitions while serving_state owns reader
 // leases. A retiring root must reject new exact-generation readers and cannot

@@ -412,6 +412,21 @@ func (r *Repository) RecordRetentionRoot(ctx context.Context, root RetentionRoot
 	if err != nil {
 		return RetentionRoot{}, err
 	}
+	return recordRetentionRoot(ctx, db, root)
+}
+
+// RecordRetentionRootTx records a generation-scoped root in a caller-owned
+// PostgreSQL transaction. The transaction remains owned by the caller, which
+// lets generation admission commit binding evidence and its managed-data
+// reachability root atomically with the serving state.
+func (r *Repository) RecordRetentionRootTx(ctx context.Context, tx Tx, root RetentionRoot) (RetentionRoot, error) {
+	if tx == nil {
+		return RetentionRoot{}, ErrInvalid
+	}
+	return recordRetentionRoot(ctx, tx, root)
+}
+
+func recordRetentionRoot(ctx context.Context, db DBTX, root RetentionRoot) (RetentionRoot, error) {
 	// DuckLake snapshot retention/root state has its own capability-owned
 	// authority.  Managed-data roots intentionally admit revisions only; a
 	// cross-database snapshot tuple would otherwise be unverifiable here.
@@ -421,7 +436,10 @@ func (r *Repository) RecordRetentionRoot(ctx context.Context, root RetentionRoot
 	if root.State == "" {
 		root.State = "live"
 	}
-	if root.State != "live" && root.State != "retiring" && root.State != "expired" {
+	// Delivery generation admission is the sole production creator. Lifecycle
+	// transitions are synchronized by delivery's fenced root functions, so a
+	// caller cannot insert a pre-retired or pre-expired root.
+	if root.State != "live" {
 		return RetentionRoot{}, ErrInvalid
 	}
 	evidence, err := boundedObject(root.Evidence, 65536)
@@ -432,7 +450,7 @@ func (r *Repository) RecordRetentionRoot(ctx context.Context, root RetentionRoot
 	if err != nil {
 		return RetentionRoot{}, err
 	}
-	stored, err := r.RetentionRootByID(ctx, root.RootID)
+	stored, err := retentionRootByID(ctx, db, root.RootID)
 	if err != nil {
 		return RetentionRoot{}, err
 	}
@@ -447,6 +465,10 @@ func (r *Repository) RetentionRootByID(ctx context.Context, id string) (Retentio
 	if err != nil {
 		return RetentionRoot{}, err
 	}
+	return retentionRootByID(ctx, db, id)
+}
+
+func retentionRootByID(ctx context.Context, db DBTX, id string) (RetentionRoot, error) {
 	row, err := manageddb.New(db).GetRetentionRoot(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RetentionRoot{}, ErrNotFound
