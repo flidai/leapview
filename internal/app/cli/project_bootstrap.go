@@ -207,7 +207,7 @@ func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListRe
 		if item.PolicyRevision != policy.PolicyRevision || item.PolicyDigest != policy.PolicyDigest {
 			return fmt.Errorf("role binding %q is not bound to the policy head", item.Id)
 		}
-		if subject.Kind == access.SubjectKindPrincipal && subject.ID == principalID && role == access.ProjectRoleAdmin {
+		if subject.Kind == access.SubjectKindPrincipal && subject.ID == principalID && bootstrapAdministratorRole(role) {
 			ownerFound = true
 		}
 		bindings = append(bindings, binding)
@@ -223,6 +223,10 @@ func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListRe
 		return errors.New("authorization policy digest does not match its canonical bindings")
 	}
 	return nil
+}
+
+func bootstrapAdministratorRole(role access.ProjectRole) bool {
+	return role == access.ProjectRoleOwner || role == access.ProjectRoleAdmin
 }
 
 func validateBootstrapCapabilities(actual []accessgen.GenSchemaCapability, expected []access.Capability) error {

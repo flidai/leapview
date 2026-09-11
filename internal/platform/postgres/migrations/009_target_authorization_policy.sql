@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS access.authorization_policy_operation (
 );
 
 -- Legacy seals remain readable without invented policy identities. Every seal
--- written by the revision-10 application supplies both columns; the pair check
+-- written by the post-migration application supplies both columns; the pair check
 -- prevents partial evidence while permitting pre-governance historical rows.
 ALTER TABLE delivery.delivery_snapshot_seal
     ADD COLUMN IF NOT EXISTS authorization_policy_revision bigint CHECK (authorization_policy_revision > 0),

@@ -121,7 +121,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'),
 		SecurityDomainFingerprint: authorizationDigest, ArtifactDigest: artifactDigest,
 		QualificationDigest: admissionDigest('3'),
-	}, "project_admission")
+	}, "project_admission", AuthorizationPolicyEvidence{Revision: 1, Digest: policyDigest})
 	planDigest := planRecord.PlanDigest
 	relationNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
 	if err != nil {
@@ -444,6 +444,12 @@ func seedGenerationAdmissionBootstrap(t *testing.T, db *pgxpool.Pool, instanceID
 
 func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, input GenerationAdmissionInput) {
 	t.Helper()
+	plan := nativePlanFixture(t, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest, QualificationDigest: input.QualificationDigest}, input.Bundle.ProjectID.String(), input.AuthorizationPolicy)
+	seedGenerationAdmissionWithPlan(t, repo, input, plan)
+}
+
+func seedGenerationAdmissionWithPlan(t *testing.T, repo *deploymentnative.Repository, input GenerationAdmissionInput, plan deploymentnative.PlanInput) {
+	t.Helper()
 	ctx := t.Context()
 	leaseExpiresAt := timeNowPlusHour().Truncate(time.Microsecond)
 	const sessionIdentity = "duckdb-session-admission"
@@ -457,7 +463,6 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, in
 		t.Fatal(err)
 	}
 	if _, err := repo.Plan(ctx, input.Generation.PlanID); errors.Is(err, deploymentnative.ErrNotFound) {
-		plan := nativePlanFixture(t, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest, QualificationDigest: input.QualificationDigest}, input.Bundle.ProjectID.String())
 		if plan.PlanDigest != input.Generation.PlanDigest {
 			t.Fatalf("native plan fixture digest = %s, generation expects %s", plan.PlanDigest, input.Generation.PlanDigest)
 		}
@@ -702,6 +707,47 @@ func TestGenerationAdmissionRejectsCandidateExpiryDrift(t *testing.T) {
 	}
 	if rootCount != 0 {
 		t.Fatalf("expiry-drift admission created candidate retention root: %d", rootCount)
+	}
+}
+
+func TestGenerationAdmissionRejectsPersistedPlanAuthorizationPolicyDrift(t *testing.T) {
+	p := generationAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	admission, err := NewGenerationAdmission(delivery, servingnative.New(p), lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validGenerationAdmissionInput(t)
+	mismatchedPolicy := AuthorizationPolicyEvidence{Revision: input.AuthorizationPolicy.Revision + 1, Digest: admissionDigest('6')}
+	plan := nativePlanFixture(t, deploymentnative.PlanInput{
+		PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1,
+		CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest,
+		SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest,
+		QualificationDigest: input.QualificationDigest,
+	}, input.Bundle.ProjectID.String(), mismatchedPolicy)
+	input.Generation.PlanDigest = plan.PlanDigest
+	input.Seal.PlanDigest = plan.PlanDigest
+	var marker catalogartifact.CommitMarker
+	if err := json.Unmarshal(input.Commit.CommitMarker, &marker); err != nil {
+		t.Fatal(err)
+	}
+	marker.PlanDigest = plan.PlanDigest
+	markerJSON, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Commit.CommitMarker = json.RawMessage(markerJSON)
+	seedGenerationAdmissionWithPlan(t, delivery, input, plan)
+
+	if _, err := admission.CompleteBuildAndAdmit(t.Context(), input); err == nil || !errors.Is(err, deploymentnative.ErrConflict) || !strings.Contains(err.Error(), "persisted delivery plan authorization policy differs") {
+		t.Fatalf("persisted plan policy drift error = %v, want native authorization-policy conflict", err)
+	}
+	var artifacts, seals, generations int
+	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid)`, input.Commit.AttemptID, input.Seal.SealID, input.Generation.GenerationID).Scan(&artifacts, &seals, &generations); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts != 0 || seals != 0 || generations != 0 {
+		t.Fatalf("rejected plan-policy drift persisted artifacts=%d seals=%d generations=%d", artifacts, seals, generations)
 	}
 }
 

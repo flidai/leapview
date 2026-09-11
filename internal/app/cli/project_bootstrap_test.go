@@ -117,8 +117,8 @@ func TestBootstrapProjectPersistsAuthorityBeforeTargetRequests(t *testing.T) {
 
 func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_existing", "project:existing", "production", "principal-existing"
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	binding := access.RoleBinding{ID: "existing-owner", Name: "Existing owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: capabilities}
+	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleOwner)
+	binding := access.RoleBinding{ID: "existing-owner", Name: "Existing owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleOwner, Capabilities: capabilities}
 	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{binding})
 	if err != nil {
 		t.Fatal(err)
@@ -140,7 +140,7 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 7, "policyDigest": digest,
-				"items": []any{map[string]any{"id": binding.ID, "name": binding.Name, "subjectType": "principal", "subjectId": principalID, "role": "admin", "capabilities": encodedCapabilities, "policyRevision": 7, "policyDigest": digest}},
+				"items": []any{map[string]any{"id": binding.ID, "name": binding.Name, "subjectType": "principal", "subjectId": principalID, "role": "owner", "capabilities": encodedCapabilities, "policyRevision": 7, "policyDigest": digest}},
 				"page":  map[string]any{},
 			})
 		default:

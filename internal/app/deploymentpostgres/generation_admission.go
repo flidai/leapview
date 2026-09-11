@@ -592,6 +592,10 @@ func (a *generationAdmitter) authoritativeCandidateExpiry(ctx context.Context, t
 	if plan.ID != input.Generation.PlanID || plan.TargetID != input.Generation.TargetID || plan.Digest != input.Generation.PlanDigest || plan.ProjectID != input.Bundle.ProjectID || plan.Environment != string(input.Bundle.Environment) {
 		return time.Time{}, fmt.Errorf("%w: persisted delivery plan identity differs from generation admission", deploymentnative.ErrConflict)
 	}
+	if plan.Governance.PolicyRevision != input.AuthorizationPolicy.Revision || plan.Governance.PolicyDigest != input.AuthorizationPolicy.Digest ||
+		plan.Governance.AuthorizationDigest != input.Generation.SecurityDomainFingerprint {
+		return time.Time{}, fmt.Errorf("%w: persisted delivery plan authorization policy differs from generation admission", deploymentnative.ErrConflict)
+	}
 	expiry, err := canonicalCandidateExpiry(plan.Governance.ExpiresAt)
 	if err != nil {
 		return time.Time{}, err
