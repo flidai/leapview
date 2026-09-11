@@ -11,7 +11,10 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
+	"github.com/flidai/leapview/internal/recoveryset/capture"
 )
+
+var _ capture.ObservationVerifier = (*manageds3.Store)(nil)
 
 // This validates recovery evidence binding. It does not prove successful physical disaster recovery.
 func TestFAI520ManagedS3WriteResponseVersionCapture(t *testing.T) {
@@ -32,14 +35,14 @@ func TestFAI520ManagedS3WriteResponseVersionCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireExactWriteObservation(t, client, first, profile, firstBody)
+	requireExactWriteObservation(t, store, client, first, profile, firstBody)
 
 	secondBody := []byte("managed object revision two\n")
 	second, err := store.Put(ctx, blobFor(secondBody), bytes.NewReader(secondBody))
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireExactWriteObservation(t, client, second, profile, secondBody)
+	requireExactWriteObservation(t, store, client, second, profile, secondBody)
 	if first.ProviderVersion.VersionID == second.ProviderVersion.VersionID || first.ProviderVersion.ObjectKey == second.ProviderVersion.ObjectKey {
 		t.Fatal("successive managed revisions did not retain distinct provider observations")
 	}
@@ -61,7 +64,7 @@ func TestFAI520ManagedS3WriteResponseVersionCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requireExactWriteObservation(t, client, completed, profile, multipartBody)
+	requireExactWriteObservation(t, store, client, completed, profile, multipartBody)
 
 	var observations storage.ProviderVersionObservationSet
 	for _, blob := range []storage.Blob{first, second, completed} {
@@ -77,7 +80,7 @@ func TestFAI520ManagedS3WriteResponseVersionCapture(t *testing.T) {
 	}
 }
 
-func requireExactWriteObservation(t *testing.T, client *awss3.Client, blob storage.Blob, profile storage.ProviderProfileIdentity, want []byte) {
+func requireExactWriteObservation(t *testing.T, store *manageds3.Store, client *awss3.Client, blob storage.Blob, profile storage.ProviderProfileIdentity, want []byte) {
 	t.Helper()
 	if blob.ProviderVersion == nil {
 		t.Fatal("managed write omitted provider-version observation")
@@ -85,6 +88,9 @@ func requireExactWriteObservation(t *testing.T, client *awss3.Client, blob stora
 	observation := *blob.ProviderVersion
 	if observation.Profile != profile || observation.VersionID == "" || observation.VersionID == "null" || observation.SHA256 != blob.SHA256 || observation.Size != blob.Size {
 		t.Fatalf("provider-version observation = %#v", observation)
+	}
+	if err := store.VerifyExact(t.Context(), observation); err != nil {
+		t.Fatalf("production exact-version verifier: %v", err)
 	}
 	result, err := client.GetObject(t.Context(), &awss3.GetObjectInput{
 		Bucket: &profile.Bucket, Key: &observation.ObjectKey, VersionId: &observation.VersionID,

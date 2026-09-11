@@ -51,17 +51,21 @@ digest wire formats. It does not fetch repositories or verify raw provider
 tokens, attach planner barriers, filter catalogs, execute queries, or publish
 cache invalidation.
 
-FAI-641 owns planner security-barrier enforcement; FAI-642 separately owns
-discovery and semantic-consumer integration. Source-provider adapters, semantic generation references, and
-cache/event invalidation also remain pending or partial below.
+FAI-641 owns planner security-barrier enforcement; FAI-642 owns discovery and
+semantic-consumer integration; FAI-645 owns authorization cache, lifecycle,
+and audit integration. Source-provider adapters and production activation
+remain pending or partial below.
 
 FAI-619 is the structural contract authority. Its generated SemanticModel
 boundary and compatibility-lowering fixtures are complemented by FAI-639's
-runtime lowering and compiler/evaluator fixtures, but neither qualifies
-planner security barriers or consumer admission. FAI-641 adds the separate
-planner boundary; FAI-642 consumer admission remains pending.
+runtime lowering and compiler/evaluator fixtures. FAI-641 adds the separate
+planner boundary, FAI-642 adds consumer admission, and FAI-645 binds cache,
+lifecycle, and audit behavior to the same authorization identity.
 VAL-11 remains Partial until generated canonicalization and the complete
-control-plane and runtime equivalence paths are evidenced.
+control-plane and runtime equivalence paths are evidenced. FAI-648 inventories
+the current cross-layer and PostgreSQL evidence without changing those
+implementation boundaries. Production activation and provider admission
+remain outside this qualification layer.
 
 ## Change control
 
@@ -260,8 +264,10 @@ assignments with claims admitted through the opaque `trustedclaims.Envelope`
 boundary for matching trusted mappings. It canonicalizes values through the
 shared semantic-value boundary. Equal values from multiple sources may be
 combined; conflicting values for one definition return a source-conflict
-error. The resolver is not yet wired to a real provider adapter or semantic
-consumer.
+error. FAI-639 consumes this effective-value projection at the semantic policy
+evaluator boundary. FAI-642 exposes authenticated direct/group resolution to
+request-bound semantic consumers; real provider adapters and production
+activation composition remain deferred.
 
 ## Platform-admin control flow
 
@@ -572,22 +578,19 @@ are not claimed, so LIF is not complete.
 
 ## Evidence ledger
 
-| Requirement range | Evidence | Status |
-|---|---|---|
-| CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
-| FAI-619 structural authority + FAI-639 compiler/evaluator boundary | [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp), generated [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) and [Go DTOs](../../internal/project/contracts/models.gen.go), [generated-boundary fixtures](../../internal/project/contracts/contracts_test.go), [structural and extracted-YAML fixtures](../../internal/project/schema/semantic_access_contract_test.go), [generated-schema matrix](../../internal/project/schema/semantic_model_generated_schema_test.go), compiler compatibility/exact-number fixtures, [FAI-639 lowering fixtures](../../internal/project/compiler/data_resources_test.go), [compiler fixtures](../../internal/project/compiler/semantic_model_lowering_test.go), [snapshot fixtures](../../internal/analytics/model/semantic_access_test.go), [policy compiler/evaluator fixtures](../../internal/analytics/query/semantic_access_compile_test.go) / [evaluator fixtures](../../internal/analytics/query/semantic_access_evaluate_test.go), [direct assignment evidence](../../internal/access/semantic_attribute_direct_evidence_test.go), [verified claim evidence](../../internal/access/semantic_attribute_claim_evidence_test.go), [snapshot admission validation](../../internal/access/semantic_attribute_snapshot_validation_test.go), [bounded registry reader fixtures](../../internal/access/postgres/semantic_attribute_registry_snapshot_test.go), and the [planner/consumer boundary architecture guard](../../internal/platform/architecture/semantic_access_compiler_test.go). These prove the structural and bounded compiler/evaluator boundaries, opaque evidence, complete member predicate propagation, reader stability, and digest-preserving admission checks only; FAI-641 planner evidence is tracked separately below; FAI-642 consumer integration remains pending. | Partial |
-| STR-01–STR-12 | The FAI-619 generated-boundary, structural, extracted-YAML, and compiler fixtures above cover the generated surface; FAI-639 adds local grant-reference and registry/type qualification. STR-08 remains partial because standalone transitional `DataPolicy` rejection and complete target/generation admission are not evidenced by this slice. | Partial |
-| ATT-01–ATT-04, ATT-08, ATT-11–ATT-12 | PostgreSQL registry/control migrations and repositories, typed API envelopes, canonical-value tests, trustedclaims structural tests, and platform-admin route/attenuation tests | Partial: durable definition/assignment/mapping boundaries are implemented; principal-context integration, source adapters, and semantic-consumer admission are not. |
-| ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist. Bounded before/after registry/control reads, effective-resolution stability checks, opaque direct-assignment evidence, verified-envelope evidence, and derived lifecycle/name/definition-reference/tombstone admission checks are covered; generation-reference, provider-admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified | Partial |
-| VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |
-| VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, semantic-filter, and FAI-639 compiler/evaluator paths. Generated canonicalization plus complete control-plane claim-ingestion, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
-| GRT-01–GRT-10 | FAI-639 [policy compiler fixtures](../../internal/analytics/query/semantic_access_compile_test.go) and [evaluator fixtures](../../internal/analytics/query/semantic_access_evaluate_test.go) cover target-independent lowering, registry-qualified grant references, canonical typed matching, logical-AND requirements, transitive member decisions, opaque direct-assignment and verified-claim evidence, stale/tampered snapshot rejection, complete multi-dataset member predicate sets, and deterministic outcomes. Provider-adapter expiry wiring, all consumer admission, and end-to-end discovery/execution remain unqualified. | Partial |
-| FLT-01–FLT-10 | FAI-639 compiler/evaluator fixtures cover direct compatible dimension binding, scalar `compare`/`=` and list `in` typed PlanIR output, filter `and` composition, complete per-dataset predicate propagation, value-digest/evidence identity, and fail-closed missing/stale values. FAI-641 adds planner placement and bound-parameter execution tests below; discovery and consumer enforcement remain unqualified. | Partial |
-| PLN-01–PLN-09 | FAI-641 [planner boundary](../../docs/articles/architecture/semantic-access-planner.md), [barrier fixtures](../../internal/analytics/query/planir/security_test.go), and [executable join/aggregation and mutation regressions](../../internal/analytics/query/planir/security_review_test.go) establish explicit pre-relational barriers and fail-closed seals. Existing relationship traversal supports LEFT JOIN; arbitrary join-kind, rollup/cache substitution, and consumer-wide qualification are not claimed by this slice. | Partial |
-| ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration tests | Pending |
-| CMP-01–CMP-06 | `internal/project/contractversion` policy-diff and version fixtures plus publication-bound widening-approval evidence in `internal/project/contractpublication` | Partial: classification and immutable approval evidence implemented by FAI-622; deployment acceptance remains downstream |
-| LIF-01–LIF-08 | FAI-645 [cache/lifecycle boundary](semantic-access-cache-lifecycle.md), protected resultidentity/cache guard tests, consumer audit tests, FAI-622 publication-policy adapter tests, and PostgreSQL lifecycle/concurrency/audit tests cover identity partitioning, stale-reuse rejection, logical invalidation, deterministic redacted audit, and audit-failure denial. Unsupported cache families, active publication selection, event-driven physical eviction, and exhaustive consumer qualification remain downstream. | Partial |
-| OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
+The [FAI-648 qualification matrix](semantic-access-qualification.md) is the
+single current per-requirement status ledger. It records implementation owner,
+exact executable evidence, PASS/PARTIAL/FAIL/NOT APPLICABLE disposition and
+remaining limits for every normative requirement above, plus the identity
+lifecycle prerequisites. Earlier milestone specifications retain historical
+checkpoint results; their grouped statuses do not override this matrix.
+
+The PostgreSQL repair and FAI-645 policy-evidence slices qualify their linked
+repository and publication boundaries. They do not substitute for production
+activation/restart evidence or complete provider-backed consumer coverage.
+Protected rollup/bundle/opaque-cache rejection is not positive substitution
+support. FAI-649 activation/approval and DataPolicy removal remain unimplemented
+by this qualification-only layer; FAI-632 is not declared ready.
 
 ## Maintained verification
 
