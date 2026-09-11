@@ -1,0 +1,76 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:variance_drivers
+  name: variance_drivers
+  displayName: EBITDA Variance Fact
+  description: Variance fact with one signed contribution per financial record and driver that reconciles exactly to EBITDA variance.
+spec:
+  fields:
+    variance_row_id: {datatype: String, label: Variance row ID}
+    finance_date: {datatype: Date, label: Date}
+    segment: {datatype: String, label: Segment key}
+    country: {datatype: String, label: Country key}
+    product: {datatype: String, label: Product key}
+    driver_order: {datatype: Integer, label: Order}
+    impact: {datatype: Decimal, label: EBITDA impact}
+  definition:
+    type: sql
+    sql: |
+      WITH base AS (
+        SELECT
+          record_id,
+          finance_date,
+          segment,
+          country,
+          product,
+          net_sales - budget_sales AS revenue_impact,
+          budget_sales_marketing_expense - sales_marketing_expense AS sales_marketing_impact,
+          budget_operations_expense - operations_expense AS operations_impact,
+          budget_research_development_expense - research_development_expense AS research_development_impact,
+          budget_general_admin_expense - general_admin_expense AS general_admin_impact,
+          ebitda - budget_ebitda AS ebitda_variance
+        FROM model.financial_performance
+      ), drivers AS (
+        SELECT record_id, finance_date, segment, country, product, 10 AS driver_order, revenue_impact AS impact FROM base
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 20, ebitda_variance - revenue_impact - sales_marketing_impact - operations_impact - research_development_impact - general_admin_impact FROM base
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 30, sales_marketing_impact FROM base
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 40, operations_impact FROM base
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 50, research_development_impact FROM base
+        UNION ALL
+        SELECT record_id, finance_date, segment, country, product, 60, general_admin_impact FROM base
+      )
+      SELECT
+        record_id || '-' || CAST(driver_order AS VARCHAR) AS variance_row_id,
+        finance_date,
+        segment,
+        country,
+        product,
+        driver_order,
+        CAST(round(impact, 2) AS DECIMAL(38,2)) AS impact
+      FROM drivers
+  entities:
+    variance_row:
+      type: primary
+      fields: [variance_row_id]
+    finance_date:
+      type: foreign
+      fields: [finance_date]
+    segment:
+      type: foreign
+      fields: [segment]
+    country:
+      type: foreign
+      fields: [country]
+    product:
+      type: foreign
+      fields: [product]
+    variance_driver:
+      type: foreign
+      fields: [driver_order]
+  grain:
+    entity: variance_row

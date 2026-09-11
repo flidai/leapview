@@ -153,7 +153,7 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		definitions[id] = DashboardCompiledFilterDefinition{
 			ID: id, Label: item.Label, Description: optionalValue(item.Description), Field: item.Field,
 			Dataset: optionalValue(item.Dataset), ValueKind: string(item.ValueKind), Predicates: predicates,
-			Options:       DashboardFilterOptionSource{Kind: optionKind, Limit: int32(item.Options.Limit), IncludeNull: item.Options.IncludeNull, Values: staticOptions},
+			Options:       DashboardFilterOptionSource{Kind: optionKind, Dataset: optionalValue(item.Options.Dataset), Limit: int32(item.Options.Limit), IncludeNull: item.Options.IncludeNull, Values: staticOptions},
 			FormatPattern: optionalValue(item.Formatting.Pattern), FormatUnit: optionalValue(item.Formatting.Unit),
 			Timezone: item.Time.Timezone, Calendar: item.Time.Calendar, WeekStart: item.Time.WeekStart,
 		}

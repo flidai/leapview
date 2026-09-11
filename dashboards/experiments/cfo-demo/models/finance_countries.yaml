@@ -1,0 +1,22 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:finance_countries
+  name: finance_countries
+  displayName: Countries
+  description: Conformed country dimension shared by the finance facts.
+spec:
+  fields:
+    country: {datatype: String, label: Country}
+  definition:
+    type: sql
+    sql: |
+      SELECT DISTINCT trim(country) AS country
+      FROM source."finance.financials"
+      WHERE country IS NOT NULL AND trim(country) <> ''
+  entities:
+    country:
+      type: primary
+      fields: [country]
+  grain:
+    entity: country

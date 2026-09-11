@@ -45,7 +45,7 @@ func Value(locale string, format ir.VisualizationFormat, value any) (string, err
 		if err != nil {
 			return "", err
 		}
-		return symbol + data.currencySpace + formatted, nil
+		return currency(symbol, data.currencySpace, formatted), nil
 	case *ir.PercentVisualizationFormat:
 		value, err := numeric(value)
 		if err != nil {
@@ -96,6 +96,13 @@ func Value(locale string, format ir.VisualizationFormat, value any) (string, err
 	default:
 		return "", fmt.Errorf("unsupported visualization format %T", format.Value)
 	}
+}
+
+func currency(symbol, space, formatted string) string {
+	if strings.HasPrefix(formatted, "-") {
+		return "-" + symbol + space + strings.TrimPrefix(formatted, "-")
+	}
+	return symbol + space + formatted
 }
 
 func number(locale localeData, raw any, minimum, maximum int, suffix string) (string, error) {

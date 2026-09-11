@@ -6028,6 +6028,7 @@ paths:
                   id: example
                   label: example
                   options:
+                    dataset: example
                     kind: example
                     limit: 1
                     values:
@@ -71371,6 +71372,7 @@ components:
         id: example
         label: example
         options:
+          dataset: example
           kind: example
           limit: 1
           values:
@@ -72078,6 +72080,7 @@ components:
           id: example
           label: example
           options:
+            dataset: example
             kind: example
             limit: 1
             values:
@@ -72212,6 +72215,9 @@ components:
             - static
             - distinct
           example: example
+        dataset:
+          type: string
+          example: example
         limit:
           type: integer
           format: int32
@@ -72223,6 +72229,7 @@ components:
           example:
             - label: example
       example:
+        dataset: example
         kind: example
         limit: 1
         values:

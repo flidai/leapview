@@ -1161,7 +1161,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         const exploreHref = this.presentation === 'app' && page
           ? dashboardExploreHref(page, component, this.renderSnapshot?.filterContract ?? this.filterContract, this.renderSnapshot?.filterState ?? this.canonicalFilterState)
           : undefined
-        return html`<lv-visualization-host defer-mount .envelope=${visual} .openVisualFocus=${this.openVisualFocus}>${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
+        return html`<lv-visualization-host
+          defer-mount
+          .envelope=${visual}
+          .openVisualFocus=${this.openVisualFocus}
+        >${this.renderAskAction(askReference, referenced)}${exploreHref ? html`<a slot="agent-action" class="explore-visual" href=${exploreHref} aria-label="Explore this visual in Data Explorer" title="Explore this visual in Data Explorer">Explore</a>` : nothing}</lv-visualization-host>`
       }
       default:
         return html`<div class="unsupported">Unsupported dashboard component: ${component.kind}</div>`

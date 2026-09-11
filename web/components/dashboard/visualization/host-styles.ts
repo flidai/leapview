@@ -198,13 +198,17 @@ export const visualizationHostStyles = css`
     z-index: var(--zIndex-sticky);
   }
   .headerless-actions[data-table-actions] {
+    /* The table owns its persistent Focus and More controls. Place the
+       transient Ask action immediately before them without reserving room
+       in the table toolbar when Ask is hidden. */
     inset-inline-end: calc(
       var(--base-size-8)
-      + var(--control-medium-size)
+      + var(--lv-button-height, var(--control-medium-size))
       + var(--base-size-4)
-      + var(--control-medium-size)
+      + var(--lv-button-height, var(--control-medium-size))
+      + var(--borderWidth-default, var(--lv-border-width))
+      + var(--borderWidth-default, var(--lv-border-width))
       + var(--base-size-4)
-      + var(--base-size-2)
     );
   }
   h2 {

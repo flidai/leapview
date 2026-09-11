@@ -212,6 +212,9 @@ func canonicalMetricPresentation(model *semanticmodel.Model, name, fallbackLabel
 		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.NumberVisualizationFormat{Kind: "number", MinimumFractionDigits: &digits, MaximumFractionDigits: &digits}}
 	case "decimal":
 		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.NumberVisualizationFormat{Kind: "number"}}
+	case "percent":
+		digits := int32(1)
+		return label, &visualizationir.VisualizationFormat{Value: &visualizationir.PercentVisualizationFormat{Kind: "percent", MinimumFractionDigits: &digits, MaximumFractionDigits: &digits}}
 	default:
 		return label, nil
 	}

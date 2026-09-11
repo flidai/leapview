@@ -37,10 +37,15 @@ test('development startup reuses the bounded CI fixture supply', async () => {
   expect(source).not.toContain('extensionsupply --out "$root"')
 })
 
-test('development MCP smoke queries an authored semantic metric', async () => {
+test('development MCP smoke resolves configurable authored semantic metrics', async () => {
   const source = await readFile('scripts/dev-server.sh', 'utf8')
 
-  expect(source).toContain('metrics: [{field: "revenue"}]')
+  expect(source).toContain('local model_query="${LEAPVIEW_DEV_MCP_MODEL_QUERY:-sales}"')
+  expect(source).toContain('local metric_name="${LEAPVIEW_DEV_MCP_METRIC:-revenue}"')
+  expect(source).toContain('--arg query "$model_query"')
+  expect(source).toContain('--arg metric "$metric_name"')
+  expect(source).toContain('.result.structuredContent.items[0].ref.id as $model |')
+  expect(source).toContain('select(($model | type) == "string" and ($model | length) > 0) |')
   expect(source).not.toContain('metrics: [{field: "sales_orders.revenue"}]')
 })
 

@@ -26,7 +26,7 @@ export function formatValue(locale: string, format: VisualizationFormat, value: 
       const symbol = data.currencies[format.currency]
       if (!symbol) throw new Error(`unsupported visualization currency ${JSON.stringify(format.currency)}`)
       const [minimum, maximum] = fractionDigits(format.minimumFractionDigits, format.maximumFractionDigits, 2, 2)
-      return symbol + data.currencySpace + number(data, value, minimum, maximum)
+      return currency(data, symbol, number(data, value, minimum, maximum))
     }
     case 'percent': {
       const [minimum, maximum] = fractionDigits(format.minimumFractionDigits, format.maximumFractionDigits, 0, 1)
@@ -137,7 +137,7 @@ export function formatDisplayValue(
     if (format.kind !== 'currency') return formatted
     const symbol = data.currencies[format.currency]
     if (!symbol) throw new Error(`unsupported visualization currency ${JSON.stringify(format.currency)}`)
-    return symbol + data.currencySpace + formatted
+    return currency(data, symbol, formatted)
   }
   const raw = numeric(semantic)
   const scaled = raw / unit.scale
@@ -147,7 +147,13 @@ export function formatDisplayValue(
   if (format.kind !== 'currency') return formatted
   const symbol = data.currencies[format.currency]
   if (!symbol) throw new Error(`unsupported visualization currency ${JSON.stringify(format.currency)}`)
-  return symbol + data.currencySpace + formatted
+  return currency(data, symbol, formatted)
+}
+
+function currency(locale: LocaleData, symbol: string, formatted: string): string {
+  return formatted.startsWith('-')
+    ? `-${symbol}${locale.currencySpace}${formatted.slice(1)}`
+    : `${symbol}${locale.currencySpace}${formatted}`
 }
 
 function displayUnit(policy: VisualizationDisplayUnits): { scale: number; suffix: string } | undefined {

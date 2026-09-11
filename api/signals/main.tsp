@@ -1296,6 +1296,7 @@ model DashboardFilterPredicatePolicy {
 
 model DashboardFilterOptionSource {
   `kind`: "none" | "static" | "distinct";
+  `dataset`?: string;
   `limit`: int32;
   `includeNull`: boolean;
   `values`: DashboardFilterStaticOption[];
