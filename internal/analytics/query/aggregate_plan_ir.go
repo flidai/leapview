@@ -36,8 +36,10 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 	}
 	graph := &planir.Graph{Nodes: map[string]planir.Node{}}
 	dimensionNames := make([]string, 0, len(resolved.Dimensions))
+	dimensionAliases := make([]string, 0, len(resolved.Dimensions))
 	for _, dimension := range resolved.Dimensions {
 		dimensionNames = append(dimensionNames, dimension.Name)
+		dimensionAliases = append(dimensionAliases, dimension.Alias)
 	}
 	metricNames := sortedAggregateMetricNames(resolved.Aggregates)
 
@@ -191,10 +193,12 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 		}
 
 		groupBy := append([]string(nil), dimensionNames...)
+		groupByAliases := append([]string(nil), dimensionAliases...)
 		// Scalar multi-dataset results have a single implicit, null-safe key. It is
 		// explicit in PlanIR even though the existing SQL uses a CROSS JOIN.
 		if resolved.MultiDataset && len(groupBy) == 0 {
 			groupBy = []string{"__scalar_key"}
+			groupByAliases = []string{"__scalar_key"}
 		}
 		metrics, err := p.planIRAggregateMetrics(dataset, metricNames, resolved, fields)
 		if err != nil {
@@ -224,32 +228,32 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 			)
 		}
 		aggregateID := fmt.Sprintf("aggregate_%d", datasetIndex)
-		aggregateFields := planIRGroupFields(fields, groupBy)
+		aggregateFields := planIRAggregateGroupFields(fields, groupBy, groupByAliases)
 		aggregateMetrics := make([]planir.Metric, 0, len(metrics))
 		for _, metric := range metrics {
 			aggregateMetrics = append(aggregateMetrics, planir.Metric{Name: metric.Name, Type: metric.Type, Empty: metric.Empty})
 		}
-		aggregateLineage := planIRLineageForFields(lineage, aggregateFields)
-		aggregateMeta := planIRMeta(aggregateID, planir.Grain{Fields: groupBy}, aggregateFields, aggregateMetrics, []string{dataset}, planir.FilterPhaseAggregate, aggregateLineage, routes)
+		aggregateLineage := planIRAggregateLineage(lineage, groupBy, groupByAliases, aggregateFields)
+		aggregateMeta := planIRMeta(aggregateID, planir.Grain{Fields: groupByAliases}, aggregateFields, aggregateMetrics, []string{dataset}, planir.FilterPhaseAggregate, aggregateLineage, routes)
 		timeBuckets := make([]planir.TimeBucket, 0, len(resolved.Dimensions))
 		for _, dimension := range resolved.Dimensions {
 			if dimension.Grain == "" {
 				continue
 			}
-			timeBuckets = append(timeBuckets, planir.TimeBucket{Field: dimension.Name, Grain: dimension.Grain, Timezone: dimension.Timezone, WeekStart: dimension.WeekStart, DateTimeTZ: dimension.Datatype == semanticmodel.DataTypeDateTimeTZ})
+			timeBuckets = append(timeBuckets, planir.TimeBucket{Field: dimension.Name, Group: dimension.Alias, Grain: dimension.Grain, Timezone: dimension.Timezone, WeekStart: dimension.WeekStart, DateTimeTZ: dimension.Datatype == semanticmodel.DataTypeDateTimeTZ})
 		}
 		var spatial *planir.SpatialBucket
 		if request.SpatialBucket != nil {
 			spatial = &planir.SpatialBucket{Latitude: request.SpatialBucket.Latitude.Field, Longitude: request.SpatialBucket.Longitude.Field, Zoom: request.SpatialBucket.Zoom, CellPixels: request.SpatialBucket.CellPixels, ClusterRadius: request.SpatialBucket.ClusterRadius}
 		}
-		graph.Nodes[aggregateID] = planir.AggregateMetrics{NodeMeta: aggregateMeta, Input: inputID, GroupBy: groupBy, TimeBuckets: timeBuckets, Spatial: spatial, Metrics: metrics}
+		graph.Nodes[aggregateID] = planir.AggregateMetrics{NodeMeta: aggregateMeta, Input: inputID, GroupBy: groupBy, GroupByAliases: groupByAliases, TimeBuckets: timeBuckets, Spatial: spatial, Metrics: metrics}
 		branchIDs = append(branchIDs, aggregateID)
 	}
 
 	currentID := branchIDs[0]
 	currentMeta := graph.Nodes[currentID].Meta()
 	if resolved.MultiDataset {
-		keys := append([]string(nil), dimensionNames...)
+		keys := append([]string(nil), dimensionAliases...)
 		if len(keys) == 0 {
 			keys = []string{"__scalar_key"}
 		}
@@ -358,8 +362,8 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 		// typed operation while preserving the caller's ordering direction.
 		if !planIRNameSet(currentMeta)[field] {
 			for _, dimension := range resolved.Dimensions {
-				if dimension.Alias == field {
-					field = dimension.Name
+				if dimension.Name == field {
+					field = dimension.Alias
 					break
 				}
 			}
@@ -374,7 +378,7 @@ func (p *Planner) buildAggregatePlanIR(request Request, resolved aggregateResolu
 	}
 	projection := make([]planir.Projection, 0, len(resolved.Dimensions)+len(resolved.Members))
 	for _, dimension := range resolved.Dimensions {
-		projection = append(projection, planir.Projection{Name: dimension.Alias, Source: dimension.Name})
+		projection = append(projection, planir.Projection{Name: dimension.Alias, Source: dimension.Alias})
 	}
 	for _, member := range resolved.Members {
 		projection = append(projection, planir.Projection{Name: member.Alias, Source: member.Name})
@@ -777,6 +781,51 @@ func planIRGroupFields(fields []planir.Field, groupBy []string) []planir.Field {
 		out = append(out, field)
 	}
 	return out
+}
+
+// planIRAggregateGroupFields preserves one output field per requested group
+// identity. A source field may occur more than once when it is projected at
+// different grains, so a source-keyed map alone is insufficient here.
+func planIRAggregateGroupFields(fields []planir.Field, groupBy, identities []string) []planir.Field {
+	byName := make(map[string]planir.Field, len(fields))
+	for _, field := range fields {
+		if _, exists := byName[field.Name]; !exists {
+			byName[field.Name] = field
+		}
+	}
+	out := make([]planir.Field, 0, len(groupBy))
+	for index, name := range groupBy {
+		field := byName[name]
+		if field.Name == "" {
+			field = planir.Field{Name: name}
+		}
+		if index < len(identities) && identities[index] != "" {
+			field.Name = identities[index]
+		}
+		out = append(out, field)
+	}
+	return out
+}
+
+func planIRAggregateLineage(lineage []planir.PhysicalLineage, groupBy, identities []string, fields []planir.Field) []planir.PhysicalLineage {
+	out := planIRLineageForFields(lineage, fields)
+	available := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		available[field.Name] = true
+	}
+	for index, source := range groupBy {
+		if index >= len(identities) || !available[identities[index]] {
+			continue
+		}
+		for _, item := range lineage {
+			if item.Logical != source && item.Dataset+"."+item.Field != source {
+				continue
+			}
+			item.Logical = identities[index]
+			out = append(out, item)
+		}
+	}
+	return dedupePlanIRLineage(out)
 }
 
 func dedupePlanIRMetrics(metrics []planir.Metric) []planir.Metric {

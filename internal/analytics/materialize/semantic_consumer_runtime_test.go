@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,6 +140,7 @@ type semanticConsumerArrowDatabase struct {
 	cacheRuntimeDatabase
 	afterSchema func()
 	assertPlan  func(semanticquery.Plan)
+	emitNull    bool
 	queries     atomic.Int32
 }
 
@@ -152,7 +154,11 @@ func (d *semanticConsumerArrowDatabase) QueryArrow(ctx context.Context, plan sem
 	for index, column := range plan.Columns {
 		fields[index] = arrow.Field{Name: column, Type: arrow.PrimitiveTypes.Int64}
 		builder := array.NewInt64Builder(memory.DefaultAllocator)
-		builder.Append(1)
+		if d.emitNull {
+			builder.AppendNull()
+		} else {
+			builder.Append(1)
+		}
 		arrays[index] = builder.NewArray()
 		builder.Release()
 	}
@@ -336,6 +342,41 @@ func TestProtectedRuntimeUsesGovernorConsumerAndReleasesAllowedArrow(t *testing.
 	}
 	if sink.rows != 1 || result.RowsReturned != 1 || database.queries.Load() != 1 {
 		t.Fatalf("rows=%d result=%d queries=%d", sink.rows, result.RowsReturned, database.queries.Load())
+	}
+}
+
+func TestRuntimeNativeArrowEnforcesGovernedOutputNullability(t *testing.T) {
+	nonNullable := false
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				ModelName:   "orders",
+				GrainEntity: "order",
+				Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"id"}}},
+				Schema:      semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "id", PhysicalType: "INTEGER", Nullable: &nonNullable}}},
+				Dimensions:  map[string]semanticmodel.MetricDimension{"id": {Name: "id", Type: "integer", Datatype: semanticmodel.DataTypeInteger}},
+			},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	planner, err := semanticquery.NewCompiledPlanner(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := &semanticConsumerArrowDatabase{emitNull: true}
+	runtime := &Runtime{modelID: "sales", model: model, planner: planner, db: database}
+	sink := &semanticConsumerTestSink{}
+	_, err = runtime.ExecuteDataQueryArrow(context.Background(), dataquery.Query{
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}, sink)
+	var violation *arrowquery.NullabilityViolationError
+	if !errors.As(err, &violation) || violation.Alias != "id" || violation.NullCount != 1 {
+		t.Fatalf("native Arrow nullability error = %#v / %v", violation, err)
+	}
+	if sink.rows != 0 || database.queries.Load() != 1 {
+		t.Fatalf("rows=%d queries=%d after nullability violation", sink.rows, database.queries.Load())
 	}
 }
 

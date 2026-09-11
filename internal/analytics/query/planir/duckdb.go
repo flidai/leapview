@@ -150,14 +150,14 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		sourceArgs := append([]any(nil), r.args[argStart:]...)
 		r.args = r.args[:argStart]
 		parts := make([]string, 0, len(n.GroupBy)+len(n.Metrics))
-		for _, field := range n.GroupBy {
+		for index, field := range n.GroupBy {
 			expr, err := r.fieldExpr(field, ctx)
 			if err != nil {
 				return "", nil, err
 			}
 			expr = renderSpatialBucketExpr(expr, field, n.Spatial)
-			expr = renderTimeBucketExpr(expr, field, n.TimeBuckets)
-			alias := columnName(field)
+			alias := aggregateGroupAlias(n, index, field)
+			expr = renderTimeBucketExpr(expr, field, alias, n.TimeBuckets)
 			if expr == quoteName(alias) {
 				parts = append(parts, expr)
 			} else {
@@ -193,7 +193,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 					return "", nil, fmt.Errorf("aggregate node %q group field %q: %w", id, field, err)
 				}
 				groups[i] = renderSpatialBucketExpr(expr, field, n.Spatial)
-				groups[i] = renderTimeBucketExpr(groups[i], field, n.TimeBuckets)
+				groups[i] = renderTimeBucketExpr(groups[i], field, aggregateGroupAlias(n, i, field), n.TimeBuckets)
 			}
 			sql += " GROUP BY " + strings.Join(groups, ", ")
 		}
@@ -454,9 +454,20 @@ func renderSpatialBucketExpr(expr, field string, bucket *SpatialBucket) string {
 	return expr
 }
 
-func renderTimeBucketExpr(expr, field string, buckets []TimeBucket) string {
+func aggregateGroupAlias(node AggregateMetrics, index int, field string) string {
+	if index >= 0 && index < len(node.GroupByAliases) && node.GroupByAliases[index] != "" {
+		return node.GroupByAliases[index]
+	}
+	return columnName(field)
+}
+
+func renderTimeBucketExpr(expr, field, groupIdentity string, buckets []TimeBucket) string {
 	for _, bucket := range buckets {
-		if bucket.Field != field || bucket.Grain == "" {
+		group := bucket.Group
+		if group == "" {
+			group = bucket.Field
+		}
+		if group != groupIdentity || bucket.Field != field || bucket.Grain == "" {
 			continue
 		}
 		if bucket.DateTimeTZ && bucket.Timezone != "" {
