@@ -170,13 +170,6 @@ func materializationIdentity(artifacts release.CandidateArtifactSet) (string, er
 	return planDigest(string(encoded)), nil
 }
 
-// MaterializationIdentity exposes the canonical physical-projection identity
-// to the local candidate runner without exposing that runner's persistence
-// adapters through this package.
-func MaterializationIdentity(artifacts release.CandidateArtifactSet) (string, error) {
-	return materializationIdentity(artifacts)
-}
-
 // CandidateDeliveryPolicy is resolved by the target owner at composition
 // time. Planning must not invent approval, rollback, or retention claims.
 type CandidateDeliveryPolicy struct {
@@ -212,10 +205,6 @@ func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
 // not inspect a worktree, credentials, or physical storage.
 func CandidatePlanRequest(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, now time.Time) (deployment.DeliveryPlanRequest, error) {
 	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, now, nil)
-}
-
-func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time) (deployment.DeliveryPlanRequest, error) {
-	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, policy, now, nil)
 }
 
 // CandidatePlanRequestWithPolicyAndReuse computes the canonical plan and, when

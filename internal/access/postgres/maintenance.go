@@ -105,15 +105,6 @@ func (m *Maintenance) PruneAuthState(ctx context.Context, before time.Time, limi
 	return pruneAuthState(ctx, m.db, before, limit)
 }
 
-// PruneAuthStateTx executes one bounded operational-auth retention batch on a
-// caller-owned transaction and deliberately leaves commit/rollback to caller.
-func (m *Maintenance) PruneAuthStateTx(ctx context.Context, tx Tx, before time.Time, limit int) (AuthRetentionResult, error) {
-	if m == nil || isNilMaintenanceDB(tx) {
-		return AuthRetentionResult{}, errors.New("access retention maintenance repository is nil")
-	}
-	return pruneAuthState(ctx, tx, before, limit)
-}
-
 func pruneAuthState(ctx context.Context, db DBTX, before time.Time, limit int) (AuthRetentionResult, error) {
 	if isNilMaintenanceDB(db) {
 		return AuthRetentionResult{}, errors.New("access retention PostgreSQL connection is nil")

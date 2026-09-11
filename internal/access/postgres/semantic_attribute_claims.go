@@ -97,20 +97,6 @@ func (r *Repository) SetTrustedClaimMapping(ctx context.Context, input access.Tr
 	return result, err
 }
 
-func SetTrustedClaimMappingTx(ctx context.Context, tx Tx, input access.TrustedClaimMappingInput) (access.TrustedClaimMapping, error) {
-	if tx == nil {
-		return access.TrustedClaimMapping{}, errors.New("trusted claim mapping PostgreSQL transaction is required")
-	}
-	result, audit, err := (&Repository{db: tx}).setTrustedClaimMappingCore(ctx, tx, input)
-	if err != nil {
-		return access.TrustedClaimMapping{}, err
-	}
-	if err := (&Repository{db: tx}).RecordAuditEvent(ctx, audit); err != nil {
-		return access.TrustedClaimMapping{}, fmt.Errorf("record trusted claim mapping audit: %w", err)
-	}
-	return result, nil
-}
-
 func (r *Repository) TombstoneTrustedClaimMapping(ctx context.Context, id string, expected int64, mutation access.SemanticAttributeMutationContext) (result access.TrustedClaimMapping, err error) {
 	err = r.RunAuditedMutation(ctx, func(repo access.Repository) (access.AuditEventInput, error) {
 		var audit access.AuditEventInput
@@ -153,20 +139,6 @@ func tombstoneTrustedClaimMappingCore(ctx context.Context, db DBTX, id string, e
 		return access.TrustedClaimMapping{}, access.AuditEventInput{}, err
 	}
 	return result, semanticAttributeMappingAudit(mutation, access.SemanticAttributeAuditActionClaimMappingTombstone, result, next), nil
-}
-
-func TombstoneTrustedClaimMappingTx(ctx context.Context, tx Tx, id string, expected int64, mutation access.SemanticAttributeMutationContext) (access.TrustedClaimMapping, error) {
-	if tx == nil {
-		return access.TrustedClaimMapping{}, errors.New("trusted claim mapping PostgreSQL transaction is required")
-	}
-	result, audit, err := tombstoneTrustedClaimMappingCore(ctx, tx, id, expected, mutation)
-	if err != nil {
-		return access.TrustedClaimMapping{}, err
-	}
-	if err := (&Repository{db: tx}).RecordAuditEvent(ctx, audit); err != nil {
-		return access.TrustedClaimMapping{}, fmt.Errorf("record trusted claim mapping audit: %w", err)
-	}
-	return result, nil
 }
 
 func semanticAttributeMappingAudit(mutation access.SemanticAttributeMutationContext, action string, row access.TrustedClaimMapping, state semanticAttributeControlStateRow) access.AuditEventInput {

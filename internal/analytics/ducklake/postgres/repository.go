@@ -203,16 +203,6 @@ func (r *Repository) TransactionCapable() bool {
 	return ok
 }
 
-// QuarantineMarkerTx persists immutable marker-anomaly evidence through a
-// caller-owned transaction. Exact replay is idempotent; changed evidence for
-// the same pool/catalog/attempt key returns ErrConflict.
-func (r *Repository) QuarantineMarkerTx(ctx context.Context, tx Tx, in MarkerQuarantineInput) (MarkerQuarantine, error) {
-	if r == nil || tx == nil {
-		return MarkerQuarantine{}, ErrInvalid
-	}
-	return QuarantineMarker(ctx, tx, in)
-}
-
 // QuarantineMarker records an anomaly observed while reconciling one external
 // attempt. The operation never opens or commits a transaction itself.
 func QuarantineMarker(ctx context.Context, tx DBTX, in MarkerQuarantineInput) (MarkerQuarantine, error) {

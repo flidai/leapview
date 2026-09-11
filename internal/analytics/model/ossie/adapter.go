@@ -638,12 +638,6 @@ func sameFields(left, right []string) bool {
 	return true
 }
 
-// ImportYAML is an explicit spelling for callers handling authored YAML.
-// Import accepts both YAML and JSON because JSON is a YAML subset.
-func ImportYAML(data []byte, projectModels map[string]semanticmodel.Table) (*semanticmodel.Model, error) {
-	return Import(data, projectModels)
-}
-
 func importRelationship(result *semanticmodel.Model, value Relationship) error {
 	if value.Name == "" || value.From == "" || value.To == "" || len(value.FromColumns) == 0 || len(value.ToColumns) == 0 {
 		return fmt.Errorf("Ossie relationship %q requires from/to datasets and non-empty key columns", value.Name)
@@ -1168,10 +1162,6 @@ func copyMetrics(values map[string]semanticmodel.Metric) map[string]semanticmode
 	}
 	return result
 }
-
-// ExportJSON is an explicit alias for callers that want to document the wire
-// encoding at the call site.
-func ExportJSON(value *semanticmodel.Model) ([]byte, error) { return Export(value) }
 
 // ExportYAML emits the same document in YAML while retaining official schema
 // validation.

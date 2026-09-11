@@ -464,29 +464,6 @@ func startAndPrepareRetentionMaintenance(ctx context.Context, db DBTX, in Retent
 	})
 }
 
-func ensureRetentionMaintenanceSnapshot(ctx context.Context, tx DBTX, maintenanceID string, ref SnapshotRef) (RetentionMaintenanceSnapshot, error) {
-	if tx == nil || !validUUID(maintenanceID) || !validSnapshotRef(ref) {
-		return RetentionMaintenanceSnapshot{}, ErrInvalid
-	}
-	// The owner/epoch are read from the operation row by callers and are bound
-	// here so the SQL leaf can prove the active pool fence in the same write.
-	maintenance, loadErr := loadRetentionMaintenance(ctx, tx, maintenanceID)
-	if loadErr != nil {
-		return RetentionMaintenanceSnapshot{}, loadErr
-	}
-	if err := querygen(tx).InsertRetentionMaintenanceSnapshot(ctx, dbgen.InsertRetentionMaintenanceSnapshotParams{MaintenanceID: upgradeUUID(maintenanceID), PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID, OwnerID: maintenance.OwnerID, FencingEpoch: maintenance.FencingEpoch}); err != nil {
-		return RetentionMaintenanceSnapshot{}, err
-	}
-	row, err := querygen(tx).GetRetentionMaintenanceSnapshot(ctx, dbgen.GetRetentionMaintenanceSnapshotParams{MaintenanceID: upgradeUUID(maintenanceID), PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return RetentionMaintenanceSnapshot{}, ErrRetentionMaintenanceNotFound
-	}
-	if err != nil {
-		return RetentionMaintenanceSnapshot{}, err
-	}
-	return RetentionMaintenanceSnapshot{MaintenanceID: row.MaintenanceID, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, SnapshotID: row.SnapshotID, Phase: row.Phase, ExpiryEvidence: append(json.RawMessage(nil), row.ExpiryEvidence...), QuarantineEvidence: append(json.RawMessage(nil), row.QuarantineEvidence...), CleanupEvidence: append(json.RawMessage(nil), row.CleanupEvidence...), CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC()}, nil
-}
-
 func ListRetentionMaintenanceSnapshots(ctx context.Context, db DBTX, maintenanceID string) ([]RetentionMaintenanceSnapshot, error) {
 	if db == nil || !validUUID(maintenanceID) {
 		return nil, ErrInvalid
@@ -500,15 +477,6 @@ func ListRetentionMaintenanceSnapshots(ctx context.Context, db DBTX, maintenance
 		out = append(out, RetentionMaintenanceSnapshot{MaintenanceID: row.MaintenanceID, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, SnapshotID: row.SnapshotID, Phase: row.Phase, ExpiryEvidence: append(json.RawMessage(nil), row.ExpiryEvidence...), QuarantineEvidence: append(json.RawMessage(nil), row.QuarantineEvidence...), CleanupEvidence: append(json.RawMessage(nil), row.CleanupEvidence...), CreatedAt: row.CreatedAt.Time.UTC(), UpdatedAt: row.UpdatedAt.Time.UTC()})
 	}
 	return out, nil
-}
-
-func (r *Repository) EnsureRetentionMaintenanceSnapshot(ctx context.Context, maintenanceID string, ref SnapshotRef) (RetentionMaintenanceSnapshot, error) {
-	if r == nil {
-		return RetentionMaintenanceSnapshot{}, ErrInvalid
-	}
-	return inRepositoryTransaction(ctx, r.db, func(tx DBTX) (RetentionMaintenanceSnapshot, error) {
-		return ensureRetentionMaintenanceSnapshot(ctx, tx, maintenanceID, ref)
-	})
 }
 
 func (r *Repository) ListRetentionMaintenanceSnapshots(ctx context.Context, maintenanceID string) ([]RetentionMaintenanceSnapshot, error) {

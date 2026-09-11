@@ -181,20 +181,6 @@ func tombstoneSemanticAttributeAssignmentCore(ctx context.Context, db DBTX, id s
 	return result, semanticAttributeControlAudit(mutation, access.SemanticAttributeAuditActionAssignmentTombstone, result, next), nil
 }
 
-func TombstoneSemanticAttributeAssignmentTx(ctx context.Context, tx Tx, id string, expected int64, mutation access.SemanticAttributeMutationContext) (access.SemanticAttributeAssignment, error) {
-	if tx == nil {
-		return access.SemanticAttributeAssignment{}, errors.New("semantic attribute assignment PostgreSQL transaction is required")
-	}
-	result, audit, err := tombstoneSemanticAttributeAssignmentCore(ctx, tx, id, expected, mutation)
-	if err != nil {
-		return access.SemanticAttributeAssignment{}, err
-	}
-	if err := (&Repository{db: tx}).RecordAuditEvent(ctx, audit); err != nil {
-		return access.SemanticAttributeAssignment{}, fmt.Errorf("record semantic attribute assignment audit: %w", err)
-	}
-	return result, nil
-}
-
 func semanticAttributeControlAudit(mutation access.SemanticAttributeMutationContext, action string, row access.SemanticAttributeAssignment, state semanticAttributeControlStateRow) access.AuditEventInput {
 	metadata, _ := json.Marshal(struct {
 		DefinitionID      string `json:"definitionId"`
