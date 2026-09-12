@@ -217,6 +217,32 @@ func TestSharedAssetOverviewCoversEveryTopLevelAssetType(t *testing.T) {
 	if len(pipelineOverview.UpstreamAssets) != 1 || pipelineOverview.UpstreamAssets[0].Label != "Sales" {
 		t.Fatalf("pipeline upstream = %#v, want Sales semantic model", pipelineOverview.UpstreamAssets)
 	}
+	if len(pipelineOverview.DownstreamAssets) != 1 || pipelineOverview.DownstreamAssets[0].Label != "Executive" {
+		t.Fatalf("pipeline affected assets = %#v, want Executive dashboard", pipelineOverview.DownstreamAssets)
+	}
+}
+
+func TestPipelineOverviewReportsRunsWithoutInferringSuccessFromPublishedData(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh",
+		Payload: map[string]any{"SemanticModel": "sales"},
+	}
+	project := projectview.DevelopView{ID: "project:test"}
+	published := AssetRefreshState{DataVersion: AssetDataVersion{SnapshotID: 42, RefreshedAt: time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC), Source: refreshschedule.DataVersionSourcePublish}}
+	beforeRun := projectAssetDetailsSignalWithRefreshAndVersions(project, asset, []projectview.DevelopAssetView{asset}, nil, published, AssetVersionsState{}).AssetOverview.PipelineMonitor
+	if beforeRun == nil || beforeRun.Status != "not_run" || beforeRun.LatestRun != nil || len(beforeRun.RecentRuns) != 0 {
+		t.Fatalf("published data must not imply a successful pipeline run: %#v", beforeRun)
+	}
+	failed := published
+	failed.Latest = AssetRefreshRun{ID: "run:failed", Status: "failed", StartedAt: "2026-09-12T13:00:00Z", FinishedAt: "2026-09-12T13:00:05Z", Error: "Source unavailable"}
+	failed.Runs = []AssetRefreshRun{failed.Latest}
+	monitor := projectAssetDetailsSignalWithRefreshAndVersions(project, asset, []projectview.DevelopAssetView{asset}, nil, failed, AssetVersionsState{}).AssetOverview.PipelineMonitor
+	if monitor == nil || monitor.Status != "failed" || monitor.LatestRun == nil || monitor.LatestRun.Error == nil || *monitor.LatestRun.Error != "Source unavailable" {
+		t.Fatalf("failed run monitor = %#v", monitor)
+	}
+	if monitor.LatestRun.Href != "/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed" || len(monitor.RecentRuns) != 1 {
+		t.Fatalf("run links = %#v", monitor)
+	}
 }
 
 func TestSemanticDatasetLinkUsesBoundModelWhenDatasetIsAliased(t *testing.T) {

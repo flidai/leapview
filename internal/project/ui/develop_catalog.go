@@ -426,7 +426,7 @@ func projectAssetDetailsSignalWithRefresh(project projectview.DevelopView, asset
 func projectAssetDetailsSignalWithRefreshAndVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState, versions AssetVersionsState) uisignals.ResourceAssetDetailsSignal {
 	model := assetDetailModelForAssetWithRefresh(project, asset, assets, edges, refresh)
 	details := uisignals.ResourceAssetDetailsSignal{
-		AssetOverview:      uisignals.Pointer(assetOverviewSignal(project.ID, asset, assets, edges, versions)),
+		AssetOverview:      uisignals.Pointer(assetOverviewSignal(project.ID, asset, assets, edges, refresh, versions)),
 		Overview:           definitionFactSignals(model.Overview),
 		Sections:           assetDetailSectionSignals(model.Sections),
 		SemanticModelGraph: model.SemanticModelGraph,

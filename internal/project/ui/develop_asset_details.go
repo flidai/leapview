@@ -139,7 +139,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 	)
 }
 
-func assetOverviewSignal(projectID string, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, versions AssetVersionsState) uisignals.AssetOverviewSignal {
+func assetOverviewSignal(projectID string, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState, versions AssetVersionsState) uisignals.AssetOverviewSignal {
 	metadata := metaMap(asset.Payload, "metadata", "Metadata")
 	owner := firstNonEmpty(metaString(metadata, "owner", "Owner"), metaString(asset.Payload, "owner", "Owner"))
 	tags := stringSlice(metaValue(metadata, "tags", "Tags"))
@@ -164,10 +164,98 @@ func assetOverviewSignal(projectID string, asset projectview.DevelopAssetView, a
 		)
 	}
 	overview.UpstreamAssets = appendUniqueAssetOverviewLinks(overview.UpstreamAssets, referencedUpstreamAssetLinks(asset, assets))
+	if asset.Type == string(projectview.AssetTypeRefreshPipeline) || asset.Type == "pipeline" {
+		overview.PipelineMonitor = pipelineOverviewMonitor(asset, refresh)
+		modelRef := metaString(asset.Payload, "SemanticModel", "semanticModel", "semantic_model")
+		for _, target := range assets {
+			if modelRef == "" || target.Type != string(projectview.AssetTypeSemanticModel) || !assetReferenceMatches(target, modelRef) {
+				continue
+			}
+			overview.DownstreamAssets = appendUniqueAssetOverviewLinks(overview.DownstreamAssets, semanticModelDashboardLinks(target, assets, edges))
+			break
+		}
+	}
 	if asset.Type != string(projectview.AssetTypeConnection) && len(versions.Versions) > 0 {
 		overview.ActiveVersion = uisignals.Pointer(int64(len(versions.Versions)))
 	}
 	return overview
+}
+
+func pipelineOverviewMonitor(asset projectview.DevelopAssetView, refresh AssetRefreshState) *uisignals.PipelineOverviewMonitorSignal {
+	monitor := &uisignals.PipelineOverviewMonitorSignal{
+		RecentRuns: []uisignals.PipelineOverviewRunSignal{},
+		Schedule:   pipelineScheduleLabel(asset.Payload),
+		Status:     "not_run",
+	}
+	if timezone := metaString(asset.Payload, "Timezone", "timezone"); timezone != "" && monitor.Schedule != "Manual only" && !strings.Contains(monitor.Schedule, timezone) {
+		monitor.Schedule += " · " + timezone
+	}
+	if !refresh.NextRun.IsZero() {
+		monitor.NextRunAt = uisignals.Pointer(refresh.NextRun.UTC().Format(time.RFC3339))
+	}
+	monitor.LastSuccessfulAt = uisignals.Optional(refresh.LatestSuccessful.FinishedAt)
+	runs := append([]AssetRefreshRun(nil), refresh.Runs...)
+	if refresh.Latest.ID != "" {
+		found := false
+		for _, run := range runs {
+			if run.ID == refresh.Latest.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			runs = append(runs, refresh.Latest)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		left := firstNonEmpty(runs[i].StartedAt, runs[i].CreatedAt)
+		right := firstNonEmpty(runs[j].StartedAt, runs[j].CreatedAt)
+		return left > right
+	})
+	for index, run := range runs {
+		if index == 5 {
+			break
+		}
+		monitor.RecentRuns = append(monitor.RecentRuns, pipelineOverviewRun(asset, run))
+	}
+	latest := refresh.Latest
+	if latest.ID == "" && len(runs) > 0 {
+		latest = runs[0]
+	}
+	if latest.ID != "" {
+		monitor.LatestRun = uisignals.Pointer(pipelineOverviewRun(asset, latest))
+		monitor.Status = strings.ToLower(strings.TrimSpace(latest.Status))
+		if monitor.Status == "" {
+			monitor.Status = "unknown"
+		}
+	}
+	if refresh.Unavailable {
+		monitor.Status = "unavailable"
+	}
+	return monitor
+}
+
+func pipelineOverviewRun(asset projectview.DevelopAssetView, run AssetRefreshRun) uisignals.PipelineOverviewRunSignal {
+	return uisignals.PipelineOverviewRunSignal{
+		Duration:  uisignals.Optional(refreshRunDuration(run)),
+		Error:     uisignals.Optional(strings.TrimSpace(run.Error)),
+		Href:      assetnav.CanonicalAssetSectionHref(asset, "refreshes") + "?refresh=" + url.QueryEscape(run.ID),
+		ID:        run.ID,
+		StartedAt: uisignals.Optional(run.StartedAt),
+		Status:    strings.ToLower(strings.TrimSpace(run.Status)),
+	}
+}
+
+func semanticModelDashboardLinks(model projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) []uisignals.AssetOverviewLinkSignal {
+	links := semanticModelAdjacentLinks(model.ID, string(projectview.AssetTypeDashboard), assets, edges)
+	for _, candidate := range assets {
+		modelRef := metaString(candidate.Payload, "SemanticModel", "semanticModel", "semantic_model")
+		if modelRef == "" || candidate.Type != string(projectview.AssetTypeDashboard) || !assetReferenceMatches(model, modelRef) {
+			continue
+		}
+		links = appendUniqueAssetOverviewLinks(links, []uisignals.AssetOverviewLinkSignal{assetOverviewLink(candidate)})
+	}
+	return links
 }
 
 func assetOverviewLinksFromRows(rows []map[string]any) []uisignals.AssetOverviewLinkSignal {

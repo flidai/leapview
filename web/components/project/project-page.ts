@@ -24,6 +24,8 @@ import type {
   ResourceTabSignal,
   AssetOverviewLinkSignal,
   AssetOverviewSignal,
+  PipelineOverviewMonitorSignal,
+  PipelineOverviewRunSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { assetPresentation } from '../shared/asset-presentation'
@@ -783,10 +785,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return html`
       <section class="details semantic-model-details-page" id="details" aria-label="Asset details">
         <div class="details-content semantic-model-overview">
-          ${renderAssetOverview(details?.overview ?? [], details?.assetOverview, refreshHref, versionsHref)}
+          ${renderAssetOverview(page, details?.overview ?? [], details?.assetOverview, refreshHref, versionsHref)}
           ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
           ${renderAssetContents(details?.sections ?? [], page.asset.type, modelHref)}
-          ${renderAssetImpact(details?.assetOverview, lineageHref, isSemanticModel)}
+          ${renderAssetImpact(details?.assetOverview, lineageHref, page.asset.type)}
         </div>
       </section>
     `
@@ -1322,6 +1324,7 @@ function countLabel(count: number, singular: string, plural = `${singular}s`): s
 }
 
 function renderAssetOverview(
+  page: ResourceAssetPageSignal,
   facts: DefinitionFactSignal[],
   overview: AssetOverviewSignal | undefined,
   refreshHref: string,
@@ -1329,18 +1332,13 @@ function renderAssetOverview(
 ) {
   const key = overviewFact(facts, 'Key')
   const description = overviewFact(facts, 'Description')
-  const refreshStatus = overviewFact(facts, 'Refresh status')
-  const lastRefreshed = overviewFact(facts, 'Last refreshed')
-  const refreshGuidance = overviewFact(facts, 'Refresh guidance')
   const owner = overview?.owner ?? overviewFact(facts, 'Owner')?.value
   const tags = overview?.tags?.length
     ? overview.tags
     : (overviewFact(facts, 'Tags')?.value ?? '').split(',').map((tag) => tag.trim()).filter(Boolean)
-  const reservedLabels = new Set(['Type', 'Key', 'Description', 'Owner', 'Tags', 'Refresh status', 'Last refreshed', 'Refresh guidance'])
-  const operationalFacts = facts.filter((fact) => fact.value?.trim() && !reservedLabels.has(fact.label))
-  const status = refreshStatus?.value ?? ''
+  const state = renderAssetState(page, facts, overview, refreshHref)
   return html`
-    <div class="semantic-overview-panels">
+    <div class=${`semantic-overview-panels ${state === nothing ? 'single' : ''}`}>
       <section class="semantic-overview-panel semantic-overview-about" aria-label="About">
         <h2>About</h2>
         <p class="semantic-overview-description">${description?.value ?? 'No description has been provided.'}</p>
@@ -1362,21 +1360,135 @@ function renderAssetOverview(
                 <dd>${tags.map((tag) => html`<span class="semantic-overview-tag">${tag}</span>`)}</dd>
               </div>
             ` : nothing}
+            ${overview?.activeVersion === undefined ? nothing : html`
+              <div class="semantic-overview-version">
+                <dt>Version</dt>
+                <dd>${versionsHref === '#'
+                  ? overview.activeVersion
+                  : html`<a class="semantic-overview-version-link" href=${versionsHref}>${overview.activeVersion}</a>`}</dd>
+              </div>
+            `}
           </dl>
         ` : nothing}
       </section>
-      <section class="semantic-overview-panel semantic-overview-state" aria-label="Operational state">
-        <h2>Operational state</h2>
+      ${state}
+    </div>
+    ${page.asset.type === 'refresh_pipeline' || page.asset.type === 'pipeline'
+      ? renderPipelineRecentRuns(overview?.pipelineMonitor)
+      : nothing}
+  `
+}
+
+function renderOverviewStatus(label: string, value: string, tone: string) {
+  return html`
+    <div class="semantic-overview-refresh-status">
+      <dt>${label}</dt>
+      <dd data-tone=${tone}>
+        <span class="semantic-overview-status-dot" aria-hidden="true"></span>
+        <strong>${semanticRefreshLabel(value)}</strong>
+      </dd>
+    </div>
+  `
+}
+
+function renderOverviewTime(label: string, value: string | undefined) {
+  if (!value) return nothing
+  return html`
+    <div class="semantic-overview-last-refreshed">
+      <dt>${label}</dt>
+      <dd><time datetime=${value} title=${semanticRefreshDate(value)}>${semanticRelativeDate(value)}</time></dd>
+    </div>
+  `
+}
+
+function renderAssetState(
+  page: ResourceAssetPageSignal,
+  facts: DefinitionFactSignal[],
+  overview: AssetOverviewSignal | undefined,
+  refreshHref: string,
+) {
+  const type = page.asset.type
+  if (type === 'dashboard') return nothing
+  if (type === 'refresh_pipeline' || type === 'pipeline') {
+    const monitor = overview?.pipelineMonitor
+    const status = monitor?.status ?? 'unavailable'
+    const latest = monitor?.latestRun
+    return html`
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Pipeline monitoring">
+        <h2>Pipeline monitoring</h2>
         <dl class="semantic-overview-properties">
-          ${refreshStatus ? html`
-            <div class="semantic-overview-refresh-status">
-              <dt>Refresh status</dt>
-              <dd data-tone=${semanticRefreshTone(status)}>
-                <span class="semantic-overview-status-dot" aria-hidden="true"></span>
-                <strong>${semanticRefreshLabel(status)}</strong>
-              </dd>
-            </div>
+          ${renderOverviewStatus('Run status', pipelineRunLabel(status), semanticRefreshTone(status))}
+          ${latest?.startedAt ? renderOverviewTime('Latest run', latest.startedAt) : nothing}
+          ${latest?.duration ? html`<div><dt>Duration</dt><dd>${latest.duration}</dd></div>` : nothing}
+          ${monitor?.lastSuccessfulAt ? renderOverviewTime('Last successful run', monitor.lastSuccessfulAt) : nothing}
+          <div><dt>Schedule</dt><dd>${monitor?.schedule ?? 'Unavailable'}</dd></div>
+          ${monitor?.schedule !== 'Manual only' ? html`
+            <div><dt>Next run</dt><dd>${monitor?.nextRunAt
+              ? html`<time datetime=${monitor.nextRunAt} title=${semanticRefreshDate(monitor.nextRunAt)}>${semanticRelativeDate(monitor.nextRunAt)}</time>`
+              : 'Not available'}</dd></div>
           ` : nothing}
+        </dl>
+        ${latest?.status === 'failed' && latest.error ? html`<p class="semantic-overview-guidance" role="status">${latest.error}</p>` : nothing}
+        ${status === 'unavailable' ? html`<p class="semantic-overview-guidance">Refresh state could not be loaded. Check the refresh runtime and try again.</p>` : nothing}
+        <div class="semantic-overview-actions">
+          ${latest ? html`<a class="semantic-overview-refresh-link" href=${latest.href}>View latest run</a>` : nothing}
+          ${refreshHref === '#' ? nothing : html`<a class="semantic-overview-refresh-link" href=${refreshHref}>Refresh history</a>`}
+        </div>
+      </section>
+    `
+  }
+  if (type === 'connection') {
+    const lifecycle = page.connectionLifecycle
+    if (!lifecycle) return nothing
+    return html`
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Connection state">
+        <h2>Connection state</h2>
+        <dl class="semantic-overview-properties">
+          ${renderOverviewStatus('Status', lifecycle.statusLabel, lifecycle.tone)}
+          ${renderOverviewTime('Last validated', lifecycle.lastValidatedAt)}
+        </dl>
+        ${lifecycle.state === 'missing' ? html`<p class="semantic-overview-note">Configuration is required before this connection can be used.</p>` : nothing}
+      </section>
+    `
+  }
+  if (type === 'source') {
+    const status = overviewFact(facts, 'Schema status')?.value ?? 'not observed'
+    const observed = overviewFact(facts, 'Schema observed at')?.value
+    return html`
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Schema observation">
+        <h2>Schema observation</h2>
+        <dl class="semantic-overview-properties">
+          ${renderOverviewStatus('Status', status, semanticRefreshTone(status))}
+          ${observed ? html`<div><dt>Observed at</dt><dd>${observed}</dd></div>` : nothing}
+        </dl>
+      </section>
+    `
+  }
+  if (type === 'model') {
+    const refreshed = overviewFact(facts, 'Last refreshed')?.value
+    return html`
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Data state">
+        <h2>Data state</h2>
+        <dl class="semantic-overview-properties">
+          <div><dt>Last refreshed</dt><dd>${refreshed ?? 'Unknown'}</dd></div>
+          ${['Rows', 'Physical size'].map((label) => {
+            const fact = overviewFact(facts, label)
+            return fact ? html`<div><dt>${label}</dt><dd>${fact.value}</dd></div>` : nothing
+          })}
+        </dl>
+        ${refreshHref === '#' ? nothing : html`<div class="semantic-overview-actions"><a class="semantic-overview-refresh-link" href=${refreshHref}>Refresh history</a></div>`}
+      </section>
+    `
+  }
+  if (type === 'semantic_model') {
+    const refreshStatus = overviewFact(facts, 'Refresh status')?.value
+    const lastRefreshed = overviewFact(facts, 'Last refreshed')?.value
+    const refreshGuidance = overviewFact(facts, 'Refresh guidance')?.value
+    return html`
+      <section class="semantic-overview-panel semantic-overview-state" aria-label="Data state">
+        <h2>Data state</h2>
+        <dl class="semantic-overview-properties">
+          ${refreshStatus ? renderOverviewStatus('Refresh status', refreshStatus, semanticRefreshTone(refreshStatus)) : nothing}
           ${overview?.pipelines.length ? html`
             <div class="semantic-overview-pipeline-row">
               <dt>Pipeline</dt>
@@ -1386,32 +1498,39 @@ function renderAssetOverview(
               </dd>
             </div>
           ` : nothing}
-          ${lastRefreshed ? html`
-            <div class="semantic-overview-last-refreshed">
-              <dt>Last refreshed</dt>
-              <dd><time datetime=${lastRefreshed.value} title=${semanticRefreshDate(lastRefreshed.value)}>${semanticRelativeDate(lastRefreshed.value)}</time></dd>
-            </div>
-          ` : nothing}
-          ${overview?.activeVersion !== undefined ? html`
-            <div class="semantic-overview-version">
-              <dt>Version</dt>
-              <dd>${overview.activeVersion}</dd>
-            </div>
-          ` : nothing}
-          ${operationalFacts.map((fact) => html`
-            <div class=${fact.label.toLowerCase().includes('status') ? 'semantic-overview-generic-status' : ''}>
-              <dt>${fact.label}</dt>
-              <dd>${fact.code ? html`<code>${fact.value}</code>` : fact.value}</dd>
-            </div>
-          `)}
+          ${renderOverviewTime('Last refreshed', lastRefreshed)}
         </dl>
-        ${refreshGuidance ? html`<p class="semantic-overview-guidance">${refreshGuidance.value}</p>` : nothing}
-        <div class="semantic-overview-actions">
-          ${refreshHref === '#' ? nothing : html`<a class="semantic-overview-refresh-link" href=${refreshHref}>Refresh history</a>`}
-          ${versionsHref === '#' || overview?.activeVersion === undefined ? nothing : html`<a class="semantic-overview-version-link" href=${versionsHref}>View version</a>`}
-        </div>
+        ${refreshGuidance ? html`<p class="semantic-overview-guidance">${refreshGuidance}</p>` : nothing}
+        ${refreshHref === '#' ? nothing : html`<div class="semantic-overview-actions"><a class="semantic-overview-refresh-link" href=${refreshHref}>Refresh history</a></div>`}
       </section>
-    </div>
+    `
+  }
+  return nothing
+}
+
+function pipelineRunLabel(status: string): string {
+  return status === 'not_run' ? 'No runs recorded' : status
+}
+
+function renderPipelineRecentRuns(monitor: PipelineOverviewMonitorSignal | undefined) {
+  return html`
+    <section class="semantic-overview-recent-runs" aria-label="Recent pipeline runs">
+      <div class="semantic-model-summary-heading">
+        <div><h2>Recent runs</h2><p>Latest recorded pipeline executions.</p></div>
+      </div>
+      ${monitor?.recentRuns.length ? html`
+        <ol class="semantic-overview-run-list">
+          ${monitor.recentRuns.map((run: PipelineOverviewRunSignal) => html`
+            <li><a class="semantic-overview-run" href=${run.href}>
+              <span class="semantic-overview-run-state" data-tone=${semanticRefreshTone(run.status)} aria-hidden="true"></span>
+              <strong>${semanticRefreshLabel(run.status)}</strong>
+              <span>${run.startedAt ? semanticRefreshDate(run.startedAt) : 'Start time unavailable'}</span>
+              ${run.duration ? html`<span>${run.duration}</span>` : nothing}
+            </a></li>
+          `)}
+        </ol>
+      ` : html`<p class="semantic-overview-empty-impact">No pipeline runs have been recorded.</p>`}
+    </section>
   `
 }
 
@@ -1483,30 +1602,35 @@ function renderImpactAssetLinks(assets: AssetOverviewLinkSignal[], className: st
   `
 }
 
-function renderAssetImpact(overview: AssetOverviewSignal | undefined, lineageHref: string, isSemanticModel: boolean) {
+function renderAssetImpact(overview: AssetOverviewSignal | undefined, lineageHref: string, assetType: string) {
   if (!overview) return nothing
+  const isSemanticModel = assetType === 'semantic_model'
+  const isPipeline = assetType === 'refresh_pipeline' || assetType === 'pipeline'
   const upstreamFacts = isSemanticModel && overview.upstreamDatasetCount !== undefined
     ? [countLabel(overview.upstreamDatasetCount, 'governed dataset'), countLabel(overview.pipelines.length, 'refresh pipeline')]
     : groupedAssetCounts(overview.upstreamAssets)
   const downstreamFacts = groupedAssetCounts(overview.downstreamAssets)
+  const showUpstream = upstreamFacts.length > 0 || isPipeline || isSemanticModel
+  const showDownstream = downstreamFacts.length > 0 || assetType !== 'dashboard'
+  if (!showUpstream && !showDownstream) return nothing
   return html`
-    <section class="semantic-overview-impact-grid" aria-label="Lineage summary">
-      <article class="semantic-overview-impact semantic-overview-upstream">
-        <h2>Upstream</h2>
+    <section class=${`semantic-overview-impact-grid ${showUpstream && showDownstream ? '' : 'single'}`} aria-label="Lineage summary">
+      ${showUpstream ? html`<article class="semantic-overview-impact semantic-overview-upstream">
+        <h2>${isPipeline ? 'Refresh target' : 'Upstream'}</h2>
         ${upstreamFacts.length
           ? upstreamFacts.map((fact) => html`<p class="semantic-overview-impact-fact">${fact}</p>`)
-          : html`<p class="semantic-overview-empty-impact">No upstream dependencies.</p>`}
+          : html`<p class="semantic-overview-empty-impact">${isPipeline ? 'No semantic model target configured.' : 'No upstream dependencies.'}</p>`}
         ${isSemanticModel ? nothing : renderImpactAssetLinks(overview.upstreamAssets, 'semantic-overview-upstream-asset')}
         ${lineageHref === '#' ? nothing : html`<a class="semantic-overview-lineage-link" href=${lineageHref}>View lineage</a>`}
-      </article>
-      <article class="semantic-overview-impact semantic-overview-downstream">
-        <h2>Downstream impact</h2>
+      </article>` : nothing}
+      ${showDownstream ? html`<article class="semantic-overview-impact semantic-overview-downstream">
+        <h2>${isPipeline ? 'Affected assets' : 'Downstream impact'}</h2>
         ${downstreamFacts.length
           ? downstreamFacts.map((fact) => html`<p class="semantic-overview-impact-fact">${fact}</p>`)
           : html`<p class="semantic-overview-empty-impact">No downstream assets.</p>`}
         ${renderImpactAssetLinks(overview.downstreamAssets, 'semantic-overview-downstream-asset')}
         ${lineageHref === '#' ? nothing : html`<a class="semantic-overview-downstream-link" href=${lineageHref}>View downstream lineage</a>`}
-      </article>
+      </article>` : nothing}
     </section>
   `
 }
@@ -2104,6 +2228,11 @@ const projectStyles = css`
     gap: var(--base-size-12);
   }
 
+  .semantic-overview-panels.single,
+  .semantic-overview-impact-grid.single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .semantic-overview-panel {
     display: grid;
     min-width: 0;
@@ -2197,6 +2326,61 @@ const projectStyles = css`
     color: var(--lv-fg-danger);
     font: var(--lv-type-body-compact);
   }
+
+  .semantic-overview-note {
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+  }
+
+  .semantic-overview-recent-runs {
+    display: grid;
+    gap: var(--base-size-12);
+    border-top: var(--lv-border-muted);
+    padding-top: var(--base-size-16);
+  }
+
+  .semantic-overview-run-list {
+    display: grid;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    overflow: hidden;
+  }
+
+  .semantic-overview-run-list li + li {
+    border-top: var(--lv-border-muted);
+  }
+
+  .semantic-overview-run {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-12);
+    padding: var(--base-size-12);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body-compact);
+    text-decoration: none;
+  }
+
+  .semantic-overview-run:hover,
+  .semantic-overview-run:focus-visible {
+    background: var(--lv-bg-control-hover);
+  }
+
+  .semantic-overview-run-state {
+    width: var(--base-size-8);
+    height: var(--base-size-8);
+    flex: 0 0 auto;
+    border-radius: var(--lv-radius-full);
+    background: var(--lv-fg-muted);
+  }
+
+  .semantic-overview-run-state[data-tone='success'] { background: var(--lv-fg-success); }
+  .semantic-overview-run-state[data-tone='warning'] { background: var(--lv-fg-warning); }
+  .semantic-overview-run-state[data-tone='danger'] { background: var(--lv-fg-danger); }
 
   .semantic-overview-actions {
     display: flex;
@@ -2314,6 +2498,10 @@ const projectStyles = css`
     gap: var(--base-size-12);
     border-top: var(--lv-border-muted);
     padding-top: var(--base-size-16);
+  }
+
+  .semantic-overview-impact-grid.single {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .semantic-overview-impact {

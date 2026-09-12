@@ -184,7 +184,7 @@ test('semantic model overview separates summary metadata from model inspection',
       }
     })
     expect(state.graphCount).toBe(0)
-    expect(state.panelHeadings).toEqual(['About', 'Operational state'])
+    expect(state.panelHeadings).toEqual(['About', 'Data state'])
     expect(state.description).toBe('Governed orders model.')
     expect(state.key).toBe('semantic_model:orders')
     expect(state.owner).toBe('Finance')
@@ -401,8 +401,8 @@ test('connections list and asset detail render without workspace terminology', a
     expect(connection.tabs).toEqual(expect.arrayContaining(['Overview', 'Definition', 'Lineage']))
     expect(connection.tabCounts).toBe(0)
     expect(connection.hasAdministration).toBe(true)
-    expect(connection.overview).toContain('DuckDB')
-    expect(connection.panels).toEqual(['About', 'Operational state'])
+    expect(connection.overview).toContain('Configured')
+    expect(connection.panels).toEqual(['About', 'Connection state'])
     expect(connection.contents).toBeUndefined()
     expect(connection.downstream).toContain('1 source')
     expect(connection.downstreamHref).toBe('/sources/source:orders/details')
@@ -763,6 +763,11 @@ test('dashboard Overview owns the persisted appearance editor and emits complete
     await page.goto(`${baseURL}/?root=dashboard-detail`)
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const host = page.locator('lv-project-asset-page')
+    const panels = await host.evaluate(async (element: any) => {
+      await element.updateComplete
+      return Array.from(element.shadowRoot!.querySelectorAll('.semantic-overview-panel h2')).map((node: Element) => node.textContent?.trim())
+    })
+    expect(panels).toEqual(['About'])
     const initial = await host.evaluate(async (element: any) => {
       await element.updateComplete
 	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
@@ -854,6 +859,60 @@ test('pipeline detail run action emits canonical pipeline command detail', async
       return { command, documentCommand, button: Boolean(button), disabled: button?.disabled, labels: Array.from(element.shadowRoot?.querySelectorAll('button') ?? []).map((candidate: any) => candidate.getAttribute('aria-label')) }
     })
     expect(detail).toEqual({ command: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, documentCommand: { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' }, button: true, disabled: false, labels: ['Run now'] })
+  } finally {
+    await page.close()
+  }
+})
+
+test('pipeline Overview reports executions independently of a published data snapshot', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const overview = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        panels: Array.from(root.querySelectorAll('.semantic-overview-panel h2')).map((node: Element) => node.textContent?.trim()),
+        status: root.querySelector('.semantic-overview-refresh-status strong')?.textContent?.trim(),
+        recent: root.querySelector('.semantic-overview-recent-runs')?.textContent?.trim(),
+        impact: Array.from(root.querySelectorAll('.semantic-overview-impact h2')).map((node: Element) => node.textContent?.trim()),
+        target: root.querySelector<HTMLAnchorElement>('.semantic-overview-upstream-asset')?.getAttribute('href'),
+        affected: root.querySelector<HTMLAnchorElement>('.semantic-overview-downstream-asset')?.getAttribute('href'),
+      }
+    })
+    expect(overview.panels).toEqual(['About', 'Pipeline monitoring'])
+    expect(overview.status).toBe('No runs recorded')
+    expect(overview.recent).toContain('No pipeline runs have been recorded')
+    expect(overview.impact).toEqual(['Refresh target', 'Affected assets'])
+    expect(overview.target).toBe('/semantic-models/semantic-model:sales/details')
+    expect(overview.affected).toBe('/dashboards/dashboard:executive-sales/details')
+  } finally {
+    await page.close()
+  }
+})
+
+test('pipeline Overview exposes a failed run and its diagnostic link', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-failed`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const overview = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        status: root.querySelector('.semantic-overview-refresh-status strong')?.textContent?.trim(),
+        error: root.querySelector('.semantic-overview-guidance')?.textContent?.trim(),
+        latest: root.querySelector<HTMLAnchorElement>('.semantic-overview-actions a')?.getAttribute('href'),
+        runs: root.querySelectorAll('.semantic-overview-run-list li').length,
+      }
+    })
+    expect(overview).toEqual({
+      status: 'Failed',
+      error: 'Source unavailable',
+      latest: '/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed',
+      runs: 1,
+    })
   } finally {
     await page.close()
   }
@@ -958,7 +1017,7 @@ function testDocument(rootName: string): string {
     kind: 'data', title: 'Sales', assetId: 'semantic:sales', activeSection: 'refreshes', asset: { id: 'semantic:sales', key: 'sales', title: 'Sales', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:sales/details', openHref: '/semantic-models/semantic:sales/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'Sales', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/semantic-models/semantic:sales/details' }, { id: 'refreshes', label: 'Refreshes', href: '/semantic-models/semantic:sales/refreshes', active: true }], refresh: { status: 'succeeded', running: false, lastSuccessful: '2026-08-24T14:32:05Z', facts: [{ label: 'Refresh status', value: 'succeeded' }, { label: 'Last refreshed', value: '2026-08-24T14:32:05Z' }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'duration', header: 'Duration' }, { id: 'trigger', header: 'Trigger' }, { id: 'triggered_by', header: 'Initiated by' }], rows: [{ status: { label: 'succeeded', tone: 'success' }, started: '2026-08-24T14:32:00Z', duration: '5s', trigger: 'Schedule', triggered_by: 'Scheduler', runId: 'run:semantic:sales', statusLabel: 'succeeded' }], empty: 'No refresh runs.', rowAction: 'open-refresh-run' } },
   } : rootName === 'model-versions' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'versions', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model', typeLabel: 'Model', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'versions', label: 'Versions', href: '/models/model:orders/versions', active: true }], versions: { currentContentHash: 'sha256:current', table: { columns: [{ id: 'version', header: 'Version', kind: 'number' }, { id: 'content_hash', header: 'Content hash', kind: 'code' }, { id: 'published', header: 'Published' }, { id: 'diff_stat', header: 'Changes', kind: 'diff' }, { id: 'status', header: 'Status', kind: 'badge' }, { id: 'published_by', header: 'Published by' }], rows: [{ version: 2, content_hash: 'sha256:curre', published: '2026-08-24T14:57:00Z', diff_stat: { label: '2 additions, 1 deletion', additions: 2, deletions: 1 }, status: { label: 'current', tone: 'success' }, published_by: 'dev', versionId: 'state:current', statusLabel: 'current', contentHash: 'sha256:current', sourceFile: 'models/orders.yaml', environment: 'dev', snapshotId: 'snapshot:2', servingStateId: 'state:current', servingDigest: 'digest:current', createdAt: '2026-08-24T14:56:00Z', activatedAt: '2026-08-24T14:57:00Z', compiledConfiguration: '{\n  "fields": [\n    "order_id",\n    "revenue"\n  ]\n}\n', previousVersion: '1', changes: '--- sha256:previ\n+++ sha256:curre\n@@ -1,5 +1,6 @@\n {\n   "fields": [\n-    "order_id"\n+    "order_id",\n+    "revenue"\n   ]\n }\n', changesSummary: '' }, { version: 1, content_hash: 'sha256:previ', published: '2026-08-23T14:57:00Z', diff_stat: '-', status: { label: 'inactive', tone: 'muted' }, published_by: 'dev', versionId: 'state:previous', statusLabel: 'inactive', contentHash: 'sha256:previous', sourceFile: 'models/orders.yaml', environment: 'dev', snapshotId: 'snapshot:1', servingStateId: 'state:previous', servingDigest: 'digest:previous', createdAt: '2026-08-23T14:56:00Z', activatedAt: '2026-08-23T14:57:00Z', compiledConfiguration: '{\n  "fields": [\n    "order_id"\n  ]\n}\n', previousVersion: '', changes: '', changesSummary: 'This is the first recorded version.' }], empty: 'No versions.', rowAction: 'open-asset-version' } },
-  } : rootName === 'pipeline-detail' ? {
+  } : rootName === 'pipeline-detail' || rootName === 'pipeline-failed' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'succeeded', running: false, canRun: true }, actions: [{ label: 'Run now', command: 'run-refresh-pipeline', disabled: false }], details: { overview: [{ label: 'Refresh status', value: 'succeeded' }], sections: [] },
   } : rootName === 'pipeline-unavailable' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Check the refresh runtime and try again.', wide: true }], sections: [] },
@@ -979,7 +1038,18 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-failed' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
+  if (rootName === 'pipeline-detail' || rootName === 'pipeline-failed') {
+    const pipeline = page as any
+    pipeline.details.assetOverview = {
+      upstreamAssets: [{ label: 'Sales', href: '/semantic-models/semantic-model:sales/details', type: 'Semantic model' }],
+      downstreamAssets: [{ label: 'Executive Sales', href: '/dashboards/dashboard:executive-sales/details', type: 'Dashboard' }],
+      pipelines: [],
+      pipelineMonitor: rootName === 'pipeline-failed'
+        ? { status: 'failed', schedule: 'Manual only', recentRuns: [{ id: 'run:failed', status: 'failed', startedAt: '2026-09-12T13:00:00Z', duration: '5s', error: 'Source unavailable', href: '/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed' }], latestRun: { id: 'run:failed', status: 'failed', startedAt: '2026-09-12T13:00:00Z', duration: '5s', error: 'Source unavailable', href: '/pipelines/pipeline:sales/refreshes?refresh=run%3Afailed' } }
+        : { status: 'not_run', schedule: 'Manual only', recentRuns: [] },
+    }
+  }
   const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
   const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { semanticModelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
   const signals = {
