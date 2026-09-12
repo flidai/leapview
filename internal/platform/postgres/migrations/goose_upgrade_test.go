@@ -169,7 +169,7 @@ RESET ROLE;
 		name := fmt.Sprintf("%03d_noop.sql", revision)
 		previous[name] = &fstest.MapFile{Data: []byte("-- +goose Up\n-- +goose Down\n")}
 	}
-	migration, err := fs.ReadFile(MigrationFS(), "009_agent_conversation_delete.sql")
+	migration, err := fs.ReadFile(MigrationFS(), "013_agent_conversation_delete.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ RESET ROLE;
 	for name, file := range previous {
 		upgrade[name] = file
 	}
-	upgrade["009_agent_conversation_delete.sql"] = &fstest.MapFile{Data: migration}
+	upgrade["013_agent_conversation_delete.sql"] = &fstest.MapFile{Data: migration}
 
 	db, err := sql.Open("pgx", database.URL(migrator))
 	if err != nil {
@@ -209,8 +209,8 @@ RESET ROLE;
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current != 9 {
-		t.Fatalf("upgraded version = %d, want 9", current)
+	if current != 13 {
+		t.Fatalf("upgraded version = %d, want 13", current)
 	}
 
 	if _, err := admin.Exec(t.Context(), `
