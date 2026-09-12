@@ -156,15 +156,6 @@ func (s *Service) StartPendingConversationLifecycle(ctx context.Context) error {
 	return s.pending.start(ctx)
 }
 
-// StopPendingConversationLifecycle releases timers during application
-// shutdown. Persisted pending rows remain available for the next process to
-// rehydrate.
-func (s *Service) StopPendingConversationLifecycle() {
-	if s != nil && s.pending != nil {
-		s.pending.stop()
-	}
-}
-
 // BeginPendingConversationAction persists the operation before returning to
 // the browser. The browser is therefore only a presentation surface for the
 // undo window, never the owner of its deadline.

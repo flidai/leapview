@@ -179,6 +179,32 @@ func TestPostgreSQL18ConversationManagementLifecycleAndBusyDelete(t *testing.T) 
 	}
 }
 
+func TestPostgreSQL18PendingArchiveAlreadyArchivedAndStaleUndo(t *testing.T) {
+	_, repo := agentPostgresTestRepo(t, "pending_archive")
+	ctx := t.Context()
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", Title: "pending", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := agent.PendingConversationAction{PrincipalID: "owner", ConversationID: conversation.ID, Action: agent.PendingConversationArchive, RequestID: "request-archived", Deadline: time.Now().UTC().Add(-time.Second)}
+	if _, err := repo.BeginPendingConversationAction(ctx, pending); err != nil {
+		t.Fatalf("begin pending archive: %v", err)
+	}
+	if _, err := repo.ArchiveConversation(ctx, "owner", conversation.ID); err != nil {
+		t.Fatalf("direct archive pending conversation: %v", err)
+	}
+	if err := repo.FinalizePendingConversationAction(ctx, pending); err != nil {
+		t.Fatalf("finalize already archived conversation: %v", err)
+	}
+	if err := repo.CancelPendingConversationAction(ctx, "owner", conversation.ID, pending.RequestID); !errors.Is(err, agent.ErrPendingConversationCanceled) {
+		t.Fatalf("undo after finalized direct archive error = %v, want canceled", err)
+	}
+	archived, err := repo.ListArchivedConversations(ctx, "owner")
+	if err != nil || len(archived) != 1 || archived[0].ID != conversation.ID {
+		t.Fatalf("archived conversation after finalized direct archive = %#v err=%v", archived, err)
+	}
+}
+
 type nonTransactionalDB struct{}
 
 func (nonTransactionalDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {

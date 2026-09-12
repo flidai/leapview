@@ -319,7 +319,8 @@ test('new chat submits Enter and navigates from the command signal before the an
     expect(draftTurnAnswerSent).toBe(false)
     expect(new URL(page.url()).pathname).toBe('/chats/c3')
   } finally {
-    releaseDraftTurnAnswer?.()
+    const release = releaseDraftTurnAnswer as (() => void) | null
+    release?.()
     for (let attempt = 0; attempt < 50 && !draftTurnAnswerFinished; attempt += 1) {
       await new Promise<void>((resolve) => setTimeout(resolve, 10))
     }

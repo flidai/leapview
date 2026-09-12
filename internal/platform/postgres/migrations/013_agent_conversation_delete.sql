@@ -1,6 +1,11 @@
 -- +goose Up
 SET LOCAL ROLE leapview_control_owner;
 
+-- Bound background Undo recovery to rows with a pending operation.
+CREATE INDEX agent_conversations_pending_until_idx
+ON agent.conversations ((metadata_json #>> '{_leapview_chat,pendingUntil}'))
+WHERE COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') IN ('archive', 'delete');
+
 -- Chat deletion is an explicit runtime operation. The agent tables remain
 -- append-only for retention and maintenance, while this narrow path removes a
 -- principal-scoped conversation and its FK-cascaded content after rejecting

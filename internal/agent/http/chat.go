@@ -565,7 +565,15 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 			if running {
 				signal.Agent.Status.RunID = ui.Pointer(latestRun.ID)
 			} else {
+				// The worker may have completed while ChatSignalWith was
+				// constructing the acknowledgement. Reload the settled transcript
+				// before patching so this HTTP response cannot overwrite the worker's
+				// terminal broker patch with the pre-worker snapshot.
+				if settled, settledErr := service.ConversationTranscriptState(r.Context(), scope, conversationID); settledErr == nil {
+					signal = h.chatSignalWith(r.Context(), scope, conversationID, settled.Transcript, settled.Artifacts, "", false)
+				}
 				signal.Agent.Status.RunID = nil
+				signal.Agent.Status.Running = false
 			}
 		}
 		_ = updates.Patch(chatSignalPatch(signal, embedded))

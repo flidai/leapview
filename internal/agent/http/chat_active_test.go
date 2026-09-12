@@ -343,6 +343,67 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 	}
 }
 
+func TestActiveChatTurnDoesNotOverwriteSettledWorkerTranscript(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-queued-settled.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-settled@example.com", DisplayName: "Queued Settled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), nil, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+		return nil
+	}))
+	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "worker terminal output", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
+		return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}}
+	})
+	scope := agent.Scope{PrincipalID: owner.ID}
+	conversation, err := service.CreateConversation(t.Context(), scope, "Queued settled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started *agent.StartedPrompt
+	workerSettled := false
+	handler := NewHandler(Options{
+		Service: service,
+		EnqueueChatRun: func(_ context.Context, _ agent.Scope, queued *agent.StartedPrompt, _ string) error {
+			started = queued
+			return nil
+		},
+		ChatSignalWith: func(ctx context.Context, _ agent.Scope, activeID string, transcript []agent.ChatTranscriptItem, _ agent.ChatArtifactSignals, statusErr string, running bool) ui.ChatViewState {
+			if !workerSettled {
+				workerSettled = true
+				worker, resumeErr := service.ResumePrompt(ctx, scope, conversation.ID, started.RunID, "")
+				if resumeErr != nil {
+					t.Errorf("resume queued worker: %v", resumeErr)
+				} else if _, completeErr := worker.Complete(context.Background(), nil); completeErr != nil {
+					t.Errorf("complete queued worker: %v", completeErr)
+				}
+			}
+			return ui.ChatViewState{Agent: ui.ChatSignal{ActiveConversationID: activeID, Transcript: ui.ChatTranscriptItems(transcript), Status: ui.ChatStatus{Enabled: true, Running: running, Error: ui.Optional(statusErr)}}}
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+	request.Header.Set(uicommand.HeaderOperationID, createAgentRunOperation.APIGenOperationID())
+	response := httptest.NewRecorder()
+	handler.runChatTurn(response, request, service, scope, "queued-client", conversation.ID, "hello", nil, false)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "worker terminal output") {
+		t.Fatalf("queued acknowledgement status=%d body=%s, want settled worker transcript", response.Code, response.Body.String())
+	}
+	run, err := service.GetRun(t.Context(), scope, conversation.ID, started.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agent.RunStatusCompleted {
+		t.Fatalf("run status=%q, want completed", run.Status)
+	}
+}
+
 func TestChatConversationUpdatesIgnoreGlobalWorkerPatches(t *testing.T) {
 	fixture := newActiveChatFixture(t)
 	conversation, err := fixture.service.CreateConversation(t.Context(), agent.Scope{PrincipalID: fixture.owner}, "Scoped")

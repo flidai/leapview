@@ -215,7 +215,7 @@ test('composer exposes stop only after a run is accepted and protects an unsent 
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = element.shadowRoot as ShadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       textarea.value = 'Keep this new question'
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
@@ -345,7 +345,7 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = element.shadowRoot as ShadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const contextButton = root.querySelector('.context-button') as HTMLButtonElement
       textarea.value = 'Compare revenue'
@@ -384,7 +384,7 @@ test('composer presents edit mode, targets the selected message, and cancels saf
       element.editing = true
       element.setDraft('Rewrite this answer')
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = element.shadowRoot as ShadowRoot
       const submit = new Promise<any>((resolve) => element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true }))
       const editState = {
         banner: root.querySelector('.edit-banner')?.textContent?.replace(/\s+/g, ' ').trim(),

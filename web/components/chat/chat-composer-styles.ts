@@ -162,13 +162,13 @@ export const chatComposerStyles = css`
 
 		.stop-button {
 			border-color: var(--lv-line-danger, var(--lv-fg-danger));
-			background: var(--lv-bg-danger, var(--lv-fg-danger));
-			color: var(--lv-fg-on-emphasis, #fff);
+			background: var(--lv-fg-danger);
+			color: var(--lv-fg-on-emphasis);
 		}
 
 		.stop-button:hover:not(:disabled) {
-			border-color: var(--lv-line-danger-emphasis, var(--lv-fg-danger));
-			background: var(--lv-bg-danger-emphasis, var(--lv-fg-danger));
+			border-color: var(--lv-line-danger);
+			background: var(--lv-fg-danger);
 		}
 
 		.continuation-action {

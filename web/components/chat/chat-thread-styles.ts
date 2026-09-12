@@ -156,7 +156,7 @@ export const chatThreadStyles = css`
       max-width: min(var(--lv-chat-message-width), 100%);
     }
 
-    .edited-label { display: block; margin-top: 4px; text-align: right; color: var(--lv-fg-muted); font-size: 12px; }
+    .edited-label { display: block; margin-top: 4px; text-align: right; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .message-actions { display: flex; align-items: center; gap: 4px; min-height: 28px; margin-top: 6px; color: var(--lv-fg-muted); }
     .user .message-actions { justify-content: flex-end; opacity: 0; }
     .user:hover .message-actions, .user:focus-within .message-actions { opacity: 1; }

@@ -24,15 +24,14 @@ import {
 	UsersRound,
 	User,
 	Waypoints,
-  Workflow,
-  X,
-  Pin, PinOff, Archive, Trash2,
-  type IconNode,
+	Workflow,
+	X,
+	type IconNode,
 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
-import '../shared/loading-spinner'
+import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import '../shared/user-avatar'
 
 type NavItem = {
@@ -82,21 +81,6 @@ type SidebarAction = {
   label: string
   href: string
   icon: IconName
-}
-
-type SidebarHistory = {
-  label: string
-  emptyText?: string
-  items: SidebarHistoryItem[]
-}
-
-type SidebarHistoryItem = {
-  pinned?: boolean
-  id: string
-  title: string
-  href: string
-  active?: boolean
-  pending?: boolean
 }
 
 type SidebarStatus = {
@@ -200,7 +184,7 @@ class LeapViewSidebar extends LitElement {
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = [sidebarControlStyles, css`
+  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -643,67 +627,6 @@ class LeapViewSidebar extends LitElement {
       transform: rotate(-3deg) scale(1.06);
     }
 
-    .history {
-      display: grid;
-      gap: var(--base-size-4);
-      min-height: 0;
-      padding-top: var(--base-size-8);
-    }
-
-    .history-label {
-      overflow: hidden;
-      margin:
-        0
-        var(--control-xsmall-paddingInline-normal)
-        0
-        calc(var(--base-size-12) + var(--lv-border-width));
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-caption);
-      letter-spacing: 0;
-    }
-
-    .history-list {
-      display: grid;
-      gap: var(--base-size-2);
-      min-height: 0;
-    }
-
-    .nav-item.history-item {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .history-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lv-radius-default); }
-    .history-row .history-item { flex: 1; min-width: 0; }
-    .chat-pin { display: inline-flex; flex-shrink: 0; color: var(--lv-fg-muted); }
-    .chat-actions { position: absolute; right: 4px; display: flex; gap: 2px; opacity: 0; pointer-events: none; background: var(--lv-bg-panel-muted); border-radius: var(--lv-radius-default); }
-    .chat-action { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: transparent; color: var(--lv-fg-muted); cursor: pointer; }
-    .history-row:hover, .history-row:focus-within { background: var(--lv-bg-panel-muted); }
-    .history-row:hover .history-item, .history-row:focus-within .history-item { padding-right: 96px; background: transparent; }
-    .history-row:hover .chat-actions, .history-row:focus-within .chat-actions { opacity: 1; pointer-events: auto; }
-    .chat-action:hover { color: var(--lv-fg-default); background: var(--lv-bg-panel); }
-    .chat-action.danger:hover { color: var(--lv-fg-danger); }
-    .chat-action:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
-    @media (hover: none) {
-      .chat-actions { opacity: 1; pointer-events: auto; background: var(--lv-bg-panel); }
-      .history-row .history-item { padding-right: 96px; }
-    }
-
-    .history-title {
-      overflow: hidden;
-      min-width: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body);
-    }
-
-    .history-empty {
-      padding: var(--base-size-4) var(--base-size-12);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
     a,
     button {
       font: inherit;
@@ -1123,11 +1046,6 @@ class LeapViewSidebar extends LitElement {
       .mobile-drawer-title {
         font: var(--lv-type-body-large);
         font-weight: var(--base-text-weight-semibold);
-      }
-
-      .history,
-      :host([data-collapsed]) .history {
-        display: grid;
       }
 
       .nav-group,
@@ -1739,37 +1657,7 @@ class LeapViewSidebar extends LitElement {
   }
 
   private renderHistory() {
-    const history = this.config.history
-    if (!history) return null
-    const items = (Array.isArray(history.items) ? history.items : []).filter(item => item.id !== this.pendingRemovalId)
-    return html`
-      <section class="history" aria-label=${history.label || 'Chats'}>
-        <strong class="history-label">${history.label || 'Chats'}</strong>
-        <div class="history-list">
-          ${items.length === 0 ? html`<span class="history-empty">${history.emptyText || 'No chats yet.'}</span>` : null}
-          ${items.map((item) => this.renderHistoryItem(item))}
-        </div>
-
-      </section>
-    `
-  }
-
-  private renderHistoryItem(item: SidebarHistoryItem) {
-    const title = item.title || 'Conversation'
-    return html`
-      <div class="history-row">
-        <a class="nav-item history-item" href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => this.followInternalLink(event, item.href)}>
-          ${item.pinned ? html`<span class="chat-pin" title="Pinned chat" aria-label="Pinned chat">${lucideIcon(Pin, { size: 13 })}</span>` : null}
-          <span class="history-title">${title}</span>
-          ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
-        </a>
-        <div class="chat-actions" role="group" aria-label=${`Actions for ${title}`}>
-          <button class="chat-action" type="button" title=${item.pinned ? 'Unpin chat' : 'Pin chat'} aria-label=${item.pinned ? 'Unpin chat' : 'Pin chat'} @click=${() => this.chatAction(item.pinned ? 'unpin' : 'pin', item)}>${lucideIcon(item.pinned ? PinOff : Pin, { size: 16 })}</button>
-          <button class="chat-action" type="button" title="Archive chat" aria-label="Archive chat" @click=${() => this.chatAction('archive', item)}>${lucideIcon(Archive, { size: 16 })}</button>
-          <button class="chat-action danger" type="button" title="Delete chat" aria-label="Delete chat" @click=${() => this.chatAction('delete', item)}>${lucideIcon(Trash2, { size: 16 })}</button>
-        </div>
-      </div>
-    `
+    return renderSidebarChatHistory(this.config.history, this.pendingRemovalId, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
   }
 
   private chatAction(action: string, item: SidebarHistoryItem) {

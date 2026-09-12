@@ -642,8 +642,27 @@ func TestPendingConversationActionSurvivesReadModelAndIsPrincipalScoped(t *testi
 	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); err != nil {
 		t.Fatalf("cancel pending archive: %v", err)
 	}
+	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); !errors.Is(err, agent.ErrPendingConversationCanceled) {
+		t.Fatalf("stale undo error = %v, want canceled", err)
+	}
 	if active, err := repo.ListConversations(ctx, owner.ID); err != nil || len(active) != 1 || active[0].ID != conversation.ID {
 		t.Fatalf("canceled conversation active rows=%#v err=%v", active, err)
+	}
+	archivedPending := agent.PendingConversationAction{PrincipalID: owner.ID, ConversationID: conversation.ID, Action: agent.PendingConversationArchive, RequestID: "request-archived", Deadline: time.Now().UTC().Add(-time.Second)}
+	if _, err := repo.BeginPendingConversationAction(ctx, archivedPending); err != nil {
+		t.Fatalf("begin pending archive before direct archive: %v", err)
+	}
+	if _, err := repo.ArchiveConversation(ctx, owner.ID, conversation.ID); err != nil {
+		t.Fatalf("direct archive pending conversation: %v", err)
+	}
+	if err := repo.FinalizePendingConversationAction(ctx, archivedPending); err != nil {
+		t.Fatalf("finalize already archived conversation: %v", err)
+	}
+	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, archivedPending.RequestID); !errors.Is(err, agent.ErrPendingConversationCanceled) {
+		t.Fatalf("undo after finalized direct archive error = %v, want canceled", err)
+	}
+	if archived, err := repo.ListArchivedConversations(ctx, owner.ID); err != nil || len(archived) != 1 || archived[0].ID != conversation.ID {
+		t.Fatalf("archived conversation after finalized direct archive = %#v err=%v", archived, err)
 	}
 	deletePending := agent.PendingConversationAction{PrincipalID: owner.ID, ConversationID: conversation.ID, Action: agent.PendingConversationDelete, RequestID: "request-delete", Deadline: time.Now().UTC().Add(-time.Second)}
 	if _, err := repo.BeginPendingConversationAction(ctx, deletePending); err != nil {

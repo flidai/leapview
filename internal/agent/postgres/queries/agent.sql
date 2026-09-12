@@ -73,6 +73,23 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;
 
+-- name: UpdatePendingConversationMetadata :execrows
+UPDATE agent.conversations
+SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+WHERE id = sqlc.arg(conversation_id) AND principal_id = sqlc.arg(principal_id)
+  AND status IN ('active', 'archived')
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = '';
+
+-- name: ListPendingConversationActions :many
+SELECT principal_id, id,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') AS text) AS pending_action,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingRequestId}', '') AS text) AS pending_request_id,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingUntil}', '') AS text) AS pending_until
+FROM agent.conversations
+WHERE COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') IN ('archive', 'delete')
+ORDER BY metadata_json #>> '{_leapview_chat,pendingUntil}' ASC, id
+LIMIT 1000;
+
 -- name: DeleteAgentConversation :one
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
        transcript_revision, created_at, updated_at, archived_at

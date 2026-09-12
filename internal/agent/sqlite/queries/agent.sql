@@ -58,6 +58,25 @@ WHERE id = sqlc.arg(id)
   AND json_extract(metadata_json, '$._leapview_chat.deletedAt') IS NULL
 RETURNING *;
 
+-- name: UpdatePendingConversationMetadata :execrows
+UPDATE agent_conversations
+SET metadata_json = sqlc.arg(metadata_json),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(conversation_id)
+  AND principal_id = sqlc.arg(principal_id)
+  AND status IN ('active', 'archived')
+  AND json_extract(metadata_json, '$._leapview_chat.deletedAt') IS NULL;
+
+-- name: ListPendingConversationActions :many
+SELECT principal_id, id,
+       CAST(json_extract(metadata_json, '$._leapview_chat.pendingAction') AS TEXT) AS pending_action,
+       CAST(json_extract(metadata_json, '$._leapview_chat.pendingRequestId') AS TEXT) AS pending_request_id,
+       CAST(json_extract(metadata_json, '$._leapview_chat.pendingUntil') AS TEXT) AS pending_until
+FROM agent_conversations
+WHERE json_extract(metadata_json, '$._leapview_chat.pendingAction') IN ('archive', 'delete')
+ORDER BY json_extract(metadata_json, '$._leapview_chat.pendingUntil') ASC, id
+LIMIT 1000;
+
 -- name: DeleteAgentConversation :one
 DELETE FROM agent_conversations
 WHERE id = sqlc.arg(id)
