@@ -859,6 +859,7 @@ func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse 
 		PrincipalID: row.PrincipalID,
 		Title:       row.Title,
 		Status:      row.Status,
+		Pinned:      conversationPinned(row),
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
 	}
@@ -1005,14 +1006,14 @@ func parseAPILimit(value string) (int, error) {
 }
 
 func statusForNotFound(err error) int {
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrConversationArchived) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) || errors.Is(err, agent.ErrConversationArchived) {
 		return stdhttp.StatusNotFound
 	}
 	return stdhttp.StatusInternalServerError
 }
 
 func statusForBadRequestOrNotFound(err error) int {
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
 		return stdhttp.StatusNotFound
 	}
 	return stdhttp.StatusBadRequest

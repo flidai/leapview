@@ -20,7 +20,7 @@ func TestGeneratedAgentOperationClassifications(t *testing.T) {
 		"archiveAgentConversation": {audit: "agent.conversation.archived", target: "conversation", guarantee: "transactional"},
 		"updateAgentConversation":  {audit: "agent.conversation.updated", target: "conversation", concurrency: "if-match", guarantee: "transactional"},
 		"createAgentRun":           {audit: "agent.run.created", target: "conversation", idempotency: "required", guarantee: "transactional", ui: true},
-		"cancelAgentRun":           {audit: "agent.run.cancelled", target: "conversation", idempotency: "required", guarantee: "transactional"},
+		"cancelAgentRun":           {audit: "agent.run.cancelled", target: "conversation", idempotency: "required", guarantee: "transactional", ui: true},
 	}
 	for operationID, want := range commands {
 		contract, ok := contracts[operationID]

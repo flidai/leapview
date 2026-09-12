@@ -130,6 +130,7 @@ type ChatArtifactSignal struct {
 }
 
 type ChatConversationSummary struct {
+	Pinned          *bool   `json:"pinned,omitempty" yaml:"pinned,omitempty"`
 	ArchivedAt      *string `json:"archivedAt,omitempty" yaml:"archivedAt,omitempty"`
 	CreatedAt       string  `json:"createdAt" yaml:"createdAt"`
 	ID              string  `json:"id" yaml:"id"`
@@ -151,12 +152,15 @@ type ChatSignal struct {
 }
 
 type ChatStatus struct {
-	Enabled bool    `json:"enabled" yaml:"enabled"`
-	Error   *string `json:"error,omitempty" yaml:"error,omitempty"`
-	Running bool    `json:"running" yaml:"running"`
+	CanContinue *bool   `json:"canContinue,omitempty" yaml:"canContinue,omitempty"`
+	RunID       *string `json:"runId,omitempty" yaml:"runId,omitempty"`
+	Enabled     bool    `json:"enabled" yaml:"enabled"`
+	Error       *string `json:"error,omitempty" yaml:"error,omitempty"`
+	Running     bool    `json:"running" yaml:"running"`
 }
 
 type ChatTranscriptItemSignal struct {
+	Edited          *bool                   `json:"edited,omitempty" yaml:"edited,omitempty"`
 	ArgumentsJSON   *string                 `json:"argumentsJson,omitempty" yaml:"argumentsJson,omitempty"`
 	Artifact        *ChatArtifactSignal     `json:"artifact,omitempty" yaml:"artifact,omitempty"`
 	ConversationID  *string                 `json:"conversationId,omitempty" yaml:"conversationId,omitempty"`
@@ -187,9 +191,10 @@ type ChromeSignal struct {
 }
 
 type ComposerSignal struct {
-	Disabled    bool   `json:"disabled" yaml:"disabled"`
-	Placeholder string `json:"placeholder" yaml:"placeholder"`
-	Value       string `json:"value" yaml:"value"`
+	EditMessageID *string `json:"editMessageId,omitempty" yaml:"editMessageId,omitempty"`
+	Disabled      bool    `json:"disabled" yaml:"disabled"`
+	Placeholder   string  `json:"placeholder" yaml:"placeholder"`
+	Value         string  `json:"value" yaml:"value"`
 }
 
 type ConnectionAdministrationCommandSignal struct {
@@ -1590,6 +1595,7 @@ type SidebarGroupSignal struct {
 }
 
 type SidebarHistoryItemSignal struct {
+	Pinned  *bool  `json:"pinned,omitempty" yaml:"pinned,omitempty"`
 	Active  bool   `json:"active" yaml:"active"`
 	Href    string `json:"href" yaml:"href"`
 	ID      string `json:"id" yaml:"id"`

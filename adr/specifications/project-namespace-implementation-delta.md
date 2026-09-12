@@ -115,7 +115,7 @@ binding service, lifecycle, Project context, or registry framework.
 | SEM-01 | Conforming | SemanticModel datasets resolve only through the candidate-local Model map, while `TestSourceRootRejectsQualifiedForeignSemanticModelReferenceDeterministically` and `TestSourceBundleRejectsMissingAndForeignSemanticModelReferences` reject missing and foreign-qualified references during compilation and bundle admission. | — |
 | SEM-02 | Conforming | Compiled models are stored inside one graph/artifact, and active graph readers pin one exact runtime lease in [`internal/project/module/active_graph_test.go`](../../internal/project/module/active_graph_test.go); there is no resolver path to another active catalog. | — |
 | SEM-03 | Conforming | Source-to-Model-to-SemanticModel is the ordinary compiler path and no dbt runtime kind exists. `TestResourceResolverDoesNotResolveThroughProvenance` proves provenance cannot become a semantic resolver alias; FAI-678 separately owns the dbt adoption fixture. | — |
-| SEM-04 | Missing | ADR-0019 documents the upstream dbt boundary, but no fixture proves upstream dependencies become consumer-owned ordinary Sources/Models before LeapView compilation. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
+| SEM-04 | Conforming | `TestDBTMultiSourceProjectClosure` builds a consumer-owned Parquet mart from a local upstream dbt package, then compiles and queries it only through ordinary Project-local Source, Model, and SemanticModel resources. Package-qualified and foreign live references fail closed. | — |
 | SEM-05 | Conforming | The graph is a closed project-local topology: `TestSourceBundleRejectsIncompleteSemanticModelClosure` requires each semantic dataset dependency and its exact edge, and the foreign-reference corpus rejects resolution outside that topology. | — |
 
 ### Isolation boundary
@@ -140,12 +140,12 @@ binding service, lifecycle, Project context, or registry framework.
 
 | Requirement | Disposition | Current evidence or conflict | Gap owner |
 | --- | --- | --- | --- |
-| DBT-01 | Missing | ADR-0019 defines the mapping, but the reference dbt-repository-plus-LeapView deployment fixture does not exist. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
-| DBT-02 | Missing | Provenance types are separate from execution identity, but no dbt fixture proves those identifiers cannot replace Project UID. FAI-667's issuer-owned UID flow is a prerequisite for the FAI-678 adoption evidence. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
+| DBT-01 | Conforming | The maintained [`examples/dbt-warehouse-boundary/multi-source`](../../examples/dbt-warehouse-boundary/multi-source) fixture and `task dbt:warehouse:proof` build an upstream-package-derived consumer mart and combine it with an independent CRM publication in one rootless LeapView resource graph. | — |
+| DBT-02 | Conforming | `TestDBTMultiSourceProjectClosure` mints and replays one issuer-owned ProjectUID, proves the same portable digest binds to separate target contexts, and rejects dbt project, repository, invocation, manifest, target, and path values from the portable artifact. | — |
 | DBT-03 | Conforming | [`discoverAuthoredResources`](../../internal/project/compiler/resource_discovery.go) discovers SemanticModels and Dashboards beside the other four portable kinds without a Project manifest; the maintained [`examples/dbt-warehouse-boundary/leapview`](../../examples/dbt-warehouse-boundary/leapview) fixture contains only those conventional resource directories. | — |
-| DBT-04 | Partial | Target Connection bindings and ordinary Source locations already select environment-specific physical relations, but the dbt mapping fixture is absent. FAI-675 supplies the closed resolver/rejection behavior consumed by that fixture. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
-| DBT-05 | Missing | Runtime has no dbt Mesh resolver, as required, but there is no fixture showing upstream dbt dependencies only as provenance behind consumer-owned outputs. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
-| DBT-06 | Partial | The compiler already supports several ordinary Sources and Models in one closed graph, but a maintained independently-produced multi-Source semantic fixture is absent. FAI-675 supplies the closed-graph and live-reference rejection contract used by that fixture. | [FAI-678](https://linear.app/flid/issue/FAI-678) |
+| DBT-04 | Conforming | The proof binds two ordinary Connection roots independently for dev and prod while preserving the portable artifact digest; the directory publication changes by target without becoming portable identity. | — |
+| DBT-05 | Conforming | dbt resolves the local upstream package and materializes a consumer-owned Parquet mart before handoff. LeapView receives no manifest or live Mesh authority, and package-qualified live references are rejected. | — |
+| DBT-06 | Conforming | The proof compiles two Connections, two independently produced Sources, two thin Models, one SemanticModel, and one Dashboard into one closed graph. PostgreSQL activation assigns a complete, stable generation ResourceUID inventory and rejects foreign Project or instance lookups. | — |
 
 ## Follow-up ownership
 

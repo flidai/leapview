@@ -19,6 +19,7 @@ import (
 var (
 	updateAgentConfigOperation        = agentgen.GenCommandOperationUpdateAgentConfig()
 	createAgentConversationOperation  = agentgen.GenCommandOperationCreateAgentConversation()
+	manageAgentConversationsOperation = agentgen.GenCommandOperationManageAgentConversations()
 	archiveAgentConversationOperation = agentgen.GenCommandOperationArchiveAgentConversation()
 	updateAgentConversationOperation  = agentgen.GenCommandOperationUpdateAgentConversation()
 	createAgentRunOperation           = agentgen.GenCommandOperationCreateAgentRun()
@@ -192,8 +193,20 @@ func beginUICommandInvocation(r *stdhttp.Request, binding uicommand.Binding, wor
 			RequestID: identity, CorrelationID: correlationID,
 		})
 		return ctx, err
+	case manageAgentConversationsOperation.APIGenOperationID():
+		ctx, _, err := agentgen.BeginGenManageAgentConversationsCommand(r.Context(), agentgen.GenManageAgentConversationsCommandInvocation{
+			Surface: apigencommand.SurfaceUI, IdempotencyKey: idempotencyKey,
+			RequestID: identity, CorrelationID: correlationID,
+		})
+		return ctx, err
 	case createAgentRunOperation.APIGenOperationID():
 		ctx, _, err := agentgen.BeginGenCreateAgentRunCommand(r.Context(), agentgen.GenCreateAgentRunCommandInvocation{
+			Surface: apigencommand.SurfaceUI, Conversation: strings.TrimSpace(target), IdempotencyKey: idempotencyKey,
+			RequestID: identity, CorrelationID: correlationID,
+		})
+		return ctx, err
+	case cancelAgentRunOperation.APIGenOperationID():
+		ctx, _, err := agentgen.BeginGenCancelAgentRunCommand(r.Context(), agentgen.GenCancelAgentRunCommandInvocation{
 			Surface: apigencommand.SurfaceUI, Conversation: strings.TrimSpace(target), IdempotencyKey: idempotencyKey,
 			RequestID: identity, CorrelationID: correlationID,
 		})
@@ -209,8 +222,12 @@ func agentUIBinding(operationID agentgen.GenCommandOperationID) uicommand.Bindin
 		return agentgen.GenUIActionUpdateAgentConfig()
 	case createAgentConversationOperation.APIGenOperationID():
 		return agentgen.GenUIActionCreateAgentConversation()
+	case manageAgentConversationsOperation.APIGenOperationID():
+		return agentgen.GenUIActionManageAgentConversations()
 	case createAgentRunOperation.APIGenOperationID():
 		return agentgen.GenUIActionCreateAgentRun()
+	case cancelAgentRunOperation.APIGenOperationID():
+		return agentgen.GenUIActionCancelAgentRun()
 	default:
 		return uicommand.Binding{}
 	}

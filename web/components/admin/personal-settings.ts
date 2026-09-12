@@ -342,10 +342,22 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
             </div>
           </div>
         </section>` : nothing}
+        ${settings.active === 'profile' ? html`<section aria-label="Chat history">
+          <h2>Chat history</h2>
+          <div class="card">
+            <div class="row"><div class="settings-field"><h3>Archived chats</h3><span class="settings-description">Restore or delete chats hidden from your sidebar.</span></div><button @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))}>Manage</button></div>
+            <div class="row"><div class="settings-field"><h3>Archive all chats</h3><span class="settings-description">Clear your sidebar and keep your conversations.</span></div><button @click=${() => this.requestChatCleanup('archive_all')}>Archive all</button></div>
+            <div class="row"><div class="settings-field"><h3>Delete all chats</h3><span class="settings-description">Permanently delete your conversations, including archived chats.</span></div><button class="danger" @click=${() => this.requestChatCleanup('delete_all')}>Delete all</button></div>
+          </div>
+        </section>` : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
       </div>
     `
+  }
+
+  private requestChatCleanup(action: string) {
+    this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: '' } }))
   }
 
   private renderThemePicker(theme: string) {

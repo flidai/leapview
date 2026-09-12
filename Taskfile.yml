@@ -47,6 +47,11 @@ tasks:
     cmds:
       - ./scripts/dbt-warehouse-boundary.sh build
 
+  dbt:warehouse:proof:
+    desc: Prove independent physical producers and upstream dbt packages close into one Project
+    cmds:
+      - ./scripts/dbt-warehouse-boundary.sh proof
+
   dbt:warehouse:qualify:
     desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
     cmds:
@@ -322,6 +327,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
+      - bun test scripts/agent_e2e_config.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
@@ -1279,6 +1285,21 @@ tasks:
         go run ./cmd/leapviewctl qualify site-image
         --image {{.IMAGE | quote}}
 
+  qualify:ubdr:managed-data-s3-dr:
+    desc: Capture the managed-data S3 disaster-recovery seed evidence without restoring it
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+      - >-
+        go test -race -tags='duckdb_arrow fai520qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI520ManagedDataS3DRSeedQualification$'
+        -count=1 -timeout=15m -v
+
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
     cmds:
@@ -1765,7 +1786,7 @@ tasks:
       - task: security:source
 
   agent:e2e:
-    desc: Run opt-in DeepSeek-backed headless agent E2E
+    desc: Run opt-in OpenAI-compatible headless agent E2E
     deps:
       - postgres:dev:up
     cmds:

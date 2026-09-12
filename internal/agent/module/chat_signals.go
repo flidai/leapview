@@ -9,7 +9,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
-func chatSignalWithConversations(conversations []ui.ChatConversationSummary, activeID string, transcript []agent.ChatTranscriptItem, artifacts agent.ChatArtifactSignals, statusErr string, running, enabled bool) ui.ChatViewState {
+func chatSignalWithConversations(conversations []ui.ChatConversationSummary, activeID string, transcript []agent.ChatTranscriptItem, artifacts agent.ChatArtifactSignals, statusErr string, running, enabled bool, runIDs ...string) ui.ChatViewState {
 	if !enabled && statusErr == "" {
 		statusErr = "Agent is not configured"
 	}
@@ -17,17 +17,17 @@ func chatSignalWithConversations(conversations []ui.ChatConversationSummary, act
 		conversations = []ui.ChatConversationSummary{}
 	}
 	artifacts = normalizeChatArtifacts(artifacts)
+	status := ui.ChatStatus{Enabled: enabled, Running: running, Error: ui.Optional(statusErr)}
+	if running && len(runIDs) > 0 {
+		status.RunID = ui.Optional(runIDs[0])
+	}
 	return ui.ChatViewState{
 		Visuals: TypedChatArtifacts(artifacts),
 		Agent: ui.ChatSignal{
 			Conversations:        conversations,
 			ActiveConversationID: activeID,
 			Transcript:           ui.ChatTranscriptItems(transcript),
-			Status: ui.ChatStatus{
-				Enabled: enabled,
-				Running: running,
-				Error:   ui.Optional(statusErr),
-			},
+			Status:               status,
 			Composer: ui.ComposerSignal{
 				Value:       "",
 				Disabled:    !enabled || running,
@@ -56,21 +56,36 @@ func (m *Module) ChatSignalWith(ctx context.Context, scope agent.Scope, activeID
 		statusErr = "Agent is not configured"
 	}
 	artifacts = normalizeChatArtifacts(artifacts)
+	effectiveRunning := running
+	status := ui.ChatStatus{Enabled: enabled, Running: effectiveRunning, Error: ui.Optional(statusErr)}
+	// The in-memory running map is intentionally lost across a process
+	// restart. Derive the browser's run identity and continue affordance from
+	// the newest durable run so the browser reflects the durable lifecycle.
+	if activeID != "" && m.service != nil && scope.PrincipalID != "" {
+		if runs, err := m.service.ListRunsPage(ctx, scope, activeID, agent.Page{Limit: 1}); err == nil && len(runs) > 0 {
+			latest := runs[0]
+			effectiveRunning = latest.Status == agent.RunStatusRunning || latest.Status == agent.RunStatusPreparing
+			status.Running = effectiveRunning
+			if effectiveRunning {
+				status.RunID = ui.Optional(latest.ID)
+			}
+			if latest.Status == agent.RunStatusCanceled {
+				status.Error = nil
+				status.CanContinue = ui.Pointer(true)
+			}
+		}
+	}
 	return ui.ChatViewState{
 		Visuals: TypedChatArtifacts(artifacts),
 		Agent: ui.ChatSignal{
 			Conversations:        conversations,
 			ActiveConversationID: activeID,
 			Transcript:           ui.ChatTranscriptItems(transcript),
-			Status: ui.ChatStatus{
-				Enabled: enabled,
-				Running: running,
-				Error:   ui.Optional(statusErr),
-			},
+			Status:               status,
 			Composer: ui.ComposerSignal{
 				Value:       "",
-				Disabled:    !enabled || running,
-				Placeholder: chatPlaceholder(enabled, running),
+				Disabled:    !enabled || effectiveRunning,
+				Placeholder: chatPlaceholder(enabled, effectiveRunning),
 			},
 		},
 	}
@@ -130,6 +145,7 @@ func chatConversationSummary(row agent.Conversation) ui.ChatConversationSummary 
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
 		ArchivedAt:  ui.Optional(row.ArchivedAt),
+		Pinned:      ui.Pointer(row.Pinned),
 	}
 }
 

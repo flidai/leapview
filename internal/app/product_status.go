@@ -20,7 +20,7 @@ func productAdministrationStatus(config appconfig.Config, instanceID, publicURL,
 		SCIM:      adminmodule.ProductAvailability{Available: true, Enabled: strings.TrimSpace(config.SCIMBearerToken) != ""},
 		ManagedBy: "deployment",
 	}
-	agentConfigured := strings.TrimSpace(config.AgentAPIKey) != ""
+	agentConfigured := strings.TrimSpace(config.AgentAPIKey) != "" && strings.TrimSpace(config.AgentModel) != ""
 	storageBackend := strings.TrimSpace(config.ManagedDataBackend)
 	if storageBackend == "" {
 		storageBackend = "local"

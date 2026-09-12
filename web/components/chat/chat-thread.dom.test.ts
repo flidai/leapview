@@ -344,7 +344,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
     return {
       chart: (root.querySelector('lv-visual-artifact[artifact-id="agent_chart_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
       table: (root.querySelector('lv-visual-artifact[artifact-id="agent_table_1"]')?.shadowRoot?.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind,
-      jsonDetails: root.querySelectorAll('.tool-details').length,
+      toolRows: root.querySelectorAll('.tool-call').length,
       bodyText: root.textContent || '',
       artifactBackground: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).backgroundColor,
       artifactBorderTopWidth: getComputedStyle(root.querySelector('lv-visual-artifact')!.shadowRoot!.querySelector('.artifact')!).borderTopWidth,
@@ -352,7 +352,7 @@ test('chat thread renders visual artifacts with dashboard web components', async
   })
   expect(rendered.chart).toBe('cartesian')
   expect(rendered.table).toBe('table')
-  expect(rendered.jsonDetails).toBe(0)
+  expect(rendered.toolRows).toBe(0)
   expect(rendered.bodyText.includes('delivered')).toBe(false)
   expect(rendered.artifactBackground).toBe('rgb(1, 2, 3)')
   expect(rendered.artifactBorderTopWidth).toBe('2px')
@@ -360,134 +360,57 @@ test('chat thread renders visual artifacts with dashboard web components', async
   await page.close()
 })
 
-test('chat thread renders tool details with compact json and toon code blocks', async () => {
+test('chat thread hides tool activity while keeping Working and run errors visible', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
     await customElements.whenDefined('lv-chat-thread')
     const thread = document.querySelector('lv-chat-thread') as any
+    thread.status = { enabled: true, running: true }
     thread.transcript = [
+      { id: 'user-1', kind: 'user', text: 'Find the sales dashboard.' },
       {
-        id: 'tool-toon',
-        kind: 'tool',
-        name: 'catalog_list',
-        status: 'complete',
-        inputJson: '{\n  "name": "catalog_list",\n  "arguments": "{}"\n}',
-        inputFormat: 'json',
-        resultJson: 'items[2]{id,title}:\n  sales,Sales\n  ops,Operations\ncount: 2\nhasMore: false',
-        resultFormat: 'toon',
+        id: 'tool-running', kind: 'tool', name: 'catalog_search', status: 'running',
+        inputJson: '{"query":"sales"}', resultJson: 'items[1]{id}: sales',
       },
       {
-        id: 'tool-json',
-        kind: 'tool',
-        name: 'query_visual',
-        status: 'complete',
-        resultJson: '{\n  "ok": true,\n  "kind": "chart"\n}',
+        id: 'tool-error', kind: 'tool', name: 'catalog_get', status: 'error',
+        inputJson: '{"id":"dashboard:sales"}', error: 'Catalog lookup failed.',
+        resultJson: '{"error":"secret tool result"}',
       },
+      {
+        id: 'tool-complete', kind: 'tool', name: 'catalog_list', status: 'complete',
+        resultJson: 'items[1]{id}: dashboard:sales',
+      },
+      { id: 'run-error', kind: 'error', text: 'The dashboard could not be loaded.' },
+      { id: 'assistant-1', kind: 'assistant', markdown: 'I could not load that dashboard.' },
     ]
     await thread.updateComplete
-    for (const trigger of Array.from((thread.shadowRoot as ShadowRoot).querySelectorAll('.tool-trigger')) as HTMLButtonElement[]) {
-      trigger.click()
-    }
-    await thread.updateComplete
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const blocks = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-code-block')) as any[]
+    const root = element.shadowRoot
+    const text = root.textContent?.replace(/\s+/g, ' ').trim() || ''
     return {
-      blockCount: blocks.length,
-      languages: blocks.map((block) => block.language),
-      compact: blocks.map((block) => block.compact),
-      text: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
-      hasRawPre: Boolean((element.shadowRoot as ShadowRoot).querySelector('.tool-detail-block > pre')),
+      text,
+      working: root.querySelector('.working')?.textContent?.replace(/\s+/g, ' ').trim(),
+      toolRows: root.querySelectorAll('.tool-call').length,
+      codeBlocks: root.querySelectorAll('lv-code-block').length,
+      agentTurns: root.querySelectorAll('.agent-turn').length,
+      runError: root.querySelector('.message.error')?.textContent?.replace(/\s+/g, ' ').trim(),
+      assistantMarkdown: (root.querySelector('.agent-markdown') as any)?.value,
     }
   })
 
-  expect(state.blockCount).toBe(3)
-  expect(state.languages).toEqual(['json', 'toon', 'json'])
-  expect(state.compact).toEqual([true, true, true])
-  expect(state.text).toContain('items[2]{id,title}:')
-  expect(state.hasRawPre).toBe(false)
-  await page.close()
-})
-
-test('chat thread keeps in-flight tool details open as the result arrives', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
-  await page.evaluate(async () => {
-    await customElements.whenDefined('lv-chat-thread')
-    const thread = document.querySelector('lv-chat-thread') as any
-    thread.transcript = [{
-      id: 'part-live-tool',
-      toolCallId: 'call-live-tool',
-      kind: 'tool',
-      name: 'catalog_list',
-      status: 'running',
-      inputJson: '{\n  "name": "catalog_list",\n  "arguments": "{\\"kind\\":\\"dashboard\\"}"\n}',
-      inputFormat: 'json',
-    }]
-    await thread.updateComplete
-    ;(thread.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.tool-trigger')!.click()
-    await thread.updateComplete
-  })
-
-  const running = await page.locator('lv-chat-thread').evaluate((element: any) => ({
-    expanded: (element.shadowRoot as ShadowRoot).querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-    details: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
-  }))
-  expect(running.expanded).toBe('true')
-  expect(running.details).toContain('catalog_list')
-
-  await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
-    thread.transcript = [{
-      ...thread.transcript[0],
-      status: 'complete',
-      resultJson: 'items[1]{id}:\n  dashboard:sales',
-      resultFormat: 'toon',
-    }]
-    await thread.updateComplete
-  })
-  const complete = await page.locator('lv-chat-thread').evaluate((element: any) => ({
-    expanded: (element.shadowRoot as ShadowRoot).querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
-    details: (element.shadowRoot as ShadowRoot).querySelector('.tool-details')?.textContent || '',
-  }))
-  expect(complete.expanded).toBe('true')
-  expect(complete.details).toContain('dashboard:sales')
-  await page.close()
-})
-
-test('chat thread renders tool arguments directly and exported yaml as code', async () => {
-  const page = await browser.newPage()
-  await page.goto(baseURL)
-  await page.evaluate(async () => {
-    await customElements.whenDefined('lv-chat-thread')
-    const thread = document.querySelector('lv-chat-thread') as any
-    thread.transcript = [{
-      id: 'tool-export', kind: 'tool', name: 'export_dashboard_yaml', status: 'complete',
-      inputJson: '{"name":"export_dashboard_yaml","arguments":"{\\"dashboardId\\":\\"dashboard:sales\\"}"}',
-      argumentsJson: '{\n  "dashboardId": "dashboard:sales",\n  "sourceKind": "project"\n}',
-      inputFormat: 'json',
-      resultJson: 'apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:sales\n',
-      resultFormat: 'yaml',
-    }]
-    await thread.updateComplete
-    ;(thread.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.tool-trigger')!.click()
-    await thread.updateComplete
-  })
-
-  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const blocks = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-code-block')) as any[]
-    return {
-      languages: blocks.map((block) => block.language),
-      values: blocks.map((block) => block.code),
-      labels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.tool-detail-label')).map((label) => label.textContent),
-    }
-  })
-  expect(state.languages).toEqual(['json', 'yaml'])
-  expect(state.values[0]).toContain('"dashboardId": "dashboard:sales"')
-  expect(state.values[0]).not.toContain('export_dashboard_yaml')
-  expect(state.values[1]).toContain('kind: Dashboard')
-  expect(state.labels).toEqual(['Input', 'Dashboard YAML'])
+  expect(state.working).toBe('Working')
+  expect(state.toolRows).toBe(0)
+  expect(state.codeBlocks).toBe(0)
+  expect(state.agentTurns).toBe(1)
+  expect(state.runError).toBe('The dashboard could not be loaded.')
+  expect(state.text).toContain('Find the sales dashboard.')
+  expect(state.assistantMarkdown).toBe('I could not load that dashboard.')
+  expect(state.text).not.toContain('Catalog lookup failed.')
+  expect(state.text).not.toContain('secret tool result')
   await page.close()
 })
 
@@ -584,4 +507,48 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
   expect(state.hasChart).toBe(false)
   expect(state.text).toBe('Artifact data is unavailable.')
   await page.close()
+})
+
+test('message actions copy exact text and prepare edits without submitting', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as any).copied = text } } })
+      const thread = document.querySelector('lv-chat-thread') as any
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [{ id: 'u1', kind: 'user', text: 'Explain revenue', references: [] }, { id: 'a1', kind: 'assistant', markdown: '**Revenue** is sales.', status: 'complete' }]
+      ;(window as any).reused = []
+      ;(window as any).submitted = 0
+      document.addEventListener('lv-chat-reuse', (event: Event) => (window as any).reused.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-submit', () => (window as any).submitted++)
+    })
+    await page.getByRole('group', { name: 'Answer actions' }).getByRole('button', { name: 'Copy message' }).click()
+    expect(await page.evaluate(() => (window as any).copied)).toBe('**Revenue** is sales.')
+    await page.locator('.message.user').hover()
+    await page.getByRole('button', { name: 'Edit message' }).click()
+    await page.getByRole('button', { name: 'Ask again', exact: true }).click()
+    expect(await page.evaluate(() => (window as any).reused)).toEqual([{ text: 'Explain revenue', references: [], editMessageId: 'u1' }, { text: 'Explain revenue', references: [] }])
+    expect(await page.evaluate(() => (window as any).submitted)).toBe(0)
+    await page.evaluate(() => { (document.querySelector('lv-chat-thread') as any).status = { enabled: true, running: true } })
+    expect(await page.getByRole('button', { name: 'Edit message' }).isDisabled()).toBe(true)
+  } finally { await page.close() }
+})
+
+test('message edit action ignores a transcript item without a persisted ID', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      const thread = document.querySelector('lv-chat-thread') as any
+      thread.status = { enabled: true, running: false }
+      thread.transcript = [{ id: '', kind: 'user', text: 'Unpersisted prompt', references: [] }]
+      ;(window as any).reuseCount = 0
+      document.addEventListener('lv-chat-reuse', () => (window as any).reuseCount++)
+      await thread.updateComplete
+    })
+    await page.locator('.message.user').hover()
+    await page.getByRole('button', { name: 'Edit message' }).click()
+    expect(await page.evaluate(() => (window as any).reuseCount)).toBe(0)
+  } finally { await page.close() }
 })

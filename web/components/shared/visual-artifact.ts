@@ -22,7 +22,8 @@ class VisualArtifact extends LitElement {
     }
 
     .artifact {
-      display: block;
+      display: flex;
+      flex-direction: column;
       width: 100%;
       height: 100%;
       min-width: 0;
@@ -36,8 +37,11 @@ class VisualArtifact extends LitElement {
     lv-visualization-host {
       display: block;
       width: 100%;
-      height: 100%;
+      min-height: 0;
+      flex: 1;
     }
+
+    .limit-notice { margin: 0; padding: 6px 10px; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
 
     .state {
       display: grid;
@@ -58,9 +62,14 @@ class VisualArtifact extends LitElement {
     if (!this.payload) {
       return this.renderState('Artifact data is unavailable.')
     }
+    const limitNotice = this.payload.diagnostics.find(item => item.code === 'agent_row_limit_reached')?.message
+    const budget = this.payload.spec.dataBudget.maxRows
+    const limited = this.payload.dataState.kind === 'inline' && budget > 0
+      && this.payload.dataState.datasets.some(dataset => dataset.rows.length >= budget)
     return html`
       <div class=${`artifact ${isTabularVisualType(this.payload.spec.kind) ? 'table' : 'chart'}`}>
         <lv-visualization-host .envelope=${this.payload}></lv-visualization-host>
+        ${limitNotice || limited ? html`<p class="limit-notice" role="note">${limitNotice || `Showing up to ${budget} rows. More data may exist.`}</p>` : null}
       </div>
     `
   }

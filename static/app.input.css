@@ -38,9 +38,8 @@
 
 @custom-variant dark (&:where([data-color-mode="dark"], [data-color-mode="dark"] *));
 
-@view-transition {
-  navigation: auto;
-}
+/* Keep navigation native: automatic cross-document transitions can stall
+   rendering when a chat redirect is followed immediately by another route. */
 
 :root {
   --fontStack-system: "Inter Variable", "Inter", "Mona Sans VF", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
@@ -681,4 +680,10 @@
 
 @utility shadow-inset {
   box-shadow: var(--shadow-inset);
+}
+
+/* Keep the development inspector launcher out of chat composers. */
+body:has(lv-chat-page) datastar-inspector,
+body:has(lv-dashboard-page[data-agent-open]) datastar-inspector {
+  display: none;
 }

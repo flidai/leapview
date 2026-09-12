@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	project "github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
@@ -29,6 +32,200 @@ import (
 )
 
 const resourceUIDQualificationInstance = "lvinst_0123456789abcdefghijklmnopqrstuv"
+
+const resourceUIDMultiSourceProject = "lvproject_0198f2c07c7a7f008a11000000006780"
+
+// TestPostgresResourceUIDMultiSourceProjectClosure compiles the maintained
+// dbt warehouse-boundary consumer and proves that one portable, rootless
+// graph receives one exact ResourceUID binding for every resource when the
+// current PostgreSQL delivery authority commits its generation.
+func TestPostgresResourceUIDMultiSourceProjectClosure(t *testing.T) {
+	db := deliveryTestDB(t)
+	installResourceUIDQualificationDependencies(t, db)
+	seedResourceUIDQualificationBootstrapForProject(t, db, resourceUIDMultiSourceProject)
+
+	bundle := compileResourceUIDMultiSourceBundle(t)
+	graph := bundle.Graph()
+	if len(bundle.Manifest().Connections) != 2 || len(bundle.Manifest().Sources) != 2 {
+		t.Fatalf("multi-source bundle connections=%d sources=%d, want two each", len(bundle.Manifest().Connections), len(bundle.Manifest().Sources))
+	}
+	inventory, err := project.NewResourceUIDInventory(bundle)
+	if err != nil {
+		t.Fatalf("seal multi-source ResourceUID inventory: %v", err)
+	}
+
+	adminRepository := New(db)
+	first := prepareResourceUIDQualificationGeneration(t, adminRepository, resourceUIDQualificationGenerationSpec{
+		Number: 1, Bundle: &bundle, Inventory: &inventory, Graph: &graph, ProjectID: resourceUIDMultiSourceProject,
+	})
+	lineage := &testActivationLineage{expected: ActivationLineageInput{
+		TargetID: resourceUIDQualificationInstance, ProjectID: resourceUIDMultiSourceProject,
+		GenerationID: first.generationID, CompiledGraphDigest: graph.Digest(),
+	}}
+	repository := NewWithOptions(db, Options{
+		ActivationAudit: testActivationAudit{audit: accesspostgres.New()},
+		Lineage:         lineage,
+	})
+
+	var registryRows int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM project.resource_uid_registry WHERE instance_id=$1 AND project_id=$2`, resourceUIDQualificationInstance, resourceUIDMultiSourceProject).Scan(&registryRows); err != nil {
+		t.Fatal(err)
+	}
+	if registryRows != 0 {
+		t.Fatalf("pre-activation registry rows=%d, want zero", registryRows)
+	}
+
+	firstResult, err := repository.Activate(t.Context(), first.activation)
+	if err != nil {
+		t.Fatalf("activate multi-source generation: %v", err)
+	}
+	if firstResult.Replay || firstResult.Pointer.ActiveGenerationID != first.generationID {
+		t.Fatalf("multi-source activation result=%#v", firstResult)
+	}
+
+	projectRepository := projectpostgres.New(db)
+	firstBindings, err := projectRepository.ListGenerationResourceUIDs(t.Context(), resourceUIDQualificationInstance, resourceUIDMultiSourceProject, first.generationID)
+	if err != nil {
+		t.Fatalf("list first-generation ResourceUID bindings: %v", err)
+	}
+	assertResourceUIDMultiSourceBindings(t, firstBindings, graph, first.generationID)
+	firstUIDs := resourceUIDBindingMap(firstBindings)
+
+	second := prepareResourceUIDQualificationGeneration(t, adminRepository, resourceUIDQualificationGenerationSpec{
+		Number: 2, BaseGenerationID: first.generationID, Bundle: &bundle, Inventory: &inventory, Graph: &graph, ProjectID: resourceUIDMultiSourceProject,
+	})
+	lineage.expected.GenerationID = second.generationID
+	if result, err := repository.Activate(t.Context(), second.activation); err != nil {
+		t.Fatalf("activate compatible multi-source generation: %v", err)
+	} else if result.Replay || result.Pointer.ActiveGenerationID != second.generationID {
+		t.Fatalf("compatible multi-source activation result=%#v", result)
+	}
+	secondBindings, err := projectRepository.ListGenerationResourceUIDs(t.Context(), resourceUIDQualificationInstance, resourceUIDMultiSourceProject, second.generationID)
+	if err != nil {
+		t.Fatalf("list second-generation ResourceUID bindings: %v", err)
+	}
+	assertResourceUIDMultiSourceBindings(t, secondBindings, graph, second.generationID)
+	if got := resourceUIDBindingMap(secondBindings); !sameResourceUIDMap(got, firstUIDs) {
+		t.Fatalf("compatible generation changed ResourceUIDs: got=%v want=%v", got, firstUIDs)
+	}
+
+	for _, resource := range graph.Resources() {
+		uid := firstUIDs[resource.ID.String()]
+		if _, err := projectRepository.ResolveResourceUID(t.Context(), resourceUIDQualificationInstance, "project_foreign", resource.ID.String()); !errors.Is(err, project.ErrResourceUIDNotFound) {
+			t.Fatalf("foreign Project resolved %q: %v", resource.ID, err)
+		}
+		if _, err := projectRepository.ResolveResourceUIDByUID(t.Context(), "lvinst_1123456789abcdefghijklmnopqrstuv", resourceUIDMultiSourceProject, uid); !errors.Is(err, project.ErrResourceUIDNotFound) {
+			t.Fatalf("foreign instance resolved %q: %v", resource.ID, err)
+		}
+	}
+}
+
+func compileResourceUIDMultiSourceBundle(t *testing.T) projectartifact.SourceBundle {
+	t.Helper()
+	example := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary")
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS(filepath.Join(example, "leapview"))); err != nil {
+		t.Fatalf("copy multi-source consumer fixture: %v", err)
+	}
+	for _, relative := range []string{"connections/directory.yaml", "sources/dim_customers.yaml"} {
+		contents, err := os.ReadFile(filepath.Join(example, "multi-source", "consumer-overlay", relative))
+		if err != nil {
+			t.Fatalf("read multi-source overlay %s: %v", relative, err)
+		}
+		if err := os.WriteFile(filepath.Join(root, relative), contents, 0o600); err != nil {
+			t.Fatalf("write multi-source overlay %s: %v", relative, err)
+		}
+	}
+	bundle, err := projectcompiler.Compile(root)
+	if err != nil {
+		t.Fatalf("compile multi-source consumer fixture: %v", err)
+	}
+	return bundle
+}
+
+func assertResourceUIDMultiSourceBindings(t *testing.T, bindings []project.ResourceUIDBinding, graph projectgraph.ProjectGraph, generationID string) {
+	t.Helper()
+	if err := validateResourceUIDMultiSourceBindings(bindings, graph, generationID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validateResourceUIDMultiSourceBindings(bindings []project.ResourceUIDBinding, graph projectgraph.ProjectGraph, generationID string) error {
+	if len(bindings) != len(graph.Resources()) {
+		return fmt.Errorf("generation %s bindings=%d, want complete graph closure of %d", generationID, len(bindings), len(graph.Resources()))
+	}
+	expectedKinds := make(map[string]projectgraph.Kind, len(graph.Resources()))
+	for _, resource := range graph.Resources() {
+		expectedKinds[resource.ID.String()] = resource.Kind
+	}
+	seen := make(map[string]struct{}, len(bindings))
+	for _, binding := range bindings {
+		if binding.GenerationID != generationID || binding.InstanceID != resourceUIDQualificationInstance || binding.TargetID != resourceUIDQualificationInstance || binding.ProjectID != resourceUIDMultiSourceProject {
+			return fmt.Errorf("binding scope=%#v", binding)
+		}
+		if err := binding.Validate(); err != nil {
+			return fmt.Errorf("invalid ResourceUID binding %#v: %v", binding, err)
+		}
+		wantKind, ok := expectedKinds[binding.AuthoredID]
+		if !ok {
+			return fmt.Errorf("binding authored ID %q is not in graph", binding.AuthoredID)
+		}
+		if binding.Kind != wantKind {
+			return fmt.Errorf("binding authored ID %q kind=%s, want graph kind %s", binding.AuthoredID, binding.Kind, wantKind)
+		}
+		if _, duplicate := seen[binding.AuthoredID]; duplicate {
+			return fmt.Errorf("duplicate binding for %q", binding.AuthoredID)
+		}
+		seen[binding.AuthoredID] = struct{}{}
+	}
+	for _, resource := range graph.Resources() {
+		if _, ok := seen[resource.ID.String()]; !ok {
+			return fmt.Errorf("graph resource %q (%s) has no generation binding", resource.ID, resource.Kind)
+		}
+	}
+	return nil
+}
+
+func TestResourceUIDMultiSourceBindingsRequireExactGraphKinds(t *testing.T) {
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationID := "0198f2c0-7c7a-7f00-8a11-000000001000"
+	valid := []project.ResourceUIDBinding{
+		{
+			ResourceUID: "0198f2c0-7c7a-7f00-8a11-000000001001", InstanceID: resourceUIDQualificationInstance, ProjectID: resourceUIDMultiSourceProject,
+			Environment: "prod", TargetID: resourceUIDQualificationInstance, GenerationID: generationID,
+			AuthoredID: "connection:warehouse", Kind: projectgraph.KindConnection, ContractStatus: "not_contract_bearing",
+		},
+		{
+			ResourceUID: "0198f2c0-7c7a-7f00-8a11-000000001002", InstanceID: resourceUIDQualificationInstance, ProjectID: resourceUIDMultiSourceProject,
+			Environment: "prod", TargetID: resourceUIDQualificationInstance, GenerationID: generationID,
+			AuthoredID: "source:orders", Kind: projectgraph.KindSource, ContractStatus: "unversioned",
+		},
+	}
+	if err := validateResourceUIDMultiSourceBindings(valid, graph, generationID); err != nil {
+		t.Fatalf("valid bindings rejected: %v", err)
+	}
+
+	swapped := append([]project.ResourceUIDBinding(nil), valid...)
+	swapped[0].Kind, swapped[1].Kind = swapped[1].Kind, swapped[0].Kind
+	swapped[0].ContractStatus, swapped[1].ContractStatus = swapped[1].ContractStatus, swapped[0].ContractStatus
+	if err := validateResourceUIDMultiSourceBindings(swapped, graph, generationID); err == nil || !strings.Contains(err.Error(), "want graph kind") {
+		t.Fatalf("swapped binding kinds error = %v, want exact graph-kind mismatch", err)
+	}
+}
+
+func resourceUIDBindingMap(bindings []project.ResourceUIDBinding) map[string]project.ResourceUID {
+	result := make(map[string]project.ResourceUID, len(bindings))
+	for _, binding := range bindings {
+		result[binding.AuthoredID] = binding.ResourceUID
+	}
+	return result
+}
 
 // TestPostgresResourceUIDAdmissionAndActivationQualification exercises the
 // complete PostgreSQL lifecycle against the canonical instance target. The
@@ -487,6 +684,10 @@ type resourceUIDQualificationGenerationSpec struct {
 	IncludeDashboard bool
 	BaseGenerationID string
 	KindMismatch     bool
+	ProjectID        string
+	Bundle           *projectartifact.SourceBundle
+	Inventory        *project.ResourceUIDInventory
+	Graph            *projectgraph.ProjectGraph
 }
 
 type resourceUIDQualificationGeneration struct {
@@ -520,6 +721,10 @@ func installResourceUIDQualificationDependencies(t *testing.T, db *pgxpool.Pool)
 }
 
 func seedResourceUIDQualificationBootstrap(t *testing.T, db *pgxpool.Pool) {
+	seedResourceUIDQualificationBootstrapForProject(t, db, "project_uid_qualification")
+}
+
+func seedResourceUIDQualificationBootstrapForProject(t *testing.T, db *pgxpool.Pool, projectID string) {
 	t.Helper()
 	bootstrap := platformbootstrappostgres.New(db)
 	if err := bootstrap.EnsureInstanceID(t.Context(), resourceUIDQualificationInstance); err != nil {
@@ -528,11 +733,11 @@ func seedResourceUIDQualificationBootstrap(t *testing.T, db *pgxpool.Pool) {
 	if err := bootstrap.BindInstanceEnvironment(t.Context(), "prod"); err != nil {
 		t.Fatalf("bind instance environment: %v", err)
 	}
-	if _, err := projectpostgres.New(db).Ensure(t.Context(), projectpostgres.EnsureInput{ID: "project_uid_qualification", Title: "Resource UID qualification"}); err != nil {
+	if _, err := projectpostgres.New(db).Ensure(t.Context(), projectpostgres.EnsureInput{ID: projectgraph.ResourceID(projectID), Title: "Resource UID qualification"}); err != nil {
 		t.Fatalf("ensure project identity: %v", err)
 	}
 	if _, err := bootstrap.ClaimProject(t.Context(), platformbootstrappostgres.ProjectClaimInput{
-		ProjectID: "project_uid_qualification", Environment: "prod", ClaimedBy: "qualification", ClaimedAt: time.Now().UTC().Truncate(time.Microsecond),
+		ProjectID: projectID, Environment: "prod", ClaimedBy: "qualification", ClaimedAt: time.Now().UTC().Truncate(time.Microsecond),
 	}); err != nil {
 		t.Fatalf("claim project: %v", err)
 	}
@@ -542,6 +747,9 @@ func prepareResourceUIDQualificationGeneration(t *testing.T, r *Repository, spec
 	t.Helper()
 	ctx := t.Context()
 	projectID := "project_uid_qualification"
+	if spec.ProjectID != "" {
+		projectID = spec.ProjectID
+	}
 	ids := fmt.Sprintf("%d", spec.Number)
 	planID := "0198f2c0-7c7a-7f00-8a11-000000007" + ids + "01"
 	candidateID := "0198f2c0-7c7a-7f00-8a11-000000007" + ids + "02"
@@ -555,6 +763,12 @@ func prepareResourceUIDQualificationGeneration(t *testing.T, r *Repository, spec
 	catalogID := "uid-catalog-" + ids
 	artifactDigest := testDigest('e')
 	bundle, inventory, graph := resourceUIDQualificationBundle(t, spec.IncludeDashboard)
+	if spec.Bundle != nil || spec.Inventory != nil || spec.Graph != nil {
+		if spec.Bundle == nil || spec.Inventory == nil || spec.Graph == nil {
+			t.Fatal("resource UID generation fixture must provide bundle, inventory, and graph together")
+		}
+		bundle, inventory, graph = *spec.Bundle, *spec.Inventory, *spec.Graph
+	}
 	if spec.KindMismatch {
 		bundle, inventory, graph = resourceUIDQualificationKindMismatchBundle(t)
 	}

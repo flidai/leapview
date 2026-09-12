@@ -75,6 +75,7 @@ type RouteScope struct {
 type AgentCommandBindings struct {
 	CreateConversation uicommand.Binding
 	CreateRun          uicommand.Binding
+	CancelRun          uicommand.Binding
 }
 
 // DashboardAuthoringAction is the single contextual transition from a
@@ -182,10 +183,11 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 }
 
 func dashboardAgentComponentAttrs(commands AgentCommandBindings) []g.Node {
-	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
+	agentTurn := "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 	return []g.Node{
 		g.Attr("data-on:lv-chat-submit", agentTurn),
+		g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(commands.CancelRun, "/chats/stop", "agent", "agentContext")),
 		g.Attr("data-on:lv-chat-restore", agentRestore),
 		g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
 	}

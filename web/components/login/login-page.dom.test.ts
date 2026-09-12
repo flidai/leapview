@@ -17,7 +17,12 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
+      response.end(testDocument({
+        localAuth: url.searchParams.get('localAuth') === 'true',
+        ssoAuth: url.searchParams.has('ssoAuth') ? url.searchParams.get('ssoAuth') === 'true' : true,
+        mustChangePassword: url.searchParams.get('mustChangePassword') === 'true',
+        error: url.searchParams.get('error') === 'invalid_credentials' ? 'The email or password is incorrect.' : '',
+      }))
       return
     }
     if (url.pathname === '/loader-test') {
@@ -30,7 +35,7 @@ beforeAll(async () => {
       response.end(`window.__loginBackgroundModuleLoaded = true`)
       return
     }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') || url.pathname === '/static/login-background-loader.js' ? projectRoot : root
+    const fileRoot = url.pathname.startsWith('/static/vendor/') || url.pathname === '/static/app.css' || url.pathname === '/static/login-background-loader.js' ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
       response.writeHead(404)
@@ -38,7 +43,7 @@ beforeAll(async () => {
       return
     }
     try {
-      response.setHeader('content-type', 'text/javascript')
+      response.setHeader('content-type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript')
       response.end(await readFile(file))
     } catch {
       response.writeHead(404)
@@ -57,7 +62,7 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
-test('login page composes route UI', async () => {
+test('login page composes branded route UI', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -73,6 +78,7 @@ test('login page composes route UI', async () => {
       const brandMark = root.querySelector('lv-brand-mark') as HTMLElement | null
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
+        hasBrandName: root.textContent?.includes('LeapView') ?? false,
         brandMarkCount: root.querySelectorAll('lv-brand-mark').length,
         apertureCircleCount: brandMark?.shadowRoot?.querySelectorAll('circle[cx="12"][cy="12"][r="10"]').length,
         hasBackground: Boolean(root.querySelector('lv-topology-background[data-login-background]')),
@@ -81,15 +87,15 @@ test('login page composes route UI', async () => {
         hasThemeToggle: Boolean(root.querySelector('[data-theme-toggle]')),
         visibleThemeIcon: visibleThemeIcon?.getAttribute('data-theme-icon'),
         visibleThemeIconHasSvg: Boolean(visibleThemeIcon?.querySelector('svg')),
-        panelCenteredX: Math.abs((panelRect.left + panelRect.width / 2) - (hostRect.left + hostRect.width / 2)) <= 1,
-        panelCenteredY: Math.abs((panelRect.top + panelRect.height / 2) - (hostRect.top + hostRect.height / 2)) <= 1,
+        panelFitsViewport: panelRect.left >= hostRect.left - 1 && panelRect.right <= hostRect.right + 1,
         hostHeight: Math.round(hostRect.height),
         provider: root.querySelector('.provider')?.textContent?.trim(),
       }
     })
 
     expect(state).toEqual({
-      title: 'LeapView',
+      title: 'Welcome back',
+      hasBrandName: true,
       brandMarkCount: 1,
       apertureCircleCount: 1,
       hasBackground: true,
@@ -98,10 +104,290 @@ test('login page composes route UI', async () => {
       hasThemeToggle: true,
       visibleThemeIcon: 'system',
       visibleThemeIconHasSvg: true,
-      panelCenteredX: true,
-      panelCenteredY: true,
-      hostHeight: 820,
+      panelFitsViewport: true,
+      hostHeight: expect.any(Number),
       provider: 'Sign in with Azure Active Directory',
+    })
+    expect(state.hostHeight).toBeGreaterThanOrEqual(820)
+  } finally {
+    await page.close()
+  }
+})
+
+test('minimal form remains centred and preserves the original background overlay', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false`)
+    await page.getByRole('heading', { name: 'Welcome back' }).waitFor()
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const panelElement = root.querySelector('.panel')
+      const panel = panelElement.getBoundingClientRect()
+      const brand = root.querySelector('.brand-lockup')
+      const brandRect = brand.getBoundingClientRect()
+      const themeRect = root.querySelector('.theme').getBoundingClientRect()
+      const tokenProbe = document.createElement('span')
+      tokenProbe.style.backgroundColor = 'var(--overlay-backdrop-bgColor)'
+      document.body.append(tokenProbe)
+      const expected = getComputedStyle(tokenProbe).backgroundColor
+      tokenProbe.remove()
+      return {
+        logoAtTopLeft: brandRect.left <= 24 && brandRect.top <= 24,
+        logoOutsideForm: !panelElement.contains(brand),
+        logoClearsControls: brandRect.bottom < panel.top && brandRect.right < themeRect.left,
+        centredX: Math.abs(panel.x + panel.width / 2 - innerWidth / 2) < 1,
+        centredY: Math.abs(panel.y + panel.height / 2 - innerHeight / 2) < 1,
+        originalOverlay: getComputedStyle(root.querySelector('.scrim')).backgroundColor === expected,
+        hasMarketing: Boolean(root.querySelector('.product-preview, .suggestion, .feature-options')),
+      }
+    })
+    expect(state).toEqual({ centredX: true, centredY: true, originalOverlay: true, hasMarketing: false, logoAtTopLeft: true, logoOutsideForm: true, logoClearsControls: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('login form remains reachable on a short mobile viewport without horizontal overflow', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 240 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const host = element as HTMLElement
+      const form = root.querySelector('form') as HTMLElement | null
+      const panel = root.querySelector('.panel') as HTMLElement | null
+      const hostRect = host.getBoundingClientRect()
+      const panelRect = panel?.getBoundingClientRect()
+      const documentWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth)
+      form?.scrollIntoView({ block: 'center', inline: 'nearest' })
+      const formRect = form?.getBoundingClientRect()
+      return {
+        hasForm: Boolean(form),
+        noHorizontalOverflow: documentWidth <= window.innerWidth && host.scrollWidth <= host.clientWidth,
+        panelFitsViewport: Boolean(panelRect && panelRect.left >= hostRect.left - 1 && panelRect.right <= hostRect.right + 1),
+        formIntersectsViewport: Boolean(formRect && formRect.bottom > 0 && formRect.top < window.innerHeight),
+      }
+    })
+
+    expect(state).toEqual({
+      hasForm: true,
+      noHorizontalOverflow: true,
+      panelFitsViewport: true,
+      formIntersectsViewport: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('login fits laptop and phone viewports without page scrolling', async () => {
+  const page = await browser.newPage()
+  try {
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 1280, height: 720 }, { width: 900, height: 600 }, { width: 390, height: 700 }]) {
+      await page.setViewportSize(viewport)
+      await page.goto(`${baseURL}/?localAuth=true&ssoAuth=true`)
+      await page.getByRole('heading', { name: 'Welcome back' }).waitFor()
+      const size = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight }))
+      expect(size.width).toBeLessThanOrEqual(viewport.width)
+      expect(size.height).toBeLessThanOrEqual(viewport.height)
+      expect(await page.getByRole('button', { name: 'Sign in', exact: true }).isVisible()).toBe(true)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile keyboard navigation moves directly through the sign-in form', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 740 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const focusedNames: Array<string | undefined> = []
+    for (let index = 0; index < 5; index += 1) {
+      await page.keyboard.press('Tab')
+      focusedNames.push(await page.locator('lv-login-page').evaluate((element: any) => {
+        const focused = element.shadowRoot.activeElement as HTMLElement | null
+        if (!focused) return undefined
+        if (focused.matches('[data-theme-toggle]')) return 'theme'
+        if (focused.matches('input')) return focused.getAttribute('name') ?? undefined
+        if (focused.matches('button')) return focused.getAttribute('aria-label') ?? focused.textContent?.replace(/\s+/g, ' ').trim()
+        return focused.tagName.toLowerCase()
+      }))
+    }
+
+    expect(focusedNames).toEqual([
+      'theme',
+      'email',
+      'password',
+      'Show password',
+      'Sign in',
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+test('local authentication renders the local login contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const form = root.querySelector('form') as HTMLFormElement | null
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        action: form?.getAttribute('action'),
+        method: form?.getAttribute('method'),
+        email: form?.querySelector('input[name="email"]')?.getAttribute('autocomplete'),
+        password: form?.querySelector('input[name="password"]')?.getAttribute('autocomplete'),
+        submit: form?.querySelector('button[type="submit"]')?.textContent?.trim(),
+        providerCount: root.querySelectorAll('.provider').length,
+      }
+    })
+
+    expect(state).toEqual({
+      title: 'Welcome back',
+      action: '/auth/local/login',
+      method: 'post',
+      email: 'username',
+      password: 'current-password',
+      submit: 'Sign in',
+      providerCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('password visibility toggles preserve values and never submit the form', async () => {
+  const page = await browser.newPage()
+  try {
+    for (const changePassword of [false, true]) {
+      await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false&mustChangePassword=${changePassword}`)
+      await page.locator('lv-login-page form').waitFor()
+      await page.locator('form').evaluate((form) => {
+        (window as any).__submissions = 0
+        form.addEventListener('submit', (event) => { event.preventDefault(); (window as any).__submissions++ })
+      })
+      const fields = changePassword ? ['Temporary password', 'New password'] : ['Password']
+      for (const label of fields) {
+        const input = page.getByLabel(label, { exact: true })
+        await input.fill('example-password-123')
+        expect(await input.getAttribute('type')).toBe('password')
+        const show = page.getByRole('button', { name: `Show ${label.toLowerCase()}`, exact: true })
+        await show.focus()
+        await page.keyboard.press('Space')
+        expect(await input.getAttribute('type')).toBe('text')
+        expect(await input.inputValue()).toBe('example-password-123')
+        const hide = page.getByRole('button', { name: `Hide ${label.toLowerCase()}`, exact: true })
+        expect(await hide.evaluate((button) => button === (button.getRootNode() as ShadowRoot).activeElement)).toBe(true)
+        await hide.click()
+        expect(await input.getAttribute('type')).toBe('password')
+        expect(await input.inputValue()).toBe('example-password-123')
+      }
+      expect(await page.evaluate(() => (window as any).__submissions)).toBe(0)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('SSO authentication renders the configured provider contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=false&ssoAuth=true`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const provider = root.querySelector('.provider') as HTMLAnchorElement | null
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        href: provider?.getAttribute('href'),
+        label: provider?.textContent?.trim(),
+        formCount: root.querySelectorAll('form').length,
+      }
+    })
+
+    expect(state).toEqual({
+      title: 'Welcome back',
+      href: '/auth/azureadv2',
+      label: 'Sign in with Azure Active Directory',
+      formCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('change-password authentication renders only the password recovery contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=true&mustChangePassword=true`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const form = root.querySelector('form') as HTMLFormElement | null
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        action: form?.getAttribute('action'),
+        currentPassword: form?.querySelector('input[name="currentPassword"]')?.getAttribute('autocomplete'),
+        newPassword: form?.querySelector('input[name="newPassword"]')?.getAttribute('autocomplete'),
+        requirements: form?.querySelector('#new-password-requirements')?.textContent?.trim(),
+        submit: form?.querySelector('button[type="submit"]')?.textContent?.trim(),
+        providerCount: root.querySelectorAll('.provider').length,
+      }
+    })
+
+    expect(state).toEqual({
+      title: 'Set a new password',
+      action: '/auth/local/password',
+      currentPassword: 'current-password',
+      newPassword: 'new-password',
+      requirements: 'Use at least 12 characters.',
+      submit: 'Change password',
+      providerCount: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('login errors stay visible in the local form contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false&error=invalid_credentials`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const state = await page.locator('lv-login-page').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const error = root.querySelector('[role="alert"]') as HTMLElement | null
+      const form = root.querySelector('form') as HTMLFormElement | null
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        error: error?.textContent?.trim(),
+        live: error?.getAttribute('aria-live'),
+        formAction: form?.getAttribute('action'),
+      }
+    })
+
+    expect(state).toEqual({
+      title: 'Welcome back',
+      error: 'The email or password is incorrect.',
+      live: 'assertive',
+      formAction: '/auth/local/login',
     })
   } finally {
     await page.close()
@@ -198,24 +484,36 @@ test('login theme toggle preserves an accessibility theme until the user changes
   }
 })
 
-function testDocument(): string {
+type TestDocumentOptions = {
+  localAuth?: boolean
+  ssoAuth?: boolean
+  mustChangePassword?: boolean
+  error?: string
+}
+
+function testDocument(options: TestDocumentOptions = {}): string {
   const page = {
     kind: 'login',
     title: 'LeapView',
+    localAuth: options.localAuth ?? false,
+    ssoAuth: options.ssoAuth ?? true,
+    mustChangePassword: options.mustChangePassword ?? false,
     providerLabel: 'Sign in with Azure Active Directory',
     backgroundModuleSrc: '/static/topology-background.js?v=dev',
   }
+  const status = { error: options.error ?? '' }
   return `
     <!doctype html>
     <html>
       <head>
+        <link rel="stylesheet" href="/static/app.css">
         <style>
           html, body { margin: 0; min-height: 100%; }
           body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-accent: #0969da; --bgColor-accent-emphasis: #0969da; --bgColor-inverse: #0d1117; --lv-topology-bg: #0d1117; --lv-border-default: 1px solid #d0d7de; --lv-radius-default: 6px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --control-medium-size: 32px; --control-xlarge-size: 40px; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); }
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page }))}">
+        <main data-signals="${escapeHTML(JSON.stringify({ page, status }))}">
           <lv-login-page></lv-login-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>

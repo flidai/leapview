@@ -2,7 +2,7 @@
 
 Status: partial; Project-free source prerequisite satisfied
 
-Last updated: 2026-09-06
+Last updated: 2026-09-12
 
 Governing decision:
 [ADR-0019](../0019-integrate-dbt-at-the-warehouse-contract-boundary.md)
@@ -51,7 +51,15 @@ Evidence classifications used below:
 | Serving and refresh require no dbt executable, repository, artifacts, or credentials | Runtime module/image architecture assertion; dbt dependencies are isolated under `examples/` and CI | Proven local by runtime/module assertions. |
 | Source read, serving write, and semantic policy boundaries remain distinct | Azure workflow, existing scoped Azure secret tests in `internal/analytics/duckdb/source_test.go`, and integration guide | Structurally validated — not live Azure; IAM scopes are operator requirements and live Azure authorization is not claimed. |
 | MetricFlow/dbt Semantic Layer definitions do not silently become LeapView definitions | No artifact parser or dbt semantic dependency exists; architecture assertion | Implemented by absence and explicit deferral. |
-| Every SemanticModel dataset resolves inside the same Project candidate/generation | ADR-0018 SEM-01/SEM-02 evidence in `project-namespace-conformance.md` | Partial; Project-free compilation is in place, while FAI-675 owns the closed candidate resolver proof. |
+| Every SemanticModel dataset resolves inside the same Project candidate/generation | ADR-0018 SEM-01/SEM-02 evidence in `project-namespace-conformance.md`; `task dbt:warehouse:proof`; `TestPostgresResourceUIDMultiSourceProjectClosure` | Proven locally for a dbt-package-derived mart plus an independent CRM publication. The graph closes under one issuer ProjectUID and one exact generation ResourceUID inventory. Missing and ambiguous Source mappings fail before delivery. |
+| dbt output has no alternate authorization path | `TestDBTMultiSourceProjectClosure`; ADR-0017 semantic-access compiler, consumer, and PlanIR barrier suites | Proven locally. The exact dbt/CRM semantic mapping rejects unbound execution, admits a request-bound consumer, installs barriers on both dataset scans, and fails closed for denied target-owned attributes. |
+
+The FAI-678 proof adds adoption evidence, not runtime authority. dbt resolves
+its upstream package and materializes the consumer-owned mart before the
+physical boundary. LeapView receives Parquet plus ordinary Connection and
+Source resources; it neither imports dbt artifacts nor resolves live dbt Mesh
+references. The second CRM publication has a separate Connection root, while
+both Sources close into the same SemanticModel and Dashboard generation.
 
 ## Existing capability composition
 
@@ -64,6 +72,7 @@ Evidence classifications used below:
 | Atomic activation, retained generations, rollback, leases, recovery | `internal/runtimehost`, `internal/deployment`, and `internal/servingstate` |
 | Local non-interactive orchestration | `leapview dev --once --no-browser` via `scripts/dev-server.sh` |
 | Project/environment identity and target bindings | existing deployment and connection-binding contracts; Project-free source semantics supplied by FAI-666, with durable identity and final binding tracked by FAI-667/FAI-669 |
+| Semantic authorization over consumer outputs | existing ADR-0017 semantic-access consumer, compiled policy, target-owned attribute authority, and PlanIR SecurityBarrier path |
 
 Physical Parquet is the CI contract evidence. dbt's manifest and run-results
 files are neither parsed nor admitted; a targeted metadata-only case proves

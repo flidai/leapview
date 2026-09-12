@@ -1,12 +1,35 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 
+	"github.com/flidai/leapview/internal/dashboard"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
+
+func TestBundleAggregateRequestPreservesTemporalDimensionGrain(t *testing.T) {
+	visual := visualPlan{
+		Definition: visualizationdefinition.Definition{Query: visualizationdefinition.QueryBinding{ResultShape: visualizationdefinition.ResultCategoryValue}},
+		Table:      "orders",
+		Dimensions: []visualizationdefinition.FieldBinding{{FieldID: "orders.created_at", Alias: "month", Grain: "month"}},
+		Metrics:    []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "value"}},
+	}
+	service := &VisualizationDataService{filters: &FilterService{}}
+	query, err := service.bundleAggregateRequest(context.Background(), &modelRuntime{}, &dashboarddefinition.Definition{}, dashboard.Filters{}, "monthly", visual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query.Time.Field != "orders.created_at" || query.Time.Grain != "month" || query.Time.Alias != "month" {
+		t.Fatalf("query time = %#v, want monthly temporal dimension", query.Time)
+	}
+	if len(query.Dimensions) != 0 {
+		t.Fatalf("query dimensions = %#v, want temporal dimension in query time", query.Dimensions)
+	}
+}
 
 func TestVisualSortsUseCanonicalResultNames(t *testing.T) {
 	visual := visualPlan{

@@ -125,6 +125,8 @@ func encodeAgentCommandAuditPayload(operationID string, payload agentgen.GenSche
 		return agentgen.EncodeGenUpdateAgentConfigAuditPayload(payload)
 	case string(agentgen.GenOperationCreateAgentConversation):
 		return agentgen.EncodeGenCreateAgentConversationAuditPayload(payload)
+	case string(agentgen.GenOperationManageAgentConversations):
+		return agentgen.EncodeGenManageAgentConversationsAuditPayload(payload)
 	case string(agentgen.GenOperationArchiveAgentConversation):
 		return agentgen.EncodeGenArchiveAgentConversationAuditPayload(payload)
 	case string(agentgen.GenOperationUpdateAgentConversation):

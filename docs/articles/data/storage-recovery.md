@@ -1991,3 +1991,63 @@ evidence does not prove physical disaster recovery.
 Evidence persistence does not prove physical disaster recovery.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Managed-data S3 disaster-recovery seed qualification
+
+The bounded seed harness composes the existing evidence owners without
+performing restoration. It creates one disposable, versioned MinIO bucket and
+one PostgreSQL control database, then seeds a single managed connection with
+two explicit logical revisions. Normal S3 writes populate both revisions and
+one revision also contains a multipart object. Every managed object remains
+under `recovered-data/`; independently versioned sentinel objects remain under
+`unrelated-sentinel/` and are compared byte-for-byte before and after capture.
+
+The writer persists the exact VersionID returned by each successful PUT or
+multipart completion together with its trusted provider profile, object key,
+SHA-256, size, and capture time. The harness never infers a version from HEAD
+or the mutable latest object. PostgreSQL then captures the complete ready
+revision projection and recovery marker, the existing Manifest v2 service
+resolves and re-verifies every exact version, and the existing signer and
+`CreateSet3` path produce and persist the prepared RecoverySet v3 evidence.
+The in-memory qualification key is never written to an artifact.
+
+Run the isolated seed capture with Docker available:
+
+```sh
+task qualify:ubdr:managed-data-s3-dr
+```
+
+The command removes only the previous
+`.tmp/qualification/ubdr/managed-data-s3/` output. The harness stages private
+evidence in a sibling directory, completes every positive and negative gate,
+and validates both report contracts against the captured Manifest v2 and
+RecoverySet v3. Only then does it atomically publish the final directory with
+mode `0700` and its two operator-facing reports with mode `0600`. A failed gate
+therefore cannot leave valid-looking final artifacts:
+
+- `recovery-point.json` records the scenario and RecoverySet identities,
+  source-anchor and frontier commitments, Manifest v2 digest, capture interval,
+  observation counts, revision identities, and logical scenario fingerprint.
+- `baseline-object-inventory.json` records the two revision memberships,
+  upload kind, exact managed-object versions, hashes and sizes, plus the
+  independent sentinel version inventory.
+
+Both reports use stable field and collection ordering and are never accepted
+as recovery-admission input. Strict semantic validation checks schema and
+scenario identities, commitments, timestamps, revision membership, exact
+versions, hashes, sizes, counts, sentinel isolation, and cross-report
+consistency before publication. Repeated runs are semantically deterministic:
+the fingerprint binds the project, connection, collection, stable provider
+profile identity, prefixes, revision membership, fixture content hashes and
+sizes, and sentinel membership to a checked-in compatibility vector.
+Disposable bucket names, endpoints, provider VersionIDs, PostgreSQL restore
+points and capture timestamps remain authoritative per-run values and are not
+part of that logical fingerprint or required to be byte-identical.
+
+The qualification rejects missing observations, unavailable exact versions,
+missing revision membership, sentinel namespace substitution, and digest
+mismatches before a usable v3 association can be created. It does not restore
+objects, execute provider recovery, activate state, exercise startup admission,
+or measure RPO/RTO.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.

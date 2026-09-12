@@ -104,7 +104,12 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 				ClientID:           payload.ChatClientID,
 				Emit: func(signal ui.ChatViewState) error {
 					if m.broker != nil {
-						m.broker.Publish(ChatStreamID(payload.Scope, payload.ChatClientID), chatSignalPatch(signal))
+						// The global stream serves list/new-chat chrome. Keep its
+						// patches conversation-free so a worker from a previous page
+						// cannot replace the newly selected transcript. A
+						// conversation page subscribes to the scoped stream below.
+						m.broker.Publish(ChatStreamID(payload.Scope, payload.ChatClientID), ui.ChatConversationsPatch(signal.Agent.Conversations, ""))
+						m.broker.Publish(ChatConversationStreamID(payload.Scope, payload.ChatClientID, payload.Conversation), chatSignalPatch(signal))
 					}
 					return nil
 				},
