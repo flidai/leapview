@@ -57,6 +57,46 @@ not perform image upgrades or paired state rollback.
 
 Do not run two application versions against shared writable state unless the release explicitly declares mixed-version compatibility.
 
+### PostgreSQL-era transition preflight
+
+FAI-518 defines the transition boundary for a PostgreSQL-era predecessor and
+candidate. The pure preflight consumes exact immutable OCI artifact identities,
+the PostgreSQL control-schema projection, Goose ownership, River's upstream
+operational-schema and LeapView-owned job-history projections, the exact
+five-field DuckLake compatibility tuple, the release policy, and a mandatory
+recovery frontier reference. The frontier anchors the transition phases even
+when the decision permits binary rollback. A predecessor from the older
+SQLite-era architecture is outside this boundary and is unsupported. Admission
+and recovery references are owner-produced projections; this library does not
+query them live.
+
+The evaluator emits exactly one decision:
+
+- `binary-rollback-compatible` means every persistent domain is explicitly
+  backward compatible and the matching release policy permits returning to the
+  predecessor artifact through the deployment platform.
+- `provider-recovery-required` means at least one persistent domain is
+  explicitly incompatible, and a matching provider-recovery policy and valid
+  recovery frontier reference are present. Restore mutually consistent
+  PostgreSQL and DuckLake/object-provider state before starting the predecessor.
+- `unsupported` means the evidence is incomplete, unknown, ambiguous, has
+  mismatched ownership or policy metadata, or otherwise cannot prove either
+  path safely.
+
+This FAI-518 preflight is the eligibility boundary for the later FAI-519
+transition execution work. It is pure and read-only: it does not inspect live
+PostgreSQL, run Goose or River migrations, contact a provider, acquire a
+fence, select an image, or mutate persistent state. FAI-519 must revalidate the
+same immutable evidence at its execution boundary.
+
+The DuckLake compatibility value is the owner-produced verdict over the exact
+predecessor and candidate tuples recorded in the evidence. The preflight does
+not infer cross-version safety from tuple equality. A binary policy also binds
+the explicit candidate-to-predecessor rollback direction; authorizing only the
+forward pair is insufficient.
+
+This validates transition eligibility. It does not prove successful upgrade, rollback, or disaster recovery.
+
 ### Catalog compatibility boundary
 
 Production upgrades operate only on an admitted PostgreSQL-backed DuckLake
