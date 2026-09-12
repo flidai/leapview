@@ -421,7 +421,7 @@ adapter.
 ### Intended qualification cases
 
 The qualification uses a disposable versioned MinIO bucket and the frozen
-RecoverySet v3 evidence bundle. It uploads all six canonical payloads, captures
+RecoverySet v3 evidence bundle. It uploads all seven canonical payloads, captures
 their provider VersionIDs, overwrites each current object, and creates a delete
 marker before the repository reads anything. `CreateSet3` succeeds only by
 using the selected historical versions. After the PostgreSQL connection is
@@ -1946,11 +1946,22 @@ PostgreSQL. The transaction performs no provider I/O. A separate connection
 can read back the same exact payloads and reverify them under independently
 resolved trust.
 
-This slice follows the current `CreateSet3` bundle, where the capture core is
-embedded in the detached receipt and committed by its domain digest. It does
-not add the separately located capture-core transport entry described by the
-frozen transport design; that representation must be reconciled explicitly
-before production evidence upload is enabled.
+### Managed-capture-core persistence boundary
+
+This slice extends the `CreateSet3` bundle with the separately located,
+canonical capture-core entry described by the frozen transport design. The
+core remains embedded in the detached receipt for signature verification, but
+the transport persistence path now requires the independent
+`leapview.managed-capture-core` version-2 bytes and frozen domain digest. New
+associations retain the core locator and verify its exact bytes and relation to
+the receipt and manifest. The association verification metadata records the
+resolved worker fence, and the same transaction locks the authoritative trust
+generation row and rejects a changed generation or fence before inserting any
+evidence. An explicit persistence marker distinguishes those
+associations from the legacy embedded-only form. Historical v3 rows and
+in-flight older writers remain compatible without backfill; they retain the
+original embedded receipt-core behavior, are not presented as independently
+transported core payloads, and cannot be silently upgraded by retry.
 
 ### Deterministic and failure behavior
 
@@ -1972,7 +1983,11 @@ association is accepted.
 This qualification does not establish provider retention, restart durability of
 the source system, PostgreSQL restore or PITR, physical provider recovery,
 production signer/key deployment, or RPO/RTO. It also does not grant admission,
-startup, publication, or activation authority. Standalone capture-core payload
-transport remains unresolved as noted above. Signed evidence does not prove physical disaster recovery.
+startup, publication, or activation authority. Standalone capture-core
+transport is bounded to this persistence slice; upload intent execution,
+provider retention and production evidence enablement remain separate. Signed
+evidence does not prove physical disaster recovery.
+
+Evidence persistence does not prove physical disaster recovery.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.

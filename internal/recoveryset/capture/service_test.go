@@ -34,6 +34,7 @@ func TestFAI520CaptureCanonicalizesSameFixedCapturedEvidence(t *testing.T) {
 	for name, pair := range map[string][2][]byte{
 		"set": {first.Documents.Set, second.Documents.Set}, "manifest": {first.Documents.Manifest, second.Documents.Manifest},
 		"anchor": {first.Documents.Anchor, second.Documents.Anchor}, "profiles": {first.Documents.Profiles, second.Documents.Profiles},
+		"core":    {first.Documents.Core, second.Documents.Core},
 		"receipt": {first.Documents.Receipt, second.Documents.Receipt}, "authorities": {first.Documents.Authorities, second.Documents.Authorities},
 	} {
 		if !bytes.Equal(pair[0], pair[1]) {

@@ -160,6 +160,7 @@ type Documents struct {
 	Manifest    []byte
 	Anchor      []byte
 	Profiles    []byte
+	Core        []byte
 	Receipt     []byte
 	Authorities []byte
 }
@@ -725,6 +726,7 @@ func canonicalDocuments(set successor.RecoverySet3, evidence successor.Evidence)
 	}{
 		{"set", &documents.Set, set.CanonicalJSON}, {"manifest", &documents.Manifest, evidence.Manifest.CanonicalJSON},
 		{"anchor", &documents.Anchor, evidence.Anchor.CanonicalJSON}, {"profiles", &documents.Profiles, evidence.Profiles.CanonicalJSON},
+		{"core", &documents.Core, evidence.Receipt.Core.CanonicalJSON},
 		{"receipt", &documents.Receipt, evidence.Receipt.CanonicalJSON}, {"authorities", &documents.Authorities, evidence.Authorities.CanonicalJSON},
 	}
 	for _, encoder := range encoders {
