@@ -136,6 +136,57 @@ func TestLoadAllowsMissingDefaultOnlyWithoutExternalBindings(t *testing.T) {
 	assertDiagnostic(t, err, "profile.setup_required", "")
 	_, err = loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: "missing.yaml"})
 	assertDiagnostic(t, err, "profile.file", "")
+
+	bareRoot := t.TempDir()
+	selected, err = Load(LoadOptions{CheckoutRoot: bareRoot, Connections: map[string]LogicalConnection{
+		"fixture": {ID: "connection_fixture", ConnectorKind: "managed"},
+	}})
+	if err != nil || len(selected.Connections) != 0 {
+		t.Fatalf("fixture selection without a source directory = %#v, %v", selected, err)
+	}
+}
+
+func TestLoadRejectsIncompleteSelectedProfileCoverage(t *testing.T) {
+	root := t.TempDir()
+	file := writeProfile(t, root, postgresProfile("warehouse", "host: analytics.internal", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE"))
+	_, err := loadProfile(LoadOptions{
+		CheckoutRoot: root,
+		ProfileFile:  file,
+		Connections: map[string]LogicalConnection{
+			"warehouse": {ID: "connection_warehouse", ConnectorKind: "postgres"},
+			"catalog":   {ID: "connection_catalog", ConnectorKind: "ducklake"},
+			"fixture":   {ID: "connection_fixture", ConnectorKind: "managed"},
+		},
+	})
+	assertDiagnostic(t, err, "profile.coverage", "")
+}
+
+func TestLoadRejectsIncompleteUnselectedProfileCoverage(t *testing.T) {
+	root := t.TempDir()
+	file := writeProfile(t, root, `version: 1
+profiles:
+  local:
+    connections:
+      warehouse:
+        endpoint:
+          host: analytics.internal
+        credentials:
+          env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE
+  incomplete:
+    connections: {}
+`)
+	_, err := loadProfile(LoadOptions{
+		CheckoutRoot: root,
+		ProfileFile:  file,
+		Connections: map[string]LogicalConnection{
+			"warehouse": {ID: "connection_warehouse", ConnectorKind: "postgres"},
+		},
+	})
+	assertDiagnostic(t, err, "profile.coverage", "")
+	var diagnostic *DiagnosticError
+	if !errors.As(err, &diagnostic) || diagnostic.Field != "profiles.incomplete.connections" {
+		t.Fatalf("diagnostic field = %#v, want profiles.incomplete.connections", diagnostic)
+	}
 }
 
 func TestLoadRejectsProfileFlagsForRemoteDevelopment(t *testing.T) {
@@ -172,6 +223,22 @@ func TestLoadRejectsProfileInsidePortableSourceRootAfterSymlinkResolution(t *tes
 		t.Fatal(err)
 	}
 	_, err = loadProfile(LoadOptions{CheckoutRoot: checkout, SourceRoot: source, ProfileFile: escape})
+	assertDiagnostic(t, err, "profile.portable_source", "")
+}
+
+func TestLoadRejectsDefaultProfileSymlinkIntoDerivedPortableSourceRoot(t *testing.T) {
+	checkout := t.TempDir()
+	source := filepath.Join(checkout, defaultSourceRoot)
+	inside := writeNamedProfile(t, filepath.Join(source, "profile.yaml"), validEmptyProfile)
+	defaultFile := filepath.Join(checkout, DefaultRelativePath)
+	if err := os.MkdirAll(filepath.Dir(defaultFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inside, defaultFile); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{CheckoutRoot: checkout})
 	assertDiagnostic(t, err, "profile.portable_source", "")
 }
 

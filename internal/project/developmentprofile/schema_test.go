@@ -89,33 +89,52 @@ func TestJSONSchemaForConnectionsMatchesGraphAndConnectorContracts(t *testing.T)
 		t.Fatal(err)
 	}
 	schema := compileSchema(t, encoded)
-	base := func(name string, endpoint, credentials map[string]any) map[string]any {
+	base := func() map[string]any {
 		return map[string]any{
 			"version": float64(1),
 			"profiles": map[string]any{"local": map[string]any{"connections": map[string]any{
-				name: map[string]any{"endpoint": endpoint, "credentials": credentials},
+				"warehouse": map[string]any{
+					"endpoint":    map[string]any{"host": "db.internal"},
+					"credentials": map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+				},
+				"catalog": map[string]any{
+					"endpoint":    map[string]any{"options": map[string]any{"data_path": "/data"}},
+					"credentials": map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_CATALOG"},
+				},
+				"public_files": map[string]any{
+					"endpoint":    map[string]any{"objectScope": "s3://bucket/"},
+					"credentials": map[string]any{"none": true},
+				},
 			}}},
 		}
 	}
-	for name, document := range map[string]map[string]any{
-		"postgres env":    base("warehouse", map[string]any{"host": "db.internal"}, map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"}),
-		"ducklake option": base("catalog", map[string]any{"options": map[string]any{"data_path": "/data"}}, map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_CATALOG"}),
-		"public none":     base("public_files", map[string]any{"objectScope": "s3://bucket/"}, map[string]any{"none": true}),
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := schema.Validate(document); err != nil {
-				t.Fatalf("graph-specific schema rejected valid profile: %v", err)
-			}
-		})
+	if err := schema.Validate(base()); err != nil {
+		t.Fatalf("graph-specific schema rejected valid profile: %v", err)
 	}
-	for name, document := range map[string]map[string]any{
-		"unknown name":            base("Warehouse", map[string]any{}, map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"}),
-		"managed name":            base("fixture", map[string]any{}, map[string]any{"none": true}),
-		"postgres foreign option": base("warehouse", map[string]any{"options": map[string]any{"data_path": "/data"}}, map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"}),
-		"private none":            base("warehouse", map[string]any{}, map[string]any{"none": true}),
-		"public env":              base("public_files", map[string]any{}, map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_PUBLIC"}),
+	for name, mutate := range map[string]func(map[string]any){
+		"missing required connection": func(value map[string]any) {
+			delete(profileSchemaConnections(value), "catalog")
+		},
+		"unknown name": func(value map[string]any) {
+			profileSchemaConnections(value)["Warehouse"] = profileSchemaConnections(value)["warehouse"]
+			delete(profileSchemaConnections(value), "warehouse")
+		},
+		"managed name": func(value map[string]any) {
+			profileSchemaConnections(value)["fixture"] = map[string]any{"endpoint": map[string]any{}, "credentials": map[string]any{"none": true}}
+		},
+		"postgres foreign option": func(value map[string]any) {
+			profileSchemaConnection(value)["endpoint"].(map[string]any)["options"] = map[string]any{"data_path": "/data"}
+		},
+		"private none": func(value map[string]any) {
+			profileSchemaConnection(value)["credentials"] = map[string]any{"none": true}
+		},
+		"public env": func(value map[string]any) {
+			profileSchemaConnections(value)["public_files"].(map[string]any)["credentials"] = map[string]any{"env": "LEAPVIEW_DEV_CONNECTION_PUBLIC"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			document := cloneSchemaDocument(t, base())
+			mutate(document)
 			if err := schema.Validate(document); err == nil {
 				t.Fatal("graph-specific schema accepted invalid profile")
 			}
@@ -141,7 +160,11 @@ func compileSchema(t *testing.T, encoded []byte) *jsonschema.Schema {
 }
 
 func profileSchemaConnection(document map[string]any) map[string]any {
-	return document["profiles"].(map[string]any)["local"].(map[string]any)["connections"].(map[string]any)["warehouse"].(map[string]any)
+	return profileSchemaConnections(document)["warehouse"].(map[string]any)
+}
+
+func profileSchemaConnections(document map[string]any) map[string]any {
+	return document["profiles"].(map[string]any)["local"].(map[string]any)["connections"].(map[string]any)
 }
 
 func cloneSchemaDocument(t *testing.T, input map[string]any) map[string]any {

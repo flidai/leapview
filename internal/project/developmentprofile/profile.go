@@ -32,6 +32,7 @@ const (
 	MaxDocumentBytes    = 1 << 20
 	maxYAMLDepth        = 32
 	maxYAMLNodes        = 32768
+	defaultSourceRoot   = "dashboards"
 )
 
 var (
@@ -292,7 +293,11 @@ func readProfileFile(path string, options LoadOptions, explicit bool) ([]byte, s
 	if !explicit && !pathWithin(checkoutRoot, canonical) {
 		return nil, "", diagnostic(path, "", "profile.checkout_escape", "default profile file must remain inside the selected checkout", nil)
 	}
-	if sourceRoot := strings.TrimSpace(options.SourceRoot); sourceRoot != "" {
+	sourceRoot := strings.TrimSpace(options.SourceRoot)
+	if sourceRoot == "" && !explicit {
+		sourceRoot = filepath.Join(checkoutRoot, defaultSourceRoot)
+	}
+	if sourceRoot != "" {
 		if !filepath.IsAbs(sourceRoot) {
 			sourceRoot = filepath.Join(checkoutRoot, sourceRoot)
 		}
@@ -352,9 +357,13 @@ func readProfileContent(file profileContentReader, path string, before os.FileIn
 	if err != nil {
 		return nil, err
 	}
+	pathAfter, err := os.Stat(path)
+	if err != nil {
+		return nil, diagnostic(path, "", "profile.file_changed", "profile file changed while its contents were being captured", nil)
+	}
 	if !os.SameFile(before, after) || before.Size() != after.Size() ||
 		before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) ||
-		int64(len(content)) != after.Size() {
+		int64(len(content)) != after.Size() || !os.SameFile(after, pathAfter) {
 		return nil, diagnostic(path, "", "profile.file_changed", "profile file changed while its contents were being captured", nil)
 	}
 	if len(content) > MaxDocumentBytes {
@@ -477,6 +486,22 @@ func resolveDocument(file, profileName string, root *yaml.Node, catalog map[stri
 	if profiles == nil || profiles.Kind != yaml.MappingNode {
 		return Selected{}, diagnostic(file, "profiles", "profile.profiles", "profiles must be a mapping", profiles)
 	}
+	catalogNames := make([]string, 0, len(catalog))
+	for name := range catalog {
+		catalogNames = append(catalogNames, name)
+	}
+	sort.Strings(catalogNames)
+	requiredConnections := make([]string, 0, len(catalogNames))
+	for _, name := range catalogNames {
+		logical := catalog[name]
+		spec, ok := connectors.LookupConnection(logical.ConnectorKind)
+		if !ok {
+			return Selected{}, diagnostic(file, "profiles."+profileName+".connections", "profile.graph_connector", "compiled graph contains an unsupported connection", profiles)
+		}
+		if spec.ActivationMode == connectors.TargetBindingActivation {
+			requiredConnections = append(requiredConnections, name)
+		}
+	}
 	result := Selected{Connections: []Connection{}}
 	found := false
 	for profileIndex := 0; profileIndex < len(profiles.Content); profileIndex += 2 {
@@ -505,6 +530,15 @@ func resolveDocument(file, profileName string, root *yaml.Node, catalog map[stri
 				return Selected{}, resolveErr
 			}
 			resolvedConnections = append(resolvedConnections, resolved)
+		}
+		covered := make(map[string]struct{}, len(resolvedConnections))
+		for _, connection := range resolvedConnections {
+			covered[connection.Name] = struct{}{}
+		}
+		for _, required := range requiredConnections {
+			if _, exists := covered[required]; !exists {
+				return Selected{}, diagnostic(file, "profiles."+name+".connections", "profile.coverage", "profile must cover every required external connection", connections)
+			}
 		}
 		if name == profileName {
 			found = true

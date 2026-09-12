@@ -45,11 +45,56 @@ func TestReadProfileContentRejectsSameFileMutation(t *testing.T) {
 	assertDiagnostic(t, err, "profile.file_changed", "")
 }
 
+func TestReadProfileContentRejectsAtomicReplacement(t *testing.T) {
+	root := t.TempDir()
+	path := writeProfile(t, root, validEmptyProfile)
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &atomicReplacingProfileReader{
+		File:        file,
+		path:        path,
+		replacement: []byte("version: 1\nprofiles:\n  other:\n    connections: {}\n"),
+	}
+	if len(reader.replacement) != len(validEmptyProfile) {
+		t.Fatal("same-size replacement fixture changed size")
+	}
+	_, err = readProfileContent(reader, path, info)
+	assertDiagnostic(t, err, "profile.file_changed", "")
+}
+
 type mutatingProfileReader struct {
 	*os.File
 	path        string
 	replacement []byte
 	mutated     bool
+}
+
+type atomicReplacingProfileReader struct {
+	*os.File
+	path        string
+	replacement []byte
+	replaced    bool
+}
+
+func (reader *atomicReplacingProfileReader) Read(buffer []byte) (int, error) {
+	if !reader.replaced {
+		reader.replaced = true
+		temporary := reader.path + ".replacement"
+		if err := os.WriteFile(temporary, reader.replacement, 0o600); err != nil {
+			return 0, err
+		}
+		if err := os.Rename(temporary, reader.path); err != nil {
+			return 0, err
+		}
+	}
+	return reader.File.Read(buffer)
 }
 
 func (reader *mutatingProfileReader) Read(buffer []byte) (int, error) {

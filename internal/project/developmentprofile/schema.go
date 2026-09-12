@@ -56,6 +56,12 @@ func schemaDocument(exactConnections map[string]any) map[string]any {
 	} else {
 		connections["additionalProperties"] = false
 		connections["properties"] = exactConnections
+		required := make([]string, 0, len(exactConnections))
+		for name := range exactConnections {
+			required = append(required, name)
+		}
+		sort.Strings(required)
+		connections["required"] = required
 	}
 	profile := map[string]any{
 		"type": "object", "additionalProperties": false, "required": []string{"connections"},
