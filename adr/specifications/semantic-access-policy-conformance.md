@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.semantic-access/v1`
 
-Last updated: 2026-09-03
+Last updated: 2026-09-12
 
 Owners: LeapView maintainers
 
@@ -53,8 +53,8 @@ cache invalidation.
 
 FAI-641 owns planner security-barrier enforcement; FAI-642 owns discovery and
 semantic-consumer integration; FAI-645 owns authorization cache, lifecycle,
-and audit integration. Source-provider adapters and production activation
-remain pending or partial below.
+and audit integration. FAI-649 activates their qualified supported-profile
+composition. Source-provider adapters remain outside that profile.
 
 FAI-619 is the structural contract authority. Its generated SemanticModel
 boundary and compatibility-lowering fixtures are complemented by FAI-639's
@@ -64,8 +64,8 @@ lifecycle, and audit behavior to the same authorization identity.
 VAL-11 remains Partial until generated canonicalization and the complete
 control-plane and runtime equivalence paths are evidenced. FAI-648 inventories
 the current cross-layer and PostgreSQL evidence without changing those
-implementation boundaries. Production activation and provider admission
-remain outside this qualification layer.
+implementation boundaries. FAI-649 supplies activation for the exact qualified
+profile; provider admission remains outside it.
 
 ## Change control
 
@@ -266,8 +266,8 @@ shared semantic-value boundary. Equal values from multiple sources may be
 combined; conflicting values for one definition return a source-conflict
 error. FAI-639 consumes this effective-value projection at the semantic policy
 evaluator boundary. FAI-642 exposes authenticated direct/group resolution to
-request-bound semantic consumers; real provider adapters and production
-activation composition remain deferred.
+request-bound semantic consumers, and FAI-649 activates the qualified
+composition. Real provider adapters remain outside the supported profile.
 
 ## Platform-admin control flow
 
@@ -284,8 +284,9 @@ non-production only. Repository or role-check failure fails closed.
 
 This guard protects registry, assignment, mapping, impact-preview, and
 semantic-attribute audit operations. It is an administration boundary, not
-evidence that ordinary dashboards, APIs, embeds, or other semantic consumers
-already evaluate the profile.
+evidence for every dashboard, API, embed, or other semantic consumer. The
+FAI-648 matrix names the qualified consumer routes; unsupported routes remain
+fail closed.
 
 ## Attribute value canonicalization
 
@@ -586,11 +587,12 @@ lifecycle prerequisites. Earlier milestone specifications retain historical
 checkpoint results; their grouped statuses do not override this matrix.
 
 The PostgreSQL repair and FAI-645 policy-evidence slices qualify their linked
-repository and publication boundaries. They do not substitute for production
-activation/restart evidence or complete provider-backed consumer coverage.
+repository and publication boundaries. FAI-649 supplies the activation,
+restart, rollback, and DataPolicy-cutover evidence for the supported profile.
+None of those slices claim complete provider-backed consumer coverage.
 Protected rollup/bundle/opaque-cache rejection is not positive substitution
-support. FAI-649 activation/approval and DataPolicy removal remain unimplemented
-by this qualification-only layer; FAI-632 is not declared ready.
+support. The current status and remaining Partial requirements are recorded in
+the qualification matrix rather than inferred from this specification.
 
 ## Maintained verification
 
