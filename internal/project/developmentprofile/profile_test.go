@@ -114,6 +114,8 @@ profiles:
 	if err != nil || selected.File != explicitFile {
 		t.Fatalf("explicit selection = %#v, %v", selected, err)
 	}
+	_, err = loadProfile(LoadOptions{CheckoutRoot: checkout, InvocationDirectory: invocation, ProfileFile: "   "})
+	assertDiagnostic(t, err, "profile.file", "")
 	selected, err = loadProfile(LoadOptions{CheckoutRoot: checkout, ProfileName: "prod"})
 	if err != nil || selected.File != defaultFile || selected.ProfileName != "prod" {
 		t.Fatalf("prod remained-local selection = %#v, %v", selected, err)
@@ -277,7 +279,10 @@ func TestLoadRejectsConnectionAndEndpointViolations(t *testing.T) {
 		{"relative URL secret query", "objectScope: 'bucket/path?token=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"opaque URL secret query", "objectScope: 's3:bucket/path?password=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"compound access key query", "objectScope: 's3://bucket/path?access_key_id=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"prefixed access key query", "objectScope: 's3://bucket/path?aws_access_key_id=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"camel-case client secret query", "objectScope: 's3://bucket/path?clientSecret=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"connection string query", "objectScope: 's3://bucket/path?connection_string=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
+		{"libpq credential assignment", "host: 'host=analytics.internal password=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"malformed URL query", "objectScope: 's3://bucket/path?mode=fast;ignored=value'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"URL secret fragment", "objectScope: 's3://bucket/path#token=exposed'", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint_secret"},
 		{"invalid port", "port: 70000", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "profile.endpoint"},
@@ -308,6 +313,51 @@ func TestLoadAllowsNonSecretEndpointQuery(t *testing.T) {
 			t.Fatalf("Load() rejected non-secret endpoint %q: %v", endpoint, err)
 		}
 	}
+}
+
+func TestLoadAllowsAbsoluteFilesystemPathsContainingAtSign(t *testing.T) {
+	for _, test := range []struct {
+		kind, option string
+	}{
+		{kind: "sqlite", option: "path"},
+		{kind: "ducklake", option: "data_path"},
+	} {
+		t.Run(test.kind, func(t *testing.T) {
+			root := t.TempDir()
+			file := writeProfile(t, root, postgresProfile(
+				"warehouse",
+				"options:\n            "+test.option+": 'C:\\Users\\john@example.com\\analytics.db'",
+				"env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
+			))
+			_, err := loadProfile(LoadOptions{
+				CheckoutRoot: root,
+				ProfileFile:  file,
+				Connections: map[string]LogicalConnection{
+					"warehouse": {ID: "connection_warehouse", ConnectorKind: test.kind},
+				},
+			})
+			if err != nil {
+				t.Fatalf("Load() rejected %s path: %v", test.kind, err)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsCredentialAssignmentInAllowedEndpointOption(t *testing.T) {
+	root := t.TempDir()
+	file := writeProfile(t, root, postgresProfile(
+		"warehouse",
+		"options:\n            data_path: 'AccountName=example;AccountKey=exposed'",
+		"env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
+	))
+	_, err := loadProfile(LoadOptions{
+		CheckoutRoot: root,
+		ProfileFile:  file,
+		Connections: map[string]LogicalConnection{
+			"warehouse": {ID: "connection_warehouse", ConnectorKind: "ducklake"},
+		},
+	})
+	assertDiagnostic(t, err, "profile.endpoint_secret", "exposed")
 }
 
 func TestLoadRejectsManagedConnectionEntries(t *testing.T) {

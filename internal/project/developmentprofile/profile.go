@@ -211,7 +211,7 @@ func resolveSelection(options LoadOptions) (string, string, bool, error) {
 	if profileName != strings.TrimSpace(profileName) || !profileNamePattern.MatchString(profileName) {
 		return "", "", false, diagnostic("profile selection", "profile", "profile.name", "selected profile name is invalid", nil)
 	}
-	explicit := strings.TrimSpace(options.ProfileFile) != ""
+	explicit := options.ProfileFile != ""
 	if strings.TrimSpace(options.RemoteTarget) != "" && (explicit || options.ProfileName != "") {
 		return "", "", false, diagnostic("profile selection", "", "profile.remote_conflict", "local profile flags cannot be combined with remote development", nil)
 	}
@@ -614,19 +614,27 @@ func mapping(file, field string, node *yaml.Node, allowed ...string) (map[string
 
 func hasSecretBearingURL(endpoint connectionadmin.EndpointConfig) bool {
 	values := []struct {
-		value string
-		host  bool
+		value          string
+		host           bool
+		filesystemPath bool
 	}{{value: endpoint.Host, host: true}, {value: endpoint.Database}, {value: endpoint.ObjectScope}, {value: endpoint.SourceIdentity}, {value: endpoint.TLSMode}}
-	for _, value := range endpoint.Options {
+	for name, value := range endpoint.Options {
 		values = append(values, struct {
-			value string
-			host  bool
-		}{value: value})
+			value          string
+			host           bool
+			filesystemPath bool
+		}{value: value, filesystemPath: name == "path" || name == "data_path"})
 	}
 	for _, candidate := range values {
 		value := candidate.value
 		if strings.ContainsAny(value, "\r\n\x00") {
 			return true
+		}
+		if hasSecretAssignment(value) {
+			return true
+		}
+		if candidate.filesystemPath && looksLikeAbsoluteFilesystemPath(value) {
+			continue
 		}
 		uriLike := strings.ContainsAny(value, "?#") || strings.Contains(value, "://") || strings.HasPrefix(value, "//")
 		if !uriLike {
@@ -671,9 +679,15 @@ func hasSecretBearingURL(endpoint connectionadmin.EndpointConfig) bool {
 
 func secretShapedName(value string) bool {
 	normalized := strings.NewReplacer("_", "", "-", "", ".", "").Replace(value)
-	switch normalized {
-	case "privatekey", "accesskey", "accesskeyid", "apikey", "accesstoken", "refreshtoken", "connectionstring":
-		return true
+	for _, suffix := range []string{
+		"password", "passwd", "secret", "token", "credential", "credentials",
+		"privatekey", "accesskey", "accesskeyid", "apikey", "accesstoken",
+		"refreshtoken", "connectionstring", "accountkey", "subscriptionkey",
+		"signature", "authorization",
+	} {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
 	}
 	for _, part := range strings.FieldsFunc(value, func(char rune) bool {
 		return (char < 'a' || char > 'z') && (char < '0' || char > '9')
@@ -684,4 +698,37 @@ func secretShapedName(value string) bool {
 		}
 	}
 	return false
+}
+
+func hasSecretAssignment(value string) bool {
+	for index := 0; index < len(value); index++ {
+		if value[index] != '=' && value[index] != ':' {
+			continue
+		}
+		end := index
+		for end > 0 && (value[end-1] == ' ' || value[end-1] == '\t' || value[end-1] == '\'' || value[end-1] == '"') {
+			end--
+		}
+		start := end
+		for start > 0 && secretKeyCharacter(value[start-1]) {
+			start--
+		}
+		if start < end && secretShapedName(strings.ToLower(value[start:end])) {
+			return true
+		}
+	}
+	return false
+}
+
+func secretKeyCharacter(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9' || value == '_' || value == '-' || value == '.'
+}
+
+func looksLikeAbsoluteFilesystemPath(value string) bool {
+	if filepath.IsAbs(value) {
+		return true
+	}
+	return len(value) >= 3 && ((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) &&
+		value[1] == ':' && (value[2] == '\\' || value[2] == '/')
 }
