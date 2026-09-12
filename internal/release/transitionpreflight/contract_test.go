@@ -3,6 +3,7 @@ package transitionpreflight
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -125,6 +126,125 @@ func TestEvaluateRejectsStructurallyMalformedInput(t *testing.T) {
 	input.Candidate.Release.ReleaseID = string([]byte{0xff})
 	if _, err := Evaluate(input); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("invalid UTF-8 error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestReleasePolicyVersionGate(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []string{"release-policy/v2", "release-policy/v999", "release-policy/future"} {
+		input := testInput()
+		input.ReleasePolicy.Version = version
+		if _, err := Evaluate(input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("version %q error = %v, want ErrInvalidInput", version, err)
+		}
+	}
+
+	// An empty policy remains a valid, explicitly missing policy so the
+	// evaluator preserves its existing unsupported evidence behavior.
+	input := testInput()
+	input.ReleasePolicy = ReleasePolicy{}
+	evidence, err := Evaluate(input)
+	if err != nil {
+		t.Fatalf("missing policy error = %v", err)
+	}
+	if evidence.Decision != DecisionUnsupported || !containsReason(evidence.ReasonCodes, ReasonMissingReleasePolicy) {
+		t.Fatalf("missing policy result = decision %q reasons %v", evidence.Decision, evidence.ReasonCodes)
+	}
+}
+
+func TestEvaluateRejectsOversizedPreflightFields(t *testing.T) {
+	t.Parallel()
+
+	for _, mutate := range []func(*Input){
+		func(input *Input) {
+			input.Control.PredecessorSchemaVersion = strings.Repeat("s", MaxSchemaVersionBytes+1)
+		},
+		func(input *Input) {
+			input.Control.CandidateSchemaVersion = strings.Repeat("s", MaxSchemaVersionBytes+1)
+		},
+		func(input *Input) { input.River.ExistingSchemaVersion = strings.Repeat("s", MaxSchemaVersionBytes+1) },
+		func(input *Input) { input.River.RequiredSchemaVersion = strings.Repeat("s", MaxSchemaVersionBytes+1) },
+		func(input *Input) {
+			input.River.ExistingJobHistoryVersion = strings.Repeat("s", MaxSchemaVersionBytes+1)
+		},
+		func(input *Input) {
+			input.River.RequiredJobHistoryVersion = strings.Repeat("s", MaxSchemaVersionBytes+1)
+		},
+		func(input *Input) { input.ReleasePolicy.Rules = make([]ReleasePolicyRule, MaxReleasePolicyRules+1) },
+		func(input *Input) {
+			input.ReleasePolicy.Rules[0].Decision = Decision(strings.Repeat("d", MaxReleasePolicyDecisionBytes+1))
+		},
+	} {
+		input := testInput()
+		mutate(&input)
+		if _, err := Evaluate(input); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("oversized input error = %v, want ErrInvalidInput", err)
+		}
+	}
+}
+
+func TestEvaluateRejectsCanonicalEvidenceOverLimit(t *testing.T) {
+	t.Parallel()
+
+	input := testInput()
+	// physicalpool compatibility strings are valid opaque owner values, so the
+	// producer-wide evidence bound must protect this otherwise valid input.
+	input.DuckLake.Predecessor.DuckDBRuntime = strings.Repeat("d", MaxCanonicalEvidenceBytes)
+	if _, err := Evaluate(input); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("oversized canonical evidence error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestMaximumAcceptedCanonicalEvidenceRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	input := testInput()
+	maxSchemaVersion := strings.Repeat("s", MaxSchemaVersionBytes)
+	input.Control.PredecessorSchemaVersion = maxSchemaVersion
+	input.Control.CandidateSchemaVersion = maxSchemaVersion
+	input.River.ExistingSchemaVersion = maxSchemaVersion
+	input.River.RequiredSchemaVersion = maxSchemaVersion
+	input.River.ExistingJobHistoryVersion = maxSchemaVersion
+	input.River.RequiredJobHistoryVersion = maxSchemaVersion
+
+	rules := make([]ReleasePolicyRule, 0, MaxReleasePolicyRules)
+	rules = append(rules, input.ReleasePolicy.Rules[0])
+	for i := 1; i < MaxReleasePolicyRules; i++ {
+		predecessor := fmt.Sprintf("sha256:%064x", i)
+		candidate := fmt.Sprintf("sha256:%064x", i+MaxReleasePolicyRules)
+		rules = append(rules, ReleasePolicyRule{
+			PredecessorArtifactDigest:  predecessor,
+			CandidateArtifactDigest:    candidate,
+			RollbackFromArtifactDigest: candidate,
+			RollbackToArtifactDigest:   predecessor,
+			Decision:                   Decision(strings.Repeat("d", MaxReleasePolicyDecisionBytes)),
+		})
+	}
+	input.ReleasePolicy.Rules = rules
+	input.ReleasePolicy.Digest, _ = input.ReleasePolicy.ContentDigest()
+
+	evidence, err := Evaluate(input)
+	if err != nil {
+		t.Fatalf("maximum accepted Evaluate() error = %v", err)
+	}
+	canonical, err := evidence.CanonicalJSON()
+	if err != nil {
+		t.Fatalf("maximum accepted CanonicalJSON() error = %v", err)
+	}
+	if len(canonical) > MaxCanonicalEvidenceBytes {
+		t.Fatalf("canonical evidence size = %d, want <= %d", len(canonical), MaxCanonicalEvidenceBytes)
+	}
+	parsed, err := ParseEvidence(canonical)
+	if err != nil {
+		t.Fatalf("maximum accepted canonical evidence did not parse: %v", err)
+	}
+	parsedCanonical, err := parsed.CanonicalJSON()
+	if err != nil {
+		t.Fatalf("parsed maximum accepted CanonicalJSON() error = %v", err)
+	}
+	if !reflect.DeepEqual(canonical, parsedCanonical) {
+		t.Fatalf("maximum accepted evidence was not canonical after round trip:\n%s\n%s", canonical, parsedCanonical)
 	}
 }
 
@@ -393,7 +513,7 @@ func testInput() Input {
 	predecessorDigest, _ := predecessor.Digest()
 	candidateDigest, _ := candidate.Digest()
 	targetDigest := "sha256:" + strings.Repeat("f", 64)
-	policy := ReleasePolicy{Version: "release-policy/v1", Rules: []ReleasePolicyRule{{PredecessorArtifactDigest: predecessorDigest, CandidateArtifactDigest: candidateDigest, RollbackFromArtifactDigest: candidateDigest, RollbackToArtifactDigest: predecessorDigest, Decision: DecisionBinaryRollbackCompatible}}}
+	policy := ReleasePolicy{Version: ReleasePolicyVersion, Rules: []ReleasePolicyRule{{PredecessorArtifactDigest: predecessorDigest, CandidateArtifactDigest: candidateDigest, RollbackFromArtifactDigest: candidateDigest, RollbackToArtifactDigest: predecessorDigest, Decision: DecisionBinaryRollbackCompatible}}}
 	policy.Digest, _ = policy.ContentDigest()
 	return Input{
 		SchemaVersion: 1, TargetIdentityDigest: targetDigest,

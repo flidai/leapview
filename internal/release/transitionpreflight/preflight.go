@@ -31,6 +31,27 @@ const (
 	// SchemaVersion is the version of the preflight evidence contract.
 	SchemaVersion = 1
 
+	// ReleasePolicyVersion is the only release-policy contract version this
+	// evaluator understands. Future versions must be rejected until their
+	// semantics are explicitly implemented here.
+	ReleasePolicyVersion = "release-policy/v1"
+
+	// MaxCanonicalEvidenceBytes is shared by the producer and ParseEvidence so
+	// canonical evidence can always be consumed by the bounded parser.
+	MaxCanonicalEvidenceBytes = 1 << 20
+
+	// MaxSchemaVersionBytes bounds the owner-provided schema version labels
+	// retained in evidence. Both the supplied and normalized values are measured
+	// in UTF-8 bytes.
+	MaxSchemaVersionBytes = 128
+
+	// MaxReleasePolicyRules bounds the number of artifact-pair rules retained in
+	// one policy. MaxReleasePolicyRuleBytes bounds each rule's encoded JSON and
+	// MaxReleasePolicyDecisionBytes bounds its decision vocabulary extension.
+	MaxReleasePolicyRules         = 128
+	MaxReleasePolicyRuleBytes     = 1024
+	MaxReleasePolicyDecisionBytes = 128
+
 	// DigestDomain is prepended to canonical evidence before hashing. Keeping
 	// the newline in the domain makes this identity unambiguous when the
 	// canonical JSON begins with a JSON string or number in a future version.
@@ -438,23 +459,18 @@ func Evaluate(input Input) (Evidence, error) {
 	if err != nil {
 		return Evidence{}, err
 	}
+	if _, err := marshalEvidence(evidence); err != nil {
+		return Evidence{}, malformed("canonicalEvidence", err)
+	}
 	return evidence, nil
 }
-
-// EvaluatePreflight is an explicit spelling for call sites at the release
-// admission boundary.
-func EvaluatePreflight(input Input) (Evidence, error) { return Evaluate(input) }
-
-// EvaluateTransition is an explicit spelling for callers that own transition
-// orchestration.
-func EvaluateTransition(input Input) (Evidence, error) { return Evaluate(input) }
 
 // ParseEvidence decodes one bounded evidence document through the repository's
 // strict JSON owner, rejects unknown/duplicate/trailing fields, and returns its
 // normalized value. Parsing remains pure and never verifies live state.
 func ParseEvidence(document []byte) (Evidence, error) {
 	var evidence Evidence
-	if err := strictjson.DecodeWithOptions(document, &evidence, strictjson.Options{MaxBytes: 1 << 20, MaxDepth: 32, DuplicateKeys: strictjson.CaseFoldedKeys}); err != nil {
+	if err := strictjson.DecodeWithOptions(document, &evidence, strictjson.Options{MaxBytes: MaxCanonicalEvidenceBytes, MaxDepth: 32, DuplicateKeys: strictjson.CaseFoldedKeys}); err != nil {
 		return Evidence{}, fmt.Errorf("%w: decode evidence: %v", ErrInvalidEvidence, err)
 	}
 	// Keep this explicit even though strictjson currently rejects trailing
@@ -472,6 +488,17 @@ func ParseEvidence(document []byte) (Evidence, error) {
 		return Evidence{}, err
 	}
 	return normalized, nil
+}
+
+func marshalEvidence(evidence Evidence) ([]byte, error) {
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, fmt.Errorf("encode canonical evidence: %w", err)
+	}
+	if len(encoded) > MaxCanonicalEvidenceBytes {
+		return nil, fmt.Errorf("canonical evidence exceeds %d bytes", MaxCanonicalEvidenceBytes)
+	}
+	return encoded, nil
 }
 
 // Normalize validates structural identity and returns a deep-normalized copy.
@@ -496,13 +523,31 @@ func (input Input) Normalize() (Input, error) {
 	if err != nil {
 		return Input{}, err
 	}
-	input.Control.PredecessorSchemaVersion = normalizeText(input.Control.PredecessorSchemaVersion)
-	input.Control.CandidateSchemaVersion = normalizeText(input.Control.CandidateSchemaVersion)
+	input.Control.PredecessorSchemaVersion, err = normalizeSchemaVersion(input.Control.PredecessorSchemaVersion, "control.predecessorSchemaVersion")
+	if err != nil {
+		return Input{}, err
+	}
+	input.Control.CandidateSchemaVersion, err = normalizeSchemaVersion(input.Control.CandidateSchemaVersion, "control.candidateSchemaVersion")
+	if err != nil {
+		return Input{}, err
+	}
 	input.Control.TargetIdentityDigest = normalizeText(input.Control.TargetIdentityDigest)
-	input.River.ExistingSchemaVersion = normalizeText(input.River.ExistingSchemaVersion)
-	input.River.RequiredSchemaVersion = normalizeText(input.River.RequiredSchemaVersion)
-	input.River.ExistingJobHistoryVersion = normalizeText(input.River.ExistingJobHistoryVersion)
-	input.River.RequiredJobHistoryVersion = normalizeText(input.River.RequiredJobHistoryVersion)
+	input.River.ExistingSchemaVersion, err = normalizeSchemaVersion(input.River.ExistingSchemaVersion, "river.existingSchemaVersion")
+	if err != nil {
+		return Input{}, err
+	}
+	input.River.RequiredSchemaVersion, err = normalizeSchemaVersion(input.River.RequiredSchemaVersion, "river.requiredSchemaVersion")
+	if err != nil {
+		return Input{}, err
+	}
+	input.River.ExistingJobHistoryVersion, err = normalizeSchemaVersion(input.River.ExistingJobHistoryVersion, "river.existingJobHistoryVersion")
+	if err != nil {
+		return Input{}, err
+	}
+	input.River.RequiredJobHistoryVersion, err = normalizeSchemaVersion(input.River.RequiredJobHistoryVersion, "river.requiredJobHistoryVersion")
+	if err != nil {
+		return Input{}, err
+	}
 	input.River.TargetIdentityDigest = normalizeText(input.River.TargetIdentityDigest)
 	input.DuckLake.TargetIdentityDigest = normalizeText(input.DuckLake.TargetIdentityDigest)
 	for field, value := range map[string]string{
@@ -573,6 +618,17 @@ func canonicalText(value string) error {
 
 func normalizeText(value string) string { return strings.TrimSpace(value) }
 
+func normalizeSchemaVersion(value, field string) (string, error) {
+	if len(value) > MaxSchemaVersionBytes {
+		return "", malformed(field, fmt.Errorf("schema version is not bounded canonical text"))
+	}
+	value = normalizeText(value)
+	if len(value) > MaxSchemaVersionBytes || !utf8.ValidString(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", malformed(field, fmt.Errorf("schema version is not bounded canonical text"))
+	}
+	return value, nil
+}
+
 func (f RecoveryFrontierRef) Validate() error {
 	u, err := uuid.Parse(f.SetID)
 	if err != nil || u.String() != f.SetID {
@@ -613,11 +669,17 @@ func (m MigrationOwnership) normalize() (MigrationOwnership, error) {
 
 func (p ReleasePolicy) normalize() (ReleasePolicy, error) {
 	p.Version = normalizeText(p.Version)
+	if p.Version != "" && p.Version != ReleasePolicyVersion {
+		return ReleasePolicy{}, malformed("releasePolicy.version", fmt.Errorf("unsupported version"))
+	}
 	p.Digest = normalizeText(p.Digest)
 	if p.Digest != "" {
 		if err := platformdigest.ValidateSHA256Identity(p.Digest); err != nil {
 			return ReleasePolicy{}, malformed("releasePolicy.digest", err)
 		}
+	}
+	if len(p.Rules) > MaxReleasePolicyRules {
+		return ReleasePolicy{}, malformed("releasePolicy.rules", fmt.Errorf("too many rules"))
 	}
 	p.Rules = append([]ReleasePolicyRule(nil), p.Rules...)
 	for i := range p.Rules {
@@ -636,7 +698,21 @@ func (p ReleasePolicy) normalize() (ReleasePolicy, error) {
 		rule.CandidateArtifactDigest = normalizeText(rule.CandidateArtifactDigest)
 		rule.RollbackFromArtifactDigest = normalizeText(rule.RollbackFromArtifactDigest)
 		rule.RollbackToArtifactDigest = normalizeText(rule.RollbackToArtifactDigest)
-		rule.Decision = Decision(normalizeText(string(rule.Decision)))
+		rawDecision := string(rule.Decision)
+		if len(rawDecision) > MaxReleasePolicyDecisionBytes {
+			return ReleasePolicy{}, malformed(fmt.Sprintf("releasePolicy.rules[%d].decision", i), fmt.Errorf("decision is not bounded canonical text"))
+		}
+		rule.Decision = Decision(normalizeText(rawDecision))
+		if len(rule.Decision) > MaxReleasePolicyDecisionBytes || !utf8.ValidString(string(rule.Decision)) || strings.IndexFunc(string(rule.Decision), unicode.IsControl) >= 0 {
+			return ReleasePolicy{}, malformed(fmt.Sprintf("releasePolicy.rules[%d].decision", i), fmt.Errorf("decision is not bounded canonical text"))
+		}
+		encoded, err := json.Marshal(rule)
+		if err != nil {
+			return ReleasePolicy{}, fmt.Errorf("encode release policy rule %d: %w", i, err)
+		}
+		if len(encoded) > MaxReleasePolicyRuleBytes {
+			return ReleasePolicy{}, malformed(fmt.Sprintf("releasePolicy.rules[%d]", i), fmt.Errorf("rule exceeds bounded size"))
+		}
 	}
 	sort.Slice(p.Rules, func(i, j int) bool {
 		left, right := p.Rules[i], p.Rules[j]

@@ -75,13 +75,31 @@ func (e Evidence) Normalize() (Evidence, error) {
 	if err != nil {
 		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
 	}
-	e.Control.PredecessorSchemaVersion = normalizeText(e.Control.PredecessorSchemaVersion)
-	e.Control.CandidateSchemaVersion = normalizeText(e.Control.CandidateSchemaVersion)
+	e.Control.PredecessorSchemaVersion, err = normalizeSchemaVersion(e.Control.PredecessorSchemaVersion, "control.predecessorSchemaVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
+	e.Control.CandidateSchemaVersion, err = normalizeSchemaVersion(e.Control.CandidateSchemaVersion, "control.candidateSchemaVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
 	e.Control.TargetIdentityDigest = normalizeText(e.Control.TargetIdentityDigest)
-	e.River.ExistingSchemaVersion = normalizeText(e.River.ExistingSchemaVersion)
-	e.River.RequiredSchemaVersion = normalizeText(e.River.RequiredSchemaVersion)
-	e.River.ExistingJobHistoryVersion = normalizeText(e.River.ExistingJobHistoryVersion)
-	e.River.RequiredJobHistoryVersion = normalizeText(e.River.RequiredJobHistoryVersion)
+	e.River.ExistingSchemaVersion, err = normalizeSchemaVersion(e.River.ExistingSchemaVersion, "river.existingSchemaVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
+	e.River.RequiredSchemaVersion, err = normalizeSchemaVersion(e.River.RequiredSchemaVersion, "river.requiredSchemaVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
+	e.River.ExistingJobHistoryVersion, err = normalizeSchemaVersion(e.River.ExistingJobHistoryVersion, "river.existingJobHistoryVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
+	e.River.RequiredJobHistoryVersion, err = normalizeSchemaVersion(e.River.RequiredJobHistoryVersion, "river.requiredJobHistoryVersion")
+	if err != nil {
+		return Evidence{}, errors.Join(ErrInvalidEvidence, err)
+	}
 	e.River.TargetIdentityDigest = normalizeText(e.River.TargetIdentityDigest)
 	e.DuckLake.TargetIdentityDigest = normalizeText(e.DuckLake.TargetIdentityDigest)
 	for field, value := range map[string]string{
@@ -199,7 +217,11 @@ func (e Evidence) CanonicalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(normalized)
+	encoded, err := marshalEvidence(normalized)
+	if err != nil {
+		return nil, errors.Join(ErrInvalidEvidence, err)
+	}
+	return encoded, nil
 }
 
 // CanonicalBytes is a convenience alias for CanonicalJSON.
