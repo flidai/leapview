@@ -2,7 +2,7 @@
 
 # catalog_get
 
-Resolve one exact authorized project resource ID and return its compact metadata.
+Resolve one exact authorized project resource ID and return compact metadata. For a semantic_model ref, details.metadata.definition contains the bounded active definition (datasets, dimensions, and metrics); use it to explain metric formulas before exporting dashboards or searching documentation.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_get.json) · [complete manifest](/docs/agent-tools/manifest.json)
 

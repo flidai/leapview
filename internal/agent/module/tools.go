@@ -10,6 +10,7 @@ import (
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	"github.com/flidai/leapview/internal/access"
 	agentcap "github.com/flidai/leapview/internal/agent"
+	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -89,7 +90,19 @@ func (m *Module) DocsToolProvider() agenttools.DocsProvider {
 }
 
 func (m *Module) CatalogToolProvider() agenttools.CatalogProvider {
-	return agenttools.CatalogProvider{Catalog: m.catalog}
+	return agenttools.CatalogProvider{
+		Catalog: m.catalog,
+		SemanticModel: func(_ context.Context, scope agenttools.Scope, ref agenttools.CatalogRef) (*semanticmodel.Model, bool) {
+			if ref.Kind != agenttools.CatalogType(agentcontracts.CatalogTypeSemanticModel) || m.dashboardMetrics == nil {
+				return nil, false
+			}
+			metrics, ok := m.dashboardMetrics(scope.ProjectID)
+			if !ok || metrics == nil {
+				return nil, false
+			}
+			return metrics.SemanticModel(ref.ID)
+		},
+	}
 }
 
 func (m *Module) VisualToolProvider() agenttools.VisualProvider {

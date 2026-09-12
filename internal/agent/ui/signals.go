@@ -18,6 +18,7 @@ type AgentReferenceSignal = signalcontracts.AgentReferenceSignal
 type ChatArtifactSignal = signalcontracts.ChatArtifactSignal
 type ChatConversationSummary = signalcontracts.ChatConversationSummary
 type ChatSignal = signalcontracts.ChatSignal
+type ChatManagementSignal = signalcontracts.ChatManagementSignal
 type ChatStatus = signalcontracts.ChatStatus
 type ChatTranscriptItemSignal = signalcontracts.ChatTranscriptItemSignal
 type ComposerSignal = signalcontracts.ComposerSignal
@@ -61,7 +62,8 @@ func ChatTranscriptItems(items []agent.ChatTranscriptItem) []ChatTranscriptItemS
 
 func chatTranscriptItem(item agent.ChatTranscriptItem) ChatTranscriptItemSignal {
 	out := ChatTranscriptItemSignal{
-		ID: item.ID, Kind: item.Kind, ParentMessageID: Optional(item.ParentMessageID), Text: Optional(item.Text), Markdown: Optional(item.Markdown),
+		Edited: &item.Edited,
+		ID:     item.ID, Kind: item.Kind, ParentMessageID: Optional(item.ParentMessageID), Text: Optional(item.Text), Markdown: Optional(item.Markdown),
 		ToolCallID: Optional(item.ToolCallID), Name: Optional(item.Name), Title: Optional(item.Title),
 		Status: Optional(item.Status), Summary: Optional(item.Summary), ResultSummary: Optional(item.ResultSummary),
 		InputJSON: Optional(item.InputJSON), InputFormat: Optional(item.InputFormat), ArgumentsJSON: Optional(item.ArgumentsJSON),
@@ -148,7 +150,7 @@ func chatHistoryItems(state ChatSignal) []SidebarHistoryItemSignal {
 		}
 		items = append(items, SidebarHistoryItemSignal{
 			ID: conversation.ID, Title: title, Href: chatPath(conversation.ID),
-			Active: conversation.ID == state.ActiveConversationID, Pending: conversation.TitlePending,
+			Active: conversation.ID == state.ActiveConversationID, Pending: conversation.TitlePending, Pinned: conversation.Pinned,
 		})
 	}
 	return items

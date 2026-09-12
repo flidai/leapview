@@ -16,6 +16,37 @@ export const chatComposerStyles = css`
       padding: calc(var(--lv-space-lg) + var(--lv-space-sm)) var(--lv-space-lg) var(--lv-space-lg);
     }
 
+		.edit-banner {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: var(--lv-space-sm);
+			margin-bottom: var(--lv-space-sm);
+			color: var(--lv-fg-muted);
+			font: var(--lv-type-caption);
+		}
+
+		.cancel-edit {
+			border: 0;
+			background: transparent;
+			color: var(--lv-fg-accent);
+			font: inherit;
+			cursor: pointer;
+			padding: var(--lv-space-2xs) var(--lv-space-xs);
+		}
+
+		.cancel-edit:hover:not(:disabled),
+		.cancel-edit:focus-visible {
+			color: var(--lv-fg-default);
+			text-decoration: underline;
+		}
+
+		.cancel-edit:disabled {
+			color: var(--lv-fg-muted);
+			cursor: not-allowed;
+			opacity: var(--opacity-disabled);
+		}
+
     .composer-surface {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -121,6 +152,57 @@ export const chatComposerStyles = css`
       cursor: not-allowed;
       opacity: var(--opacity-disabled);
     }
+
+		.send-button.is-editing {
+			width: auto;
+			min-width: var(--lv-button-height, var(--lv-control-medium));
+			padding-inline: var(--lv-space-sm);
+			gap: var(--lv-space-xs);
+		}
+
+		.stop-button {
+			border-color: var(--lv-line-danger, var(--lv-fg-danger));
+			background: var(--lv-bg-danger, var(--lv-fg-danger));
+			color: var(--lv-fg-on-emphasis, #fff);
+		}
+
+		.stop-button:hover:not(:disabled) {
+			border-color: var(--lv-line-danger-emphasis, var(--lv-fg-danger));
+			background: var(--lv-bg-danger-emphasis, var(--lv-fg-danger));
+		}
+
+		.continuation-action {
+			display: flex;
+			justify-content: flex-end;
+			margin-top: var(--lv-space-xs);
+		}
+
+		.continue-button {
+			border: 0;
+			border-radius: var(--lv-radius-default);
+			background: transparent;
+			color: var(--lv-fg-accent);
+			cursor: pointer;
+			font: var(--lv-type-caption);
+			padding: var(--lv-space-xs) var(--lv-space-sm);
+		}
+
+		.continue-button:hover:not(:disabled),
+		.continue-button:focus-visible {
+			background: var(--lv-bg-control-hover);
+			color: var(--lv-fg-default);
+		}
+
+		.continue-button:focus-visible {
+			outline: var(--focus-outline, var(--lv-border-default));
+			outline-offset: var(--focus-outline-offset, var(--lv-space-2xs));
+		}
+
+		.continue-button:disabled {
+			color: var(--lv-fg-muted);
+			cursor: not-allowed;
+			opacity: var(--opacity-disabled);
+		}
 
     :host([hide-context-action]) .context-button {
       display: none;

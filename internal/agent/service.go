@@ -19,7 +19,6 @@ import (
 
 var (
 	ErrDisabled          = apigenfailure.New("unavailable", "agent is not configured")
-	ErrBusy              = apigenfailure.New("conflict", "agent conversation already has a running turn")
 	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "agent run is not cancellable")
 )
 
@@ -229,6 +228,172 @@ func (s *Service) ArchiveConversation(ctx context.Context, scope Scope, conversa
 	return s.repo.ArchiveConversation(ctx, scope.PrincipalID, conversationID)
 }
 
+func (s *Service) conversationManagementRepository() (ConversationManagementRepository, error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("agent store is required")
+	}
+	management, ok := s.repo.(ConversationManagementRepository)
+	if !ok {
+		return nil, fmt.Errorf("agent conversation management is unavailable")
+	}
+	return management, nil
+}
+
+func (s *Service) rejectRunningConversation(conversationID string) error {
+	if s != nil && s.ConversationRunning(conversationID) {
+		return ErrConversationBusy
+	}
+	return nil
+}
+
+func (s *Service) ListArchivedConversations(ctx context.Context, scope Scope) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.ListArchivedConversations(ctx, scope.PrincipalID)
+}
+
+func (s *Service) ListArchivedConversationsPage(ctx context.Context, scope Scope, page Page) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.ListArchivedConversationsPage(ctx, scope.PrincipalID, normalizePage(page))
+}
+
+func (s *Service) RestoreConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	if err := s.rejectRunningConversation(conversationID); err != nil {
+		return Conversation{}, err
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.RestoreConversation(ctx, scope.PrincipalID, conversationID)
+}
+
+func (s *Service) SetConversationPinned(ctx context.Context, scope Scope, conversationID string, pinned bool) (Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.SetConversationPinned(ctx, scope.PrincipalID, conversationID, pinned)
+}
+
+func (s *Service) PinConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	return s.SetConversationPinned(ctx, scope, conversationID, true)
+}
+
+func (s *Service) UnpinConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	return s.SetConversationPinned(ctx, scope, conversationID, false)
+}
+
+func (s *Service) DeleteConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	if err := s.rejectRunningConversation(conversationID); err != nil {
+		return Conversation{}, err
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.DeleteConversation(ctx, scope.PrincipalID, conversationID)
+}
+
+func (s *Service) BulkArchiveConversations(ctx context.Context, scope Scope, conversationIDs []string) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.BulkArchiveConversations(ctx, scope.PrincipalID, conversationIDs)
+}
+
+func (s *Service) BulkDeleteConversations(ctx context.Context, scope Scope, conversationIDs []string) ([]Conversation, error) {
+	for _, conversationID := range conversationIDs {
+		if err := s.rejectRunningConversation(conversationID); err != nil {
+			return nil, err
+		}
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.BulkDeleteConversations(ctx, scope.PrincipalID, conversationIDs)
+}
+
+// ManageConversation is the compact action surface used by HTTP and Datastar
+// adapters. Bulk actions intentionally derive their IDs from the principal's
+// own active/archived read models so a caller can never supply another user's
+// conversation as an implicit bulk target.
+func (s *Service) ManageConversation(ctx context.Context, scope Scope, action, conversationID string) error {
+	action = strings.TrimSpace(action)
+	conversationID = strings.TrimSpace(conversationID)
+	switch action {
+	case "pin":
+		_, err := s.PinConversation(ctx, scope, conversationID)
+		return err
+	case "unpin":
+		_, err := s.UnpinConversation(ctx, scope, conversationID)
+		return err
+	case "archive":
+		_, err := s.ArchiveConversation(ctx, scope, conversationID)
+		return err
+	case "restore":
+		_, err := s.RestoreConversation(ctx, scope, conversationID)
+		return err
+	case "delete":
+		_, err := s.DeleteConversation(ctx, scope, conversationID)
+		return err
+	case "archive_all", "delete_all":
+		active, err := s.listAllConversations(ctx, scope, false)
+		if err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(active))
+		for _, conversation := range active {
+			ids = append(ids, conversation.ID)
+		}
+		if action == "archive_all" {
+			_, err = s.BulkArchiveConversations(ctx, scope, ids)
+			return err
+		}
+		archived, err := s.listAllConversations(ctx, scope, true)
+		if err != nil {
+			return err
+		}
+		for _, conversation := range archived {
+			ids = append(ids, conversation.ID)
+		}
+		_, err = s.BulkDeleteConversations(ctx, scope, ids)
+		return err
+	default:
+		return fmt.Errorf("unsupported conversation management action %q", action)
+	}
+}
+
+func (s *Service) listAllConversations(ctx context.Context, scope Scope, archived bool) ([]Conversation, error) {
+	all := make([]Conversation, 0)
+	after := ""
+	for {
+		page := Page{Limit: 100, After: after}
+		var rows []Conversation
+		var err error
+		if archived {
+			rows, err = s.ListArchivedConversationsPage(ctx, scope, page)
+		} else {
+			rows, err = s.ListConversationsPage(ctx, scope, page)
+		}
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		if len(rows) < page.Limit {
+			return all, nil
+		}
+		after = rows[len(rows)-1].ID
+	}
+}
+
 func (s *Service) ListMessages(ctx context.Context, scope Scope, conversationID string) ([]Message, error) {
 	return s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
 }
@@ -421,14 +586,19 @@ func (s *Service) ConversationTranscript(ctx context.Context, scope Scope, conve
 }
 
 func (s *Service) ConversationTranscriptState(ctx context.Context, scope Scope, conversationID string) (ChatTranscriptState, error) {
-	if _, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID); err != nil {
+	_, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID)
+	if err != nil {
 		return ChatTranscriptState{}, err
 	}
 	messages, err := s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
 	if err != nil {
 		return ChatTranscriptState{}, err
 	}
-	return transcriptStateFromMessages(conversationID, messages), nil
+	// TranscriptJSON drives model context and edit validation. Message rows are
+	// retained as immutable history; successful edit user rows carry a target
+	// marker so the active UI projection can retain complete multipart/tool
+	// output rows while excluding the replaced branch.
+	return transcriptStateFromMessages(conversationID, activeMessageProjection(messages)), nil
 }
 
 func (s *Service) systemPrompt(ctx context.Context) (string, error) {

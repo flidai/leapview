@@ -48,6 +48,15 @@ func (d *APIGenDispatcher) CreateAgentConversation(w stdhttp.ResponseWriter, r *
 	d.handler.CreateConversation(w, r)
 }
 
+func (d *APIGenDispatcher) ManageAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.Request, headers agentgen.GenManageAgentConversationsHeaders) {
+	r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	d.handler.ManageAgentConversations(w, r)
+}
+
+func (d *APIGenDispatcher) ListArchivedAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.Request, _ agentgen.GenListArchivedAgentConversationsParams) {
+	d.handler.ListArchivedAgentConversations(w, r)
+}
+
 func (d *APIGenDispatcher) GetAgentConversation(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
 	d.handler.GetConversation(w, r)
 }

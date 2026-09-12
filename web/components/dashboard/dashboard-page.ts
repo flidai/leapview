@@ -167,6 +167,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
 
     .route > lv-chat-drawer {
+      height: 100%;
+      min-height: 0;
       grid-column: 3;
       grid-row: 2 / 4;
     }
@@ -573,6 +575,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
+    this.toggleAttribute('data-agent-open', this.agentDrawerOpen)
     const agent = this.presentation === 'app'
       ? this.signal<{ activeConversationId?: string } | null>('agent', null)
       : null

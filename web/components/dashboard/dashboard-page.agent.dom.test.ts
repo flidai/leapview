@@ -603,3 +603,28 @@ test('dashboard agent restores its open state and active conversation after relo
     await page.close()
   }
 })
+
+
+test('side agent keeps the composer visible and starter prompts never submit automatically', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
+      ;(window as any).sideSubmits = 0
+      document.addEventListener('lv-chat-submit', () => (window as any).sideSubmits++)
+    })
+    await page.locator('.agent-toggle').click()
+    const drawer = page.locator('lv-chat-drawer[open]')
+    await drawer.getByRole('button', { name: 'Summarize the key takeaways on this page.', exact: true }).click()
+    expect(await drawer.locator('textarea').inputValue()).toBe('Summarize the key takeaways on this page.')
+    expect(await page.evaluate(() => (window as any).sideSubmits)).toBe(0)
+    const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))
+    expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport + 1)
+    expect(geometry.composerBottom).toBeLessThanOrEqual(geometry.viewport + 1)
+    await page.evaluate(async () => { const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev'); mergePatch({ agentTurnPending: true }) })
+    expect(await drawer.getByRole('button', { name: 'New chat', exact: true }).isDisabled()).toBe(true)
+    await drawer.getByRole('status').filter({ hasText: 'Working' }).waitFor()
+  } finally { await page.close() }
+})

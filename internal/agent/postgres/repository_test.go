@@ -95,6 +95,58 @@ func TestPostgreSQL18AgentCRUDScopingAndMessageSequence(t *testing.T) {
 	}
 }
 
+func TestPostgreSQL18ConversationManagementLifecycleAndBusyDelete(t *testing.T) {
+	_, repo := agentPostgresTestRepo(t, "chat_management")
+	ctx := t.Context()
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", Title: "managed", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned, err := repo.SetConversationPinned(ctx, "owner", conversation.ID, true); err != nil {
+		t.Fatal(err)
+	} else if !pinned.Pinned {
+		t.Fatalf("pinned conversation = %#v", pinned)
+	}
+	if _, err := repo.ArchiveConversation(ctx, "owner", conversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := repo.ListArchivedConversations(ctx, "owner")
+	if err != nil || len(archived) != 1 || archived[0].ID != conversation.ID || !archived[0].Pinned {
+		t.Fatalf("archived conversations = %#v err=%v", archived, err)
+	}
+	if restored, err := repo.RestoreConversation(ctx, "owner", conversation.ID); err != nil {
+		t.Fatal(err)
+	} else if restored.Status != agent.ConversationStatusActive {
+		t.Fatalf("restored conversation = %#v", restored)
+	}
+	purge, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", Title: "purge", MetadataJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendMessage(ctx, agent.MessageInput{PrincipalID: "owner", ConversationID: purge.ID, Role: agent.MessageRoleUser, ContentText: "purged", ContentJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := repo.DeleteConversation(ctx, "owner", purge.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Status != agent.ConversationStatusDeleted || deleted.DeletedAt == "" {
+		t.Fatalf("deleted conversation = %#v", deleted)
+	}
+	if _, err := repo.GetConversation(ctx, "owner", purge.ID); !errors.Is(err, agent.ErrNotFound) {
+		t.Fatalf("deleted conversation lookup error = %v, want not found", err)
+	}
+	if messages, err := repo.ListMessages(ctx, "owner", purge.ID); err != nil || len(messages) != 0 {
+		t.Fatalf("deleted transcript = %#v err=%v", messages, err)
+	}
+	if _, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: "owner", ConversationID: conversation.ID, RunID: "management-busy", Status: agent.RunStatusRunning, MetadataJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DeleteConversation(ctx, "owner", conversation.ID); !errors.Is(err, agent.ErrConversationBusy) {
+		t.Fatalf("delete running conversation error = %v, want busy", err)
+	}
+}
+
 type nonTransactionalDB struct{}
 
 func (nonTransactionalDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -414,6 +466,14 @@ func TestPostgreSQL18AgentRuntimeLeastPrivilege(t *testing.T) {
 	}
 	if _, err := runtimeRepo.AppendEvent(t.Context(), agent.EventInput{PrincipalID: "runtime", RunID: run.ID, Sequence: 1, EventType: "agent.run.output", PayloadJSON: `{}`}); err != nil {
 		t.Fatalf("runtime event insert with sequence usage: %v", err)
+	}
+	if _, err := runtimeRepo.FinishRun(t.Context(), agent.RunFinish{PrincipalID: "runtime", ConversationID: conversation.ID, RunID: run.ID, Status: agent.RunStatusCompleted, MetadataJSON: `{}`}); err != nil {
+		t.Fatalf("runtime run completion: %v", err)
+	}
+	if deleted, err := runtimeRepo.DeleteConversation(t.Context(), "runtime", conversation.ID); err != nil {
+		t.Fatalf("runtime conversation delete through security-definer path: %v", err)
+	} else if deleted.Status != agent.ConversationStatusDeleted || deleted.DeletedAt == "" {
+		t.Fatalf("runtime deleted conversation = %#v", deleted)
 	}
 	readonlyDB, err := pgxpool.New(t.Context(), database.URL(readonly))
 	if err != nil {

@@ -8,6 +8,10 @@ import { typographyTestTokens } from '../test-typography-tokens'
 let server: Server
 let baseURL = ''
 let browser: Browser
+let draftTurnRequests = 0
+let draftTurnAnswerSent = false
+let draftTurnAnswerFinished = false
+let releaseDraftTurnAnswer: (() => void) | null = null
 
 setDefaultTimeout(15_000)
 
@@ -17,6 +21,28 @@ const root = join(projectRoot, '.tmp/chat-page-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (request.method === 'POST' && url.pathname === '/chats/turns') {
+      draftTurnRequests += 1
+      response.writeHead(200, {
+        'cache-control': 'no-cache',
+        'content-type': 'text/event-stream',
+        connection: 'close',
+      })
+      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"activeConversationId":"c3"}}\n\n')
+      await new Promise<void>((resolve) => {
+        releaseDraftTurnAnswer = resolve
+      })
+      draftTurnAnswerSent = true
+      if (response.destroyed) {
+        draftTurnAnswerFinished = true
+        return
+      }
+      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"transcript":[{"id":"fake-answer","kind":"assistant","markdown":"Fake answer","conversationId":"c3"}]}}\n\n')
+      response.end()
+      draftTurnAnswerFinished = true
+      releaseDraftTurnAnswer = null
+      return
+    }
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -71,7 +97,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  server.closeAllConnections()
+  await new Promise<void>((resolve, reject) => server.close((error: NodeJS.ErrnoException | undefined) => {
+    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+    else resolve()
+  }))
 }, 15_000)
 
 for (const viewport of [
@@ -265,6 +295,38 @@ test('new chat navigates when the created conversation signal arrives', async ()
   }
 })
 
+test('new chat submits Enter and navigates from the command signal before the answer arrives', async () => {
+  draftTurnRequests = 0
+  draftTurnAnswerSent = false
+  draftTurnAnswerFinished = false
+  releaseDraftTurnAnswer = null
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/new`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
+    await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const composer = element.shadowRoot.querySelector('lv-chat-composer') as any
+      await composer.updateComplete
+    })
+
+    const textarea = page.locator('lv-chat-page').locator('lv-chat-composer').locator('textarea')
+    await textarea.fill('What changed most recently?')
+    await textarea.press('Enter')
+
+    await page.waitForURL(`${baseURL}/chats/c3`)
+    expect(draftTurnRequests).toBe(1)
+    expect(draftTurnAnswerSent).toBe(false)
+    expect(new URL(page.url()).pathname).toBe('/chats/c3')
+  } finally {
+    releaseDraftTurnAnswer?.()
+    for (let attempt = 0; attempt < 50 && !draftTurnAnswerFinished; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+    await page.close()
+  }
+})
+
 test('chat list page renders searchable conversation history', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -435,6 +497,9 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
     status: { enabled, running: false, ...(enabled ? {} : { error: 'Agent is not configured.' }) },
     composer: { value: '', disabled: !enabled, placeholder: enabled ? 'Ask about dashboards, metrics, or models...' : 'Agent is not configured.' },
   }
+  const submitCommand = scenario === 'new'
+    ? ` data-on:lv-chat-submit="$agent.composer.value = evt.detail.input; @post('/chats/turns')"`
+    : ''
   return `
     <!doctype html>
     <html>
@@ -447,7 +512,7 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
       </head>
       <body>
         <main data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}">
-          <lv-chat-page></lv-chat-page>
+          <lv-chat-page${submitCommand}></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
         <script type="module" src="/chat-page-under-test.js"></script>

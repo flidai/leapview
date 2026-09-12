@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
@@ -10,12 +12,24 @@ import (
 
 var ErrNotFound = apigenfailure.New("not_found", "agent record not found")
 var ErrConversationArchived = apigenfailure.New("not_found", "agent conversation is archived")
+var ErrConversationBusy = apigenfailure.New("conflict", "agent conversation has a running turn")
+
+// ErrBusy is retained as the service-facing name used by prompt and HTTP
+// callers. Keep it identical to ErrConversationBusy so repository lifecycle
+// mutations and prompt admission share one conflict identity.
+var ErrBusy = ErrConversationBusy
 var ErrRequestConflict = apigenfailure.New("conflict", "agent request id conflicts with existing run")
 
 const (
 	ConversationDefaultTitle   = "New conversation"
 	ConversationStatusActive   = "active"
 	ConversationStatusArchived = "archived"
+	// Deleted conversations remain physically stored so their transcript and
+	// audit/run history are retained. The native stores represent this state as
+	// an internal metadata marker alongside the archived status for schema
+	// compatibility; repositories map it to this public status.
+	ConversationStatusDeleted = "deleted"
+
 
 	RunStatusRunning   = "running"
 	RunStatusPreparing = "preparing"
@@ -52,6 +66,76 @@ type Conversation struct {
 	CreatedAt      string
 	UpdatedAt      string
 	ArchivedAt     string
+	DeletedAt      string
+	Pinned         bool
+}
+
+// ConversationMetadataKey is reserved inside metadata_json for durable chat
+// management state. Keeping this small state in the existing metadata object
+// lets SQLite installations adopt chat management without an unsafe live
+// table rewrite, while the repository still exposes typed fields to callers.
+const ConversationMetadataKey = "_leapview_chat"
+
+type ConversationMetadata struct {
+	Pinned    bool
+	DeletedAt string
+}
+
+// ParseConversationMetadata reads the repository-owned chat metadata. Older
+// rows and arbitrary metadata remain valid when the reserved object is absent.
+func ParseConversationMetadata(raw string) (ConversationMetadata, error) {
+	var document map[string]any
+	if strings.TrimSpace(raw) == "" {
+		return ConversationMetadata{}, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return ConversationMetadata{}, err
+	}
+	state := ConversationMetadata{}
+	reserved, ok := document[ConversationMetadataKey].(map[string]any)
+	if !ok {
+		return state, nil
+	}
+	if pinned, ok := reserved["pinned"].(bool); ok {
+		state.Pinned = pinned
+	}
+	if deletedAt, ok := reserved["deletedAt"].(string); ok {
+		state.DeletedAt = strings.TrimSpace(deletedAt)
+	}
+	return state, nil
+}
+
+// UpdateConversationMetadata changes only repository-owned chat state and
+// preserves all caller metadata. A zero DeletedAt removes the delete marker.
+func UpdateConversationMetadata(raw string, state ConversationMetadata) (string, error) {
+	var document map[string]any
+	if strings.TrimSpace(raw) == "" {
+		document = map[string]any{}
+	} else if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return "", err
+	} else if document == nil {
+		document = map[string]any{}
+	}
+	reserved, _ := document[ConversationMetadataKey].(map[string]any)
+	if reserved == nil {
+		reserved = map[string]any{}
+	}
+	reserved["pinned"] = state.Pinned
+	if strings.TrimSpace(state.DeletedAt) == "" {
+		delete(reserved, "deletedAt")
+	} else {
+		reserved["deletedAt"] = strings.TrimSpace(state.DeletedAt)
+	}
+	if !state.Pinned && strings.TrimSpace(state.DeletedAt) == "" && len(reserved) == 1 {
+		delete(document, ConversationMetadataKey)
+	} else {
+		document[ConversationMetadataKey] = reserved
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 type Page struct {
@@ -212,4 +296,20 @@ type Repository interface {
 	AppendEvent(ctx context.Context, input EventInput) (Event, error)
 	ListEvents(ctx context.Context, principalID, runID string) ([]Event, error)
 	ListEventsPage(ctx context.Context, principalID, runID string, page Page) ([]Event, error)
+}
+
+// ConversationManagementRepository is the optional lifecycle surface used by
+// chat management transports. It intentionally remains separate from the
+// historical Repository contract so small in-memory stores and callers that
+// only execute prompts do not need to implement destructive operations.
+// Implementations must scope every operation by principalID and keep child
+// transcript/run/event rows when a conversation is deleted.
+type ConversationManagementRepository interface {
+	ListArchivedConversations(ctx context.Context, principalID string) ([]Conversation, error)
+	ListArchivedConversationsPage(ctx context.Context, principalID string, page Page) ([]Conversation, error)
+	RestoreConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
+	SetConversationPinned(ctx context.Context, principalID, conversationID string, pinned bool) (Conversation, error)
+	DeleteConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
+	BulkArchiveConversations(ctx context.Context, principalID string, conversationIDs []string) ([]Conversation, error)
+	BulkDeleteConversations(ctx context.Context, principalID string, conversationIDs []string) ([]Conversation, error)
 }

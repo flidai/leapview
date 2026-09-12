@@ -1,6 +1,6 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { AtSign, Search, Send, X } from 'lucide'
+import { AtSign, Search, Send, Square, X } from 'lucide'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
@@ -22,19 +22,25 @@ import {
 
 const maxPinnedMentionSuggestions = 8
 const maxGlobalMentionSuggestions = 8
+const continueResponsePrompt = 'Continue your previous response from where you stopped.'
 
 class ChatComposer extends LitElement {
   @property({ type: String }) value = ''
   @property({ type: Boolean, reflect: true }) disabled = false
   @property({ type: Boolean, reflect: true }) pending = false
+  @property({ type: Boolean, reflect: true }) running = false
+  @property({ type: Boolean, reflect: true }) canContinue = false
+  @property({ type: String, attribute: false }) runId = ''
   @property({ type: String }) placeholder = 'Ask about dashboards, metrics, or models...'
 	@property({ attribute: false }) references: ChatContextReference[] = []
 	@property({ attribute: false }) pinnedSuggestions: ChatContextReference[] = []
 	@property({ attribute: false }) suggestions: ChatContextReference[] = []
   @property({ type: Number, attribute: 'reference-limit' }) referenceLimit = defaultAgentReferenceLimit
   @property({ type: String, attribute: false }) suggestionQuery = ''
-  @property({ type: Number, attribute: false }) suggestionRequestId = 0
+	@property({ type: Number, attribute: false }) suggestionRequestId = 0
 	@property({ type: String, attribute: false }) acceptedRunId = ''
+	@property({ type: String, attribute: 'edit-message-id' }) editMessageId = ''
+	@property({ type: Boolean, reflect: true }) editing = false
   @state() private draft = ''
 	@state() private mentionIndex = 0
 	@state() private mentionSearchPending = false
@@ -51,7 +57,7 @@ class ChatComposer extends LitElement {
 
 	protected willUpdate(changed: Map<string, unknown>) {
 		if (!changed.has('acceptedRunId')) return
-		if (this.acceptedRunInitialized && this.acceptedRunId !== changed.get('acceptedRunId')) {
+		if (this.acceptedRunInitialized && this.acceptedRunId && this.acceptedRunId !== changed.get('acceptedRunId')) {
 			this.consumeAcceptedTurn()
 		}
 		this.acceptedRunInitialized = true
@@ -115,13 +121,23 @@ class ChatComposer extends LitElement {
   }
 
   render() {
-    const blocked = this.disabled || this.pending
+		const blocked = this.disabled || this.pending
+		const isEditing = this.editing || Boolean(this.editMessageId.trim())
+		const showStop = this.running
+		const stopDisabled = !this.runId.trim()
+		const continueDisabled = this.disabled || this.pending || this.running || isEditing || this.draft.trim() !== ''
 		const activeMention = this.activeMention()
 		const mentionGroups = this.mentionSuggestionGroups()
 		const mentions = [...mentionGroups.pinned, ...mentionGroups.global]
 		const referenceLimitReached = this.referenceLimitReached()
     return html`
       <form @submit=${this.submit}>
+			${isEditing ? html`
+				<div class="edit-banner" role="status" aria-label="Editing message">
+					<span>Editing message</span>
+					<button class="cancel-edit" type="button" ?disabled=${blocked} @click=${this.cancelEdit}>Cancel</button>
+				</div>
+			` : null}
 			${activeMention ? html`
 				<div id="chat-context-options" class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
 					${mentionGroups.pinned.length > 0 ? html`
@@ -184,17 +200,45 @@ class ChatComposer extends LitElement {
             >
               ${lucideIcon(AtSign)}
             </button>
-            <button
-						class="send-button"
-              type="submit"
-              aria-label=${this.pending ? 'Sending' : 'Send'}
-              title="Send"
-              ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
-            >
-              ${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
-            </button>
+            ${showStop ? html`
+              <button
+                class="send-button stop-button"
+                type="button"
+                aria-label="Stop response"
+                title="Stop response"
+                ?disabled=${stopDisabled}
+                @click=${this.stop}
+              >
+                ${lucideIcon(Square)}
+              </button>
+            ` : html`
+              <button
+						class=${['send-button', isEditing ? 'is-editing' : ''].filter(Boolean).join(' ')}
+                type="submit"
+				  aria-label=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
+				  title=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
+                ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
+              >
+							${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
+							${isEditing ? html`<span>Save &amp; send</span>` : null}
+              </button>
+            `}
           </div>
         </div>
+        ${this.canContinue ? html`
+          <div class="continuation-action">
+            <button
+              class="continue-button"
+              type="button"
+              aria-label="Continue response"
+              title=${continueDisabled ? 'Clear your draft to continue the previous response' : 'Continue response'}
+              ?disabled=${continueDisabled}
+              @click=${this.continueResponse}
+            >
+              Continue response
+            </button>
+          </div>
+        ` : null}
       </form>
     `
   }
@@ -266,13 +310,55 @@ class ChatComposer extends LitElement {
     this.dispatchSubmit()
   }
 
-  private dispatchSubmit() {
+	private dispatchSubmit() {
     const input = this.draft.trim()
     if (this.disabled || this.pending || input === '') return
-    emitDomainEvent(this, domainEvents.chatSubmit, { input, references: this.references })
-  }
+		const editMessageId = this.editMessageId.trim()
+		if (this.editing && !editMessageId) return
+		emitDomainEvent(this, domainEvents.chatSubmit, {
+			input,
+			references: this.references,
+			...(editMessageId ? { editMessageId } : {}),
+		})
+	}
+
+	private stop = (): void => {
+		const runId = this.runId.trim()
+		if (!this.running || !runId) return
+		this.dispatchEvent(new CustomEvent('lv-chat-stop', {
+			bubbles: true,
+			composed: true,
+			detail: { runId },
+		}))
+	}
+
+	private continueResponse = (): void => {
+		if (this.disabled || this.pending || this.running || !this.canContinue || this.editing || this.editMessageId.trim() || this.draft.trim() !== '') return
+		emitDomainEvent(this, domainEvents.chatSubmit, {
+			input: continueResponsePrompt,
+			references: this.references,
+		})
+	}
+
+	private cancelEdit = (): void => {
+		const editMessageId = this.editMessageId.trim()
+		if (!this.editing && !editMessageId) return
+		this.editMessageId = ''
+		this.editing = false
+		this.draft = ''
+		this.references = []
+		this.notifyReferences()
+		void this.updateComplete.then(() => this.resizeTextarea())
+		this.dispatchEvent(new CustomEvent('lv-chat-edit-cancel', {
+			bubbles: true,
+			composed: true,
+			detail: { editMessageId },
+		}))
+	}
 
 	private consumeAcceptedTurn() {
+		this.editMessageId = ''
+		this.editing = false
 		this.draft = ''
 		this.references = []
 		this.mentionIndex = 0

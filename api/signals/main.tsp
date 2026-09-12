@@ -811,6 +811,7 @@ model AgentContextSignal {
 }
 
 model ChatConversationSummary {
+  `pinned`?: boolean;
   `archivedAt`?: string;
   `createdAt`: string;
   `id`: string;
@@ -861,13 +862,28 @@ model ChatSignal {
   `transcript`: ChatTranscriptItemSignal[];
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["chat", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "chat" })
+model ChatManagementSignal {
+  `completedRequestId`?: string;
+  `action`: string;
+  `conversationId`: string;
+  `archivedConversations`: ChatConversationSummary[];
+  `error`?: string;
+  `message`?: string;
+  `requestId`?: string;
+}
+
 model ChatStatus {
+  `canContinue`?: boolean;
+  `runId`?: string;
   `enabled`: boolean;
   `error`?: string;
   `running`: boolean;
 }
 
 model ChatTranscriptItemSignal {
+  `edited`?: boolean;
   `argumentsJson`?: string;
   `artifact`?: ChatArtifactSignal;
   `conversationId`?: string;
@@ -900,6 +916,7 @@ model ChromeSignal {
 }
 
 model ComposerSignal {
+  `editMessageId`?: string;
   `disabled`: boolean;
   `placeholder`: string;
   `value`: string;
@@ -2026,6 +2043,7 @@ model SidebarGroupSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
 model SidebarHistoryItemSignal {
+  `pinned`?: boolean;
   `active`: boolean;
   `href`: string;
   `id`: string;

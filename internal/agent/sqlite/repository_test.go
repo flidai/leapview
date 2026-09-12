@@ -397,6 +397,133 @@ func TestRepositoryScopesConversationsToPrincipal(t *testing.T) {
 	}
 }
 
+func TestConversationManagementLifecyclePinsArchivesRestoresAndDeletes(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "chat-management@example.com")
+	other := createAgentPrincipal(t, ctx, store, "chat-management-other@example.com")
+	one, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID, Title: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID, Title: "two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID, Title: "three"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: other.ID, Title: "foreign"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.AppendMessage(ctx, agent.MessageInput{PrincipalID: owner.ID, ConversationID: two.ID, Role: agent.MessageRoleUser, ContentText: "retained", ContentJSON: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if pinned, err := repo.SetConversationPinned(ctx, owner.ID, two.ID, true); err != nil {
+		t.Fatal(err)
+	} else if !pinned.Pinned {
+		t.Fatalf("pinned conversation = %#v", pinned)
+	}
+	active, err := repo.ListConversations(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 3 || active[0].ID != two.ID || !active[0].Pinned {
+		t.Fatalf("active pinned ordering = %#v", active)
+	}
+	if _, err := repo.ArchiveConversation(ctx, owner.ID, one.ID); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := repo.ListArchivedConversations(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 1 || archived[0].ID != one.ID {
+		t.Fatalf("archived list = %#v", archived)
+	}
+	if restored, err := repo.RestoreConversation(ctx, owner.ID, one.ID); err != nil {
+		t.Fatal(err)
+	} else if restored.Status != agent.ConversationStatusActive || restored.ArchivedAt != "" {
+		t.Fatalf("restored conversation = %#v", restored)
+	}
+	deleted, err := repo.DeleteConversation(ctx, owner.ID, two.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted.Status != agent.ConversationStatusDeleted || deleted.DeletedAt == "" {
+		t.Fatalf("deleted conversation = %#v", deleted)
+	}
+	active, err = repo.ListConversations(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 2 {
+		t.Fatalf("active after delete = %#v", active)
+	}
+	archived, err = repo.ListArchivedConversations(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 0 {
+		t.Fatalf("deleted conversation leaked into archive list = %#v", archived)
+	}
+	if _, err := repo.GetConversation(ctx, owner.ID, two.ID); err == nil {
+		t.Fatal("deleted conversation lookup unexpectedly succeeded")
+	}
+	if _, err := repo.ListMessages(ctx, owner.ID, two.ID); err == nil {
+		t.Fatal("deleted transcript lookup unexpectedly succeeded")
+	}
+	if _, err := repo.SetConversationPinned(ctx, owner.ID, foreign.ID, true); !errors.Is(err, agent.ErrNotFound) {
+		t.Fatalf("foreign pin error = %v, want not found", err)
+	}
+	if _, err := repo.BulkArchiveConversations(ctx, owner.ID, []string{one.ID, foreign.ID}); !errors.Is(err, agent.ErrNotFound) {
+		t.Fatalf("foreign bulk archive error = %v, want not found", err)
+	}
+	if active, err := repo.ListConversations(ctx, owner.ID); err != nil {
+		t.Fatal(err)
+	} else if len(active) != 2 {
+		t.Fatalf("owner rows changed after foreign bulk archive = %#v", active)
+	}
+	if _, err := repo.BulkArchiveConversations(ctx, owner.ID, []string{one.ID, third.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if active, err := repo.ListConversations(ctx, owner.ID); err != nil {
+		t.Fatal(err)
+	} else if len(active) != 0 {
+		t.Fatalf("active after bulk archive = %#v", active)
+	}
+	if _, err := repo.BulkDeleteConversations(ctx, owner.ID, []string{one.ID, third.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if archived, err := repo.ListArchivedConversations(ctx, owner.ID); err != nil {
+		t.Fatal(err)
+	} else if len(archived) != 0 {
+		t.Fatalf("archive after bulk delete = %#v", archived)
+	}
+}
+
+func TestConversationManagementRejectsDeleteWithRunningRun(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "chat-management-busy@example.com")
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: owner.ID, ConversationID: conversation.ID, RunID: "management-busy-run", Status: agent.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DeleteConversation(ctx, owner.ID, conversation.ID); !errors.Is(err, agent.ErrConversationBusy) {
+		t.Fatalf("delete running conversation error = %v, want busy", err)
+	}
+	got, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil || got.Status != agent.ConversationStatusActive {
+		t.Fatalf("conversation after rejected delete = %#v err=%v", got, err)
+	}
+}
+
 func TestRepositoryCreateRunRejectsArchivedConversation(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAgentRepo(t, ctx)

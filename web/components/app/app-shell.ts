@@ -5,6 +5,8 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import '../navigation/sidebar'
 import './product-search'
+import '../chat/chat-manager'
+import type { ChatManager, ChatAction } from '../chat/chat-manager'
 
 const emptyChrome: ChromeSignal = {
   sidebar: {
@@ -23,6 +25,7 @@ const emptyChrome: ChromeSignal = {
 
 class LeapViewAppShell extends DatastarLit(LitElement) {
   @state() private productSearchOpen = false
+  @state() private pendingRemovalId = ''
 
   static styles = css`
     :host {
@@ -110,27 +113,42 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     super.connectedCallback()
     this.addEventListener('click', this.followSidebarLinkFromHost)
     this.addEventListener('product-search-open', this.openProductSearch)
+    this.addEventListener('lv-chat-action', this.handleChatAction)
+    this.addEventListener('lv-chat-settings-open', this.openChatSettings)
     window.addEventListener('keydown', this.handleProductSearchShortcut)
   }
 
   disconnectedCallback(): void {
     this.removeEventListener('click', this.followSidebarLinkFromHost)
     this.removeEventListener('product-search-open', this.openProductSearch)
+    this.removeEventListener('lv-chat-action', this.handleChatAction)
+    this.removeEventListener('lv-chat-settings-open', this.openChatSettings)
     window.removeEventListener('keydown', this.handleProductSearchShortcut)
     super.disconnectedCallback()
   }
 
   render() {
     return html`
-      ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar}></lv-sidebar>`}
+      ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar} .pendingRemovalId=${this.pendingRemovalId}></lv-sidebar>`}
       <main>
         <slot name="page"></slot>
       </main>
+      <lv-chat-manager @lv-chat-removal-pending=${(event: CustomEvent<{ conversationId: string }>) => { this.pendingRemovalId = event.detail.conversationId }}></lv-chat-manager>
       <lv-product-search
         .open=${this.productSearchOpen}
         @product-search-close=${this.closeProductSearch}
       ></lv-product-search>
     `
+  }
+
+  private handleChatAction = (event: Event) => {
+    event.stopPropagation()
+    this.renderRoot.querySelector<ChatManager>('lv-chat-manager')?.requestAction((event as CustomEvent<ChatAction>).detail)
+  }
+
+  private openChatSettings = (event: Event) => {
+    event.stopPropagation()
+    this.renderRoot.querySelector<ChatManager>('lv-chat-manager')?.openArchives()
   }
 
   private get isAppDashboard(): boolean {
@@ -161,7 +179,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     const path = event.composedPath()
     if (event.target !== this && !path.includes(sidebar)) return
-    if (path.some((node) => node instanceof HTMLAnchorElement)) return
+    if (path.some((node) => node instanceof HTMLAnchorElement || node instanceof HTMLButtonElement)) return
 
     const sidebarRect = sidebar.getBoundingClientRect()
     if (event.clientX < sidebarRect.left || event.clientX > sidebarRect.right || event.clientY < sidebarRect.top || event.clientY > sidebarRect.bottom) return

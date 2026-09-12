@@ -831,6 +831,102 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
+test('chat inline hover actions support pinning without navigating the row', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+  })
+  const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
+  await row.hover()
+  expect(await row.getByRole('button').count()).toBe(3)
+  expect(await page.getByRole('menu').count()).toBe(0)
+  await row.getByRole('button', { name: 'Pin chat', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
+  expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  await page.close()
+})
+
+test('chat deletion requires confirmation and cancel sends no command', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } }))
+  })
+  await page.getByRole('dialog', { name: 'Delete chat?' }).waitFor()
+  expect(await page.getByRole('dialog').textContent()).toContain('Inventory status')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions)).toEqual([])
+  await page.close()
+})
+
+test('individual chat archive waits ten seconds and exposes Undo before sending a command', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
+    expect(await page.evaluate(() => (window as any).chatActions)).toEqual([])
+    expect(await page.evaluate(() => {
+      const raw = sessionStorage.getItem('lv-chat-manager.pending-undo')
+      return raw ? JSON.parse(raw).deadline - Date.now() : 0
+    })).toBeGreaterThan(9_000)
+    await page.getByRole('button', { name: 'Undo', exact: true }).click()
+    await page.getByRole('status').filter({ hasText: 'Chat kept in your sidebar.' }).waitFor()
+    expect(await page.evaluate(() => ({ actions: (window as any).chatActions, stored: sessionStorage.getItem('lv-chat-manager.pending-undo') }))).toEqual({ actions: [], stored: null })
+  } finally {
+    await page.close()
+  }
+})
+
+test('archived chat manager restores a saved chat and waits for server acknowledgement', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management-load', (event: Event) => { (window as any).loadID = (event as CustomEvent).detail.requestId })
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-settings-open'))
+  })
+  await page.getByRole('dialog', { name: 'Archived chats' }).waitFor()
+  await page.waitForFunction(() => Boolean((window as any).loadID))
+  await page.evaluate(async () => {
+    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    runtime.mergePatch({ chatManagement: { action: '', conversationId: '', completedRequestId: (window as any).loadID, archivedConversations: [{ id: 'archived-1', title: 'Last quarter', status: 'archived' }] } })
+  })
+  await page.getByRole('button', { name: 'Restore Last quarter', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('restore')
+  await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
+  await page.evaluate(async () => {
+    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    runtime.mergePatch({ chatManagement: { completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
+  })
+  await page.getByText('No archived chats yet.', { exact: true }).waitFor()
+  await page.close()
+})
+
+test('chat management network failure unlocks the dialog without handling unrelated requests', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-settings-open')))
+  await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } })))
+  expect(await page.getByRole('button', { name: 'Close', exact: true }).isDisabled()).toBe(true)
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.querySelector('lv-app-shell'), argsRaw: { status: 503 } } })))
+  await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
+  expect(await page.getByRole('button', { name: 'Close', exact: true }).isEnabled()).toBe(true)
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.close()
+})
+
 test('sidebar renders global chat action and recent history', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {

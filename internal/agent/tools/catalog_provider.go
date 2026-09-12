@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
@@ -97,12 +98,22 @@ func (e *CatalogError) Error() string {
 	return e.Message
 }
 
-type CatalogProvider struct{ Catalog Catalog }
+// SemanticModelResolver supplies the active, authorization-checked semantic
+// model snapshot for catalog_get. The catalog graph intentionally carries
+// only resource metadata, so this optional projection gives the model enough
+// information to explain metric definitions without exporting dashboard YAML
+// or searching generic documentation.
+type SemanticModelResolver func(context.Context, Scope, CatalogRef) (*semanticmodel.Model, bool)
+
+type CatalogProvider struct {
+	Catalog       Catalog
+	SemanticModel SemanticModelResolver
+}
 
 func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 	return []agentcore.ToolDefinition{
 		{
-			Name: CatalogSearchToolName, Description: "Search authorized project resources by stable ID, name, description, or domain metadata.",
+			Name: CatalogSearchToolName, Description: "Search authorized project resources by stable ID, name, description, or domain metadata. Use an exact ref from a unique result; do not repeat broad searches when hasMore is false.",
 			InputSchema: json.RawMessage(agentcontracts.CatalogSearchInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
 			Effect: "read", Tags: []string{"catalog", "search"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
@@ -134,7 +145,7 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 			}),
 		},
 		{
-			Name: CatalogListToolName, Description: "Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.",
+			Name: CatalogListToolName, Description: "Browse one authorized project-resource hierarchy level when a parent ref is known. Returned refs are exact stable IDs; a page with hasMore false is complete.",
 			InputSchema: json.RawMessage(agentcontracts.CatalogListInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogPageSchemaJSON),
 			Effect: "read", Tags: []string{"catalog", "browse"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
@@ -168,7 +179,7 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 			}),
 		},
 		{
-			Name: CatalogGetToolName, Description: "Resolve one exact authorized project resource ID and return its compact metadata.",
+			Name: CatalogGetToolName, Description: "Resolve one exact authorized project resource ID and return compact metadata. For a semantic_model ref, details.metadata.definition contains the bounded active definition (datasets, dimensions, and metrics); use it to explain metric formulas before exporting dashboards or searching documentation.",
 			InputSchema: json.RawMessage(agentcontracts.CatalogGetInputSchemaJSON), OutputSchema: json.RawMessage(agentcontracts.CatalogGetResultSchemaJSON),
 			Effect: "read", Tags: []string{"catalog", "describe"},
 			Handler: agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
@@ -186,6 +197,19 @@ func (p CatalogProvider) Definitions(scope Scope) []agentcore.ToolDefinition {
 				if err != nil {
 					return catalogToolError("catalog_get_failed", err), nil
 				}
+				if request.Ref.Kind == CatalogType(agentcontracts.CatalogTypeSemanticModel) && p.SemanticModel != nil {
+					if model, ok := p.SemanticModel(ctx, scope, result.Item.Ref); ok && model != nil {
+						if result.Details == nil {
+							result.Details = map[string]any{}
+						}
+						metadata, _ := result.Details["metadata"].(map[string]any)
+						if metadata == nil {
+							metadata = map[string]any{}
+							result.Details["metadata"] = metadata
+						}
+						metadata["definition"] = semanticModelDefinition(model)
+					}
+				}
 				return agentcore.ToolResult{Content: result}, nil
 			}),
 		},
@@ -199,6 +223,151 @@ func catalogPageResult(page CatalogPage) CatalogPage {
 	page.Count = len(page.Items)
 	page.HasMore = strings.TrimSpace(page.NextCursor) != ""
 	return page
+}
+
+func semanticModelDefinition(model *semanticmodel.Model) map[string]any {
+	definition := map[string]any{
+		"name":        model.Name,
+		"title":       model.Title,
+		"description": model.Description,
+	}
+	if len(model.Datasets) > 0 {
+		datasets := make(map[string]any, len(model.Datasets))
+		for name, dataset := range model.Datasets {
+			if protected, ok := model.AccessPolicy.Datasets[name]; ok && len(protected.RequiredAccessGrants) > 0 {
+				continue
+			}
+			datasets[name] = compactSemanticDataset(dataset)
+		}
+		if len(datasets) > 0 {
+			definition["datasets"] = datasets
+		}
+	}
+	if len(model.Dimensions) > 0 {
+		dimensions := make(map[string]any, len(model.Dimensions))
+		for name, dimension := range model.Dimensions {
+			if len(model.AccessPolicy.Dimensions[name]) > 0 {
+				continue
+			}
+			protectedDataset := false
+			for dataset := range dimension.Bindings {
+				if policy, ok := model.AccessPolicy.Datasets[dataset]; ok && len(policy.RequiredAccessGrants) > 0 {
+					protectedDataset = true
+					break
+				}
+			}
+			if protectedDataset {
+				continue
+			}
+			dimensions[name] = compactSemanticDimension(dimension)
+		}
+		if len(dimensions) > 0 {
+			definition["dimensions"] = dimensions
+		}
+	}
+	if len(model.Metrics) > 0 {
+		metrics := make(map[string]any, len(model.Metrics))
+		protectedMetrics := map[string]struct{}{}
+		for name, metric := range model.Metrics {
+			if metric.Hidden || len(model.AccessPolicy.Metrics[name]) > 0 {
+				protectedMetrics[name] = struct{}{}
+				continue
+			}
+			if datasetPolicy, ok := model.AccessPolicy.Datasets[metric.Dataset]; ok && len(datasetPolicy.RequiredAccessGrants) > 0 {
+				protectedMetrics[name] = struct{}{}
+			}
+		}
+		for name, metric := range model.Metrics {
+			if _, protected := protectedMetrics[name]; protected {
+				continue
+			}
+			if metricReferencesProtected(metric, protectedMetrics) {
+				continue
+			}
+			metrics[name] = compactSemanticMetric(metric)
+		}
+		if len(metrics) > 0 {
+			definition["metrics"] = metrics
+		}
+	}
+	return definition
+}
+
+func metricReferencesProtected(metric semanticmodel.Metric, protected map[string]struct{}) bool {
+	for _, name := range []string{metric.Numerator, metric.Denominator} {
+		if _, ok := protected[name]; name != "" && ok {
+			return true
+		}
+	}
+	for _, token := range strings.FieldsFunc(metric.Expression, func(r rune) bool {
+		return !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+	}) {
+		if _, ok := protected[token]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func compactSemanticDataset(dataset semanticmodel.SemanticDatasetSpec) map[string]any {
+	return compactStrings(map[string]string{
+		"model":                dataset.Model,
+		"defaultTimeDimension": dataset.DefaultTimeDimension,
+		"displayName":          dataset.DisplayName,
+		"description":          dataset.Description,
+	})
+}
+
+func compactSemanticDimension(dimension semanticmodel.SemanticDimension) map[string]any {
+	result := compactStrings(map[string]string{
+		"label":       dimension.Label,
+		"description": dimension.Description,
+		"type":        dimension.Type,
+		"datatype":    string(dimension.Datatype),
+		"nativeGrain": dimension.NativeGrain,
+		"timezone":    dimension.Timezone,
+		"calendar":    dimension.Calendar,
+		"weekStart":   dimension.WeekStart,
+	})
+	if len(dimension.Grains) > 0 {
+		result["grains"] = append([]string(nil), dimension.Grains...)
+	}
+	return result
+}
+
+func compactSemanticMetric(metric semanticmodel.Metric) map[string]any {
+	result := compactStrings(map[string]string{
+		"type":          metric.Type,
+		"dataset":       metric.Dataset,
+		"aggregation":   metric.Aggregation,
+		"where":         strings.Join(metric.Where, ","),
+		"empty":         metric.Empty,
+		"timeDimension": metric.TimeDimension,
+		"expression":    metric.Expression,
+		"numerator":     metric.Numerator,
+		"denominator":   metric.Denominator,
+		"label":         metric.Label,
+		"description":   metric.Description,
+		"unit":          metric.Unit,
+		"format":        metric.Format,
+	})
+	if metric.Input != nil && strings.TrimSpace(metric.Input.Field) != "" {
+		result["input"] = map[string]any{"field": metric.Input.Field}
+	}
+	if len(metric.Where) > 0 {
+		result["where"] = append([]string(nil), metric.Where...)
+	}
+	return result
+}
+
+func compactStrings(values map[string]string) map[string]any {
+	result := make(map[string]any, len(values))
+	for key, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func decodeCatalogArguments(arguments json.RawMessage, value any) error {

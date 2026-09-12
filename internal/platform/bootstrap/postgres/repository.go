@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	_ "embed"
 	"encoding/base64"
 	"errors"
@@ -115,7 +116,11 @@ func (r *Repository) GetSetting(ctx context.Context, key string) (string, error)
 	}
 	value, err := bootstrapdb.New(r.db).GetSetting(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		// Settings implement the application-wide Settings boundary, whose
+		// missing-value contract is database/sql.ErrNoRows. Keep ErrNotFound
+		// for bootstrap identity and claim authorities, where it carries
+		// domain meaning to their callers.
+		return "", sql.ErrNoRows
 	}
 	return value, err
 }

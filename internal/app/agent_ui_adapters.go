@@ -54,7 +54,7 @@ func applicationLayout(access *accessmodule.Module, agent *agentmodule.Module, p
 	config.Conversations = make([]appshell.Conversation, 0, len(state.Conversations))
 	for _, conversation := range state.Conversations {
 		config.Conversations = append(config.Conversations, appshell.Conversation{
-			ID: conversation.ID, Title: conversation.Title, TitlePending: conversation.TitlePending,
+			ID: conversation.ID, Title: conversation.Title, TitlePending: conversation.TitlePending, Pinned: conversation.Pinned,
 		})
 	}
 	return appshell.Provider(config)
@@ -92,7 +92,7 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 			ArchivedAt: conversation.ArchivedAt, CreatedAt: conversation.CreatedAt, ID: conversation.ID,
 			LastMessageText: conversation.LastMessageText, MessageCount: conversation.MessageCount,
 			PrincipalID: conversation.PrincipalID, Status: conversation.Status, Title: conversation.Title,
-			TitlePending: conversation.TitlePending, UpdatedAt: conversation.UpdatedAt,
+			TitlePending: conversation.TitlePending, UpdatedAt: conversation.UpdatedAt, Pinned: conversation.Pinned,
 		})
 	}
 	transcript := make([]dashboardmodule.ChatTranscriptItemSignal, 0, len(state.Transcript))
@@ -129,7 +129,7 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 		}
 		transcript = append(transcript, dashboardmodule.ChatTranscriptItemSignal{
 			ArgumentsJSON: item.ArgumentsJSON, Artifact: artifact, ConversationID: item.ConversationID,
-			CreatedAt: item.CreatedAt, Error: item.Error, ID: item.ID, InputFormat: item.InputFormat,
+			Edited: item.Edited, CreatedAt: item.CreatedAt, Error: item.Error, ID: item.ID, InputFormat: item.InputFormat,
 			InputJSON: item.InputJSON, Kind: item.Kind, Markdown: item.Markdown, Name: item.Name,
 			References: references, ResultFormat: item.ResultFormat, ResultJSON: item.ResultJSON,
 			ResultSummary: item.ResultSummary, RunID: item.RunID, Status: item.Status, Summary: item.Summary,
@@ -142,6 +142,7 @@ func dashboardChatSignal(state agentmodule.ChatSignal) dashboardmodule.ChatSigna
 		Transcript:           transcript,
 		Status: dashboardmodule.ChatStatus{
 			Enabled: state.Status.Enabled, Error: state.Status.Error, Running: state.Status.Running,
+			CanContinue: state.Status.CanContinue, RunID: state.Status.RunID,
 		},
 		Composer: dashboardmodule.ComposerSignal{
 			Disabled: state.Composer.Disabled, Placeholder: state.Composer.Placeholder, Value: state.Composer.Value,

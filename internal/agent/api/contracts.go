@@ -13,6 +13,7 @@ type AgentConversationResponse struct {
 	PrincipalID     string `json:"principalId"`
 	Title           string `json:"title"`
 	Status          string `json:"status"`
+	Pinned          bool   `json:"pinned,omitempty"`
 	CreatedAt       string `json:"createdAt"`
 	UpdatedAt       string `json:"updatedAt"`
 	ArchivedAt      string `json:"archivedAt,omitempty"`

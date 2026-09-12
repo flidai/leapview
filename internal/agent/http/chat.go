@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	nethttp "net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/agent"
@@ -35,6 +37,16 @@ type chatRestoreSignals struct {
 	} `json:"agent"`
 }
 
+type chatStopCommandSignals struct {
+	Agent struct {
+		ActiveConversationID string `json:"activeConversationId"`
+		Status               struct {
+			RunID string `json:"runId"`
+		} `json:"status"`
+	} `json:"agent"`
+	AgentContext agent.TurnContext `json:"agentContext"`
+}
+
 const maxChatReferenceSearchResults = 24
 
 type chatTurnCommandAgentSignal struct {
@@ -43,7 +55,8 @@ type chatTurnCommandAgentSignal struct {
 }
 
 type chatTurnCommandComposerSignal struct {
-	Value string `json:"value"`
+	Value         string `json:"value"`
+	EditMessageID string `json:"editMessageId"`
 }
 
 type ChatTurnEmitter func(ui.ChatViewState) error
@@ -147,10 +160,175 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	activeConversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
 	if activeConversationID == "" {
+		if strings.TrimSpace(signals.Agent.Composer.EditMessageID) != "" {
+			nethttp.Error(w, "editing requires an existing conversation", nethttp.StatusBadRequest)
+			return
+		}
 		h.startDraftChatTurn(w, r, service, scope, clientID, input, turnContext, embedded)
 		return
 	}
-	h.runChatTurn(w, r, service, scope, clientID, activeConversationID, input, turnContext, embedded)
+	h.runChatTurn(w, r, service, scope, clientID, activeConversationID, input, turnContext, embedded, strings.TrimSpace(signals.Agent.Composer.EditMessageID))
+}
+
+// ChatStop cancels the run represented by the browser's current status. The
+// run ID is required so a delayed stop request cannot cancel a newer turn in
+// the same conversation. In-process runs are cancelled first and allowed to
+// persist their partial transcript; queued runs use the transactional queue
+// cancellation path instead.
+func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
+	service, scope, ok := h.chatService(w, r)
+	if !ok {
+		return
+	}
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
+	}
+	signals := chatStopCommandSignals{}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		return
+	}
+	conversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
+	runID := strings.TrimSpace(signals.Agent.Status.RunID)
+	if conversationID == "" || runID == "" {
+		nethttp.Error(w, "an active conversation and run are required", nethttp.StatusBadRequest)
+		return
+	}
+
+	run, err := service.GetRun(r.Context(), scope, conversationID, runID)
+	if err != nil {
+		h.writeChatStopFailure(w, r, err)
+		return
+	}
+	if run.Status != agent.RunStatusRunning && run.Status != agent.RunStatusPreparing {
+		h.writeChatStopFailure(w, r, agent.ErrRunNotCancellable)
+		return
+	}
+
+	identity := uiRequestIdentity(r, conversationID+"\x00"+runID)
+	stopCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(cancelAgentRunOperation), nil, conversationID, runID, identity)
+	if invocationErr != nil {
+		h.writeChatStopFailure(w, r, invocationErr)
+		return
+	}
+	if withIntent, intentErr := h.withAuditIntent(r.WithContext(stopCtx), cancelAgentRunOperation, scope, "conversation", conversationID); intentErr != nil {
+		h.writeChatStopFailure(w, r, intentErr)
+		return
+	} else {
+		r = withIntent
+		stopCtx = withIntent.Context()
+	}
+
+	active, queued, err := h.cancelChatRun(stopCtx, service, scope, conversationID, runID)
+	if err != nil {
+		h.writeChatStopFailure(w, r, err)
+		return
+	}
+	if active {
+		// StartedPrompt owns the durable terminal transition for an in-process
+		// run. Wait briefly for it so the refreshed state includes partial
+		// output and Continue cannot race the old worker.
+		run, err = waitForChatRunTerminal(stopCtx, service, scope, conversationID, runID)
+	} else if queued {
+		run, err = service.GetRun(stopCtx, scope, conversationID, runID)
+	}
+	if err != nil {
+		h.writeChatStopFailure(w, r, err)
+		return
+	}
+	if run.Status == agent.RunStatusRunning || run.Status == agent.RunStatusPreparing {
+		h.writeChatStopFailure(w, r, fmt.Errorf("agent run cancellation did not settle"))
+		return
+	}
+
+	state, err := service.ConversationTranscriptState(stopCtx, scope, conversationID)
+	if err != nil {
+		h.writeChatStopFailure(w, r, err)
+		return
+	}
+	embedded := strings.EqualFold(strings.TrimSpace(signals.AgentContext.Surface), "dashboard") || strings.EqualFold(strings.TrimSpace(signals.AgentContext.Surface), "data")
+	signal := h.chatSignalWith(stopCtx, scope, conversationID, state.Transcript, state.Artifacts, "", false)
+	// The transport owns the settled stop boundary. Keep the explicit status
+	// invariant even when a composition supplies a minimal signal builder.
+	signal.Agent.Status.Running = false
+	signal.Agent.Status.RunID = nil
+	if run.Status == agent.RunStatusCanceled {
+		signal.Agent.Status.CanContinue = ui.Pointer(true)
+	} else {
+		signal.Agent.Status.CanContinue = nil
+	}
+	patch := chatSignalPatch(signal, embedded)
+	if err := pagestream.NewSignalStream(w, r).Patch(patch); err != nil {
+		return
+	}
+	if h.options.Broker != nil {
+		h.options.Broker.Publish(chatConversationStreamID(scope, clientID, conversationID), patch)
+		h.options.Broker.Publish(chatStreamID(scope, clientID), ui.ChatConversationsPatch(signal.Agent.Conversations, ""))
+	}
+	h.recordLegacyCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
+}
+
+func (h *Handler) cancelChatRun(ctx context.Context, service *agent.Service, scope agent.Scope, conversationID, runID string) (active, queued bool, err error) {
+	if err := service.CancelRun(ctx, scope, conversationID, runID); err == nil {
+		return true, false, nil
+	} else if !errors.Is(err, agent.ErrRunNotCancellable) {
+		return false, false, err
+	}
+
+	var queuedErr error
+	if h.options.CancelQueuedRun != nil {
+		queued, queuedErr = h.options.CancelQueuedRun(ctx, scope, conversationID, runID)
+		if queuedErr == nil && queued {
+			return false, true, nil
+		}
+	}
+	// A worker may claim the queue item between the first in-process check and
+	// the queued transition. Recheck the service so that race still cancels the
+	// worker context and gets the partial-output terminalization path.
+	if err := service.CancelRun(ctx, scope, conversationID, runID); err == nil {
+		return true, false, nil
+	} else if !errors.Is(err, agent.ErrRunNotCancellable) {
+		return false, false, err
+	}
+	if queuedErr != nil {
+		return false, false, queuedErr
+	}
+	return false, false, agent.ErrRunNotCancellable
+}
+
+func waitForChatRunTerminal(ctx context.Context, service *agent.Service, scope agent.Scope, conversationID, runID string) (agent.Run, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	for {
+		run, err := service.GetRun(waitCtx, scope, conversationID, runID)
+		if err != nil {
+			return agent.Run{}, err
+		}
+		if run.Status != agent.RunStatusRunning && run.Status != agent.RunStatusPreparing {
+			return run, nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-waitCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return run, waitCtx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (h *Handler) writeChatStopFailure(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
+	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, agent.ErrNotFound) {
+		err = apigenfailure.Wrap("not_found", err)
+	} else if errors.Is(err, agent.ErrRunNotCancellable) {
+		// Preserve the generated cancellation failure kind.
+	} else if _, classified := apigenfailure.KindOf(err); !classified {
+		err = apigenfailure.Wrap("unavailable", err)
+	}
+	h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 }
 
 func (h *Handler) ChatReferenceSearch(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -192,6 +370,9 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	streamID := chatStreamID(scope, clientID)
+	if conversationID := strings.TrimSpace(r.URL.Query().Get("conversation")); conversationID != "" {
+		streamID = chatConversationStreamID(scope, clientID, conversationID)
+	}
 	updates := pagestream.NewSignalStream(w, r)
 	if err := updates.Patch(ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))); err != nil {
 		return
@@ -283,7 +464,12 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 			return
 		}
 		h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
-		_ = pagestream.Redirect(w, r, chatRoutePath(conversation.ID))
+		// Acknowledge the created conversation through the same signal contract
+		// as the chat page. Its draft navigation opens the conversation before
+		// the queued provider run finishes, without an injected-script redirect.
+		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+			"agent": map[string]any{"activeConversationId": conversation.ID},
+		})
 		return
 	}
 	h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
@@ -303,7 +489,11 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 	})
 }
 
-func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, service *agent.Service, scope agent.Scope, clientID, activeConversationID, input string, turnContext *agent.TurnContext, embedded bool) {
+func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, service *agent.Service, scope agent.Scope, clientID, activeConversationID, input string, turnContext *agent.TurnContext, embedded bool, editMessageIDs ...string) {
+	editMessageID := ""
+	if len(editMessageIDs) > 0 {
+		editMessageID = editMessageIDs[0]
+	}
 	conversationID := strings.TrimSpace(activeConversationID)
 	state, err := service.ConversationTranscriptState(r.Context(), scope, conversationID)
 	if err != nil {
@@ -325,17 +515,45 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 	} else {
 		runCtx = withIntent.Context()
 	}
-	started, err := service.StartPrompt(runCtx, agent.PromptInput{
+	prompt := agent.PromptInput{
 		Scope:          scope,
 		ConversationID: conversationID,
+		EditMessageID:  editMessageID,
 		Input:          input,
 		Context:        turnContext,
-	})
+	}
+	// Chat page turns use the durable workflow just like the first turn in a
+	// new conversation. Keeping the provider execution off this Datastar
+	// command request lets it return immediately; the already-open chat update
+	// stream carries the worker's live transcript. Embedded dashboard/data
+	// turns intentionally remain inline so their drawer can stream the answer
+	// directly to its command response.
+	queued := !embedded && h.options.EnqueueChatRun != nil
+	if queued {
+		// Write the running boundary before the durable workflow becomes
+		// visible to a worker. This gives the browser immediate feedback and
+		// prevents a very fast worker from racing a late running:true patch.
+		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, "", true), embedded))
+	}
+	var started *agent.StartedPrompt
+	if queued {
+		started, err = service.StartDurablePrompt(runCtx, prompt, agent.PromptDispatch{ChatClientID: clientID})
+	} else {
+		started, err = service.StartPrompt(runCtx, prompt)
+	}
 	if err != nil {
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 		return
 	}
 	h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversationID)
+	if queued {
+		if err := h.options.EnqueueChatRun(runCtx, scope, started, clientID); err != nil {
+			_ = started.Abort(context.WithoutCancel(r.Context()), err)
+			_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
+			return
+		}
+		return
+	}
 	if h.options.ExecuteStartedChatTurn == nil {
 		nethttp.Error(w, "chat turn executor is not configured", nethttp.StatusServiceUnavailable)
 		return
@@ -516,4 +734,8 @@ func chatClientID(r *nethttp.Request) string {
 
 func chatStreamID(scope agent.Scope, clientID string) string {
 	return "chat:" + clientID + ":" + scope.PrincipalID
+}
+
+func chatConversationStreamID(scope agent.Scope, clientID, conversationID string) string {
+	return chatStreamID(scope, clientID) + ":conversation:" + strings.TrimSpace(conversationID)
 }
