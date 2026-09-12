@@ -138,8 +138,8 @@ func (r *Repository) RunAuditedMutationBatch(ctx context.Context, mutation func(
 	if err != nil {
 		return err
 	}
-	if len(inputs) == 0 {
-		return errors.New("audited mutation requires at least one audit event")
+	if err := access.ValidateAuditedMutationInputs(inputs); err != nil {
+		return err
 	}
 	for _, input := range inputs {
 		if err := transactional.RecordAuditEvent(ctx, input); err != nil {

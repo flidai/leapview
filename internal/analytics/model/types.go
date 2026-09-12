@@ -60,10 +60,6 @@ type EntityDefinition struct {
 	AIContext   *AIContext `yaml:"aiContext"`
 }
 
-type GrainDefinition struct {
-	Entity string `yaml:"entity"`
-}
-
 type SemanticDatasetSpec struct {
 	Model                string     `yaml:"model"`
 	DefaultTimeDimension string     `yaml:"defaultTimeDimension"`
@@ -110,27 +106,6 @@ type SemanticFilterSpec struct {
 	Any       []SemanticFilterSpec `yaml:"any,omitempty"`
 	Not       *SemanticFilterSpec  `yaml:"not,omitempty"`
 	AIContext *AIContext           `yaml:"aiContext,omitempty"`
-}
-
-type AggregateMetricSpec struct {
-	Type          string      `yaml:"type"`
-	Dataset       string      `yaml:"dataset"`
-	Aggregation   string      `yaml:"aggregation"`
-	Input         MetricInput `yaml:"input"`
-	Where         []string    `yaml:"where"`
-	Empty         string      `yaml:"empty"`
-	TimeDimension string      `yaml:"timeDimension"`
-}
-
-type DerivedMetricSpec struct {
-	Type       string `yaml:"type"`
-	Expression string `yaml:"expression"`
-}
-
-type RatioMetricSpec struct {
-	Type        string `yaml:"type"`
-	Numerator   string `yaml:"numerator"`
-	Denominator string `yaml:"denominator"`
 }
 
 type MetricCommonSpec struct {

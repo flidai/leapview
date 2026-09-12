@@ -508,6 +508,9 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
 	}
+	if production && config.BeforeNativeActivationCommit == nil {
+		return errors.New("native delivery composition requires the semantic activation pre-commit fence")
+	}
 	return nil
 }
 
@@ -1705,7 +1708,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
@@ -1744,7 +1747,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if len(resources) == 0 {
 				// Unknown/new resources require an explicit target-owned role;
 				// a grant on an unrelated graph object must never widen scope.
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
 		},

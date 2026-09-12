@@ -97,7 +97,3 @@ func StoredValue(value string) string {
 	}
 	return value
 }
-
-func Colors() []string {
-	return []string{"gray", "blue", "green", "yellow", "orange", "red", "purple", "pink", "coral"}
-}

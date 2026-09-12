@@ -31,6 +31,12 @@ type BenchmarkResult = {
   longTaskMs: number
 }
 
+declare global {
+  interface Window {
+    runDatastarBridgeBenchmark?: (options: { iterations: number; warmup: number }) => BenchmarkResult
+  }
+}
+
 const projectRoot = process.cwd()
 const outDir = join(projectRoot, '.tmp/datastar-bridge-bench')
 const resultPath = join(projectRoot, '.tmp/datastar-bridge-benchmark.json')

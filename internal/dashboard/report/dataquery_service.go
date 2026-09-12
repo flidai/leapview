@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	"github.com/flidai/leapview/internal/dashboard/querymap"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -29,11 +30,11 @@ func (s dataQueryService) Query(ctx context.Context, request AggregateQuery) (Qu
 		ModelID:   s.modelID,
 		Kind:      dataquery.KindSemanticAggregate,
 		Target:    request.Dataset,
-		Fields:    dataQueryFields(request.Dimensions),
-		Metrics:   dataQueryFields(request.Metrics),
+		Fields:    querymap.Fields(request.Dimensions),
+		Metrics:   querymap.Fields(request.Metrics),
 		Time:      dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters:   dataQueryFilters(request.Filters),
-		Sort:      dataQuerySort(request.Sort),
+		Filters:   querymap.Filters(request.Filters),
+		Sort:      querymap.Sorts(request.Sort),
 		Limit:     request.Limit,
 		Offset:    request.Offset,
 	})
@@ -48,10 +49,10 @@ func (s dataQueryService) Rows(ctx context.Context, request RowQuery) (QueryRows
 		ModelID:   s.modelID,
 		Kind:      dataquery.KindSemanticRows,
 		Target:    request.Dataset,
-		Fields:    dataQueryFields(request.Dimensions),
-		Metrics:   dataQueryFields(request.Metrics),
-		Filters:   dataQueryFilters(request.Filters),
-		Sort:      dataQuerySort(request.Sort),
+		Fields:    querymap.Fields(request.Dimensions),
+		Metrics:   querymap.Fields(request.Metrics),
+		Filters:   querymap.Filters(request.Filters),
+		Sort:      querymap.Sorts(request.Sort),
 		Limit:     request.Limit,
 		Offset:    request.Offset,
 	})
@@ -66,7 +67,7 @@ func (s dataQueryService) Count(ctx context.Context, request CountQuery) (int, e
 		ModelID:      s.modelID,
 		Kind:         dataquery.KindSemanticRows,
 		Target:       request.Dataset,
-		Filters:      dataQueryFilters(request.Filters),
+		Filters:      querymap.Filters(request.Filters),
 		Limit:        1,
 		IncludeTotal: true,
 	})
@@ -92,9 +93,9 @@ func (s dataQueryService) Histogram(ctx context.Context, request RawValueQuery, 
 		ModelID:   s.modelID,
 		Kind:      dataquery.KindSemanticHistogram,
 		Target:    request.Dataset,
-		Fields:    dataQueryFields(request.Dimensions),
-		Value:     dataQueryField(request.Metric),
-		Filters:   dataQueryFilters(request.Filters),
+		Fields:    querymap.Fields(request.Dimensions),
+		Value:     querymap.Field(request.Metric),
+		Filters:   querymap.Filters(request.Filters),
 		BinCount:  binCount,
 		Histogram: options,
 	})
@@ -133,59 +134,14 @@ func (s dataQueryService) Distribution(ctx context.Context, request RawValueQuer
 		ModelID:      s.modelID,
 		Kind:         dataquery.KindSemanticDistribution,
 		Target:       request.Dataset,
-		Fields:       dataQueryFields(request.Dimensions),
-		Value:        dataQueryField(request.Metric),
-		Filters:      dataQueryFilters(request.Filters),
-		Sort:         dataQuerySort(sort),
+		Fields:       querymap.Fields(request.Dimensions),
+		Value:        querymap.Field(request.Metric),
+		Filters:      querymap.Filters(request.Filters),
+		Sort:         querymap.Sorts(sort),
 		Limit:        limit,
 		Distribution: options,
 	})
 	return rowsFromDataQuery(result.Rows), err
-}
-
-func dataQueryField(field QueryField) dataquery.Field {
-	fields := dataQueryFields([]QueryField{field})
-	if len(fields) == 0 {
-		return dataquery.Field{}
-	}
-	return fields[0]
-}
-
-func dataQueryFields(fields []QueryField) []dataquery.Field {
-	out := make([]dataquery.Field, 0, len(fields))
-	for _, field := range fields {
-		out = append(out, dataquery.Field{
-			Field: field.Field,
-			Alias: field.Alias,
-		})
-	}
-	return out
-}
-
-func dataQueryFilters(filters []QueryFilter) []dataquery.Filter {
-	out := make([]dataquery.Filter, 0, len(filters))
-	for _, filter := range filters {
-		groups := make([]dataquery.FilterGroup, 0, len(filter.Groups))
-		for _, group := range filter.Groups {
-			groups = append(groups, dataquery.FilterGroup{Filters: dataQueryFilters(group.Filters)})
-		}
-		out = append(out, dataquery.Filter{
-			Field:    filter.Field,
-			Dataset:  filter.Dataset,
-			Operator: filter.Operator,
-			Values:   append([]any{}, filter.Values...),
-			Groups:   groups,
-		})
-	}
-	return out
-}
-
-func dataQuerySort(sort []QuerySort) []dataquery.Sort {
-	out := make([]dataquery.Sort, 0, len(sort))
-	for _, item := range sort {
-		out = append(out, dataquery.Sort{Field: item.Field, Direction: item.Direction})
-	}
-	return out
 }
 
 func intFromAny(value any) int {

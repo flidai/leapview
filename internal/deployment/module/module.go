@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -150,9 +151,9 @@ var (
 
 // ActivationPreCommitHook is the module-owned qualification seam invoked
 // immediately before native activation commits its durable target CAS. The
-// module exposes only the cancellation context; publication details remain an
-// implementation concern of the PostgreSQL deployment adapter.
-type ActivationPreCommitHook func(context.Context) error
+// caller-owned transaction lets application admission lock mutable authority
+// identities through the same commit boundary.
+type ActivationPreCommitHook func(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error
 
 type Config struct {
 	// Persistence is the native PostgreSQL delivery authority. Callers
@@ -187,9 +188,9 @@ type Config struct {
 	CurrentApprovalActor func(*http.Request) (deployment.ApprovalActor, bool)
 	AuthorizeApproval    func(context.Context, deployment.ApprovalActor, string, string) error
 	AuthorizeActivation  func(context.Context, deployment.ApprovalActor, string, string) error
-	// BeforeNativeActivationCommit is an optional application-owned release
-	// qualification seam. The native PostgreSQL repository invokes it after
-	// validating every activation proof and immediately before its target CAS.
+	// BeforeNativeActivationCommit is an optional application-owned activation
+	// admission seam. The native PostgreSQL repository invokes it after validating
+	// every activation proof and immediately before its target CAS.
 	BeforeNativeActivationCommit ActivationPreCommitHook
 	// BootstrapPolicies is the durable one-shot first-activation policy store.
 	// It is intentionally separate from approvals and active-generation
@@ -390,14 +391,4 @@ func (m *Module) NativePersistence() *Persistence {
 		return nil
 	}
 	return m.persistence
-}
-
-func (m *Module) PrepareCandidateRuntime(
-	ctx context.Context,
-	request deployment.CandidateRuntimeRequest,
-) (deployment.CandidateRuntimeReceipt, error) {
-	if m == nil || m.candidateRuntimes == nil {
-		return deployment.CandidateRuntimeReceipt{}, deployment.ErrCandidateUnavailable
-	}
-	return m.candidateRuntimes.Prepare(ctx, request)
 }

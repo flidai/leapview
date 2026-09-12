@@ -232,16 +232,6 @@ func digestFilters(filters []dataquery.Filter) ([]digestFilter, error) {
 	return out, nil
 }
 
-// TypedValueCanonical is provided for callers that need to prove the typed
-// identity of a bound value independently of a complete Query.
-func TypedValueCanonical(value any) ([]byte, error) {
-	converted, err := typedReflect(value)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(converted)
-}
-
 func typedReflect(value any) (any, error) {
 	if value == nil {
 		return map[string]any{"type": "null"}, nil

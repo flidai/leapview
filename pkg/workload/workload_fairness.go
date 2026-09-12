@@ -1,20 +1,15 @@
 package workload
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // Fairness is enforced in two passes: reserved class capacity first, then
 // borrowed capacity. Actor queues remain FIFO while the class cursor advances
 // round-robin, so a blocked actor cannot starve later principals.
 func sameAdmission(a, b Request) bool {
-	if a.Class != b.Class || a.PrincipalID != b.PrincipalID || len(a.GroupIDs) != len(b.GroupIDs) {
-		return false
-	}
-	for i := range a.GroupIDs {
-		if a.GroupIDs[i] != b.GroupIDs[i] {
-			return false
-		}
-	}
-	return true
+	return a.Class == b.Class && a.PrincipalID == b.PrincipalID && slices.Equal(a.GroupIDs, b.GroupIDs)
 }
 
 func (c *Controller) impossibleMemoryReasonLocked(request Request) RejectionReason {

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -944,15 +945,7 @@ func (s RecoverySet) FrontierEqual(other RecoverySet) bool {
 }
 
 func equalPoints(a, b []ClusterRecoveryPoint) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func equalRoots(a, b []ObjectRoot) bool {
@@ -976,13 +969,5 @@ func equalRoots(a, b []ObjectRoot) bool {
 		}
 		return b[i].VersionID < b[j].VersionID
 	})
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }

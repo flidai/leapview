@@ -13,7 +13,7 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
         { id: 'revenue', role: 'metric', dataType: 'decimal', nullable: false, label: 'Revenue' },
       ] }],
       dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' },
-      interactions: [{ id: 'row_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['revenue'], mappings: [
+      interactions: [{ id: 'row_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: [{ visualID: 'revenue', effect: 'filter' }], mappings: [
         { source: { dataset: 'primary', field: 'order_id' }, targetFieldID: 'orders.order_id', targetDatasetID: 'orders', label: { dataset: 'primary', field: 'order_id' } },
       ] }],
       conditionalFormatting: [{
@@ -40,14 +40,15 @@ test('TanStack adapter derives semantic row interactions from the typed IR', () 
       blocks: { a: { id: 'a', start: 0, rows: [['o1', 42]], requestSeq: 4, resetVersion: 2, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }] } },
     },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
-  expect(tableSignal(envelope).interaction).toEqual({
-    kind: 'row_selection', toggle: true, targets: ['revenue'],
+  const signal = tableSignal(envelope)
+  expect(signal.interaction).toEqual({
+    kind: 'row_selection', toggle: true, targets: [{ visualID: 'revenue', effect: 'filter' }],
     mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'order_id', label: 'order_id' }],
   })
-  expect(tableSignal(envelope).columns[1]?.formatting).toEqual([{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }])
-  expect(tableSignal(envelope).columns[1]?.conditionalFormatting?.[0]).toMatchObject({
+  expect(signal.columns[1]?.formatting).toEqual([{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }])
+  expect(signal.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
     id: 'revenue-health', target: 'cell_background',
   })
 })
@@ -62,7 +63,7 @@ test('TanStack adapter leaves row interaction disabled when the IR declares none
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['order_id'], rows: [['o1']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(tableSignal(envelope).interaction).toBeUndefined()
 })
@@ -102,7 +103,7 @@ test('TanStack adapter propagates showHeader for every tabular visual kind', () 
         datasets: [{ id: 'primary', specRevision: `sha256:${kind}`, dataRevision: 1, generation: 1, columns: ['state', 'revenue'], rows: [['CA', 42]], completeness: 'complete' }],
       },
       selection: [], status: { kind: 'ready' }, diagnostics: [],
-    } as VisualizationEnvelope
+    } as unknown as VisualizationEnvelope
   }
 
   for (const kind of ['table', 'matrix', 'pivot'] as const) {
@@ -121,7 +122,7 @@ test('TanStack adapter preserves enabled table headers', () => {
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['order_id'], rows: [['o1']], completeness: 'complete' }] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(tableSignal(envelope).style.showHeader).toBe(true)
 })
@@ -142,7 +143,7 @@ test('TanStack adapter preserves sparse window block identities', () => {
       blocks: { c: { id: 'c', start: 450, rows: [['o451']], requestSeq: 8, resetVersion: 2, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }] } },
     },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const table = tableSignal(envelope)
   expect(table.blocks.c).toMatchObject({ start: 450, requestSeq: 8, rows: [{ order_id: 'o451' }] })
@@ -172,7 +173,7 @@ test('TanStack matrix adapter renders dynamic window schema columns with compile
       sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
       blocks: { a: { id: 'a', start: 0, rows: [['SP', 42]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
     }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const table = tableSignal(envelope)
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue'])
 	expect(table.columns[1]).toMatchObject({ group: 'Delivered', metric: 'revenue', columnValue: 'delivered', formatting: [{ kind: 'data_bar', min: 0, max: 100, color: 'accent' }] })
@@ -208,7 +209,7 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
       sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }],
       blocks: { a: { id: 'a', start: 0, rows: [['SP', 'delivered', 42, 3, 55, 4]], requestSeq: 1, resetVersion: 1, sort: [{ field: { dataset: 'primary', field: 'state' }, direction: 'ascending' }] } },
     }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const table = tableSignal(envelope)
   expect(table.columns.map((column) => column.key)).toEqual(['state', 'delivered__revenue', 'shipped__revenue', 'delivered__orders', 'shipped__orders'])
@@ -221,7 +222,7 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
     rule: { kind: 'field', source: { dataset: 'primary', field: 'shipped__orders' } },
   })
 
-  const pivotEnvelope = { ...envelope, visualID: 'pivot-conditional', spec: { ...envelope.spec, kind: 'pivot' as const } } as VisualizationEnvelope
+  const pivotEnvelope = { ...envelope, visualID: 'pivot-conditional', spec: { ...envelope.spec, kind: 'pivot' as const } } as unknown as VisualizationEnvelope
   const pivotTable = tableSignal(pivotEnvelope)
   expect(pivotTable.columns[1]?.conditionalFormatting?.[0]).toMatchObject({
     rule: { kind: 'field', source: { dataset: 'primary', field: 'delivered__orders' } },
@@ -234,6 +235,6 @@ test('TanStack matrix adapter projects metric aliases onto visible generated col
       ...windowed,
       schema: { ...windowed.schema, fields: windowed.schema.fields.filter((field) => field.id !== 'delivered__orders') },
     },
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   expect(() => tableSignal(crossCategory)).toThrow(/cannot be validated for generated column "delivered__revenue"/)
 })

@@ -299,19 +299,6 @@ SELECT attempt_id::text,request_digest,plan_digest,ducklake_snapshot_id FROM del
 -- name: GetPlanApprovalRequired :one
 SELECT approval_required FROM delivery.delivery_plan WHERE plan_id=(SELECT plan_id FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid);
 
--- name: UpdateTargetRevision :one
-UPDATE delivery.delivery_target SET target_revision=sqlc.arg(new_revision),updated_at=clock_timestamp()
-WHERE target_id=sqlc.arg(target_id) AND target_revision=sqlc.arg(expected_revision) RETURNING true;
-
--- name: UpsertActivePointer :exec
-INSERT INTO delivery.delivery_active_pointer(target_id,generation_id,publication_id)
-VALUES(sqlc.arg(target_id),sqlc.arg(generation_id)::uuid,sqlc.arg(publication_id)::uuid)
-ON CONFLICT(target_id) DO UPDATE SET generation_id=EXCLUDED.generation_id,publication_id=EXCLUDED.publication_id,changed_at=clock_timestamp();
-
--- name: CommitPublication :one
-UPDATE delivery.delivery_publication SET state='committed',result_target_revision=sqlc.arg(result_revision),committed_at=clock_timestamp()
-WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending' RETURNING true;
-
 -- name: CommitActivationTransition :one
 -- Runtime has no direct UPDATE privilege on the serving pointer, target
 -- revision, or publication outcome. The capability function rechecks the

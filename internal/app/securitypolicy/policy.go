@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -693,13 +694,8 @@ func dockerImages(path string) ([]string, error) {
 func compareStrings(label string, actual, declared []string) error {
 	actual = uniqueSorted(actual)
 	declared = uniqueSorted(declared)
-	if len(actual) != len(declared) {
+	if !slices.Equal(actual, declared) {
 		return fmt.Errorf("%s inventory mismatch: declared %v, found %v", label, declared, actual)
-	}
-	for i := range actual {
-		if actual[i] != declared[i] {
-			return fmt.Errorf("%s inventory mismatch: declared %v, found %v", label, declared, actual)
-		}
 	}
 	return nil
 }

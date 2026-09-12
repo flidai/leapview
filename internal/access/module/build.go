@@ -121,7 +121,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	auth := config.ExistingAuth
 	if auth == nil && !config.Auth.Disabled {
-		auth = NewAuth(repository, config.Auth)
+		var err error
+		auth, err = NewAuth(repository, config.Auth)
+		if err != nil {
+			return nil, fmt.Errorf("construct authentication authority: %w", err)
+		}
 	}
 	if auth != nil {
 		auth.authoringAuth = authoringAuth
@@ -183,13 +187,6 @@ func (m *Module) OAuthResource() mcpoauth.ResourceServer {
 		return nil
 	}
 	return m.oauthResource
-}
-
-func (m *Module) OAuthService() *mcpoauth.Service {
-	if m == nil {
-		return nil
-	}
-	return m.oauth
 }
 
 func (m *Module) repositoryValue() access.Repository {

@@ -544,6 +544,11 @@ class WindowedTable extends LitElement {
     this.observeViewport()
   }
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.hasUpdated) queueMicrotask(() => this.observeViewport())
+  }
+
   updated(): void {
     if (this.shouldResetScroll) {
       this.shouldResetScroll = false
@@ -577,10 +582,16 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
+    // A matching empty response completes the request even without scrollable content.
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+    }
   }
 
   disconnectedCallback(): void {
     this.resizeObserver?.disconnect()
+    this.resizeObserver = undefined
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
     if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame)
     this.clearJumpTimer()
@@ -747,7 +758,11 @@ class WindowedTable extends LitElement {
 
   private ensureBlocksForScroll(): void {
     const table = normalizeTable(this.table)
-    if (table.availableRows <= 0) return
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+      return
+    }
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
     const desired = this.desiredStarts(table, currentStart)
     const desiredSet = new Set(desired)
@@ -771,10 +786,10 @@ class WindowedTable extends LitElement {
   }
 
   private scheduleJumpBlock(start: number): void {
-    if (this.jumpTimer && this.pendingJumpStart === start) return
     this.pendingJumpStart = start
     this.requestUpdate()
-    this.clearJumpTimer()
+    // Keep one bounded trailing request alive; restarting per chunk can postpone loading indefinitely.
+    if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
       const table = normalizeTable(this.table)
@@ -844,11 +859,14 @@ class WindowedTable extends LitElement {
       const cacheIsEmpty = this.blockCache[id].rows.length === 0
       if (carriesRows || carriesNonDefaultStart || cacheIsEmpty) {
         this.blockCache[id] = { ...incoming, rows: incoming.rows }
-        if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
-        const expected = this.expectedBlocks.get(id)
-        if (expected && this.blockMatchesExpected(incoming, expected)) {
-          this.expectedBlocks.delete(id)
-        }
+      }
+      // A matching response fulfils the request even when it contains no
+      // rows. Empty windows are valid after a filter reduces a deeply
+      // scrolled table; leaving them pending keeps loading stuck forever.
+      if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
+      const expected = this.expectedBlocks.get(id)
+      if (expected && this.blockMatchesExpected(incoming, expected)) {
+        this.expectedBlocks.delete(id)
       }
     }
   }

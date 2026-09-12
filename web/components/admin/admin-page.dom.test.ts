@@ -64,11 +64,11 @@ test('publications admin renders lifecycle controls and emits typed commands', a
       await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-publication-command', (event: CustomEvent) => { detail = event.detail })
-      const buttons = Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]
+      const buttons = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]
       buttons.find((button) => button.textContent?.trim() === 'Suspend')?.click()
       return {
-        text: element.shadowRoot.textContent.replace(/\s+/g, ' ').trim(),
-        cards: element.shadowRoot.querySelectorAll('.publication-card').length,
+        text: (element.shadowRoot as ShadowRoot).textContent.replace(/\s+/g, ' ').trim(),
+        cards: (element.shadowRoot as ShadowRoot).querySelectorAll('.publication-card').length,
         detail,
       }
     })
@@ -99,7 +99,7 @@ test('profile settings renders the signed-in identity and editable local fields'
       const element = document.querySelector('lv-admin-page') as any
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const profile = root.querySelector('lv-personal-settings') as any
       await profile.updateComplete
       const profileRoot = profile.shadowRoot as ShadowRoot
@@ -149,7 +149,7 @@ test('profile settings renders the signed-in identity and editable local fields'
       let themeCommand: unknown = null
       let appliedTheme: unknown = null
       profile.addEventListener('lv-personal-theme-command', (event: CustomEvent) => { themeCommand = event.detail }, { once: true })
-      document.addEventListener('leapview-theme-change', (event: CustomEvent) => { appliedTheme = event.detail?.mode }, { once: true })
+      document.addEventListener('leapview-theme-change', (event: Event) => { appliedTheme = (event as CustomEvent<{ mode?: string }>).detail?.mode }, { once: true })
       const theme = profileRoot.querySelector('.theme-trigger') as HTMLButtonElement
       avatarTrigger.click()
       await profile.updateComplete
@@ -305,7 +305,7 @@ test('personal API tokens use capability selectors', async () => {
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const admin = document.querySelector('lv-admin-page') as any
       await admin.updateComplete
-      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
       const name = root.querySelector('#token-name') as HTMLInputElement
@@ -415,7 +415,7 @@ test('personal API tokens use capability selectors', async () => {
     await page.setViewportSize({ width: 390, height: 700 })
     const mobile = await page.evaluate(async () => {
       const admin = document.querySelector('lv-admin-page') as any
-      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       const root = personal.shadowRoot as ShadowRoot
       await personal.updateComplete
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
@@ -506,7 +506,7 @@ test('personal API token permissions expose enforceable access levels', async ()
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       const admin = document.querySelector('lv-admin-page') as any
       await admin.updateComplete
-      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      const personal = (admin.shadowRoot as ShadowRoot).querySelector('lv-personal-settings') as any
       await personal.updateComplete
       const root = personal.shadowRoot as ShadowRoot
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
@@ -758,7 +758,7 @@ for (const viewport of [
       await page.locator('lv-admin-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-admin-page').evaluate(async (element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const entityList = root.querySelector('lv-entity-list') as any
         await entityList?.updateComplete
         const main = root.querySelector('.main') as HTMLElement
@@ -1063,14 +1063,14 @@ test('query audit page filters table rows and exposes optional metadata columns'
       })
       document.body.replaceChildren(element)
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const search = root.querySelector<HTMLInputElement>('#query-filter-search')!
       search.value = 'select status'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 250))
       await element.updateComplete
       const commandAfterSearch = (window as any).queryHistoryCommands.at(-1)
-      const menus = Array.from(root.querySelectorAll('lv-filter-menu')) as any[]
+      const menus = Array.from(root.querySelectorAll('lv-filter-menu')) as TestDomElement[]
       menus[0]?.shadowRoot?.querySelector<HTMLButtonElement>('.trigger')?.click()
       await menus[0]?.updateComplete
       const projectMenuSearch = menus[0]?.shadowRoot?.querySelector<HTMLInputElement>('.search input')
@@ -1086,9 +1086,9 @@ test('query audit page filters table rows and exposes optional metadata columns'
       menus[2]?.shadowRoot?.querySelector<HTMLInputElement>('.option input')?.click()
       await element.updateComplete
       const filterToggleCommand = (window as any).queryHistoryCommands.at(-1)
-      const table = root.querySelector('lv-record-table') as any
+      const table = root.querySelector('lv-record-table') as TestDomElement
       const rowText = table?.textContent ?? ''
-      table.querySelector('.record-table-column-selector summary')?.click()
+      ;(table.querySelector('.record-table-column-selector summary') as HTMLElement | null)?.click()
       Array.from(table.querySelectorAll('label'))
         .find((label) => label.textContent?.includes('Runtime'))
         ?.querySelector('input')
@@ -1112,7 +1112,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
       const detailCommand = (window as any).queryHistoryCommands.at(-1)
       mergePatch({ adminQueryDetail: fixture.queryDetail })
       await element.updateComplete
-      const drawer = root.querySelector('lv-drawer') as any
+      const drawer = root.querySelector('lv-drawer') as TestDomElement
       const drawerPanel = drawer?.shadowRoot?.querySelector('.drawer') as HTMLElement | null
       const drawerText = drawer?.textContent ?? ''
       const drawerCodeBlock = drawer?.querySelector('lv-code-block') as (HTMLElement & { updateComplete: Promise<boolean> }) | null
@@ -1127,9 +1127,9 @@ test('query audit page filters table rows and exposes optional metadata columns'
       const statusIconColor = statusIcon ? getComputedStyle(statusIcon).color : ''
       const hasSubtitle = Boolean(drawer?.querySelector('.query-detail-subtitle'))
       const usesSharedDrawer = drawer?.tagName === 'LV-DRAWER'
-      const drawerIsModal = drawer?.modal
+      const drawerIsModal = (drawer as (TestDomElement & { modal?: boolean }) | null)?.modal
       const drawerModal = drawerPanel?.getAttribute('aria-modal') ?? null
-      const drawerClose = drawer?.shadowRoot?.querySelector<HTMLButtonElement>('.close')
+      const drawerClose = (drawer?.shadowRoot as ShadowRoot | null)?.querySelector<HTMLButtonElement>('.close')
       drawerClose?.focus()
       const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true, composed: true })
       drawerClose?.dispatchEvent(tabEvent)
@@ -1161,7 +1161,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
       const recreated = document.createElement('lv-admin-page') as any
       document.body.replaceChildren(recreated)
       await recreated.updateComplete
-      const recreatedTable = recreated.shadowRoot.querySelector('lv-record-table') as any
+      const recreatedTable = (recreated.shadowRoot as ShadowRoot).querySelector('lv-record-table') as any
       const refreshedHeaders = visibleHeaderLabels(recreatedTable)
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
@@ -1287,7 +1287,7 @@ test('query audit emits load more commands from backend-driven history state', a
       })
       document.body.replaceChildren(element)
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const footerText = root.querySelector('.query-history-footer')?.textContent ?? ''
       root.querySelector<HTMLButtonElement>('.query-history-load-more')?.click()
       await element.updateComplete
@@ -1343,15 +1343,15 @@ test('query audit detail drawer behaves as a mobile overlay', async () => {
       mergePatch({ page: fixture, adminQueryHistory: fixture.queryHistory, adminQueryDetail: { eventId: '', loading: false, error: '' } })
       document.body.replaceChildren(element)
       await element.updateComplete
-      const root = element.shadowRoot
-      const table = root.querySelector('lv-record-table') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const table = root.querySelector('lv-record-table') as TestDomElement
       table.querySelector<HTMLElement>('tbody tr.record-row')?.click()
       await element.updateComplete
       mergePatch({ adminQueryDetail: fixture.queryDetail })
       await element.updateComplete
-      const drawer = root.querySelector('lv-drawer') as any
-      const overlay = drawer.shadowRoot.querySelector('.overlay') as HTMLElement
-      const drawerPanel = drawer.shadowRoot.querySelector('.drawer') as HTMLElement
+      const drawer = root.querySelector('lv-drawer') as TestDomElement
+      const overlay = (drawer.shadowRoot as ShadowRoot).querySelector('.overlay') as HTMLElement
+      const drawerPanel = (drawer.shadowRoot as ShadowRoot).querySelector('.drawer') as HTMLElement
       const overlayRect = overlay.getBoundingClientRect()
       const drawerRect = drawerPanel.getBoundingClientRect()
       const tableRect = table.getBoundingClientRect()
@@ -1386,8 +1386,8 @@ test('query audit drawer does not block selecting another row', async () => {
       mergePatch({ page: fixture, adminQueryHistory: fixture.queryHistory, adminQueryDetail: { eventId: '', loading: false, error: '' } })
       document.body.replaceChildren(element)
       await element.updateComplete
-      const root = element.shadowRoot
-      const table = root.querySelector('lv-record-table') as any
+      const root = (element.shadowRoot as ShadowRoot)
+      const table = root.querySelector('lv-record-table') as TestDomElement
       const rows = Array.from(table.querySelectorAll<HTMLElement>('tbody tr.record-row'))
       rows[0]?.click()
       await element.updateComplete
@@ -1487,7 +1487,7 @@ test('storage renders a simple shared table with a schema column', async () => {
       } })
       const element = document.querySelector('lv-admin-page') as any
       await element.updateComplete
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as any
       await list.updateComplete
       const root = list as HTMLElement
       root.style.width = '672px'
@@ -1530,7 +1530,7 @@ test('storage renders a simple shared table with a schema column', async () => {
         filtered,
         columnLabels,
         listText,
-        metricsText: Array.from(element.shadowRoot.querySelectorAll('.metrics .metric')).map((metric: Element) => metric.textContent?.replace(/\s+/g, ' ').trim()),
+        metricsText: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.metrics .metric')).map((metric: Element) => metric.textContent?.replace(/\s+/g, ' ').trim()),
         hrefs,
         initialIconState,
         listLabel: root.querySelector('table')?.getAttribute('aria-label'),
@@ -1639,7 +1639,7 @@ test('storage table detail emphasizes physical storage and active files', async 
       const element = document.querySelector('lv-admin-page') as any
       await element.updateComplete
       const root = element.shadowRoot as ShadowRoot
-      const files = root.querySelector('lv-record-table') as any
+      const files = root.querySelector('lv-record-table') as TestDomElement
       await files.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
@@ -1743,12 +1743,12 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
       await element.updateComplete
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const editor = root.querySelector('lv-agent-prompt-editor') as any
       const toolsCatalog = root.querySelector('lv-agent-tools') as any
       await editor.updateComplete
       await toolsCatalog.updateComplete
-      const editorRoot = editor.shadowRoot
+      const editorRoot = (editor.shadowRoot as ShadowRoot)
       await customElements.whenDefined('lv-code-editor')
       await waitFor(() => Boolean(editorRoot.querySelector('lv-code-editor')))
       const controlRow = editorRoot.querySelector('.prompt-control-row')!
@@ -1776,8 +1776,8 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
       await editor.updateComplete
       const codeEditor = editorRoot.querySelector('lv-code-editor') as any
       await codeEditor.updateComplete
-      await waitFor(() => Boolean(codeEditor.shadowRoot.querySelector('.view-line')))
-      const editorFontSize = getComputedStyle(codeEditor.shadowRoot.querySelector('.view-line')!).fontSize
+      await waitFor(() => Boolean((codeEditor.shadowRoot as ShadowRoot).querySelector('.view-line')))
+      const editorFontSize = getComputedStyle((codeEditor.shadowRoot as ShadowRoot).querySelector('.view-line') as any).fontSize
       const seededEditorValue = codeEditor.value
       codeEditor.value = 'Updated prompt'
       codeEditor.dispatchEvent(new CustomEvent('lv-code-editor-change', {
@@ -1819,7 +1819,7 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
         hasEditor: Boolean(editor),
         hasToolsCatalog: Boolean(toolsCatalog),
         hasGenericToolsRecordTable: Boolean(root.querySelector('section[aria-label="Tools"] lv-record-table')),
-        toolsCatalogText: toolsCatalog.shadowRoot.textContent,
+        toolsCatalogText: (toolsCatalog.shadowRoot as ShadowRoot).textContent,
         hasCodeEditor: Boolean(codeEditor),
         preSwitchState,
         immediateSwitchState,
@@ -1920,9 +1920,9 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
       await element.updateComplete
       let command: unknown = null
       element.addEventListener('lv-agent-system-prompt-save', (event: CustomEvent) => { command = event.detail })
-      const editor = element.shadowRoot.querySelector('lv-agent-prompt-editor') as any
+      const editor = (element.shadowRoot as ShadowRoot).querySelector('lv-agent-prompt-editor') as any
       await editor.updateComplete
-      const editorRoot = editor.shadowRoot
+      const editorRoot = (editor.shadowRoot as ShadowRoot)
       const editButton = editorRoot.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
       editButton.click()
       await customElements.whenDefined('lv-code-editor')
@@ -2031,7 +2031,7 @@ test('admin agent tools catalog renders payload fields, JSON, empty, unsupported
       }]
       document.body.append(element)
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const firstText = root.textContent ?? ''
       const catalogHeight = Math.round(root.querySelector('.catalog')!.getBoundingClientRect().height)
       const listOverflow = getComputedStyle(root.querySelector('.list')!).overflowY
@@ -2131,7 +2131,7 @@ test('agent prompt editor seeds edit mode from value attribute', async () => {
       element.setAttribute('value', 'Attribute prompt')
       document.body.append(element)
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const editButton = root.querySelector<HTMLButtonElement>('.mode-toggle button[aria-label="Edit"]')!
       editButton.click()
       await customElements.whenDefined('lv-code-editor')
@@ -2187,10 +2187,10 @@ test('agent prompt preview delegates to compact markdown view', async () => {
       ].join('\n')
       document.body.append(element)
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const markdownView = root.querySelector('lv-markdown-view') as any
       await markdownView.updateComplete
-      const h1 = markdownView.shadowRoot.querySelector('h1')!
+      const h1 = (markdownView.shadowRoot as ShadowRoot).querySelector('h1') as any
       return {
         hasMarkdownView: Boolean(markdownView),
         compact: markdownView.compact,

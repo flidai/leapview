@@ -21,6 +21,7 @@ import type { VisualizationEnvelope, VisualizationSpatialSelectionCommand, Visua
 import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { checkSignalContract } from '../shared/signal-contract'
+import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { agentIcon } from '../chat/agent-icon'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -51,16 +52,6 @@ import {
   DashboardNavigationController,
   DashboardOptimisticInteractionController,
 } from './dashboard-page-controller'
-
-const emptyStatus: DashboardStatus = {
-  loading: false,
-  error: '',
-  generation: 0,
-  lastUpdated: '',
-  refreshId: '',
-  setupRequired: false,
-  progressPercent: 100,
-}
 
 const dashboardFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
 
@@ -738,7 +729,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private get status(): DashboardStatus {
-    return this.signal<DashboardStatus>('status', emptyStatus)
+    return this.signal<DashboardStatus>('status', emptyDashboardStatus())
   }
   async ensureVisualizationsMounted(): Promise<void> {
     await this.updateComplete; await Promise.all(Array.from(this.renderRoot.querySelectorAll('lv-visualization-host')).map((host) => host.ensureMounted()))

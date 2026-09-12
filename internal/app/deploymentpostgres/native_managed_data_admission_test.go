@@ -111,6 +111,14 @@ func TestNativeManagedDataBindingAdmissionOwnsNoTransactionLifecycle(t *testing.
 	if err != nil || len(outside) != 1 || outside[0].RevisionID != revision.ID {
 		t.Fatalf("committed bindings = %#v, error = %v", outside, err)
 	}
+	var rootCount int
+	var rootRevision, rootState string
+	if err := pool.QueryRow(t.Context(), `SELECT count(*), max(revision_id), max(state) FROM managed_data.retention_root WHERE project_id=$1 AND environment=$2`, pinnedIdentity.ProjectID.String(), string(pinnedIdentity.Environment)).Scan(&rootCount, &rootRevision, &rootState); err != nil {
+		t.Fatalf("query admitted retention root: %v", err)
+	}
+	if rootCount != 1 || rootRevision != revision.ID.String() || rootState != "live" {
+		t.Fatalf("admitted retention roots = count %d revision %q state %q, want one live root for %q", rootCount, rootRevision, rootState, revision.ID)
+	}
 
 	emptyIdentity := servingIdentityForNativeBinding(projectID, "prod", "generation_empty")
 	tx, err = pool.Begin(t.Context())
@@ -127,6 +135,13 @@ func TestNativeManagedDataBindingAdmissionOwnsNoTransactionLifecycle(t *testing.
 	empty, err := repository.ListServingStateBindings(t.Context(), emptyIdentity)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("committed empty bindings = %#v, error = %v", empty, err)
+	}
+	var emptyRoots int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM managed_data.retention_root WHERE project_id=$1 AND environment=$2 AND evidence->>'generation_id'=$3 AND evidence->>'kind'='serving-generation'`, emptyIdentity.ProjectID.String(), string(emptyIdentity.Environment), emptyIdentity.GenerationID).Scan(&emptyRoots); err != nil {
+		t.Fatalf("query empty admission retention roots: %v", err)
+	}
+	if emptyRoots != 0 {
+		t.Fatalf("empty admission retention roots = %d, want 0", emptyRoots)
 	}
 
 	rollbackIdentity := servingIdentityForNativeBinding(projectID, "prod", "generation_rollback")

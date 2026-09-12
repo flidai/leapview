@@ -17,7 +17,8 @@ SET state = 'completed', response_status = 409,
   response_body = '{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and will not be executed again"}',
   updated_at = sqlc.arg(updated_at)
 WHERE scope = sqlc.arg(scope) AND request_digest = sqlc.arg(request_digest)
-  AND state = 'pending' AND owner_session <> sqlc.arg(owner_session);
+  AND state = 'pending' AND owner_session <> sqlc.arg(owner_session)
+  AND julianday(lease_expires_at) <= julianday('now');
 
 -- name: GetAPIIdempotencyRecord :one
 SELECT request_digest, state, owner_id, owner_session, lease_generation, lease_expires_at, response_status,

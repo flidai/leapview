@@ -14,7 +14,7 @@ test('MapLibre spatial controls retain every canonical geometry for one map inte
       { sourceVisualID: 'map', interactionID: 'area', entries: [], spatialGeometry: radius, label: 'Spatial selection' },
     ],
     spatialSelection: { visualID: 'map', interactionID: 'area', geometry: radius },
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(canonicalSpatialSelectionGeometries(envelope, 'area')).toEqual([box, radius])
   expect(canonicalSpatialSelectionGeometries(envelope, 'other')).toEqual([])
@@ -58,7 +58,7 @@ test('MapLibre spatial controls preserve the armed button and keyboard focus acr
     const clear = control.element.querySelector<HTMLButtonElement>('[aria-label="Clear all spatial map selections"]')!
     expect(clear.disabled).toBe(false)
 
-    control.update({ ...envelope, status: { kind: 'loading' } } as VisualizationEnvelope)
+    control.update({ ...envelope, status: { kind: 'loading' } } as unknown as VisualizationEnvelope)
     expect(control.element.querySelector('[aria-label="Add map area with box"]')).toBe(button)
     expect(button.getAttribute('aria-pressed')).toBe('true')
     expect(document.activeElement).toBe(button)

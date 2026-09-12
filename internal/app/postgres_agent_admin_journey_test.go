@@ -60,9 +60,12 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 			Usage: agentcore.Usage{InputTokens: 3, OutputTokens: 4, TotalTokens: 7},
 		}, nil
 	})))
-	auth := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
+	auth, err := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
 		APITokenOnly: true, CSRFKey: strings.Repeat("journey-auth", 4),
 	})
+	if err != nil {
+		t.Fatalf("construct auth: %v", err)
+	}
 	accessSurface, err := accessmodule.Build(ctx, accessmodule.Config{
 		ExistingAuth: auth,
 		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {

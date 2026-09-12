@@ -114,7 +114,6 @@ type RevalidationCompiler interface {
 type RevalidationResultStatus string
 
 const (
-	RevalidationSkipped    RevalidationResultStatus = "skipped"
 	RevalidationSucceeded  RevalidationResultStatus = "succeeded"
 	RevalidationFailed     RevalidationResultStatus = "failed"
 	RevalidationSuperseded RevalidationResultStatus = "superseded"
@@ -300,10 +299,4 @@ func validateRecompiledEvidence(generation RevalidationGeneration, lifecycle Das
 		return fmt.Errorf("compiled evidence serving identity does not match activated generation")
 	}
 	return nil
-}
-
-// SortResults gives callers a deterministic order when stores return rows in
-// database order that is not guaranteed by the underlying engine.
-func SortResults(results []RevalidationResult) {
-	sort.Slice(results, func(i, j int) bool { return results[i].DashboardID < results[j].DashboardID })
 }

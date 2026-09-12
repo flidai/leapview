@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -163,6 +165,14 @@ func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 		"/api/v1/principals/principal_target/sessions/session_device",
 		map[string]string{"principal": "principal_target", "session": "session_device"},
 	)
+	commandContext, commandGuard, err := accessgen.BeginGenRevokePrincipalSessionCommand(request.Context(), accessgen.GenRevokePrincipalSessionCommandInvocation{
+		Surface:   apigencommand.SurfaceAPI,
+		Principal: "principal_target",
+	})
+	if err != nil {
+		t.Fatalf("begin generated command: %v", err)
+	}
+	request = request.WithContext(commandContext)
 	response := httptest.NewRecorder()
 
 	handler.RevokePrincipalSession(response, request)
@@ -175,6 +185,70 @@ func TestAdministratorRevokesOnlyTheTargetPrincipalsSession(t *testing.T) {
 	}
 	if repository.audit.PrincipalID != "principal_admin" || repository.audit.ResourceKind != "session" || repository.audit.ResourceID != "session_device" {
 		t.Fatalf("audit actor/resource = %q/%q/%q, want principal_admin/session/session_device", repository.audit.PrincipalID, repository.audit.ResourceKind, repository.audit.ResourceID)
+	}
+	if !commandGuard.Completed() {
+		t.Fatal("successful principal-session revoke did not complete its generated command guard")
+	}
+	var metadata struct {
+		PayloadSchema string `json:"payloadSchema"`
+		Payload       struct {
+			TargetPrincipalID string `json:"targetPrincipalId"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(repository.audit.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("decode audit metadata: %v", err)
+	}
+	if metadata.PayloadSchema != "PrincipalSessionRevokedAuditPayload" || metadata.Payload.TargetPrincipalID != "principal_target" {
+		t.Fatalf("audit metadata = %#v, want typed principal-session payload", metadata)
+	}
+}
+
+func TestCurrentSessionRevokeUsesItsGeneratedOperationAndPayload(t *testing.T) {
+	repository := &sessionLifecycleRepository{}
+	handler := Handler{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "principal_me"}, true
+		},
+	}
+	request := requestWithRouteParam(
+		stdhttp.MethodDelete,
+		"/api/v1/me/sessions/session_current",
+		"session",
+		"session_current",
+	)
+	commandContext, commandGuard, err := accessgen.BeginGenRevokeCurrentSessionCommand(request.Context(), accessgen.GenRevokeCurrentSessionCommandInvocation{
+		Surface: apigencommand.SurfaceAPI,
+		Session: "session_current",
+	})
+	if err != nil {
+		t.Fatalf("begin generated command: %v", err)
+	}
+	request = request.WithContext(commandContext)
+	response := httptest.NewRecorder()
+
+	handler.RevokeCurrentSession(response, request)
+
+	if response.Code != stdhttp.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, stdhttp.StatusNoContent, response.Body.String())
+	}
+	if repository.revokedPrincipalID != "principal_me" || repository.revokedSessionID != "session_current" {
+		t.Fatalf("revoked principal/session = %q/%q, want principal_me/session_current", repository.revokedPrincipalID, repository.revokedSessionID)
+	}
+	if !commandGuard.Completed() {
+		t.Fatal("successful current-session revoke did not complete its generated command guard")
+	}
+	var metadata struct {
+		PayloadSchema string `json:"payloadSchema"`
+		Payload       struct {
+			SessionID string `json:"sessionId"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(repository.audit.MetadataJSON), &metadata); err != nil {
+		t.Fatalf("decode audit metadata: %v", err)
+	}
+	if metadata.PayloadSchema != "CurrentSessionRevokedAuditPayload" || metadata.Payload.SessionID != "session_current" {
+		t.Fatalf("audit metadata = %#v, want typed current-session payload", metadata)
 	}
 }
 

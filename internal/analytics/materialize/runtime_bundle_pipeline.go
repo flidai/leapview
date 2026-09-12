@@ -17,6 +17,8 @@ import (
 
 type bundleStage string
 
+const bundleCacheDomain = "bundle-v1"
+
 const (
 	bundleStageGovern           bundleStage = "govern_validate"
 	bundleStagePlan             bundleStage = "plan"
@@ -83,9 +85,10 @@ type plannedBundle struct {
 }
 
 type bundleExecution struct {
-	decoded map[string]semanticquery.Rows
-	bytes   map[string]int64
-	summary dataquery.Result
+	decoded  map[string]semanticquery.Rows
+	bytes    map[string]int64
+	metadata map[string]resultcache.Metadata
+	summary  dataquery.Result
 }
 
 func branchResultEquivalenceDigest(plan semanticquery.BundlePlan, id string, request dataquery.Query) string {
@@ -227,7 +230,24 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			continue
 		}
 		started := time.Now()
-		cached, address, hit, lookup, err := r.queryCache.lookupArrowWithDigest(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL, branchResultEquivalenceDigest(plan, branch.ID, branch.Query))
+		cached, address, hit, lookup, err := r.queryCache.lookupArrowWithDigestDomain(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL, branchResultEquivalenceDigest(plan, branch.ID, branch.Query), bundleCacheDomain)
+		if err == nil && !hit {
+			// Keep compatibility with single-query entries populated before a
+			// bundle was requested. The reverse direction is intentionally not
+			// allowed: bundle entries remain namespaced so their branch metadata
+			// cannot satisfy a single-query lookup.
+			standardAddress, addressErr := r.queryCache.cacheAddressWithDigest(branch.Query, r.resultPartition, dependency, branchResultEquivalenceDigest(plan, branch.ID, branch.Query))
+			if addressErr != nil {
+				err = addressErr
+			} else {
+				standardCached, standardHit, standardLookup, standardErr := r.queryCache.getArrowObserved(ctx, branch.Query, standardAddress, plan.Plan.SQL)
+				if standardErr != nil {
+					err = standardErr
+				} else if standardHit {
+					cached, address, hit, lookup = standardCached, standardAddress, true, standardLookup
+				}
+			}
+		}
 		duration := time.Since(started)
 		if err != nil {
 			observePendingBundleCacheError(ctx, out)
@@ -449,7 +469,7 @@ func (r *Runtime) executeArrowBundle(ctx context.Context, planned plannedBundle)
 			err = stageErr
 		} else {
 			var execution bundleExecution
-			execution, err = r.splitStoreDecodeBundle(ctx, planned, source)
+			execution, err = r.splitStoreDecodeBundle(ctx, planned, source, summary)
 			execution.summary = summary
 			if err == nil {
 				summary = execution.summary
@@ -483,7 +503,7 @@ func (owned ownedBundleArrow) release() {
 	}
 }
 
-func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBundle, source *arrowresult.Result) (bundleExecution, error) {
+func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBundle, source *arrowresult.Result, summary dataquery.Result) (bundleExecution, error) {
 	branches, err := splitArrowBundle(ctx, planned.plan, source)
 	if err != nil {
 		return bundleExecution{}, err
@@ -493,7 +513,11 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 	if err := ctx.Err(); err != nil {
 		return bundleExecution{}, err
 	}
-	execution := bundleExecution{decoded: make(map[string]semanticquery.Rows, len(branches)), bytes: make(map[string]int64, len(branches))}
+	execution := bundleExecution{
+		decoded:  make(map[string]semanticquery.Rows, len(branches)),
+		bytes:    make(map[string]int64, len(branches)),
+		metadata: make(map[string]resultcache.Metadata, len(branches)),
+	}
 	for _, request := range planned.resolved.misses {
 		branch := branches[request.ID]
 		if branch == nil {
@@ -513,6 +537,7 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		for index := range values {
 			execution.decoded[request.ID][index] = semanticquery.Row(values[index])
 		}
+		execution.metadata[request.ID] = bundleBranchMetadata(summary)
 	}
 	if err := ctx.Err(); err != nil {
 		return bundleExecution{}, err
@@ -523,10 +548,9 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 			continue
 		}
 		started := time.Now()
-		outcome := r.queryCache.scope.StoreArrowObserved(slot.address.key, slot.address.family, resultcache.Token(slot.address.generation), branches[request.ID], resultcache.Metadata{})
+		outcome := r.queryCache.scope.StoreArrowObserved(slot.address.key, slot.address.family, resultcache.Token(slot.address.generation), branches[request.ID], execution.metadata[request.ID])
 		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(outcome), Duration: time.Since(started)})
 	}
-	r.queryCache.syncStats()
 	return execution, nil
 }
 
@@ -535,7 +559,8 @@ func finishExecutedBundle(ctx context.Context, planned plannedBundle, execution 
 	resolved.result.SQL = planned.plan.Plan.SQL
 	for _, branch := range resolved.misses {
 		rows := dataQueryRows(execution.decoded[branch.ID])
-		branchResult := dataquery.Result{Rows: rows, Columns: dataquery.ColumnsFromNames(bundleOutputColumns(planned.plan, branch.ID)), SQL: planned.plan.Plan.SQL, PlanningMS: execution.summary.PlanningMS, ConnectionWaitMS: execution.summary.ConnectionWaitMS, DatabaseMS: execution.summary.DatabaseMS, ExecutionState: dataquery.ExecutionSucceeded, Status: dataquery.StatusSuccess, RowsReturned: len(rows), BytesEstimate: execution.bytes[branch.ID], CacheOutcome: dataquery.CacheMiss}
+		metadata := execution.metadata[branch.ID]
+		branchResult := dataquery.Result{Rows: rows, Columns: dataquery.ColumnsFromNames(bundleOutputColumns(planned.plan, branch.ID)), SQL: planned.plan.Plan.SQL, PlanningMS: execution.summary.PlanningMS, ConnectionWaitMS: execution.summary.ConnectionWaitMS, DatabaseMS: execution.summary.DatabaseMS, ExecutionState: dataquery.ExecutionSucceeded, Status: dataquery.StatusSuccess, RowsReturned: len(rows), BytesEstimate: execution.bytes[branch.ID], TotalRows: metadata.TotalRows, TotalRowsKnown: metadata.TotalRowsKnown, Warnings: append([]string(nil), metadata.Warnings...), CacheOutcome: dataquery.CacheMiss}
 		if shared {
 			branchResult.CacheOutcome = dataquery.CacheCoalesced
 		}
@@ -548,6 +573,18 @@ func finishExecutedBundle(ctx context.Context, planned plannedBundle, execution 
 		resolved.result.Results[branch.ID] = branchResult
 	}
 	return finishBundle(ctx, resolved, nil)
+}
+
+// bundleBranchMetadata is deliberately limited to the stable metadata owned by
+// resultcache. Execution timing and SQL are request/diagnostic state and must
+// be rebuilt by the caller; total-row evidence and warnings, when supplied by
+// the shared physical execution, must survive branch storage and cache hits.
+func bundleBranchMetadata(summary dataquery.Result) resultcache.Metadata {
+	return resultcache.Metadata{
+		TotalRows:      summary.TotalRows,
+		TotalRowsKnown: summary.TotalRowsKnown,
+		Warnings:       append([]string(nil), summary.Warnings...),
+	}
 }
 
 func finishBundle(ctx context.Context, resolved resolvedBundle, executeErr error) (dataquery.BundleResult, error) {

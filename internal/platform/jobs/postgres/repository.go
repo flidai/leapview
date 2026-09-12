@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	jobdb "github.com/flidai/leapview/internal/platform/jobs/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
@@ -193,16 +193,7 @@ func (r *Repository) DB() DBTX {
 func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 func nativeDBConfigured(db DBTX) bool {
-	if db == nil {
-		return false
-	}
-	v := reflect.ValueOf(db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !v.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 func ApplySchema(ctx context.Context, tx Tx) error {

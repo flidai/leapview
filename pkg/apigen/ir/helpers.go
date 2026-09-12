@@ -76,15 +76,6 @@ func SuccessResponse(endpoint Endpoint) (*Response, bool) {
 	return best, best != nil
 }
 
-// ResolveResponseBodySchema returns the schema used for the CLI-visible success body.
-func ResolveResponseBodySchema(doc Document, response Response) (Schema, bool) {
-	ref, ok := ResolveResponseBodySchemaRef(response)
-	if !ok {
-		return Schema{}, false
-	}
-	return resolveConcreteSchema(doc, ref)
-}
-
 // ResolveResponseBodySchemaRef returns the schema reference used for the
 // CLI-visible JSON success body.
 func ResolveResponseBodySchemaRef(response Response) (SchemaRef, bool) {

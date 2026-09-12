@@ -15,6 +15,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshoperation "github.com/flidai/leapview/internal/refresh/operation"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -119,7 +120,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 	if config.PublicationIdentityResolver == nil {
 		return Persistence{}, ErrPublicationIdentityUnavailable
 	}
-	if isNilPostgresCapability(config.Jobs) {
+	if platformtypednil.IsNil(config.Jobs) {
 		return Persistence{}, errors.New("PostgreSQL canonical jobs authority is required")
 	}
 	queueAuthority, queueOK := config.Jobs.(postgresQueueAuthority)
@@ -314,6 +315,13 @@ type postgresRunPersistence struct {
 	operations        refreshoperation.Authority
 	cancelAuditWriter PostgresCancelAuditWriter
 	createAuditWriter PostgresRefreshAuditWriter
+}
+
+func (p *postgresRunPersistence) RenewJobLease(ctx context.Context, job refreshrun.JobRecord, lease time.Duration) error {
+	if p == nil || p.repository == nil {
+		return errors.New("refresh PostgreSQL run persistence is unavailable")
+	}
+	return p.repository.HeartbeatLease(ctx, job.RunID, job.LeaseOwner, job.LeaseRevision, lease)
 }
 
 func (p *postgresRunPersistence) queueLifecycle() (PostgresQueueLifecycle, error) {
@@ -645,15 +653,7 @@ func deterministicChildRunID(rootID, targetID string) string {
 }
 
 func sameStringSlice(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func (p *postgresRunPersistence) CreateRun(ctx context.Context, input refreshrun.RunInput) (refreshrun.RunRecord, error) {
@@ -793,10 +793,8 @@ func (p *postgresRunPersistence) LatestTargetRun(ctx context.Context, scope refr
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	if len(runs) == 0 {
-		return refreshrun.RunRecord{}, false, nil
-	}
-	return runs[0], true, nil
+	latest, ok := refreshrun.LatestRecord(runs)
+	return latest, ok, nil
 }
 
 func (p *postgresRunPersistence) LatestSuccessfulTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {

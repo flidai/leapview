@@ -750,9 +750,6 @@ func (r *Repository) ReferencedDuckLakeSnapshots(ctx context.Context, e string) 
 	}
 	return querySet(db).ReferencedSnapshots(ctx, e)
 }
-func (r *Repository) ActiveDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
-	return r.ReferencedDuckLakeSnapshots(ctx, e)
-}
 func (r *Repository) ForeignEnvironmentDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
 	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
 		return nil, err

@@ -131,6 +131,20 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	mailbox, unsubscribe := broker.Subscribe(streamID)
 	defer unsubscribe()
 
+	registry := h.Coordinators
+	if registry == nil {
+		registry = dashboardstream.NewRegistry()
+	}
+	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
+	coordinator, closeCoordinator, openErr := registry.OpenWithError(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
+		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
+	})
+	if openErr != nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	defer closeCoordinator()
+
 	updates := pagestream.NewSignalStream(w, r)
 	var providers []webpage.Provider
 	if h.Layout != nil {
@@ -161,18 +175,13 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	registry := h.Coordinators
-	if registry == nil {
-		registry = dashboardstream.NewRegistry()
-	}
-	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
-	coordinator, closeCoordinator := registry.Open(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
-		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
-	})
-	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, projectID, environment, request.ModelID, func() {
+	publicationScope := ""
+	if presentation, ok := publicPresentationFromContext(r.Context()); ok {
+		publicationScope = presentation.PublicationID
+	}
+	registry.BindForPublication(streamID, projectID, environment, request.ModelID, publicationScope, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err

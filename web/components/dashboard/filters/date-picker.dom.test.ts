@@ -72,13 +72,13 @@ test('date range owns compact calendars, Monday-first weeks, and canonical selec
       leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
       document.body.append(leaf, outside)
       await leaf.updateComplete
-      const pickers = Array.from(leaf.shadowRoot.querySelectorAll('lv-date-picker')) as any[]
+      const pickers = Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll('lv-date-picker')) as any[]
       const first = pickers[0]
-      const trigger = first.shadowRoot.querySelector('.date-trigger') as HTMLButtonElement
+      const trigger = (first.shadowRoot as ShadowRoot).querySelector('.date-trigger') as HTMLButtonElement
       trigger.click()
       await first.updateComplete
-      const popover = first.shadowRoot.querySelector('.date-popover') as HTMLElement
-      const calendar = first.shadowRoot.querySelector('.calendar-grid') as HTMLElement
+      const popover = (first.shadowRoot as ShadowRoot).querySelector('.date-popover') as HTMLElement
+      const calendar = (first.shadowRoot as ShadowRoot).querySelector('.calendar-grid') as HTMLElement
       const geometry = {
         controls: pickers.length,
         open: popover.matches(':popover-open'),
@@ -86,23 +86,23 @@ test('date range owns compact calendars, Monday-first weeks, and canonical selec
         overflow: getComputedStyle(popover).overflowY,
         calendarOverflow: getComputedStyle(calendar).overflowY,
         scrolls: popover.scrollHeight > popover.clientHeight || calendar.scrollHeight > calendar.clientHeight,
-        weekdays: Array.from(first.shadowRoot.querySelectorAll('.calendar-weekday')).map(node => node.textContent?.trim()),
-        year: (first.shadowRoot.querySelector('.year-control') as HTMLInputElement).value,
+        weekdays: Array.from((first.shadowRoot as ShadowRoot).querySelectorAll('.calendar-weekday')).map(node => node.textContent?.trim()),
+        year: ((first.shadowRoot as ShadowRoot).querySelector('.year-control') as HTMLInputElement).value,
       }
-      ;(first.shadowRoot.querySelector('[data-date="2025-02-08"]') as HTMLButtonElement).click()
+      ;((first.shadowRoot as ShadowRoot).querySelector('[data-date="2025-02-08"]') as HTMLButtonElement).click()
       await leaf.updateComplete
       const selected = {
-        display: first.shadowRoot.querySelector('.date-value')?.textContent?.trim(),
+        display: (first.shadowRoot as ShadowRoot).querySelector('.date-value')?.textContent?.trim(),
         mutations: mutations.length,
       }
       trigger.click()
       await first.updateComplete
-      const year = first.shadowRoot.querySelector('.year-control') as HTMLInputElement
+      const year = (first.shadowRoot as ShadowRoot).querySelector('.year-control') as HTMLInputElement
       year.focus()
       year.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
       await leaf.updateComplete
       const whileInside = {
-        open: first.shadowRoot.querySelector('.date-popover')?.matches(':popover-open'),
+        open: (first.shadowRoot as ShadowRoot).querySelector('.date-popover')?.matches(':popover-open'),
         mutations: mutations.length,
       }
       outside.focus()
@@ -153,17 +153,17 @@ test('date range Escape discards the draft and non-editable controls stay disabl
       leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => mutations.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const picker = leaf.shadowRoot.querySelector('lv-date-picker') as any
-      picker.shadowRoot.querySelector('.date-trigger').click()
+      const picker = (leaf.shadowRoot as ShadowRoot).querySelector('lv-date-picker') as any
+      (picker.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.date-trigger')!.click()
       await picker.updateComplete
-      ;(picker.shadowRoot.querySelector('[data-date="2025-02-08"]') as HTMLButtonElement).click()
+      ;((picker.shadowRoot as ShadowRoot).querySelector('[data-date="2025-02-08"]') as HTMLButtonElement).click()
       await leaf.updateComplete
-      ;(picker.shadowRoot.querySelector('.date-trigger') as HTMLButtonElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      ;((picker.shadowRoot as ShadowRoot).querySelector('.date-trigger') as HTMLButtonElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
       await leaf.updateComplete
-      const afterEscape = picker.shadowRoot.querySelector('.date-value')?.textContent?.trim()
+      const afterEscape = (picker.shadowRoot as ShadowRoot).querySelector('.date-value')?.textContent?.trim()
       leaf.binding = { ...leaf.binding, readerEditable: false }
       await leaf.updateComplete
-      return { afterEscape, disabled: (picker.shadowRoot.querySelector('.date-trigger') as HTMLButtonElement).disabled, mutations }
+      return { afterEscape, disabled: ((picker.shadowRoot as ShadowRoot).querySelector('.date-trigger') as HTMLButtonElement).disabled, mutations }
     })
     expect(result).toEqual({ afterEscape: '01-02-2025', disabled: true, mutations: [] })
   } finally {

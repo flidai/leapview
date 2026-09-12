@@ -155,7 +155,14 @@ function cartesianPresentationFixture(mark: string): VisualizationEnvelope {
       x: { dataset: 'primary', field: 'label' },
       y: [{ dataset: 'primary', field: 'value' }],
       presentation: {
+        legend: 'hidden',
         labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true },
+        smooth: false,
+        stacked: false,
+        showSymbols: true,
+        dataZoom: false,
+        area: false,
+        step: false,
       },
     },
     dataState: {
@@ -175,6 +182,7 @@ function cartesianPresentationFixture(mark: string): VisualizationEnvelope {
     },
     selection: [],
     status: { kind: 'ready' },
+    highlights: [],
     diagnostics: [],
   } as VisualizationEnvelope
 }

@@ -21,16 +21,6 @@ const (
 	BaselineExisting BaselineKind = "existing"
 )
 
-// Compatibility aliases retain the vocabulary used by adapters that model
-// policy evidence explicitly while keeping this package's shorter domain
-// names canonical.
-type PolicyBaselineKind = BaselineKind
-
-const (
-	PolicyBaselineGenesis  = BaselineGenesis
-	PolicyBaselineExisting = BaselineExisting
-)
-
 // PolicyContext is the caller-owned binding supplied to a derivation.  The
 // adapter must obtain Existing from its immutable history under its own
 // transaction; this package only validates the value it receives.
@@ -304,11 +294,6 @@ func PrepareWideningApproval(policy PolicyEvidence, actor string, approvedAt, ex
 	return evidence, nil
 }
 
-// PrepareWideningApprovalEvidence is a descriptive alias.
-func PrepareWideningApprovalEvidence(policy PolicyEvidence, actor string, approvedAt, expiresAt time.Time) (WideningApprovalEvidence, error) {
-	return PrepareWideningApproval(policy, actor, approvedAt, expiresAt)
-}
-
 // Validate checks approval evidence without checking current time.
 func (a WideningApprovalEvidence) Validate() error {
 	if err := a.Baseline.ValidateOptional(); err != nil {
@@ -376,11 +361,6 @@ func ValidateAdmission(context PolicyContext, candidate ContractPublication, pol
 	return nil
 }
 
-// ValidatePublicationAdmission is a caller-friendly alias.
-func ValidatePublicationAdmission(context PolicyContext, candidate ContractPublication, policy PolicyEvidence, approval *WideningApprovalEvidence, now time.Time) error {
-	return ValidateAdmission(context, candidate, policy, approval, now)
-}
-
 // ValidateQualifiedPublication verifies a persisted publication's nested
 // policy and approval evidence against its exact canonical bytes and current
 // admission time.  It is the adapter/read-path helper; it never rewrites
@@ -431,12 +411,6 @@ func ValidateHistoricalPublication(context PolicyContext, publication ContractPu
 		return ErrApprovalUnexpected
 	}
 	return nil
-}
-
-// ValidatePersistedPublication is an adapter-oriented alias for
-// ValidateQualifiedPublication.
-func ValidatePersistedPublication(context PolicyContext, publication ContractPublication, now time.Time) error {
-	return ValidateQualifiedPublication(context, publication, now)
 }
 
 // AttachPolicyEvidence returns a cloned publication with normalized policy and

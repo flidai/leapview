@@ -280,7 +280,7 @@ func TestDesktopAuthorizationRejectsDuplicateOrUnknownParameters(t *testing.T) {
 }
 
 func TestDesktopAuthorizationSurvivesExistingBrowserLoginReturn(t *testing.T) {
-	auth := NewAuth(nil, AuthConfig{
+	auth := mustNewAuth(t, nil, AuthConfig{
 		CSRFKey:      "0123456789abcdef0123456789abcdef",
 		CookieSecure: true,
 	})
@@ -312,7 +312,7 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repository := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repository, AuthConfig{
+	auth := mustNewAuth(t, repository, AuthConfig{
 		DevBypass: true, CSRFKey: "0123456789abcdef0123456789abcdef", CookieSecure: true,
 	})
 	module, err := newSurface(surfaceConfig{

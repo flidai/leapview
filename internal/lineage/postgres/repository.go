@@ -16,12 +16,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	lineagedb "github.com/flidai/leapview/internal/lineage/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
@@ -38,11 +38,6 @@ const (
 	maxTraversalDepth  = 64
 	maxTraversalNodes  = 10000
 	maxTraversalEdges  = 50000
-	// MaxTraversalDepth, MaxTraversalNodes and MaxTraversalEdges are the
-	// hard server-side bounds applied to every recursive request.
-	MaxTraversalDepth = maxTraversalDepth
-	MaxTraversalNodes = maxTraversalNodes
-	MaxTraversalEdges = maxTraversalEdges
 )
 
 var (
@@ -193,16 +188,10 @@ func New(db DB) *Repository { return &Repository{db: db} }
 // Configured reports whether the repository has a native database handle.
 // Schema readiness remains the migration/lifecycle owner's responsibility.
 func (r *Repository) Configured() bool {
-	if r == nil || r.db == nil {
+	if r == nil || platformtypednil.IsNil(r.db) {
 		return false
 	}
-	v := reflect.ValueOf(r.db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !v.IsNil()
-	default:
-		return true
-	}
+	return true
 }
 
 // FromGraph projects the validated rootless compiler graph into the canonical
@@ -295,17 +284,6 @@ func CompilerGraphDigest(p Projection) (string, error) {
 		return "", fmt.Errorf("%w: reconstruct compiler graph: %v", ErrInvalid, err)
 	}
 	return graph.Digest(), nil
-}
-
-// FromArtifact projects the graph carried by an immutable compiler artifact.
-// No serving identity or manifest projection is inferred here.
-func FromArtifact(projectID projectgraph.ResourceID, a interface {
-	Graph() projectgraph.ProjectGraph
-}) (Projection, error) {
-	if a == nil {
-		return Projection{}, ErrInvalid
-	}
-	return FromGraph(projectID, a.Graph())
 }
 
 // NewProjectionFromRows validates and canonicalizes already projected rows.
@@ -730,31 +708,12 @@ func PublishRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, er
 	})
 }
 
-// ReplaceRevision is the explicit replacement spelling retained for callers
-// that treat revisions as current-scope state.
-func ReplaceRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, error) {
-	return PublishRevision(ctx, tx, in)
-}
-
 // Publish is a concise compatibility alias for PublishRevision.
 func Publish(ctx context.Context, tx Tx, in RevisionInput) (Revision, error) {
 	return PublishRevision(ctx, tx, in)
 }
 
-// PublishRevisionForScope is a convenience form for callers that already
-// hold a canonical projection and separate scope coordinates.
-func PublishRevisionForScope(ctx context.Context, tx Tx, projectID, scopeID string, p Projection) (Revision, error) {
-	return PublishRevision(ctx, tx, RevisionInput{ProjectID: projectID, ScopeID: scopeID, Projection: p})
-}
-
 func (r *Repository) PublishRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, error) {
-	if r == nil {
-		return Revision{}, ErrInvalid
-	}
-	return PublishRevision(ctx, tx, in)
-}
-
-func (r *Repository) ReplaceRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, error) {
 	if r == nil {
 		return Revision{}, ErrInvalid
 	}

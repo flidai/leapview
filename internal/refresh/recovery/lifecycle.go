@@ -53,12 +53,6 @@ func recordQualificationPhase(ctx context.Context, phase, event string) error {
 	return recorder(phase, event)
 }
 
-// RecordQualificationPhase lets owner adapters delimit ledger-clocked phases
-// without supplying or controlling their timestamps.
-func RecordQualificationPhase(ctx context.Context, phase, event string) error {
-	return recordQualificationPhase(ctx, phase, event)
-}
-
 type ScenarioAdapterFunc func(context.Context, Occurrence) (ScenarioOutcome, error)
 
 func (adapter ScenarioAdapterFunc) Execute(ctx context.Context, occurrence Occurrence) (ScenarioOutcome, error) {

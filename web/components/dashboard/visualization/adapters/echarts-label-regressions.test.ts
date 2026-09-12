@@ -45,7 +45,7 @@ test('ECharts maps categorical point label priorities back to source rows', () =
   const envelope = pointFixture(rows) as any
   envelope.selection = [{ datum: { dataset: 'primary', dataRevision: 1, identity: { id: 'p-19' } }, label: 'p-19' }]
   const option = echartsOption(envelope, defaultRendererContext) as any
-  const seriesByName = new Map(option.series.map((series: any) => [series.name, series]))
+  const seriesByName = new Map<string, any>(option.series.map((series: any) => [series.name, series]))
   const selected = seriesByName.get('B')
   const wrongCategory = seriesByName.get('A')
 
@@ -59,7 +59,7 @@ test('ECharts maps categorical point label priorities back to source rows', () =
   dense.spec.presentation.labelPolicy = { ...dense.spec.presentation.labelPolicy, density: 'dense' }
   dense.selection = envelope.selection
   const denseOption = echartsOption(dense, defaultRendererContext) as any
-  const denseSeriesByName = new Map(denseOption.series.map((series: any) => [series.name, series]))
+  const denseSeriesByName = new Map<string, any>(denseOption.series.map((series: any) => [series.name, series]))
   expect(denseSeriesByName.get('B').labelLayout({ dataIndex: 9 }).hideOverlap).toBe(false)
   expect(denseSeriesByName.get('A').labelLayout({ dataIndex: 9 }).hideOverlap).toBe(true)
 })
@@ -109,6 +109,7 @@ function pointFixture(rows: unknown[][]): VisualizationEnvelope {
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['id', 'category', 'x', 'y'], rows, completeness: 'complete' }] },
     selection: [],
+    highlights: [],
     status: { kind: 'ready' },
     diagnostics: [],
   } as VisualizationEnvelope
@@ -145,6 +146,7 @@ function treeFixture(density: 'automatic' | 'always' | 'dense', initialDepth: nu
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['node', 'parent', 'value'], rows, completeness: 'complete' }] },
     selection: [],
+    highlights: [],
     status: { kind: 'ready' },
     diagnostics: [],
   } as VisualizationEnvelope

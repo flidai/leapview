@@ -16,57 +16,6 @@ import (
 	g "maragu.dev/gomponents"
 )
 
-func ProjectPage(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectPageForEnvironment(catalog, project, assets, activeType, query, "", roleLabel, csrfToken, chromeOptions...)
-}
-
-func ProjectPageForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	page := projectPageSignal(project, assets, nil, "sources", activeType, query, environment)
-	attrs := []g.Node{
-		g.Attr("slot", "page"),
-	}
-	// Access/group/role-binding administration is owned by the access/admin
-	// surfaces. The Develop catalog only renders the active project's assets.
-	extras := projectDocumentExtras{CSRFToken: csrfToken, Area: "sources"}
-	attrs = append(attrs, projectAssetFilterRouteBridge("sources")...)
-	return projectRouteDocument(project.Title, catalog, "sources", roleLabel, page, uisignals.RouteKindData,
-		g.El("lv-project-page", attrs...),
-		extras,
-		chromeOptions,
-	)
-}
-
-// ProjectAreaPage renders the shared project asset catalog under one of the
-// canonical Develop resource areas. The project identity remains server-bound
-// in the page signal; area only controls navigation and filtering.
-func ProjectAreaPage(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAreaPageWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, csrfToken, chromeOptions...)
-}
-
-func ProjectBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	return ProjectBootstrapSignalsForEnvironment(catalog, project, assets, activeType, query, "", roleLabel, chromeOptions...)
-}
-
-func ProjectBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	return ProjectBootstrapSignalsForArea(catalog, project, assets, "sources", activeType, query, environment, roleLabel, chromeOptions...)
-}
-
-func ProjectBootstrapSignalsForArea(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	return ProjectBootstrapSignalsForAreaWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, chromeOptions...)
-}
-
-func ProjectAssetListResultsPatch(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
-	return ProjectAssetListResultsPatchWithContext(projectID, assets, assets, edges)
-}
-
-func ConnectionsPage(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
-	return ConnectionsPageForEnvironment(catalog, projectID, assets, edges, query, "", roleLabel, "", chromeOptions...)
-}
-
-func ConnectionsPageForEnvironment(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	return ConnectionsPageWithAdministrationForEnvironment(catalog, projectID, assets, edges, query, environment, roleLabel, csrfToken, ConnectionAdministrationView{}, ConnectionCommandBindings{}, chromeOptions...)
-}
-
 func ConnectionsPageWithAdministrationForEnvironment(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, environment, roleLabel, csrfToken string, administration ConnectionAdministrationView, commands ConnectionCommandBindings, chromeOptions ...webpage.Provider) g.Node {
 	page := connectionsPageSignal(projectID, assets, edges, query, environment, administration)
 	if strings.TrimSpace(projectID) == "" {
@@ -84,14 +33,6 @@ func ConnectionsPageWithAdministrationForEnvironment(catalog catalog.Catalog, pr
 	)
 }
 
-func ConnectionsBootstrapSignals(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	return ConnectionsBootstrapSignalsForEnvironment(catalog, projectID, assets, edges, query, "", roleLabel, chromeOptions...)
-}
-
-func ConnectionsBootstrapSignalsForEnvironment(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	return ConnectionsBootstrapSignalsWithAdministrationForEnvironment(catalog, projectID, assets, edges, query, environment, roleLabel, ConnectionAdministrationView{}, chromeOptions...)
-}
-
 func ConnectionsBootstrapSignalsWithAdministrationForEnvironment(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, environment, roleLabel string, administration ConnectionAdministrationView, chromeOptions ...webpage.Provider) map[string]any {
 	page := connectionsPageSignal(projectID, assets, edges, query, environment, administration)
 	if strings.TrimSpace(projectID) == "" {
@@ -100,10 +41,6 @@ func ConnectionsBootstrapSignalsWithAdministrationForEnvironment(catalog catalog
 	patch := projectRouteBootstrapSignals(catalog, "connections", roleLabel, page, uisignals.RouteKindConnections, nil, chromeOptions)
 	patch["connectionAdmin"] = emptyConnectionAdministrationSignal(administration.Status)
 	return patch
-}
-
-func ConnectionsListResultsPatch(assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
-	return ConnectionsListResultsPatchWithAdministration(assets, edges, ConnectionAdministrationView{})
 }
 
 func ConnectionsListResultsPatchWithAdministration(assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, administration ConnectionAdministrationView) map[string]any {

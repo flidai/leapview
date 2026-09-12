@@ -633,6 +633,10 @@ func TestNativeCoordinatorPostgresActivationReplayAndCancelCommittedConflict(t *
 	if err != nil || active.Status != apiadapter.StatusActive {
 		t.Fatalf("activate = %#v, %v", active, err)
 	}
+	f.coordinator.beforeActivationCommit = func(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error {
+		t.Fatal("committed activation replay re-ran mutable pre-commit admission")
+		return errors.New("unreachable")
+	}
 	activeReplay, err := f.coordinator.Activate(t.Context(), apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: created.ID}, Actor: "operator", IdempotencyKey: "activate-1"})
 	if err != nil || activeReplay.ID != active.ID || activeReplay.Status != apiadapter.StatusActive {
 		t.Fatalf("activate replay = %#v, %v", activeReplay, err)
@@ -650,8 +654,11 @@ func TestNativeCoordinatorPostgresActivationPreCommitHookRollsBack(t *testing.T)
 	}
 	interrupted := errors.New("qualification activation interrupted")
 	hookCalls := 0
-	f.coordinator.beforeActivationCommit = func(_ context.Context, publication deploymentpostgres.DeliveryPublication) error {
+	f.coordinator.beforeActivationCommit = func(_ context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
 		hookCalls++
+		if tx == nil {
+			t.Fatal("pre-commit hook did not receive the activation transaction")
+		}
 		if publication.PublicationID != created.ID || publication.State != "pending" {
 			t.Fatalf("pre-commit publication = %#v", publication)
 		}
@@ -690,14 +697,17 @@ func TestActivationPreCommitHookAdapterPreservesContextAndFailure(t *testing.T) 
 	wantErr := errors.New("qualification interrupted")
 	ctx := t.Context()
 	calls := 0
-	hook := adaptActivationPreCommitHook(func(got context.Context) error {
+	hook := adaptActivationPreCommitHook(func(got context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
 		calls++
 		if got != ctx {
 			t.Fatal("activation hook context changed at the module boundary")
 		}
+		if tx != nil || publication.PublicationID != "publication-private" {
+			t.Fatalf("activation hook inputs = tx:%v publication:%#v", tx, publication)
+		}
 		return wantErr
 	})
-	if err := hook(ctx, deploymentpostgres.DeliveryPublication{PublicationID: "publication-private"}); !errors.Is(err, wantErr) {
+	if err := hook(ctx, nil, deploymentpostgres.DeliveryPublication{PublicationID: "publication-private"}); !errors.Is(err, wantErr) {
 		t.Fatalf("adapted activation hook error = %v, want %v", err, wantErr)
 	}
 	if calls != 1 {

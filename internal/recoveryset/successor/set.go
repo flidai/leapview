@@ -3,6 +3,7 @@ package successor
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -186,10 +187,8 @@ func sameOwnerProjection(s RecoverySet3, a SourceAnchor) bool {
 	}
 	left, _ := s.Normalize()
 	right, _ := a.Normalize()
-	for i := range left.ClusterPoints {
-		if left.ClusterPoints[i] != right.ClusterPoints[i] {
-			return false
-		}
+	if !slices.Equal(left.ClusterPoints, right.ClusterPoints) {
+		return false
 	}
 	for i := range left.ObjectRoots {
 		root := right.ObjectRoots[i]

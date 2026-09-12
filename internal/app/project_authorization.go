@@ -248,7 +248,7 @@ func authorizeProjectRole(
 	if snapshot.Identity() != lease.Identity() {
 		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
 	}
-	return deliveryRoleAllows(snapshot, subjects, capability), nil
+	return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 }
 
 // protectProjectResources authorizes a browser request against the immutable

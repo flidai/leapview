@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -103,15 +103,6 @@ func (m *Maintenance) PruneAuthState(ctx context.Context, before time.Time, limi
 		return AuthRetentionResult{}, errors.New("access retention maintenance repository is nil")
 	}
 	return pruneAuthState(ctx, m.db, before, limit)
-}
-
-// PruneAuthStateTx executes one bounded operational-auth retention batch on a
-// caller-owned transaction and deliberately leaves commit/rollback to caller.
-func (m *Maintenance) PruneAuthStateTx(ctx context.Context, tx Tx, before time.Time, limit int) (AuthRetentionResult, error) {
-	if m == nil || isNilMaintenanceDB(tx) {
-		return AuthRetentionResult{}, errors.New("access retention maintenance repository is nil")
-	}
-	return pruneAuthState(ctx, tx, before, limit)
 }
 
 func pruneAuthState(ctx context.Context, db DBTX, before time.Time, limit int) (AuthRetentionResult, error) {
@@ -220,14 +211,5 @@ func pruneAuditEvents(ctx context.Context, db DBTX, class RetentionClass, before
 }
 
 func isNilMaintenanceDB(db DBTX) bool {
-	if db == nil {
-		return true
-	}
-	v := reflect.ValueOf(db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(db)
 }

@@ -10,6 +10,9 @@ import (
 )
 
 func testAuth(store *platform.Store, cfg accessmodule.AuthConfig) *accessmodule.Auth {
+	if cfg.CSRFKey == "" {
+		cfg.CSRFKey = "0123456789abcdef0123456789abcdef"
+	}
 	repo := accesssqlite.NewRepository(store.SQLDB())
 	if cfg.DevBypass {
 		_, _ = repo.SetPlatformRole(context.Background(), access.PlatformRoleInput{
@@ -19,5 +22,9 @@ func testAuth(store *platform.Store, cfg accessmodule.AuthConfig) *accessmodule.
 			Role:        access.PlatformRoleAdmin,
 		})
 	}
-	return accessmodule.NewAuth(repo, cfg)
+	auth, err := accessmodule.NewAuth(repo, cfg)
+	if err != nil {
+		panic(err)
+	}
+	return auth
 }

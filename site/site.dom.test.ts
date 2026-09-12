@@ -2356,7 +2356,7 @@ test('generated API outlines keep operations and omit repeated operation details
     await page.waitForFunction(() => {
       const toc = document.querySelector<HTMLElement>('lv-site-article-toc')
       const active = toc?.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && toc.scrollTop > 0
+      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && (toc?.scrollTop ?? 0) > 0
     })
     const activeOutline = await toc.evaluate((element) => {
       const active = element.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
@@ -2424,8 +2424,8 @@ test('visual showcase renders every supported visual type', async () => {
         const host = card.querySelector('lv-visualization-host') as any
         const rect = card.getBoundingClientRect()
         const table = host?.shadowRoot?.querySelector('lv-report-table')
-        const scrollport = table?.shadowRoot?.querySelector<HTMLElement>('.table-scrollport')
-        const canvas = table?.shadowRoot?.querySelector<HTMLElement>('.canvas')
+        const scrollport = table?.shadowRoot?.querySelector('.table-scrollport') as HTMLElement | null
+        const canvas = table?.shadowRoot?.querySelector('.canvas') as HTMLElement | null
         return {
           kind: host?.envelope?.spec?.kind,
           left: rect.left,
@@ -2575,7 +2575,7 @@ test('heatmap scale is a calculable range that hides only out-of-range visible c
           maximum: visualMap.max as number,
           minimum: visualMap.min as number,
           rowCount: data.count(),
-          text: visualMap.text as string[],
+          text: visualMap.text as string[] | undefined,
           visibleRows,
         }
       }

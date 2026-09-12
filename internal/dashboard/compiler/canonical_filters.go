@@ -180,12 +180,6 @@ func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 	return result, nil
 }
 
-// CompileCanonicalDashboardFilterDefinition compiles one DTO filter. It is
-// exported for focused compiler tests and for the LEA-426 document cutover.
-func CompileCanonicalDashboardFilterDefinition(authored document.DashboardFilter, model *semanticmodel.Model) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
-	return compileCanonicalFilter(authored, model, "canonical", 0)
-}
-
 func compileCanonicalFilter(authored document.DashboardFilter, model *semanticmodel.Model, dashboardID string, order int) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
 	id := strings.TrimSpace(authored.ID)
 	if id == "" || strings.TrimSpace(authored.Label) == "" {

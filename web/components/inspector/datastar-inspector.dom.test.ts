@@ -50,30 +50,30 @@ test('inspector shows live signal state without backend history', async () => {
     await page.waitForFunction(() => customElements.get('datastar-inspector'))
     const state = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const toggleStyle = getComputedStyle(element.shadowRoot.querySelector('.toggle'))
+      const toggleStyle = getComputedStyle((element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.toggle')!)
       const launcher = {
         bottom: toggleStyle.bottom,
         width: toggleStyle.width,
         height: toggleStyle.height,
         opacity: toggleStyle.opacity,
       }
-      element.shadowRoot.querySelector<HTMLButtonElement>('.toggle')!.click()
+      ;(element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.toggle')!.click()
       await element.updateComplete
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       await element.updateComplete
-      const branch = element.shadowRoot.querySelector<HTMLButtonElement>('[data-signal-branch="/status"]')!
+      const branch = (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('[data-signal-branch="/status"]')!
       branch.click()
       await element.updateComplete
-      const initial = element.shadowRoot.querySelector('[data-signal-path="/status/progressPercent"]')?.textContent
-      const signals = element.querySelector<HTMLElement>('[data-json-signals]')!
+      const initial = (element.shadowRoot as ShadowRoot).querySelector('[data-signal-path="/status/progressPercent"]')?.textContent
+      const signals = (element as HTMLElement).querySelector<HTMLElement>('[data-json-signals]')!
       signals.textContent = '{"status":{"loading":false,"progressPercent":75}}'
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       await element.updateComplete
       return {
         initial,
-        updated: element.shadowRoot.querySelector('[data-signal-path="/status/progressPercent"]')?.textContent,
-        historyPanels: element.shadowRoot.querySelectorAll('.signal-history-pane').length,
-        historyChanges: element.shadowRoot.querySelectorAll('[data-signal-change]').length,
+        updated: (element.shadowRoot as ShadowRoot).querySelector('[data-signal-path="/status/progressPercent"]')?.textContent,
+        historyPanels: (element.shadowRoot as ShadowRoot).querySelectorAll('.signal-history-pane').length,
+        historyChanges: (element.shadowRoot as ShadowRoot).querySelectorAll('[data-signal-change]').length,
         launcher,
       }
     })
@@ -96,17 +96,17 @@ test('collapsed inspector subscribes to the signal snapshot only while open', as
     await page.waitForFunction(() => customElements.get('datastar-inspector'))
     const state = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const collapsedSnapshots = element.querySelectorAll('[data-json-signals]').length
-      element.shadowRoot.querySelector<HTMLButtonElement>('.toggle')!.click()
+      const collapsedSnapshots = (element as HTMLElement).querySelectorAll('[data-json-signals]').length
+      ;(element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.toggle')!.click()
       await element.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-      const openSnapshots = element.querySelectorAll('[data-json-signals]').length
-      element.shadowRoot.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+      const openSnapshots = (element as HTMLElement).querySelectorAll('[data-json-signals]').length
+      ;(element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
       await element.updateComplete
       return {
         collapsedSnapshots,
         openSnapshots,
-        closedSnapshots: element.querySelectorAll('[data-json-signals]').length,
+        closedSnapshots: (element as HTMLElement).querySelectorAll('[data-json-signals]').length,
       }
     })
     expect(state).toEqual({ collapsedSnapshots: 0, openSnapshots: 1, closedSnapshots: 0 })
@@ -122,7 +122,7 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
     await page.waitForFunction(() => customElements.get('datastar-inspector'))
     const initialToggle = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const toggle = element.shadowRoot.querySelector('.toggle') as HTMLElement
+      const toggle = (element.shadowRoot as ShadowRoot).querySelector('.toggle') as HTMLElement
       const rect = toggle.getBoundingClientRect()
       return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     })
@@ -134,10 +134,10 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
 
     const movedToggle = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const toggle = element.shadowRoot.querySelector('.toggle') as HTMLElement
+      const toggle = (element.shadowRoot as ShadowRoot).querySelector('.toggle') as HTMLElement
       const rect = toggle.getBoundingClientRect()
       return {
-        expanded: Boolean(element.shadowRoot.querySelector('.panel')),
+        expanded: Boolean((element.shadowRoot as ShadowRoot).querySelector('.panel')),
         x: rect.x,
         y: rect.y,
         stylePosition: { x: Number.parseFloat(toggle.style.left), y: Number.parseFloat(toggle.style.top) },
@@ -150,12 +150,12 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
     expect(movedToggle.stored).toEqual(movedToggle.stylePosition)
 
     await page.locator('datastar-inspector').evaluate(async (element: any) => {
-      element.shadowRoot.querySelector<HTMLButtonElement>('.toggle')!.click()
+      (element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.toggle')!.click()
       await element.updateComplete
     })
     const initialPanel = await page.locator('datastar-inspector').evaluate((element: any) => {
-      const panel = element.shadowRoot.querySelector('.panel') as HTMLElement
-      const handle = element.shadowRoot.querySelector('.drag-handle') as HTMLElement
+      const panel = (element.shadowRoot as ShadowRoot).querySelector('.panel') as HTMLElement
+      const handle = (element.shadowRoot as ShadowRoot).querySelector('.drag-handle') as HTMLElement
       const panelRect = panel.getBoundingClientRect()
       const handleRect = handle.getBoundingClientRect()
       return {
@@ -173,7 +173,7 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
 
     const movedPanel = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const rect = element.shadowRoot.querySelector('.panel').getBoundingClientRect()
+      const rect = (element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.panel')!.getBoundingClientRect()
       return {
         x: rect.x,
         y: rect.y,
@@ -188,7 +188,7 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
     await page.waitForFunction(() => customElements.get('datastar-inspector'))
     const restoredPanel = await page.locator('datastar-inspector').evaluate(async (element: any) => {
       await element.updateComplete
-      const rect = element.shadowRoot.querySelector('.panel').getBoundingClientRect()
+      const rect = (element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.panel')!.getBoundingClientRect()
       return { x: rect.x, y: rect.y }
     })
     expect(restoredPanel.x).toBe(movedPanel.x)

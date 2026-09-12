@@ -4,11 +4,12 @@ import {
   DesktopDiscoveryError,
   discoverInstance,
   validateDiscoveryDocument,
+  type DiscoveryDocument,
 } from "./discovery.js";
 import type { DesktopDiscoveryFailureKind } from "./generated/desktop-discovery.js";
 
 const origin = "https://analytics.company.com";
-const validDocument = {
+const validDocument: DiscoveryDocument = {
   schemaVersion: 1,
   canonicalOrigin: origin,
   instanceId: "instance_0123456789abcdef0123456789abcdef",

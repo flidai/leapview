@@ -136,12 +136,13 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 }
 
 type workloadCapabilityConfig struct {
-	Persistence  *jobsmodule.Persistence
-	Workload     workloadmodule.Config
-	Production   bool
-	LeaseTimeout time.Duration
-	Logger       *slog.Logger
-	NodeID       string
+	Persistence     *jobsmodule.Persistence
+	Workload        workloadmodule.Config
+	Production      bool
+	LeaseTimeout    time.Duration
+	RiverJobTimeout time.Duration
+	Logger          *slog.Logger
+	NodeID          string
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
@@ -158,7 +159,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
-		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
+		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, RiverJobTimeout: cfg.RiverJobTimeout, Logger: cfg.Logger,
 		OwnerID: cfg.NodeID,
 	})
 	if err != nil {

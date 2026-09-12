@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import * as echarts from 'echarts'
 
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { InlineVisualizationDataState, VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, echartsOption } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
@@ -46,7 +46,7 @@ test('ECharts renders deterministic categorical scatter legends without changing
     ['p-b', 'B', 3, 30],
     ['p-a', 'A', 4, 40],
   ])
-  const source = structuredClone(envelope.dataState.datasets[0])
+  const source = structuredClone((envelope.dataState as InlineVisualizationDataState).datasets[0])
   const option = echartsOption(envelope, defaultRendererContext) as any
 
   expect(option.legend).toMatchObject({ data: ['(null)', '(empty)', 'A', 'B'], selectedMode: 'multiple' })
@@ -57,13 +57,13 @@ test('ECharts renders deterministic categorical scatter legends without changing
   expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([null, '', 'A', 'B'])
 
   const reordered = structuredClone(envelope)
-  reordered.dataState.datasets[0].rows.reverse()
+  ;(reordered.dataState as InlineVisualizationDataState).datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered, defaultRendererContext, new CategoryColorRegistry()) as any
   expect(reorderedOption.legend.data).toEqual(option.legend.data)
   expect(reorderedOption.series.map((series: any) => series.name)).toEqual(option.series.map((series: any) => series.name))
   for (const category of option.series) {
     const same = reorderedOption.series.find((candidate: any) => candidate.name === category.name)
-    const row = envelope.dataState.datasets[0].rows[category.__lv_source_row_indices[0]]
+    const row = (envelope.dataState as InlineVisualizationDataState).datasets[0].rows[category.__lv_source_row_indices[0]]
     expect(same.itemStyle.color({ value: row })).toBe(category.itemStyle.color({ value: row }))
   }
 
@@ -111,10 +111,16 @@ test('ECharts gives point mark fill precedence over categorical colors and honor
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, danger: '#ff7b72', attention: '#d29922', success: '#56d364' } }
   for (const context of [defaultRendererContext, dark]) {
     const option = echartsOption(envelope, context) as any
-    const byName = new Map(option.series.map((series: any) => [series.name, series]))
-    const canceled = byName.get('canceled')
-    const ok = byName.get('ok')
-    const missing = byName.get('(null)')
+    type PointSeries = {
+      name: string
+      itemStyle: { color: (params: { value: unknown[] }) => string }
+      symbol: (data: unknown[]) => string
+      symbolRotate: (data: unknown[]) => number
+    }
+    const byName = new Map<string, PointSeries>(option.series.map((series: PointSeries) => [series.name, series]))
+    const canceled = byName.get('canceled')!
+    const ok = byName.get('ok')!
+    const missing = byName.get('(null)')!
     expect(canceled.itemStyle.color({ value: ['p-canceled', 'canceled', 2, 20] })).toBe(context.colors.danger)
     expect(ok.itemStyle.color({ value: ['p-ok', 'ok', 1, 10] })).toBe(context.colors.success)
     expect(missing.itemStyle.color({ value: ['p-null', null, 3, 30] })).toBe(context.colors.attention)
@@ -262,13 +268,13 @@ function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {
         { id: 'y', role: 'metric', dataType: 'decimal', nullable: false, label: 'Y' },
       ] }],
       dataBudget: { maxRows: 5_000, requiredCompleteness: 'complete' },
-      accessibility: { title: 'Point categories', description: 'Point categories' }, interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{ source: { dataset: 'primary', field: 'id' }, targetFieldID: 'orders.id', targetDatasetID: 'orders' }] }],
+      accessibility: { title: 'Point categories', description: 'Point categories' }, interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: [{ visualID: 'details', effect: 'filter' }], mappings: [{ source: { dataset: 'primary', field: 'id' }, targetFieldID: 'orders.id', targetDatasetID: 'orders' }] }],
       identity: [{ dataset: 'primary', field: 'id' }], x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' },
       color: { dataset: 'primary', field: 'category' }, colorScale: { kind: 'categorical' },
       presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, overplot: 'show_all', opacity: 1, largeMode: 'never', largeThreshold: 1000, brush: ['rectangle'] },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, columns: ['id', 'category', 'x', 'y'], rows, completeness: rows.length ? 'complete' : 'empty' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }
 

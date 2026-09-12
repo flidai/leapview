@@ -1767,7 +1767,7 @@ type completionWorkflowAgentStore struct {
 	committedMessages   int
 }
 
-func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, finish RunFinish, messages []MessageInput, transcript string, _ jobs.WorkflowIntent) ([]Message, bool, error) {
+func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, finish RunFinish, messages []MessageInput, transcript string, expectedRevision int64, _ jobs.WorkflowIntent) ([]Message, bool, error) {
 	s.completionCalls++
 	if s.atomicErr != nil {
 		return nil, false, s.atomicErr
@@ -1780,7 +1780,7 @@ func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, 
 		}
 		rows = append(rows, row)
 	}
-	if _, err := s.testAgentStore.UpdateConversationTranscript(ctx, finish.PrincipalID, finish.ConversationID, transcript); err != nil {
+	if _, err := s.testAgentStore.UpdateConversationTranscript(ctx, finish.PrincipalID, finish.ConversationID, transcript, expectedRevision); err != nil {
 		return nil, false, err
 	}
 	if _, err := s.testAgentStore.FinishRun(ctx, finish); err != nil {
@@ -1850,14 +1850,15 @@ func (s *testAgentStore) CreateConversation(_ context.Context, input Conversatio
 		title = ConversationDefaultTitle
 	}
 	conversation := Conversation{
-		ID:             s.id("agentconv"),
-		PrincipalID:    input.PrincipalID,
-		Title:          title,
-		Status:         ConversationStatusActive,
-		MetadataJSON:   firstNonEmpty(input.MetadataJSON, "{}"),
-		TranscriptJSON: "[]",
-		CreatedAt:      testNow(),
-		UpdatedAt:      testNow(),
+		ID:                 s.id("agentconv"),
+		PrincipalID:        input.PrincipalID,
+		Title:              title,
+		Status:             ConversationStatusActive,
+		MetadataJSON:       firstNonEmpty(input.MetadataJSON, "{}"),
+		TranscriptJSON:     "[]",
+		TranscriptRevision: 1,
+		CreatedAt:          testNow(),
+		UpdatedAt:          testNow(),
 	}
 	s.conversations[conversation.ID] = conversation
 	return conversation, nil
@@ -1952,14 +1953,18 @@ func (s *testAgentStore) UpdateDefaultConversationTitle(_ context.Context, princ
 	return conversation, nil
 }
 
-func (s *testAgentStore) UpdateConversationTranscript(_ context.Context, principalID, conversationID, transcriptJSON string) (Conversation, error) {
+func (s *testAgentStore) UpdateConversationTranscript(_ context.Context, principalID, conversationID, transcriptJSON string, expectedRevision int64) (Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conversation, err := s.conversationLocked(principalID, conversationID)
 	if err != nil {
 		return Conversation{}, err
 	}
+	if expectedRevision <= 0 || conversation.TranscriptRevision != expectedRevision {
+		return Conversation{}, ErrTranscriptConflict
+	}
 	conversation.TranscriptJSON = transcriptJSON
+	conversation.TranscriptRevision++
 	conversation.UpdatedAt = testNow()
 	s.conversations[conversation.ID] = conversation
 	return conversation, nil

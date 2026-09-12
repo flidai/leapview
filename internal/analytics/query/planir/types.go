@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,15 +101,7 @@ type Grain struct {
 func (g Grain) empty() bool { return len(g.Fields) == 0 && g.TimeGrain == "" }
 
 func (g Grain) equal(other Grain) bool {
-	if g.TimeGrain != other.TimeGrain || len(g.Fields) != len(other.Fields) {
-		return false
-	}
-	for i := range g.Fields {
-		if g.Fields[i] != other.Fields[i] {
-			return false
-		}
-	}
-	return true
+	return g.TimeGrain == other.TimeGrain && slices.Equal(g.Fields, other.Fields)
 }
 
 // Field and Metric are the typed names available after a node. Type is a
@@ -689,11 +682,15 @@ type AggregateFilter struct {
 
 type AggregateMetrics struct {
 	NodeMeta
-	Input       string         `json:"input"`
-	GroupBy     []string       `json:"group_by,omitempty"`
-	TimeBuckets []TimeBucket   `json:"time_buckets,omitempty"`
-	Spatial     *SpatialBucket `json:"spatial,omitempty"`
-	Metrics     []MetricSpec   `json:"metrics"`
+	Input   string   `json:"input"`
+	GroupBy []string `json:"group_by,omitempty"`
+	// GroupByAliases is parallel to GroupBy. GroupBy names the source field
+	// while the alias is the output/group identity. Keeping both permits the
+	// same source field to be requested at multiple time grains.
+	GroupByAliases []string       `json:"group_by_aliases,omitempty"`
+	TimeBuckets    []TimeBucket   `json:"time_buckets,omitempty"`
+	Spatial        *SpatialBucket `json:"spatial,omitempty"`
+	Metrics        []MetricSpec   `json:"metrics"`
 }
 
 // SpatialBucket is the typed, renderer-independent Web-Mercator bucketing
@@ -712,7 +709,12 @@ type SpatialBucket struct {
 }
 
 type TimeBucket struct {
-	Field      string `json:"field"`
+	Field string `json:"field"`
+	// Group is the exact AggregateMetrics.GroupBy identity this bucket belongs
+	// to. It is separate from Field so renderers cannot accidentally select a
+	// bucket by a presentation alias or by iterating an unrelated bucket. For
+	// compatibility with older IR, an empty Group falls back to Field.
+	Group      string `json:"group,omitempty"`
 	Grain      string `json:"grain"`
 	Timezone   string `json:"timezone,omitempty"`
 	WeekStart  string `json:"week_start,omitempty"`

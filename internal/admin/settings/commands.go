@@ -17,14 +17,6 @@ type ServiceAccountMutator interface {
 	RevokeServicePrincipalSecret(context.Context, string, string) error
 }
 
-// ApplyServiceAccountCommand executes a validated settings command. It
-// returns the one-time raw secret only for create_secret; callers should put
-// that value in a short-lived signal patch and never persist it.
-func ApplyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutator, command ServiceAccountCommand) (string, error) {
-	secret, _, err := applyServiceAccountCommand(ctx, mutator, command)
-	return secret, err
-}
-
 func applyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutator, command ServiceAccountCommand) (string, string, error) {
 	if mutator == nil {
 		return "", "", errors.New("service account mutator is nil")
@@ -74,12 +66,16 @@ func applyServiceAccountCommand(ctx context.Context, mutator ServiceAccountMutat
 
 func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Repository, actorID string, command ServiceAccountCommand) (string, error) {
 	command = NormalizeServiceAccountCommand(command)
+	auditAction, ok := serviceAccountAuditAction(command.Action)
+	if !ok {
+		return "", errors.New("unknown service account action")
+	}
 	var secret string
 	mutation := func(tx access.Repository) (access.AuditEventInput, error) {
 		createdSecret, targetID, err := applyServiceAccountCommand(ctx, tx, command)
 		secret = createdSecret
 		return access.AuditEventInput{
-			PrincipalID: actorID, Action: "service_account." + command.Action,
+			PrincipalID: actorID, Action: auditAction,
 			ResourceKind: "service_principal", ResourceID: targetID, Status: "success", MetadataJSON: `{}`,
 		}, err
 	}
@@ -97,6 +93,26 @@ func ApplyServiceAccountCommandAudited(ctx context.Context, repository access.Re
 		return "", err
 	}
 	return secret, nil
+}
+
+// serviceAccountAuditAction is the compatibility boundary for the legacy
+// settings command names. Durable audit actions are TypeSpec vocabulary and
+// must not be synthesized from UI command strings.
+func serviceAccountAuditAction(commandAction string) (string, bool) {
+	switch commandAction {
+	case "create":
+		return "service_principal.created", true
+	case "update":
+		return "service_principal.updated", true
+	case "delete":
+		return "service_principal.deleted", true
+	case "create_secret":
+		return "service_principal_secret.created", true
+	case "revoke_secret":
+		return "service_principal_secret.revoked", true
+	default:
+		return "", false
+	}
 }
 
 func NormalizeServiceAccountCommand(command ServiceAccountCommand) ServiceAccountCommand {
