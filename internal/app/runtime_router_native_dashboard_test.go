@@ -8,7 +8,6 @@ import (
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
-	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 )
@@ -42,10 +41,6 @@ func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
 		t.Fatalf("missing delivery target reader error = %v", err)
 	}
 	production.DeliveryTargetReader = bootstrapTargetReaderFake{}
-	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "semantic activation") {
-		t.Fatalf("missing semantic activation admission error = %v", err)
-	}
-	data.SemanticActivationCutover = func(context.Context, deploymentmodule.ActivationCutoverInput) error { return nil }
 	if err := validateProductionRuntimeInputs(data, capabilities, production); err != nil {
 		t.Fatalf("complete native production authorities rejected: %v", err)
 	}

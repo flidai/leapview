@@ -22,10 +22,10 @@ const (
 // created. Deployment approval binds this value through the plan evidence
 // digest; activation re-derives it from current authorities before commit.
 type SemanticActivationModelEvidence struct {
-	ModelID              string                                   `json:"modelId"`
-	ModelDigest          string                                   `json:"modelDigest"`
-	CompiledPolicyDigest string                                   `json:"compiledPolicyDigest"`
-	PublicationPolicy    resultidentity.PublicationPolicyIdentity `json:"publicationPolicy"`
+	ModelID                string                                   `json:"modelId"`
+	ModelDigest            string                                   `json:"modelDigest"`
+	PolicyDefinitionDigest string                                   `json:"policyDefinitionDigest"`
+	PublicationPolicy      resultidentity.PublicationPolicyIdentity `json:"publicationPolicy"`
 }
 
 // SemanticActivationEvidence binds protected activation to the FAI-622
@@ -111,8 +111,8 @@ func (value SemanticActivationEvidence) validate(requireDigest bool) error {
 		if err := platformdigest.ValidateSHA256Identity(model.ModelDigest); err != nil {
 			return fmt.Errorf("%w: semantic activation model digest: %v", ErrDeliveryInvalid, err)
 		}
-		if err := platformdigest.ValidateSHA256Identity(model.CompiledPolicyDigest); err != nil {
-			return fmt.Errorf("%w: semantic activation compiled policy digest: %v", ErrDeliveryInvalid, err)
+		if err := platformdigest.ValidateSHA256Identity(model.PolicyDefinitionDigest); err != nil {
+			return fmt.Errorf("%w: semantic activation policy definition digest: %v", ErrDeliveryInvalid, err)
 		}
 		if err := model.PublicationPolicy.Validate(); err != nil {
 			return fmt.Errorf("%w: semantic activation publication policy: %v", ErrDeliveryInvalid, err)

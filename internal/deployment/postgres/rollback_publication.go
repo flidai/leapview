@@ -30,3 +30,13 @@ func (r *Repository) IsRollbackPublication(ctx context.Context, publication Deli
 	}
 	return isRollbackPublication(ctx, r.db, publication)
 }
+
+// IsRollbackPublicationTx verifies rollback identity through the caller-owned
+// activation transaction so the rollback classification shares the target CAS
+// boundary.
+func (r *Repository) IsRollbackPublicationTx(ctx context.Context, tx Tx, publication DeliveryPublication) (bool, error) {
+	if r == nil || r.db == nil || tx == nil {
+		return false, ErrInvalid
+	}
+	return isRollbackPublication(ctx, tx, publication)
+}

@@ -16,7 +16,7 @@ func TestSemanticAccessActivationCutoverBoundary(t *testing.T) {
 
 	activation := readArchitectureFixture(t, root, "internal/app/semanticactivation/activation.go")
 	for _, boundary := range []string{
-		"CompiledPolicyDigest", "ValidateQualifiedPublication", "stableAuthority",
+		"PolicyDefinitionDigest", "ValidateQualifiedPublication", "ValidateHistoricalPublication", "SemanticAttributeActivationAuthorityTx",
 		"SemanticBarrierProfile", "SemanticConsumerProfile", "SemanticCacheProfile", "SemanticAuditProfile",
 		"PersistCanonicalAuditEvent", "validateLegacyDataPolicyCutover",
 	} {
@@ -25,11 +25,22 @@ func TestSemanticAccessActivationCutoverBoundary(t *testing.T) {
 		}
 	}
 
+	composition := readArchitectureFixture(t, root, "internal/app/postgres_build.go")
+	if !strings.Contains(composition, "BeforeNativeActivationCommit") || !strings.Contains(composition, "semanticActivation.ValidatePublication(ctx, tx, publication)") {
+		t.Fatal("semantic cutover validation must execute inside the native activation transaction")
+	}
+	if !strings.Contains(composition, "nativeRefreshFinalizer.BeforeActivationCommit = semanticActivation.ValidatePublication") {
+		t.Fatal("refresh generation activation must share the semantic cutover fence")
+	}
 	jobs := readArchitectureFixture(t, root, "internal/deployment/module/jobs.go")
-	fence := strings.Index(jobs, "m.jobs.ValidateCutover(ctx")
-	commit := strings.Index(jobs, "m.jobs.Coordinator.Activate(ctx")
-	if fence < 0 || commit < 0 || fence > commit {
-		t.Fatal("semantic cutover validation must execute before the activation commit")
+	if strings.Contains(jobs, "ValidateCutover") {
+		t.Fatal("semantic cutover validation must not run before the coordinator opens its activation transaction")
+	}
+	authority := readArchitectureFixture(t, root, "internal/access/postgres/semantic_activation_authority.go")
+	for _, lock := range []string{"LockSemanticAttributeRegistry", "lockSemanticAttributeControlState"} {
+		if !strings.Contains(authority, lock) {
+			t.Errorf("semantic activation authority omits transaction lock %q", lock)
+		}
 	}
 
 	cutover := readArchitectureFixture(t, root, "adr/specifications/semantic-access-activation-cutover.md")

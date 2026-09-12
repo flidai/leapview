@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/deployment"
-	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
@@ -39,6 +39,7 @@ type semanticActivationPublicationReader interface {
 type semanticActivationAttributeReader interface {
 	SemanticAttributeRegistry(context.Context) (access.SemanticAttributeRegistrySnapshot, error)
 	SemanticAttributeControl(context.Context) (access.SemanticAttributeControlSnapshot, error)
+	SemanticAttributeActivationAuthorityTx(context.Context, accesspostgres.Tx) (access.SemanticAttributeRegistrySnapshot, access.SemanticAttributeControlSnapshot, error)
 }
 
 type semanticActivationServingReader interface {
@@ -50,6 +51,21 @@ type semanticActivationDeliveryReader interface {
 	Target(context.Context, string) (deploymentpostgres.DeliveryTarget, error)
 	Generation(context.Context, string) (deploymentpostgres.DeliveryGeneration, error)
 	Plan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
+	IsRollbackPublicationTx(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) (bool, error)
+}
+
+type semanticActivationAuditRecorder interface {
+	access.CanonicalAuditRecorder
+	RecordCanonicalAuditEventTx(context.Context, accesspostgres.Tx, access.CanonicalAuditEvent) error
+}
+
+type transactionBoundAuditRecorder struct {
+	recorder semanticActivationAuditRecorder
+	tx       accesspostgres.Tx
+}
+
+func (r transactionBoundAuditRecorder) RecordCanonicalAuditEvent(ctx context.Context, event access.CanonicalAuditEvent) error {
+	return r.recorder.RecordCanonicalAuditEventTx(ctx, r.tx, event)
 }
 
 type Fence struct {
@@ -59,7 +75,7 @@ type Fence struct {
 	serving      semanticActivationServingReader
 	delivery     semanticActivationDeliveryReader
 	loader       projectbundle.ServingArtifactLoader
-	audit        access.CanonicalAuditRecorder
+	audit        semanticActivationAuditRecorder
 	clock        func() time.Time
 }
 
@@ -70,7 +86,7 @@ type semanticActivationResolvedModel struct {
 	policy deployment.SemanticActivationModelEvidence
 }
 
-func New(instanceID string, publications semanticActivationPublicationReader, attributes semanticActivationAttributeReader, serving semanticActivationServingReader, delivery semanticActivationDeliveryReader, objects projectbundle.ArtifactObjectReader, audit access.CanonicalAuditRecorder) (*Fence, error) {
+func New(instanceID string, publications semanticActivationPublicationReader, attributes semanticActivationAttributeReader, serving semanticActivationServingReader, delivery semanticActivationDeliveryReader, objects projectbundle.ArtifactObjectReader, audit semanticActivationAuditRecorder) (*Fence, error) {
 	if instanceID == "" || publications == nil || attributes == nil || serving == nil || delivery == nil || objects == nil || audit == nil {
 		return nil, errSemanticActivationUnavailable
 	}
@@ -81,14 +97,31 @@ func New(instanceID string, publications semanticActivationPublicationReader, at
 // before the delivery plan is persisted. Deployment approval therefore binds
 // the complete activation input rather than a mutable latest pointer.
 func (f *Fence) PlanEvidence(ctx context.Context, artifact projectartifact.SourceBundle) (*deployment.SemanticActivationEvidence, error) {
-	evidence, _, _, err := f.resolve(ctx, artifact.Graph(), artifact.Manifest(), artifact.Digest(), f.clock().UTC())
+	evidence, _, _, err := f.resolve(ctx, nil, artifact.Graph(), artifact.Manifest(), artifact.Digest(), f.clock().UTC(), false)
 	return evidence, err
 }
 
-func (f *Fence) Validate(ctx context.Context, input deploymentmodule.ActivationCutoverInput) error {
-	if f == nil || input.GenerationID == "" || input.Actor == "" {
+// ValidatePublication runs the semantic activation fence through the
+// coordinator-owned transaction immediately before its target CAS. Mutable
+// registry and control state is locked until that transaction completes.
+func (f *Fence) ValidatePublication(ctx context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
+	if f == nil || tx == nil || publication.GenerationID == "" || publication.ActorID == "" {
 		return errSemanticActivationUnavailable
 	}
+	rollback, err := f.delivery.IsRollbackPublicationTx(ctx, tx, publication)
+	if err != nil {
+		return fmt.Errorf("resolve semantic activation rollback identity: %w", err)
+	}
+	return f.validate(ctx, tx, activationCutoverInput{GenerationID: publication.GenerationID, Actor: publication.ActorID, Rollback: rollback})
+}
+
+type activationCutoverInput struct {
+	GenerationID string
+	Actor        string
+	Rollback     bool
+}
+
+func (f *Fence) validate(ctx context.Context, tx accesspostgres.Tx, input activationCutoverInput) error {
 	generation, err := f.delivery.Generation(ctx, input.GenerationID)
 	if err != nil {
 		return fmt.Errorf("load semantic activation generation: %w", err)
@@ -136,11 +169,37 @@ func (f *Fence) Validate(ctx context.Context, input deploymentmodule.ActivationC
 		return fmt.Errorf("%w: semantic activation artifact digest differs", deployment.ErrDeliveryConflict)
 	}
 	now := f.clock().UTC()
-	current, registry, resolved, err := f.resolve(ctx, compiled.Graph, compiled.Manifest, compiled.BundleDigest, now)
+	current, registry, resolved, err := f.resolve(ctx, tx, compiled.Graph, compiled.Manifest, compiled.BundleDigest, now, input.Rollback)
 	if err != nil {
 		return err
 	}
 	planned := plan.Evidence.SemanticActivation
+	if err := validatePlannedActivationEvidence(planned, current); err != nil {
+		return err
+	}
+	if current == nil {
+		return nil
+	}
+	for _, item := range resolved {
+		policyIdentity, err := semanticquery.QualifySemanticAccessActivation(f.instanceID, item.id.String(), input.GenerationID, item.source, item.model, registry)
+		if err != nil {
+			return fmt.Errorf("compile activated semantic policy %s: %w", item.id, err)
+		}
+		if err := f.admitPolicyActivation(ctx, tx, projectID, target.Environment, input, *current, item, policyIdentity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *Fence) admitPolicyActivation(ctx context.Context, tx accesspostgres.Tx, projectID projectgraph.ResourceID, environment string, input activationCutoverInput, evidence deployment.SemanticActivationEvidence, item semanticActivationResolvedModel, policyIdentity semanticquery.SemanticAccessActivationPolicyIdentity) error {
+	if err := validatePolicyDefinitionIdentity(item.policy.PolicyDefinitionDigest, policyIdentity); err != nil {
+		return fmt.Errorf("activated semantic policy %s: %w", item.id, err)
+	}
+	return f.auditActivation(ctx, tx, projectID, environment, input, evidence, item, policyIdentity)
+}
+
+func validatePlannedActivationEvidence(planned, current *deployment.SemanticActivationEvidence) error {
 	if current == nil {
 		if planned != nil {
 			return fmt.Errorf("%w: unprotected activation carries semantic authority evidence", deployment.ErrDeliveryConflict)
@@ -150,23 +209,22 @@ func (f *Fence) Validate(ctx context.Context, input deploymentmodule.ActivationC
 	if planned == nil || !reflect.DeepEqual(*planned, *current) {
 		return fmt.Errorf("%w: semantic activation evidence is stale or does not match the approved plan", deployment.ErrDeliveryStale)
 	}
-	for _, item := range resolved {
-		policyDigest, err := semanticquery.QualifySemanticAccessActivation(f.instanceID, item.id.String(), input.GenerationID, item.source, item.model, registry)
-		if err != nil {
-			return fmt.Errorf("compile activated semantic policy %s: %w", item.id, err)
-		}
-		if err := f.auditActivation(ctx, projectID, target.Environment, input, *current, item, policyDigest); err != nil {
-			return err
-		}
+	return nil
+}
+
+func validatePolicyDefinitionIdentity(approved string, deployed semanticquery.SemanticAccessActivationPolicyIdentity) error {
+	if approved == "" || deployed.DefinitionDigest == "" || deployed.GenerationDigest == "" || deployed.DefinitionDigest != approved {
+		return fmt.Errorf("%w: deployed policy definition differs from approved evidence", deployment.ErrDeliveryStale)
 	}
 	return nil
 }
 
-func (f *Fence) auditActivation(ctx context.Context, projectID projectgraph.ResourceID, environment string, input deploymentmodule.ActivationCutoverInput, evidence deployment.SemanticActivationEvidence, item semanticActivationResolvedModel, policyDigest string) error {
+func (f *Fence) auditActivation(ctx context.Context, tx accesspostgres.Tx, projectID projectgraph.ResourceID, environment string, input activationCutoverInput, evidence deployment.SemanticActivationEvidence, item semanticActivationResolvedModel, policyIdentity semanticquery.SemanticAccessActivationPolicyIdentity) error {
 	metadata, err := json.Marshal(map[string]any{
 		"activationEvidenceDigest": evidence.Digest,
 		"publicationDigest":        item.policy.PublicationPolicy.Candidate.Digest,
-		"policyDigest":             policyDigest,
+		"policyDefinitionDigest":   policyIdentity.DefinitionDigest,
+		"generationPolicyDigest":   policyIdentity.GenerationDigest,
 		"registryDigest":           evidence.RegistryDigest,
 		"registryRevision":         evidence.RegistryRevision,
 		"controlDigest":            evidence.ControlDigest,
@@ -180,7 +238,10 @@ func (f *Fence) auditActivation(ctx context.Context, projectID projectgraph.Reso
 	if err != nil {
 		return err
 	}
-	if err := access.PersistCanonicalAuditEvent(ctx, f.audit, access.CanonicalAuditEvent{
+	if tx == nil {
+		return errSemanticActivationUnavailable
+	}
+	if err := access.PersistCanonicalAuditEvent(ctx, transactionBoundAuditRecorder{recorder: f.audit, tx: tx}, access.CanonicalAuditEvent{
 		Identity:    projectgraph.ServingIdentity{ProjectID: projectID, Environment: environment, GenerationID: input.GenerationID},
 		PrincipalID: input.Actor, Action: "semantic_access.activation_admitted", Resource: resource,
 		Capability: access.CapabilityResourceManage, Status: "success", MetadataJSON: string(metadata),
@@ -197,7 +258,7 @@ func validateServingActivationState(state servingstate.State) error {
 	return nil
 }
 
-func (f *Fence) resolve(ctx context.Context, graph projectgraph.ProjectGraph, manifest projectmanifest.ResourceManifest, bundleDigest string, now time.Time) (*deployment.SemanticActivationEvidence, access.SemanticAttributeRegistrySnapshot, []semanticActivationResolvedModel, error) {
+func (f *Fence) resolve(ctx context.Context, tx accesspostgres.Tx, graph projectgraph.ProjectGraph, manifest projectmanifest.ResourceManifest, bundleDigest string, now time.Time, historical bool) (*deployment.SemanticActivationEvidence, access.SemanticAttributeRegistrySnapshot, []semanticActivationResolvedModel, error) {
 	references, err := contractprojection.NewReferenceContext(graph)
 	if err != nil {
 		return nil, access.SemanticAttributeRegistrySnapshot{}, nil, err
@@ -211,7 +272,13 @@ func (f *Fence) resolve(ctx context.Context, graph projectgraph.ProjectGraph, ma
 	if len(ids) == 0 {
 		return nil, access.SemanticAttributeRegistrySnapshot{}, nil, nil
 	}
-	registry, control, err := f.stableAuthority(ctx)
+	var registry access.SemanticAttributeRegistrySnapshot
+	var control access.SemanticAttributeControlSnapshot
+	if tx == nil {
+		registry, control, err = f.stableAuthority(ctx)
+	} else {
+		registry, control, err = f.attributes.SemanticAttributeActivationAuthorityTx(ctx, tx)
+	}
 	if err != nil {
 		return nil, access.SemanticAttributeRegistrySnapshot{}, nil, err
 	}
@@ -240,14 +307,15 @@ func (f *Fence) resolve(ctx context.Context, graph projectgraph.ProjectGraph, ma
 		if err != nil {
 			return nil, access.SemanticAttributeRegistrySnapshot{}, nil, err
 		}
-		if err := contractpublication.ValidateQualifiedPublication(context, publication, now); err != nil {
-			return nil, access.SemanticAttributeRegistrySnapshot{}, nil, fmt.Errorf("publication admission %s: %w", id, err)
+		admissionErr := validatePublicationForActivation(context, publication, now, historical)
+		if admissionErr != nil {
+			return nil, access.SemanticAttributeRegistrySnapshot{}, nil, fmt.Errorf("publication admission %s: %w", id, admissionErr)
 		}
-		policyDigest, err := semanticquery.QualifySemanticAccessActivation(f.instanceID, rawID, "activation-plan:"+bundleDigest, model, compiled, registry)
+		policyIdentity, err := semanticquery.QualifySemanticAccessActivation(f.instanceID, rawID, "activation-plan:"+bundleDigest, model, compiled, registry)
 		if err != nil {
 			return nil, access.SemanticAttributeRegistrySnapshot{}, nil, fmt.Errorf("compile planned semantic policy %s: %w", id, err)
 		}
-		entry := deployment.SemanticActivationModelEvidence{ModelID: rawID, ModelDigest: modelDigest, CompiledPolicyDigest: policyDigest, PublicationPolicy: identity}
+		entry := deployment.SemanticActivationModelEvidence{ModelID: rawID, ModelDigest: modelDigest, PolicyDefinitionDigest: policyIdentity.DefinitionDigest, PublicationPolicy: identity}
 		models = append(models, entry)
 		resolved = append(resolved, semanticActivationResolvedModel{id: id, model: compiled, source: model, policy: entry})
 	}
@@ -262,6 +330,13 @@ func (f *Fence) resolve(ctx context.Context, graph projectgraph.ProjectGraph, ma
 		return nil, access.SemanticAttributeRegistrySnapshot{}, nil, err
 	}
 	return &evidence, registry, resolved, nil
+}
+
+func validatePublicationForActivation(context contractpublication.PolicyContext, publication contractpublication.ContractPublication, now time.Time, historical bool) error {
+	if historical {
+		return contractpublication.ValidateHistoricalPublication(context, publication)
+	}
+	return contractpublication.ValidateQualifiedPublication(context, publication, now)
 }
 
 func (f *Fence) publication(ctx context.Context, manifest projectmanifest.ResourceManifest, references contractprojection.ReferenceContext, id projectgraph.ResourceID) (contractpublication.ContractPublication, *contractpublication.ContractPublication, contractpublication.PolicyContext, error) {

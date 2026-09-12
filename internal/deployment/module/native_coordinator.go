@@ -85,8 +85,8 @@ func adaptActivationPreCommitHook(hook ActivationPreCommitHook) deploymentpostgr
 	if hook == nil {
 		return nil
 	}
-	return func(ctx context.Context, _ deploymentpostgres.DeliveryPublication) error {
-		return hook(ctx)
+	return func(ctx context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
+		return hook(ctx, tx, publication)
 	}
 }
 

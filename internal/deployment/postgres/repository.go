@@ -550,12 +550,12 @@ type ActivationInput struct {
 	FencingEpoch                          int64
 }
 
-// ActivationPreCommitHook is an optional composition-owned interruption seam
+// ActivationPreCommitHook is an optional composition-owned admission seam
 // invoked after every durable activation proof has been checked while the
 // publication and target remain locked, but before the target CAS is mutated.
-// Production leaves it nil; release qualification uses it to prove restart
-// recovery at the exact pre-commit boundary.
-type ActivationPreCommitHook func(context.Context, DeliveryPublication) error
+// Production uses it to lock and validate mutable semantic authority; release
+// qualification also uses it to prove restart recovery at this exact boundary.
+type ActivationPreCommitHook func(context.Context, Tx, DeliveryPublication) error
 
 type ActivationResult struct {
 	Publication DeliveryPublication
@@ -3759,7 +3759,7 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	_ = sealPlan
 	_ = snap
 	if beforeCommit != nil {
-		if err := beforeCommit(ctx, p); err != nil {
+		if err := beforeCommit(ctx, tx, p); err != nil {
 			return ActivationResult{}, err
 		}
 	}

@@ -36,15 +36,6 @@ type DeploymentCoordinator interface {
 	CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error)
 }
 
-// ActivationCutoverInput is the authenticated serving identity supplied to
-// the final semantic cutover fence. It contains no mutable repository handles
-// and is identical on job replay.
-type ActivationCutoverInput struct {
-	GenerationID string
-	Actor        string
-	Rollback     bool
-}
-
 // JobConfig contains deployment-owned workflow ports. Authorization is a
 // consumer-defined port. ValidateActivation is the final deterministic
 // admission check before either activation coordinator can commit; schedule
@@ -54,7 +45,6 @@ type JobConfig struct {
 	Coordinator         DeploymentCoordinator
 	Authorize           func(context.Context, string, string, string) error
 	ValidateActivation  func(context.Context, string) error
-	ValidateCutover     func(context.Context, ActivationCutoverInput) error
 	Reconcile           func(context.Context) error
 	ReconcileActivation func(context.Context, apiadapter.Deployment) error
 	Events              jobs.EventAppender
@@ -129,11 +119,6 @@ func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) 
 	}
 	if m.jobs.ValidateActivation != nil {
 		if err := m.jobs.ValidateActivation(ctx, payload.GenerationID); err != nil {
-			return err
-		}
-	}
-	if m.jobs.ValidateCutover != nil {
-		if err := m.jobs.ValidateCutover(ctx, ActivationCutoverInput{GenerationID: payload.GenerationID, Actor: payload.PublicationActorID, Rollback: payload.Rollback}); err != nil {
 			return err
 		}
 	}
@@ -257,12 +242,6 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	if m.jobs.ValidateActivation != nil {
 		if err := m.jobs.ValidateActivation(ctx, pending.GenerationID); err != nil {
-			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
-			return err
-		}
-	}
-	if m.jobs.ValidateCutover != nil {
-		if err := m.jobs.ValidateCutover(ctx, ActivationCutoverInput{GenerationID: pending.GenerationID, Actor: payload.Actor, Rollback: payload.Rollback}); err != nil {
 			m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
 			return err
 		}
