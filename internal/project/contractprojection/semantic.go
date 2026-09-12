@@ -1,8 +1,10 @@
 package contractprojection
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -72,7 +74,7 @@ func ProjectSemanticModel(value projectcontracts.SemanticModel, contract Contrac
 			} `json:"metrics"`
 		} `json:"spec"`
 	}
-	if err := decodeGenerated(value, &input); err != nil {
+	if err := decodeNormalizedSemanticAuthoring(value, resolver, &input); err != nil {
 		return SemanticModel{}, fmt.Errorf("project SemanticModel: %w", err)
 	}
 	metadata, err := projectMetadata(input.APIVersion, input.Kind, "SemanticModel", input.Metadata, contract)
@@ -260,6 +262,133 @@ func ProjectSemanticModel(value projectcontracts.SemanticModel, contract Contrac
 		result.Metrics[name] = metric
 	}
 	return SemanticModel{payload: projectcontracts.SemanticModelContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: result}}, nil
+}
+
+// Contract publications use the same flat executable member identity as the
+// compiler. Expand local authoring before projecting so nesting never drops a
+// member or changes its public name.
+func decodeNormalizedSemanticAuthoring(value projectcontracts.SemanticModel, resolver *ReferenceContext, output any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	var document map[string]any
+	if err := decodeJSON(data, &document); err != nil {
+		return err
+	}
+	spec := document["spec"].(map[string]any)
+	dimensions, _ := spec["dimensions"].(map[string]any)
+	if dimensions == nil {
+		dimensions = map[string]any{}
+	}
+	metrics, _ := spec["metrics"].(map[string]any)
+	if metrics == nil {
+		metrics = map[string]any{}
+	}
+	for datasetName, raw := range spec["datasets"].(map[string]any) {
+		dataset := raw.(map[string]any)
+		if locals, ok := dataset["dimensions"].(map[string]any); ok {
+			for name, raw := range locals {
+				if _, exists := dimensions[name]; exists {
+					return fmt.Errorf("datasets.%s.dimensions.%s conflicts with spec.dimensions.%s", datasetName, name, name)
+				}
+				dimension := raw.(map[string]any)
+				field, _ := dimension["field"].(string)
+				if field == "" {
+					field = name
+				}
+				delete(dimension, "field")
+				dimension["bindings"] = map[string]any{datasetName: map[string]any{"field": datasetName + "." + field}}
+				dimensions[name] = dimension
+			}
+		}
+		if locals, ok := dataset["metrics"].(map[string]any); ok {
+			for name, raw := range locals {
+				if _, exists := metrics[name]; exists {
+					return fmt.Errorf("datasets.%s.metrics.%s conflicts with another metric named %s", datasetName, name, name)
+				}
+				metric := raw.(map[string]any)
+				field, _ := metric["field"].(string)
+				if field == "" {
+					field = name
+				}
+				metric["type"] = "aggregate"
+				metric["dataset"] = datasetName
+				metric["aggregation"] = metric["agg"]
+				metric["input"] = map[string]any{"field": datasetName + "." + field}
+				delete(metric, "agg")
+				delete(metric, "field")
+				if _, ok := metric["timeDimension"]; !ok {
+					if defaultTime, ok := dataset["defaultTimeDimension"]; ok {
+						metric["timeDimension"] = defaultTime
+					}
+				}
+				metrics[name] = metric
+			}
+		}
+	}
+	spec["dimensions"] = dimensions
+	spec["metrics"] = metrics
+	if err := resolveProjectedDimensionDatatypes(spec, resolver); err != nil {
+		return err
+	}
+	normalized, err := json.Marshal(document)
+	if err != nil {
+		return err
+	}
+	return decodeJSON(normalized, output)
+}
+
+func resolveProjectedDimensionDatatypes(spec map[string]any, resolver *ReferenceContext) error {
+	if resolver == nil {
+		return fmt.Errorf("semantic contract projection requires a reference context")
+	}
+	datasets := spec["datasets"].(map[string]any)
+	for name, raw := range spec["dimensions"].(map[string]any) {
+		dimension := raw.(map[string]any)
+		asserted, _ := dimension["datatype"].(string)
+		resolved := ""
+		unresolved := false
+		for _, raw := range dimension["bindings"].(map[string]any) {
+			binding := raw.(map[string]any)
+			parts := strings.SplitN(binding["field"].(string), ".", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("semantic dimension %q has invalid binding field %q", name, binding["field"])
+			}
+			datasetRaw, ok := datasets[parts[0]]
+			if !ok {
+				return fmt.Errorf("semantic dimension %q binding references unknown dataset %q", name, parts[0])
+			}
+			modelName := datasetRaw.(map[string]any)["model"].(string)
+			modelID, err := resolver.ResolveReference(modelName, projectgraph.KindModel)
+			if err != nil {
+				return fmt.Errorf("semantic dimension %q model: %w", name, err)
+			}
+			fields, provided := resolver.modelFieldTypes[modelID]
+			physical := fields[parts[1]]
+			if physical == "" {
+				if provided {
+					return fmt.Errorf("semantic dimension %q references unknown Model field %q", name, binding["field"])
+				}
+				unresolved = true
+				continue
+			}
+			if resolved != "" && resolved != physical {
+				return fmt.Errorf("semantic dimension %q bindings have incompatible logical datatypes %q and %q", name, resolved, physical)
+			}
+			resolved = physical
+		}
+		if asserted != "" && resolved != "" && asserted != resolved {
+			return fmt.Errorf("semantic dimension %q datatype %q disagrees with resolved logical datatype %q", name, asserted, resolved)
+		}
+		if asserted == "" {
+			if resolved == "" || unresolved {
+				return fmt.Errorf("semantic dimension %q requires resolved Model field datatypes for contract projection", name)
+			}
+			dimension["datatype"] = resolved
+		}
+	}
+	return nil
 }
 
 func projectSemanticFilter(value authoredSemanticFilter, dimensions map[string]struct {

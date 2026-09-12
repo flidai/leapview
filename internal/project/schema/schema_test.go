@@ -96,45 +96,44 @@ spec:
 	if err := ValidateBytes(KindModel, "model.yaml", model); err != nil {
 		t.Fatalf("canonical Model rejected: %v", err)
 	}
-	semantic := []byte(`
-apiVersion: leapview.dev/v1
+	semantic := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 aiContext:
-  synonyms: [sales analysis]
+  synonyms: [ sales analysis ]
 spec:
   datasets:
-    orders: {model: sales_orders, defaultTimeDimension: purchase_date}
-    customers: {model: sales_customers}
+    orders:
+      model: sales_orders
+      defaultTimeDimension: purchase_date
+      metrics:
+        order_count:
+          type: simple
+          where: [ captured ]
+          empty: zero
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          unit: BRL
+          format: currency
+          agg: sum
+      dimensions:
+        purchase_date:
+          datatype: Date
+          time: { nativeGrain: day, grains: [ day, week, month ], calendar: iso8601 }
+          field: purchased_at
+    customers: { model: sales_customers }
   relationships:
     orders_customers:
-      from: {dataset: orders, entity: customer}
-      to: {dataset: customers, entity: customer}
+      from: { dataset: orders, entity: customer }
+      to: { dataset: customers, entity: customer }
   filters:
     captured:
       field: orders.status
       operator: in
-      value: [captured, settled]
-  dimensions:
-    purchase_date:
-      datatype: Date
-      time: {nativeGrain: day, grains: [day, week, month], calendar: iso8601}
-      bindings: {orders: {field: orders.purchased_at}}
+      value: [ captured, settled ]
   metrics:
-    order_count:
-      type: aggregate
-      dataset: orders
-      aggregation: count_distinct
-      input: {field: orders.order_id}
-      where: [captured]
-      empty: zero
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      unit: BRL
-      format: currency
     average_order_value:
       type: ratio
       numerator: revenue
@@ -158,23 +157,33 @@ spec:
 	if err := ValidateBytes(KindModel, "model.yaml", model); err == nil {
 		t.Fatal("canonical Model accepted removed scalar primaryKey/type fields")
 	}
-	semantic := []byte(`
-apiVersion: leapview.dev/v1
+	semantic := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: model:sales_orders}}
+  datasets:
+    {
+      orders:
+        {
+          model: model:sales_orders,
+          metrics: { revenue: { type: simple, expression: bad, agg: sum } }
+        }
+    }
   relationships:
     orders_customers:
       from: orders.customer_id
       to: customers.customer_id
       cardinality: many_to_one
   filters:
-    captured: {field: orders.status, operator: in, values: [captured]}
+    captured: { field: orders.status, operator: in, values: [ captured ] }
   measures:
-    revenue: {fact: orders, aggregation: sum, input: {field: orders.revenue}, empty: zero}
-  metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, expression: bad}
+    revenue:
+      {
+        fact: orders,
+        aggregation: sum,
+        input: { field: orders.revenue },
+        empty: zero
+      }
 `)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", semantic); err == nil {
 		t.Fatal("canonical SemanticModel accepted removed/legacy semantic forms")
@@ -214,14 +223,14 @@ spec:
 }
 
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
-	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: model:sales_orders}}
-  metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
+  datasets:
+    {
+      orders: { model: model:sales_orders, metrics: { revenue: { type: simple, agg: sum } } }
+    }
 `))
 	if err == nil {
 		t.Fatal("SemanticModel accepted external Model resource ID in dataset.model")
@@ -229,38 +238,45 @@ spec:
 }
 
 func TestCanonicalFilterUsesValueAndRejectsValuesAlias(t *testing.T) {
-	valid := []byte(`
-apiVersion: leapview.dev/v1
+	valid := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: sales_orders}}
-  filters: {captured: {field: orders.status, operator: in, value: [captured, settled]}}
-  metrics: {revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured]}}
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { revenue: { type: simple, where: [ captured ], agg: sum } }
+        }
+    }
+  filters:
+    {
+      captured: { field: orders.status, operator: in, value: [ captured, settled ] }
+    }
 `)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", valid); err != nil {
 		t.Fatalf("filter value list rejected: %v", err)
 	}
-	invalid := strings.Replace(string(valid), "value: [captured, settled]", "values: [captured, settled]", 1)
+	invalid := strings.Replace(string(valid), "value: [ captured, settled ]", "values: [ captured, settled ]", 1)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(invalid)); err == nil {
 		t.Fatal("SemanticModel accepted removed filter values property")
 	}
 }
 
 func TestCanonicalMetricTagsRejectIncompatibleFields(t *testing.T) {
-	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: sales_orders}}
-  metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      expression: forbidden
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { revenue: { type: simple, expression: forbidden, agg: sum } }
+        }
+    }
 `))
 	if err == nil {
 		t.Fatal("aggregate metric accepted derived-only expression field")

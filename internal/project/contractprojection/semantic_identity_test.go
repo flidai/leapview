@@ -14,11 +14,10 @@ func semanticIdentityInput(t *testing.T, values string) contracts.SemanticModel 
 	t.Helper()
 	var input contracts.SemanticModel
 	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{
-"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}]}},
+"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},
 "accessGrants":{"region":{"userAttribute":"region","allowedValues":` + values + `}},
 "dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}},
-"filters":{"selected":{"field":"orders.region","operator":"in","value":["west","east"]}},
-"metrics":{"orders":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.id"},"requiredAccessGrants":["region"]}}
+"filters":{"selected":{"field":"orders.region","operator":"in","value":["west","east"]}}
 }}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
@@ -37,6 +36,78 @@ func semanticIdentityContext(t *testing.T) ReferenceContext {
 		t.Fatal(err)
 	}
 	return ctx
+}
+
+func TestDatasetLocalMembersReachCanonicalSemanticProjection(t *testing.T) {
+	ctx := semanticIdentityContext(t)
+	contract := Contract{Version: "1.0.0", Compatibility: "backward"}
+	var previous []byte
+	for _, field := range []string{"", `,"field":"amount"`} {
+		var authored contracts.SemanticModel
+		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{"field":"region","datatype":"String"}},"metrics":{"amount":{"type":"simple","agg":"sum"` + field + `}}}}}}`
+		if err := json.Unmarshal([]byte(raw), &authored); err != nil {
+			t.Fatal(err)
+		}
+		projection, err := ProjectSemanticModel(authored, contract, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := CanonicalBytes(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(canonical, []byte(`"aggregation":"sum"`)) || !bytes.Contains(canonical, []byte(`"field":"orders.amount"`)) || !bytes.Contains(canonical, []byte(`"field":"orders.region"`)) {
+			t.Fatalf("local members omitted from projection: %s", canonical)
+		}
+		if _, err := DecodeSemanticModelPublication(canonical); err != nil {
+			t.Fatal(err)
+		}
+		if previous != nil && !bytes.Equal(previous, canonical) {
+			t.Fatalf("explicit field default changed identity:\n%s\n%s", previous, canonical)
+		}
+		previous = canonical
+	}
+}
+
+func TestDatasetLocalProjectionResolvesDatatypeBeforeIdentity(t *testing.T) {
+	ctx, err := semanticIdentityContext(t).WithModelFieldTypes("orders_model", map[string]string{"region": "String"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var previous []byte
+	for _, assertion := range []string{"", `"datatype":"String"`} {
+		var authored contracts.SemanticModel
+		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{` + assertion + `}},"metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`
+		if err := json.Unmarshal([]byte(raw), &authored); err != nil {
+			t.Fatal(err)
+		}
+		projection, err := ProjectSemanticModel(authored, Contract{Version: "1.0.0", Compatibility: "backward"}, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonical, err := CanonicalBytes(projection)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(canonical, []byte(`"field":"orders.region"`)) || !bytes.Contains(canonical, []byte(`"datatype":"String"`)) {
+			t.Fatalf("inferred dimension projected incorrectly: %s", canonical)
+		}
+		if _, err := DecodeSemanticModelPublication(canonical); err != nil {
+			t.Fatal(err)
+		}
+		if previous != nil && !bytes.Equal(previous, canonical) {
+			t.Fatalf("explicit datatype assertion changed identity:\n%s\n%s", previous, canonical)
+		}
+		previous = canonical
+	}
+	var incompatible contracts.SemanticModel
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{"datatype":"Integer"}},"metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`
+	if err := json.Unmarshal([]byte(raw), &incompatible); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ProjectSemanticModel(incompatible, Contract{Version: "1.0.0", Compatibility: "backward"}, ctx); err == nil || !strings.Contains(err.Error(), "disagrees with resolved logical datatype") {
+		t.Fatalf("incompatible assertion accepted: %v", err)
+	}
 }
 
 func TestSemanticProtectionProjectionIdentity(t *testing.T) {

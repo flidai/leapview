@@ -97,11 +97,11 @@ func runOssieImport(ctx context.Context, opts *ossieOptions, input io.Reader, ou
 		},
 		AIContext: nativeAI(model.AIContext),
 		Spec: nativeSemanticModelSpec{
-			Datasets:      nativeDatasets(model.Datasets),
+			Datasets:      nativeDatasets(model),
 			Relationships: nativeRelationships(model.StructuredRelationships),
-			Dimensions:    semanticDimensionSpecs(model.Dimensions),
+			Dimensions:    semanticDimensionSpecs(model.Dimensions, true),
 			Filters:       nativeFilters(model.Filters),
-			Metrics:       nativeMetrics(model.Metrics),
+			Metrics:       nativeMetrics(model.Metrics, true),
 		},
 	}
 	encoder := yaml.NewEncoder(output)
@@ -176,15 +176,17 @@ type nativeSemanticModelSpec struct {
 	Relationships map[string]nativeRelationship `yaml:"relationships,omitempty"`
 	Dimensions    map[string]nativeDimension    `yaml:"dimensions,omitempty"`
 	Filters       map[string]nativeFilter       `yaml:"filters,omitempty"`
-	Metrics       map[string]nativeMetric       `yaml:"metrics"`
+	Metrics       map[string]nativeMetric       `yaml:"metrics,omitempty"`
 }
 
 type nativeDataset struct {
-	Model                string           `yaml:"model"`
-	DefaultTimeDimension string           `yaml:"defaultTimeDimension,omitempty"`
-	DisplayName          string           `yaml:"displayName,omitempty"`
-	Description          string           `yaml:"description,omitempty"`
-	AIContext            *nativeAIContext `yaml:"aiContext,omitempty"`
+	Model                string                     `yaml:"model"`
+	DefaultTimeDimension string                     `yaml:"defaultTimeDimension,omitempty"`
+	DisplayName          string                     `yaml:"displayName,omitempty"`
+	Description          string                     `yaml:"description,omitempty"`
+	AIContext            *nativeAIContext           `yaml:"aiContext,omitempty"`
+	Dimensions           map[string]nativeDimension `yaml:"dimensions,omitempty"`
+	Metrics              map[string]nativeMetric    `yaml:"metrics,omitempty"`
 }
 
 type nativeRelationship struct {
@@ -204,9 +206,10 @@ type nativeDimension struct {
 	Label       string                            `yaml:"label,omitempty"`
 	Description string                            `yaml:"description,omitempty"`
 	AIContext   *nativeAIContext                  `yaml:"aiContext,omitempty"`
-	Datatype    semanticmodel.LogicalDataType     `yaml:"datatype"`
+	Datatype    semanticmodel.LogicalDataType     `yaml:"datatype,omitempty"`
 	Time        *nativeTime                       `yaml:"time,omitempty"`
-	Bindings    map[string]nativeDimensionBinding `yaml:"bindings"`
+	Field       string                            `yaml:"field,omitempty"`
+	Bindings    map[string]nativeDimensionBinding `yaml:"bindings,omitempty"`
 }
 
 type nativeDimensionBinding struct {
@@ -226,26 +229,21 @@ type nativeFilter struct {
 }
 
 type nativeMetric struct {
-	Type          string             `yaml:"type"`
-	Dataset       string             `yaml:"dataset,omitempty"`
-	Aggregation   string             `yaml:"aggregation,omitempty"`
-	Input         *nativeMetricInput `yaml:"input,omitempty"`
-	Where         []string           `yaml:"where,omitempty"`
-	Empty         string             `yaml:"empty,omitempty"`
-	TimeDimension string             `yaml:"timeDimension,omitempty"`
-	Expression    string             `yaml:"expression,omitempty"`
-	Numerator     string             `yaml:"numerator,omitempty"`
-	Denominator   string             `yaml:"denominator,omitempty"`
-	Label         string             `yaml:"label,omitempty"`
-	Description   string             `yaml:"description,omitempty"`
-	Unit          string             `yaml:"unit,omitempty"`
-	Format        string             `yaml:"format,omitempty"`
-	Hidden        bool               `yaml:"hidden,omitempty"`
-	AIContext     *nativeAIContext   `yaml:"aiContext,omitempty"`
-}
-
-type nativeMetricInput struct {
-	Field string `yaml:"field"`
+	Type          string           `yaml:"type"`
+	Agg           string           `yaml:"agg,omitempty"`
+	Field         string           `yaml:"field,omitempty"`
+	Where         []string         `yaml:"where,omitempty"`
+	Empty         string           `yaml:"empty,omitempty"`
+	TimeDimension string           `yaml:"timeDimension,omitempty"`
+	Expression    string           `yaml:"expression,omitempty"`
+	Numerator     string           `yaml:"numerator,omitempty"`
+	Denominator   string           `yaml:"denominator,omitempty"`
+	Label         string           `yaml:"label,omitempty"`
+	Description   string           `yaml:"description,omitempty"`
+	Unit          string           `yaml:"unit,omitempty"`
+	Format        string           `yaml:"format,omitempty"`
+	Hidden        bool             `yaml:"hidden,omitempty"`
+	AIContext     *nativeAIContext `yaml:"aiContext,omitempty"`
 }
 
 type nativeAIContext struct {
@@ -268,10 +266,45 @@ func nativeAI(value *semanticmodel.AIContext) *nativeAIContext {
 	return &nativeAIContext{Instructions: value.Instructions, Synonyms: append([]string(nil), value.Synonyms...), Examples: append([]string(nil), value.Examples...)}
 }
 
-func nativeDatasets(values map[string]semanticmodel.SemanticDatasetSpec) map[string]nativeDataset {
-	result := make(map[string]nativeDataset, len(values))
-	for name, value := range values {
-		result[name] = nativeDataset{Model: value.Model, DefaultTimeDimension: value.DefaultTimeDimension, DisplayName: value.DisplayName, Description: value.Description, AIContext: nativeAI(value.AIContext)}
+func nativeDatasets(model *semanticmodel.Model) map[string]nativeDataset {
+	result := make(map[string]nativeDataset, len(model.Datasets))
+	for name, value := range model.Datasets {
+		dataset := nativeDataset{Model: value.Model, DefaultTimeDimension: value.DefaultTimeDimension, DisplayName: value.DisplayName, Description: value.Description, AIContext: nativeAI(value.AIContext)}
+		for member, dimension := range model.Dimensions {
+			if len(dimension.Bindings) != 1 {
+				continue
+			}
+			binding, ok := dimension.Bindings[name]
+			if !ok || len(binding.Path) != 0 || !strings.HasPrefix(binding.Field, name+".") {
+				continue
+			}
+			if dataset.Dimensions == nil {
+				dataset.Dimensions = map[string]nativeDimension{}
+			}
+			local := semanticDimensionSpecs(map[string]semanticmodel.SemanticDimension{member: dimension}, false)[member]
+			local.Bindings = nil
+			field := strings.TrimPrefix(binding.Field, name+".")
+			if field != member {
+				local.Field = field
+			}
+			dataset.Dimensions[member] = local
+		}
+		for member, metric := range model.Metrics {
+			if metric.Type != "aggregate" || metric.Dataset != name || metric.Input == nil {
+				continue
+			}
+			if dataset.Metrics == nil {
+				dataset.Metrics = map[string]nativeMetric{}
+			}
+			local := nativeMetrics(map[string]semanticmodel.Metric{member: metric}, false)[member]
+			local.Type, local.Agg = "simple", metric.Aggregation
+			local.Field = strings.TrimPrefix(metric.Input.Field, name+".")
+			if local.Field == member {
+				local.Field = ""
+			}
+			dataset.Metrics[member] = local
+		}
+		result[name] = dataset
 	}
 	return result
 }
@@ -288,9 +321,20 @@ func nativeRelationships(values map[string]semanticmodel.RelationshipSpec) map[s
 	return result
 }
 
-func semanticDimensionSpecs(values map[string]semanticmodel.SemanticDimension) map[string]nativeDimension {
+func semanticDimensionSpecs(values map[string]semanticmodel.SemanticDimension, topLevel bool) map[string]nativeDimension {
 	result := make(map[string]nativeDimension, len(values))
 	for name, dimension := range values {
+		local := false
+		if topLevel && len(dimension.Bindings) == 1 {
+			for dataset, binding := range dimension.Bindings {
+				if len(binding.Path) == 0 && strings.HasPrefix(binding.Field, dataset+".") {
+					local = true
+				}
+			}
+		}
+		if local {
+			continue
+		}
 		bindings := make(map[string]nativeDimensionBinding, len(dimension.Bindings))
 		for dataset, binding := range dimension.Bindings {
 			bindings[dataset] = nativeDimensionBinding{Field: binding.Field, Path: append([]string(nil), binding.Path...)}
@@ -333,16 +377,16 @@ func nativeFilterSpec(value semanticmodel.SemanticFilterSpec) nativeFilter {
 	return result
 }
 
-func nativeMetrics(values map[string]semanticmodel.Metric) map[string]nativeMetric {
+func nativeMetrics(values map[string]semanticmodel.Metric, topLevel bool) map[string]nativeMetric {
 	result := make(map[string]nativeMetric, len(values))
 	for name, value := range values {
+		if topLevel && value.Type == "aggregate" {
+			continue
+		}
 		metric := nativeMetric{
-			Type: value.Type, Dataset: value.Dataset, Aggregation: value.Aggregation, Where: append([]string(nil), value.Where...), Empty: value.Empty, TimeDimension: value.TimeDimension,
+			Type: value.Type, Where: append([]string(nil), value.Where...), Empty: value.Empty, TimeDimension: value.TimeDimension,
 			Expression: value.Expression, Numerator: value.Numerator, Denominator: value.Denominator,
 			Label: value.Label, Description: value.Description, Unit: value.Unit, Format: value.Format, Hidden: value.Hidden, AIContext: nativeAI(value.AIContext),
-		}
-		if value.Input != nil {
-			metric.Input = &nativeMetricInput{Field: value.Input.Field}
 		}
 		result[name] = metric
 	}

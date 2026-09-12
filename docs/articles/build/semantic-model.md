@@ -10,7 +10,7 @@ Build the model in this sequence:
 
 1. Choose a coherent analytical domain and its datasets.
 2. Add relationships whose endpoint keys are proven by data.
-3. Define metrics on explicit datasets and fields.
+3. Define simple metrics beside their datasets and physical fields.
 4. Compose derived metrics from named metrics.
 5. Validate the resource, then verify representative business results.
 
@@ -38,31 +38,29 @@ spec:
   datasets:
     orders:
       model: orders
+      metrics:
+        order_count:
+          type: simple
+          label: Orders
+          description: Distinct orders in the filtered result.
+          empty: zero
+          format: integer
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          label: Revenue
+          description: Sum of order revenue in the filtered result.
+          empty: zero
+          format: currency
+          agg: sum
     customers:
       model: customers
   relationships:
     orders_customers:
-      from: {dataset: orders, fields: [customer_id]}
-      to: {dataset: customers, fields: [customer_id]}
+      from: { dataset: orders, fields: [ customer_id ] }
+      to: { dataset: customers, fields: [ customer_id ] }
   metrics:
-    order_count:
-      type: aggregate
-      label: Orders
-      description: Distinct orders in the filtered result.
-      dataset: orders
-      aggregation: count_distinct
-      input: {field: orders.order_id}
-      empty: zero
-      format: integer
-    revenue:
-      type: aggregate
-      label: Revenue
-      description: Sum of order revenue in the filtered result.
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      empty: zero
-      format: currency
     aov:
       type: ratio
       label: Average order value
@@ -73,7 +71,7 @@ spec:
 
 ### Define metrics from datasets
 
-Every metric identifies its dataset and aggregation. Choose `count_distinct` when the business question counts stable identifiers; use `count` only when the dataset row grain itself is the intended count. For `sum`, `avg`, `min`, and `max`, provide a compatible input field.
+Every simple metric inherits its dataset and declares `agg`. Choose `count_distinct` when the business question counts stable identifiers; use `count` only when the dataset row grain itself is the intended count. For `sum`, `avg`, `min`, and `max`, provide a compatible `field`, or omit it when the field name equals the metric name.
 
 Set empty-result behavior intentionally. `zero` is appropriate for additive counts and sums when no rows match; `null` may better represent an undefined average. Formatting is presentation metadata and does not turn a numeric result into a formatted string at the semantic boundary.
 

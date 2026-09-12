@@ -191,8 +191,27 @@ func (m *Model) validateSemanticDefinitionsWithOptions(allowUnresolvedTypes bool
 		if err := validateSemanticIdentifier(name); err != nil {
 			return fmt.Errorf("semantic dimension %q is invalid: %w", name, err)
 		}
-		if err := validateLogicalDataType("semantic dimension "+name, dimension.Datatype); err != nil {
-			return err
+		// The authored datatype is an assertion. Without one, derive it from the
+		// physical Model bindings, and recheck after schema discovery at activation.
+		for _, dataset := range sortedDimensionBindingNames(dimension.Bindings) {
+			binding := dimension.Bindings[dataset]
+			physical, err := m.ResolveDimension(binding.Field)
+			if err != nil {
+				return fmt.Errorf("semantic dimension %q binding for dataset %q: %w", name, dataset, err)
+			}
+			if physical.Datatype == "" {
+				continue
+			}
+			if dimension.Datatype == "" {
+				dimension.Datatype = physical.Datatype
+			} else if dimension.Datatype != physical.Datatype {
+				return fmt.Errorf("semantic dimension %q logical datatype %q is incompatible with binding %q logical datatype %q", name, dimension.Datatype, binding.Field, physical.Datatype)
+			}
+		}
+		if !(allowUnresolvedTypes && dimension.Datatype == "") {
+			if err := validateLogicalDataType("semantic dimension "+name, dimension.Datatype); err != nil {
+				return err
+			}
 		}
 		if dimension.Datatype != "" {
 			canonicalType := semanticDimensionTypeForDatatype(dimension.Datatype)
@@ -231,18 +250,18 @@ func (m *Model) validateSemanticDefinitionsWithOptions(allowUnresolvedTypes bool
 		default:
 			return fmt.Errorf("semantic dimension %q has unsupported week_start %q", name, dimension.WeekStart)
 		}
-		if _, ok := supportedSemanticDimensionTypes[dimension.Type]; !ok {
+		if _, ok := supportedSemanticDimensionTypes[dimension.Type]; !ok && !(allowUnresolvedTypes && dimension.Type == "") {
 			return fmt.Errorf("semantic dimension %q has unsupported type %q", name, dimension.Type)
 		}
 		if dimension.NativeGrain != "" {
-			if dimension.Type != "date" && dimension.Type != "timestamp" {
+			if dimension.Type != "date" && dimension.Type != "timestamp" && !(allowUnresolvedTypes && dimension.Type == "") {
 				return fmt.Errorf("semantic dimension %q defines native grain for type %q", name, dimension.Type)
 			}
 			if _, ok := timeGrainOrder[dimension.NativeGrain]; !ok {
 				return fmt.Errorf("semantic dimension %q has unsupported native time grain %q", name, dimension.NativeGrain)
 			}
 		}
-		if len(dimension.Grains) > 0 && dimension.Type != "date" && dimension.Type != "timestamp" {
+		if len(dimension.Grains) > 0 && dimension.Type != "date" && dimension.Type != "timestamp" && !(allowUnresolvedTypes && dimension.Type == "") {
 			return fmt.Errorf("semantic dimension %q defines time grains for type %q", name, dimension.Type)
 		}
 		for _, grain := range dimension.Grains {
@@ -306,7 +325,7 @@ func (m *Model) validateSemanticDefinitionsWithOptions(allowUnresolvedTypes bool
 		if !ok {
 			return fmt.Errorf("semantic dataset %q default time dimension %q is unknown", datasetName, dataset.DefaultTimeDimension)
 		}
-		if dimension.Type != "date" && dimension.Type != "timestamp" {
+		if dimension.Type != "date" && dimension.Type != "timestamp" && !(allowUnresolvedTypes && dimension.Type == "") {
 			return fmt.Errorf("semantic dataset %q default time dimension %q is not temporal", datasetName, dataset.DefaultTimeDimension)
 		}
 		if _, ok := dimension.Bindings[datasetName]; !ok {
@@ -450,7 +469,16 @@ func semanticFilterValues(value any) ([]any, bool) {
 // compatibleConformedBindingTypes requires the portable logical datatype to
 // match exactly across every dataset binding of a conformed dimension.
 func compatibleConformedBindingTypes(dimension SemanticDimension, physical MetricDimension, allowUnresolvedTypes bool) bool {
-	return dimension.Datatype != "" && ((allowUnresolvedTypes && physical.Datatype == "") || dimension.Datatype == physical.Datatype)
+	return (allowUnresolvedTypes && (dimension.Datatype == "" || physical.Datatype == "")) || dimension.Datatype == physical.Datatype
+}
+
+func sortedDimensionBindingNames(bindings map[string]DimensionBinding) []string {
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (m *Model) validateMetrics() error {

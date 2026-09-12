@@ -177,7 +177,7 @@ func TestValidationEvidenceRejectsMissingDuplicateAndFailedChecks(t *testing.T) 
 func semanticPublication(t *testing.T, version, allowed string) ContractPublication {
 	t.Helper()
 	var input projectcontracts.SemanticModel
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}]}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowed + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}},"metrics":{"orders":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.id"},"requiredAccessGrants":["region"]}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowed + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}}}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

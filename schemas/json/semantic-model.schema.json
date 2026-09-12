@@ -21,87 +21,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "AggregateSemanticMetric": {
-      "properties": {
-        "aggregation": {
-          "enum": [
-            "sum",
-            "count",
-            "count_distinct",
-            "avg",
-            "min",
-            "max"
-          ],
-          "type": "string"
-        },
-        "aiContext": {
-          "$ref": "#/$defs/AIContext"
-        },
-        "dataset": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "description": {
-          "type": "string"
-        },
-        "empty": {
-          "enum": [
-            "zero",
-            "null"
-          ],
-          "type": "string"
-        },
-        "format": {
-          "type": "string"
-        },
-        "hidden": {
-          "type": "boolean"
-        },
-        "input": {
-          "$ref": "#/$defs/SemanticMetricInput"
-        },
-        "label": {
-          "type": "string"
-        },
-        "requiredAccessGrants": {
-          "items": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array",
-          "uniqueItems": true
-        },
-        "timeDimension": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "aggregate"
-          ],
-          "type": "string"
-        },
-        "unit": {
-          "type": "string"
-        },
-        "where": {
-          "items": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "minItems": 1,
-          "type": "array"
-        }
-      },
-      "required": [
-        "aggregation",
-        "dataset",
-        "input",
-        "type"
-      ],
-      "type": "object"
-    },
     "AllSemanticFilter": {
       "properties": {
         "all": {
@@ -469,6 +388,53 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "LocalSemanticDimension": {
+      "description": "A local dimension binds one field in its containing dataset.",
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "time": {
+          "$ref": "#/$defs/SemanticTimeSemantics"
+        }
+      },
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NamedSemanticRelationshipEndpoint": {
       "properties": {
         "dataset": {
@@ -720,8 +686,28 @@
         "description": {
           "type": "string"
         },
+        "dimensions": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LocalSemanticDimension"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
         "displayName": {
           "type": "string"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SimpleSemanticMetric"
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "type": "object"
         },
         "model": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
@@ -793,8 +779,7 @@
         }
       },
       "required": [
-        "bindings",
-        "datatype"
+        "bindings"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -879,35 +864,12 @@
     "SemanticMetric": {
       "oneOf": [
         {
-          "$ref": "#/$defs/SemanticMetricAggregateVariant"
-        },
-        {
           "$ref": "#/$defs/SemanticMetricDerivedVariant"
         },
         {
           "$ref": "#/$defs/SemanticMetricRatioVariant"
         }
       ]
-    },
-    "SemanticMetricAggregateVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/AggregateSemanticMetric"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "aggregate"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
     },
     "SemanticMetricDerivedVariant": {
       "allOf": [
@@ -925,19 +887,6 @@
       },
       "required": [
         "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SemanticMetricInput": {
-      "properties": {
-        "field": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "field"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -1101,8 +1050,7 @@
         }
       },
       "required": [
-        "datasets",
-        "metrics"
+        "datasets"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -1181,6 +1129,83 @@
       "required": [
         "grains",
         "nativeGrain"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "SimpleSemanticMetric": {
+      "properties": {
+        "agg": {
+          "enum": [
+            "sum",
+            "count",
+            "count_distinct",
+            "avg",
+            "min",
+            "max"
+          ],
+          "type": "string"
+        },
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "description": {
+          "type": "string"
+        },
+        "empty": {
+          "enum": [
+            "zero",
+            "null"
+          ],
+          "type": "string"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "label": {
+          "type": "string"
+        },
+        "requiredAccessGrants": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "timeDimension": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "simple"
+          ],
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "where": {
+          "items": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "agg",
+        "type"
       ],
       "type": "object",
       "unevaluatedProperties": false

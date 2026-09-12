@@ -168,24 +168,26 @@ spec:
 func TestGeneratedSemanticModelBoundaryDecodesStructuralUnions(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
   datasets:
-    orders: {model: orders_model}
-    customers: {model: customers_model}
+    orders:
+      model: orders_model
+      metrics:
+        revenue: { type: simple, agg: sum }
+    customers: { model: customers_model }
   relationships:
     customer:
-      from: {dataset: orders, entity: customer}
-      to: {dataset: customers, fields: [customer_id]}
+      from: { dataset: orders, entity: customer }
+      to: { dataset: customers, fields: [ customer_id ] }
   filters:
     captured:
       all:
-        - {field: orders.status, operator: equals, value: captured}
-        - {not: {field: orders.deleted_at, operator: is_null}}
+        - { field: orders.status, operator: equals, value: captured }
+        - { not: { field: orders.deleted_at, operator: is_null } }
   metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
-    margin: {type: derived, expression: revenue - cost}
-    margin_rate: {type: ratio, numerator: margin, denominator: revenue}
+    margin: { type: derived, expression: revenue - cost }
+    margin_rate: { type: ratio, numerator: margin, denominator: revenue }
 `)
 	var model contracts.SemanticModel
 	if err := configschema.DecodeResource(configschema.KindSemanticModel, "semantic-model.yaml", content, &model); err != nil {
@@ -209,14 +211,14 @@ spec:
 	if _, ok := all.All[1].Value.(*contracts.NotSemanticFilter); !ok {
 		t.Fatalf("second child = %T, want not node", all.All[1].Value)
 	}
-	if _, ok := model.Spec.Metrics["revenue"].Value.(*contracts.SemanticMetricAggregateVariant); !ok {
-		t.Fatalf("revenue variant = %T, want aggregate", model.Spec.Metrics["revenue"].Value)
+	if got := (*model.Spec.Datasets["orders"].Metrics)["revenue"]; got.Type != "simple" || got.Agg != "sum" {
+		t.Fatalf("revenue = %#v, want local simple sum", got)
 	}
-	if _, ok := model.Spec.Metrics["margin"].Value.(*contracts.SemanticMetricDerivedVariant); !ok {
-		t.Fatalf("margin variant = %T, want derived", model.Spec.Metrics["margin"].Value)
+	if _, ok := (*model.Spec.Metrics)["margin"].Value.(*contracts.SemanticMetricDerivedVariant); !ok {
+		t.Fatalf("margin variant = %T, want derived", (*model.Spec.Metrics)["margin"].Value)
 	}
-	if _, ok := model.Spec.Metrics["margin_rate"].Value.(*contracts.SemanticMetricRatioVariant); !ok {
-		t.Fatalf("margin_rate variant = %T, want ratio", model.Spec.Metrics["margin_rate"].Value)
+	if _, ok := (*model.Spec.Metrics)["margin_rate"].Value.(*contracts.SemanticMetricRatioVariant); !ok {
+		t.Fatalf("margin_rate variant = %T, want ratio", (*model.Spec.Metrics)["margin_rate"].Value)
 	}
 }
 

@@ -8,6 +8,28 @@ spec:
   datasets:
     operations_orders:
       model: operations_orders
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          agg: count_distinct
+          field: order_id
+        review_score:
+          type: simple
+          empty: 'null'
+          label: Review score
+          agg: avg
+        delivery_days:
+          type: simple
+          empty: 'null'
+          label: Delivery days
+          agg: avg
+      dimensions:
+        status:
+          datatype: String
+        delivery_bucket:
+          datatype: String
     operations_customers:
       model: operations_customers
   relationships:
@@ -25,39 +47,4 @@ spec:
         operations_orders:
           field: operations_customers.state
           path:
-          - orders_customers
-    status:
-      datatype: String
-      bindings:
-        operations_orders:
-          field: operations_orders.status
-    delivery_bucket:
-      datatype: String
-      bindings:
-        operations_orders:
-          field: operations_orders.delivery_bucket
-  metrics:
-    order_count:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: count_distinct
-      input:
-        field: operations_orders.order_id
-      empty: zero
-      label: Orders
-    review_score:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: avg
-      input:
-        field: operations_orders.review_score
-      empty: 'null'
-      label: Review score
-    delivery_days:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: avg
-      input:
-        field: operations_orders.delivery_days
-      empty: 'null'
-      label: Delivery days
+            - orders_customers

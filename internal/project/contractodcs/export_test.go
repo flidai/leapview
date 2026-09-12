@@ -131,7 +131,7 @@ func TestOracleNegativeFixturesViolateOfficialSchema(t *testing.T) {
 
 func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
 	var authored projectcontracts.SemanticModel
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":{"orders":{"model":"orders_model"}},"metrics":{"orders":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.id"}}}}}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":{"orders":{"model":"orders_model","metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`), &authored); err != nil {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "model:orders", Name: "orders_model", Kind: projectgraph.KindModel}}, nil)

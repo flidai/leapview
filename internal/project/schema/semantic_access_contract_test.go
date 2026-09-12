@@ -20,17 +20,15 @@ spec:
       requiredAccessGrants: [canViewSales]
       accessFilters:
         - {field: region, userAttribute: allowedRegions}
+      metrics:
+        revenue:
+          type: simple
+          agg: sum
+          requiredAccessGrants: [canViewSales]
   dimensions:
     region:
       datatype: String
       bindings: {orders: {field: orders.region}}
-      requiredAccessGrants: [canViewSales]
-  metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
       requiredAccessGrants: [canViewSales]
 `, name, accessGrants, model))
 }

@@ -6,6 +6,10 @@ Decision date: 2026-08-17
 
 Implementation: complete
 
+Amended by: [ADR-0022](0022-adopt-dataset-local-semantic-authoring.md), native
+semantic authoring placement, vocabulary, defaults, and pre-release authoring
+freeze only
+
 Deciders: LeapView maintainers
 
 Supersedes: [ADR-0001](0001-semantic-model-first.md), authored semantic shape

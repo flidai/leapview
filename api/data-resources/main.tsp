@@ -570,6 +570,10 @@ model SemanticDataset {
   displayName?: string;
   description?: string;
   aiContext?: AIContext;
+  @apigen.propertyNames(Identifier)
+  dimensions?: Record<LocalSemanticDimension>;
+  @apigen.propertyNames(Identifier)
+  metrics?: Record<SimpleSemanticMetric>;
   @minItems(1)
   @apigen.uniqueItems
   requiredAccessGrants?: Identifier[];
@@ -617,10 +621,23 @@ model SemanticDimension {
   label?: string;
   description?: string;
   aiContext?: AIContext;
-  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   time?: SemanticTimeSemantics;
   @apigen.propertyNames(Identifier)
   bindings: Record<SemanticDimensionBinding>;
+  @minItems(1)
+  @apigen.uniqueItems
+  requiredAccessGrants?: Identifier[];
+}
+
+/** A local dimension binds one field in its containing dataset. */
+model LocalSemanticDimension {
+  field?: Identifier;
+  label?: string;
+  description?: string;
+  aiContext?: AIContext;
+  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  time?: SemanticTimeSemantics;
   @minItems(1)
   @apigen.uniqueItems
   requiredAccessGrants?: Identifier[];
@@ -783,15 +800,10 @@ model SemanticMetricCommon {
   requiredAccessGrants?: Identifier[];
 }
 
-model SemanticMetricInput {
-  field: SemanticFieldReference;
-}
-
-model AggregateSemanticMetric {
-  type: "aggregate";
-  dataset: Identifier;
-  aggregation: "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
-  input: SemanticMetricInput;
+model SimpleSemanticMetric {
+  type: "simple";
+  agg: "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
+  field?: Identifier;
   @minItems(1)
   where?: Identifier[];
   empty?: "zero" | "null";
@@ -814,7 +826,6 @@ model RatioSemanticMetric {
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
 union SemanticMetric {
-  aggregate: AggregateSemanticMetric,
   derived: DerivedSemanticMetric,
   ratio: RatioSemanticMetric,
 }
@@ -832,7 +843,7 @@ model SemanticModelSpec {
   @apigen.propertyNames(Identifier)
   filters?: Record<SemanticFilter>;
   @apigen.propertyNames(Identifier)
-  metrics: Record<SemanticMetric>;
+  metrics?: Record<SemanticMetric>;
 }
 
 model ResourceProvenance {

@@ -10,14 +10,169 @@ spec:
     orders:
       model: orders
       defaultTimeDimension: purchase_date
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          description: Distinct order count.
+          format: integer
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          empty: zero
+          label: Revenue
+          description: Total payment revenue.
+          unit: BRL
+          format: currency
+          agg: sum
+        revenue_min:
+          type: simple
+          empty: 'null'
+          label: Revenue min
+          description: Minimum order revenue.
+          unit: BRL
+          format: currency
+          agg: min
+          field: revenue
+        revenue_max:
+          type: simple
+          empty: 'null'
+          label: Revenue max
+          description: Maximum order revenue.
+          unit: BRL
+          format: currency
+          agg: max
+          field: revenue
+        missing_revenue:
+          type: simple
+          where:
+            - missing_revenue_filter
+          empty: 'null'
+          label: Missing revenue comparison
+          description: Documentation-only comparison metric with no matching rows.
+          unit: BRL
+          format: currency
+          agg: sum
+          field: revenue
+        review_score:
+          type: simple
+          empty: 'null'
+          label: Review
+          description: Average order review score.
+          format: decimal
+          agg: avg
+        delivery_days:
+          type: simple
+          empty: 'null'
+          label: Delivery days
+          description: Average delivery duration in days.
+          format: decimal
+          agg: avg
+        delivery_days_min:
+          type: simple
+          empty: 'null'
+          label: Delivery min
+          description: Minimum delivery duration in days.
+          format: decimal
+          agg: min
+          field: delivery_days
+        delivery_days_max:
+          type: simple
+          empty: 'null'
+          label: Delivery max
+          description: Maximum delivery duration in days.
+          format: decimal
+          agg: max
+          field: delivery_days
+      dimensions:
+        purchase_timestamp:
+          datatype: DateTime
+          time:
+            nativeGrain: second
+            grains:
+              - second
+              - minute
+              - hour
+              - day
+              - week
+              - month
+              - quarter
+              - year
+            calendar: iso8601
+        purchase_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        purchase_month:
+          datatype: String
+        delivery_bucket:
+          datatype: String
+        order_id:
+          datatype: String
+        order_status:
+          datatype: String
+          field: status
+        category:
+          datatype: String
+        delivered:
+          datatype: Boolean
+          field: is_delivered
+        delivery_days:
+          datatype: Integer
+        revenue_amount:
+          datatype: Decimal
+          field: revenue
     customers:
       model: customers
     zip_geolocations:
       model: zip_geolocations
     delivery_routes:
       model: delivery_routes
+      metrics:
+        route_orders:
+          type: simple
+          empty: zero
+          label: Route orders
+          description: Distinct orders aggregated for a seller-to-customer ZIP corridor.
+          format: integer
+          agg: count_distinct
+          field: order_id
+        route_revenue:
+          type: simple
+          empty: zero
+          label: Route revenue
+          description: Seller-allocated revenue for actual order delivery routes.
+          unit: BRL
+          format: currency
+          agg: sum
+      dimensions:
+        route_id:
+          datatype: String
+        point_order:
+          datatype: String
+        route_label:
+          datatype: String
     spatial_load_points:
       model: spatial_load_points
+      metrics:
+        fixture_points:
+          type: simple
+          empty: zero
+          label: Fixture points
+          description: Count of deterministic locations in the spatial load fixture.
+          format: integer
+          agg: count
+          field: point_id
+      dimensions:
+        point_id:
+          datatype: String
   relationships:
     orders_customers:
       from:
@@ -41,62 +196,18 @@ spec:
       operator: equals
       value: comparison_fixture_without_rows
   dimensions:
-    purchase_timestamp:
-      datatype: DateTime
-      bindings:
-        orders:
-          field: orders.purchase_timestamp
-      time:
-        nativeGrain: second
-        grains:
-        - second
-        - minute
-        - hour
-        - day
-        - week
-        - month
-        - quarter
-        - year
-        calendar: iso8601
-    purchase_date:
-      datatype: Date
-      bindings:
-        orders:
-          field: orders.purchase_date
-      time:
-        nativeGrain: day
-        grains:
-        - day
-        - week
-        - month
-        calendar: iso8601
-    purchase_month:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.purchase_month
-    delivery_bucket:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.delivery_bucket
-    order_id:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.order_id
     state:
       datatype: String
       bindings:
         orders:
           field: customers.state
           path:
-          - orders_customers
+            - orders_customers
         delivery_routes:
           field: customers.state
           path:
-          - delivery_routes_orders
-          - orders_customers
+            - delivery_routes_orders
+            - orders_customers
         spatial_load_points:
           field: spatial_load_points.state
     zip_prefix:
@@ -105,7 +216,7 @@ spec:
         orders:
           field: customers.zip_prefix
           path:
-          - orders_customers
+            - orders_customers
         spatial_load_points:
           field: spatial_load_points.point_id
     city:
@@ -114,7 +225,7 @@ spec:
         orders:
           field: customers.city
           path:
-          - orders_customers
+            - orders_customers
         delivery_routes:
           field: delivery_routes.route_label
         spatial_load_points:
@@ -125,7 +236,7 @@ spec:
         orders:
           field: customers.latitude
           path:
-          - orders_customers
+            - orders_customers
         delivery_routes:
           field: delivery_routes.latitude
         spatial_load_points:
@@ -136,184 +247,12 @@ spec:
         orders:
           field: customers.longitude
           path:
-          - orders_customers
+            - orders_customers
         delivery_routes:
           field: delivery_routes.longitude
         spatial_load_points:
           field: spatial_load_points.longitude
-    point_id:
-      datatype: String
-      bindings:
-        spatial_load_points:
-          field: spatial_load_points.point_id
-    route_id:
-      datatype: String
-      bindings:
-        delivery_routes:
-          field: delivery_routes.route_id
-    point_order:
-      datatype: String
-      bindings:
-        delivery_routes:
-          field: delivery_routes.point_order
-    route_label:
-      datatype: String
-      bindings:
-        delivery_routes:
-          field: delivery_routes.route_label
-    order_status:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.status
-    category:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.category
-    delivered:
-      datatype: Boolean
-      bindings:
-        orders:
-          field: orders.is_delivered
-    delivery_days:
-      datatype: Integer
-      bindings:
-        orders:
-          field: orders.delivery_days
-    revenue_amount:
-      datatype: Decimal
-      bindings:
-        orders:
-          field: orders.revenue
   metrics:
-    fixture_points:
-      type: aggregate
-      dataset: spatial_load_points
-      aggregation: count
-      input:
-        field: spatial_load_points.point_id
-      empty: zero
-      label: Fixture points
-      description: Count of deterministic locations in the spatial load fixture.
-      format: integer
-    order_count:
-      type: aggregate
-      dataset: orders
-      aggregation: count_distinct
-      input:
-        field: orders.order_id
-      empty: zero
-      label: Orders
-      description: Distinct order count.
-      format: integer
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-      empty: zero
-      label: Revenue
-      description: Total payment revenue.
-      unit: BRL
-      format: currency
-    revenue_min:
-      type: aggregate
-      dataset: orders
-      aggregation: min
-      input:
-        field: orders.revenue
-      empty: 'null'
-      label: Revenue min
-      description: Minimum order revenue.
-      unit: BRL
-      format: currency
-    revenue_max:
-      type: aggregate
-      dataset: orders
-      aggregation: max
-      input:
-        field: orders.revenue
-      empty: 'null'
-      label: Revenue max
-      description: Maximum order revenue.
-      unit: BRL
-      format: currency
-    missing_revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-      where:
-      - missing_revenue_filter
-      empty: 'null'
-      label: Missing revenue comparison
-      description: Documentation-only comparison metric with no matching rows.
-      unit: BRL
-      format: currency
-    review_score:
-      type: aggregate
-      dataset: orders
-      aggregation: avg
-      input:
-        field: orders.review_score
-      empty: 'null'
-      label: Review
-      description: Average order review score.
-      format: decimal
-    delivery_days:
-      type: aggregate
-      dataset: orders
-      aggregation: avg
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery days
-      description: Average delivery duration in days.
-      format: decimal
-    delivery_days_min:
-      type: aggregate
-      dataset: orders
-      aggregation: min
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery min
-      description: Minimum delivery duration in days.
-      format: decimal
-    delivery_days_max:
-      type: aggregate
-      dataset: orders
-      aggregation: max
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery max
-      description: Maximum delivery duration in days.
-      format: decimal
-    route_orders:
-      type: aggregate
-      dataset: delivery_routes
-      aggregation: count_distinct
-      input:
-        field: delivery_routes.order_id
-      empty: zero
-      label: Route orders
-      description: Distinct orders aggregated for a seller-to-customer ZIP corridor.
-      format: integer
-    route_revenue:
-      type: aggregate
-      dataset: delivery_routes
-      aggregation: sum
-      input:
-        field: delivery_routes.route_revenue
-      empty: zero
-      label: Route revenue
-      description: Seller-allocated revenue for actual order delivery routes.
-      unit: BRL
-      format: currency
     aov:
       type: ratio
       numerator: revenue

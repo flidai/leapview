@@ -24,23 +24,6 @@ type AcceptedValuesModelCheck struct {
 	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
-type AggregateSemanticMetric struct {
-	Type                 string              `json:"type" yaml:"type"`
-	Dataset              string              `json:"dataset" yaml:"dataset"`
-	Aggregation          string              `json:"aggregation" yaml:"aggregation"`
-	Input                SemanticMetricInput `json:"input" yaml:"input"`
-	Where                *[]string           `json:"where,omitempty" yaml:"where,omitempty"`
-	Empty                *string             `json:"empty,omitempty" yaml:"empty,omitempty"`
-	TimeDimension        *string             `json:"timeDimension,omitempty" yaml:"timeDimension,omitempty"`
-	Label                *string             `json:"label,omitempty" yaml:"label,omitempty"`
-	Description          *string             `json:"description,omitempty" yaml:"description,omitempty"`
-	AiContext            *AIContext          `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-	Unit                 *string             `json:"unit,omitempty" yaml:"unit,omitempty"`
-	Format               *string             `json:"format,omitempty" yaml:"format,omitempty"`
-	Hidden               *bool               `json:"hidden,omitempty" yaml:"hidden,omitempty"`
-	RequiredAccessGrants *[]string           `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
-}
-
 type AllSemanticFilter struct {
 	All []SemanticFilter `json:"all" yaml:"all"`
 }
@@ -1030,6 +1013,16 @@ type LessThanSemanticFilter struct {
 	Value     SemanticLiteral `json:"value" yaml:"value"`
 	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
 	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type LocalSemanticDimension struct {
+	Field                *string                `json:"field,omitempty" yaml:"field,omitempty"`
+	Label                *string                `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string                `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext             `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Datatype             *string                `json:"datatype,omitempty" yaml:"datatype,omitempty"`
+	Time                 *SemanticTimeSemantics `json:"time,omitempty" yaml:"time,omitempty"`
+	RequiredAccessGrants *[]string              `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
 }
 
 type ManagedConnection struct {
@@ -2206,20 +2199,22 @@ func (value *SemanticAllowedValues) UnmarshalJSON(data []byte) error {
 }
 
 type SemanticDataset struct {
-	Model                string                  `json:"model" yaml:"model"`
-	DefaultTimeDimension *string                 `json:"defaultTimeDimension,omitempty" yaml:"defaultTimeDimension,omitempty"`
-	DisplayName          *string                 `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Description          *string                 `json:"description,omitempty" yaml:"description,omitempty"`
-	AiContext            *AIContext              `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-	RequiredAccessGrants *[]string               `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
-	AccessFilters        *[]SemanticAccessFilter `json:"accessFilters,omitempty" yaml:"accessFilters,omitempty"`
+	Model                string                             `json:"model" yaml:"model"`
+	DefaultTimeDimension *string                            `json:"defaultTimeDimension,omitempty" yaml:"defaultTimeDimension,omitempty"`
+	DisplayName          *string                            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description          *string                            `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext                         `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Dimensions           *map[string]LocalSemanticDimension `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Metrics              *map[string]SimpleSemanticMetric   `json:"metrics,omitempty" yaml:"metrics,omitempty"`
+	RequiredAccessGrants *[]string                          `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+	AccessFilters        *[]SemanticAccessFilter            `json:"accessFilters,omitempty" yaml:"accessFilters,omitempty"`
 }
 
 type SemanticDimension struct {
 	Label                *string                             `json:"label,omitempty" yaml:"label,omitempty"`
 	Description          *string                             `json:"description,omitempty" yaml:"description,omitempty"`
 	AiContext            *AIContext                          `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-	Datatype             string                              `json:"datatype" yaml:"datatype"`
+	Datatype             *string                             `json:"datatype,omitempty" yaml:"datatype,omitempty"`
 	Time                 *SemanticTimeSemantics              `json:"time,omitempty" yaml:"time,omitempty"`
 	Bindings             map[string]SemanticDimensionBinding `json:"bindings" yaml:"bindings"`
 	RequiredAccessGrants *[]string                           `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
@@ -2807,17 +2802,11 @@ type SemanticMetric struct {
 	Value SemanticMetricVariant
 }
 
-func (*SemanticMetricAggregateVariant) isSemanticMetricVariant() {}
-func (*SemanticMetricDerivedVariant) isSemanticMetricVariant()   {}
-func (*SemanticMetricRatioVariant) isSemanticMetricVariant()     {}
+func (*SemanticMetricDerivedVariant) isSemanticMetricVariant() {}
+func (*SemanticMetricRatioVariant) isSemanticMetricVariant()   {}
 
 func (value SemanticMetric) MarshalJSON() ([]byte, error) {
 	switch variant := value.Value.(type) {
-	case *SemanticMetricAggregateVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SemanticMetric variant is nil")
-		}
-		return json.Marshal(variant)
 	case *SemanticMetricDerivedVariant:
 		if variant == nil {
 			return nil, fmt.Errorf("SemanticMetric variant is nil")
@@ -2858,24 +2847,6 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 		return decoder.Decode(dest)
 	}
 	switch tag.Value {
-	case "aggregate":
-		if _, ok := fields["aggregation"]; !ok {
-			return fmt.Errorf("decode SemanticMetric variant %q: required property aggregation is missing", tag.Value)
-		}
-		if _, ok := fields["dataset"]; !ok {
-			return fmt.Errorf("decode SemanticMetric variant %q: required property dataset is missing", tag.Value)
-		}
-		if _, ok := fields["input"]; !ok {
-			return fmt.Errorf("decode SemanticMetric variant %q: required property input is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode SemanticMetric variant %q: required property type is missing", tag.Value)
-		}
-		var variant SemanticMetricAggregateVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SemanticMetric variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
 	case "derived":
 		if _, ok := fields["expression"]; !ok {
 			return fmt.Errorf("decode SemanticMetric variant %q: required property expression is missing", tag.Value)
@@ -2910,7 +2881,6 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 }
 
 type SemanticMetricVisitor interface {
-	VisitSemanticMetricAggregateVariant(*SemanticMetricAggregateVariant) error
 	VisitSemanticMetricDerivedVariant(*SemanticMetricDerivedVariant) error
 	VisitSemanticMetricRatioVariant(*SemanticMetricRatioVariant) error
 }
@@ -2923,11 +2893,6 @@ func (value *SemanticMetric) Visit(visitor SemanticMetricVisitor) error {
 		return fmt.Errorf("SemanticMetric visitor is required")
 	}
 	switch variant := value.Value.(type) {
-	case *SemanticMetricAggregateVariant:
-		if variant == nil {
-			return fmt.Errorf("SemanticMetric variant is nil")
-		}
-		return visitor.VisitSemanticMetricAggregateVariant(variant)
 	case *SemanticMetricDerivedVariant:
 		if variant == nil {
 			return fmt.Errorf("SemanticMetric variant is nil")
@@ -2950,11 +2915,6 @@ func (value *SemanticMetric) Type() (string, error) {
 		return "", fmt.Errorf("cannot inspect nil SemanticMetric")
 	}
 	switch variant := value.Value.(type) {
-	case *SemanticMetricAggregateVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SemanticMetric variant is nil")
-		}
-		return "aggregate", nil
 	case *SemanticMetricDerivedVariant:
 		if variant == nil {
 			return "", fmt.Errorf("SemanticMetric variant is nil")
@@ -2972,18 +2932,9 @@ func (value *SemanticMetric) Type() (string, error) {
 	}
 }
 
-type SemanticMetricAggregateVariant struct {
-	AggregateSemanticMetric
-	Type string `json:"type" yaml:"type"`
-}
-
 type SemanticMetricDerivedVariant struct {
 	DerivedSemanticMetric
 	Type string `json:"type" yaml:"type"`
-}
-
-type SemanticMetricInput struct {
-	Field string `json:"field" yaml:"field"`
 }
 
 type SemanticMetricRatioVariant struct {
@@ -3025,7 +2976,7 @@ type SemanticModelSpec struct {
 	Relationships *map[string]SemanticRelationship `json:"relationships,omitempty" yaml:"relationships,omitempty"`
 	Dimensions    *map[string]SemanticDimension    `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
 	Filters       *map[string]SemanticFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
-	Metrics       map[string]SemanticMetric        `json:"metrics" yaml:"metrics"`
+	Metrics       *map[string]SemanticMetric       `json:"metrics,omitempty" yaml:"metrics,omitempty"`
 }
 
 type SemanticRelationship struct {
@@ -3145,6 +3096,22 @@ type SemanticTimeSemantics struct {
 	Grains      []string `json:"grains" yaml:"grains"`
 	Calendar    *string  `json:"calendar,omitempty" yaml:"calendar,omitempty"`
 	Timezone    *string  `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+}
+
+type SimpleSemanticMetric struct {
+	Type                 string     `json:"type" yaml:"type"`
+	Agg                  string     `json:"agg" yaml:"agg"`
+	Field                *string    `json:"field,omitempty" yaml:"field,omitempty"`
+	Where                *[]string  `json:"where,omitempty" yaml:"where,omitempty"`
+	Empty                *string    `json:"empty,omitempty" yaml:"empty,omitempty"`
+	TimeDimension        *string    `json:"timeDimension,omitempty" yaml:"timeDimension,omitempty"`
+	Label                *string    `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string    `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Unit                 *string    `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format               *string    `json:"format,omitempty" yaml:"format,omitempty"`
+	Hidden               *bool      `json:"hidden,omitempty" yaml:"hidden,omitempty"`
+	RequiredAccessGrants *[]string  `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
 }
 
 type Source struct {

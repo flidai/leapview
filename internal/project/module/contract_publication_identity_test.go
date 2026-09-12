@@ -43,7 +43,7 @@ func modulePublication(t *testing.T, version string, optional bool) contractpubl
 
 func moduleSemanticPublication(t *testing.T, version, allowedValues string) contractpublication.ContractPublication {
 	t.Helper()
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders"},"spec":{"datasets":{"orders":{"model":"orders","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}]}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowedValues + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}},"metrics":{"orders":{"type":"aggregate","dataset":"orders","aggregation":"count","input":{"field":"orders.id"},"requiredAccessGrants":["region"]}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders"},"spec":{"datasets":{"orders":{"model":"orders","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowedValues + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}}}}`
 	var model projectcontracts.SemanticModel
 	if err := json.Unmarshal([]byte(raw), &model); err != nil {
 		t.Fatal(err)

@@ -14,5 +14,5 @@ spec:
     mode: compatible
     fields:
       movieId: {datatype: Integer, description: MovieLens movie identifier.}
-      imdbId: {datatype: String, description: IMDb identifier without the tt prefix.}
-      tmdbId: {datatype: String, description: TMDb movie identifier.}
+      imdbId: {datatype: Integer, description: Numeric IMDb identifier without the tt prefix.}
+      tmdbId: {datatype: Integer, description: Numeric TMDb movie identifier.}
