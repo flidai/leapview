@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
-import { testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -1021,10 +1021,9 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
       localStorage.setItem('leapview:filters-open', 'closed')
     })
     await page.goto(baseURL)
-    await page.waitForLoadState('networkidle')
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
 
-    const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    const result = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = (element.shadowRoot as ShadowRoot)
       const body = root.querySelector('.body') as HTMLElement
@@ -1052,7 +1051,7 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
         expanded: rail.getAttribute('aria-expanded'),
         panelDisplay: getComputedStyle(panel).display,
       }
-    })
+    }))
 
     expect(result.dockPosition).toBe('sticky')
     expect(result.scrolled).toBe(true)
