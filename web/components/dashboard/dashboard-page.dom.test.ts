@@ -1022,6 +1022,8 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
     })
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    await page.waitForFunction(() => document.querySelector('lv-dashboard-page')?.shadowRoot
+      ?.querySelector('.main')?.getAttribute('data-report-layout') === 'mobile')
 
     const result = await evaluateAcrossContextTurnover(page, () => page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
@@ -1037,9 +1039,6 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
       await new Promise(requestAnimationFrame)
       const after = rail.getBoundingClientRect()
       const scrolled = body.scrollTop > 0
-      rail.click()
-      await dock.updateComplete
-      const panel = (dock.shadowRoot as ShadowRoot).querySelector('.panel') as HTMLElement
       return {
         dockPosition,
         bodyTop: Math.round(bodyRect.top),
@@ -1048,8 +1047,6 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
         afterTop: Math.round(after.top),
         afterBottom: Math.round(after.bottom),
         scrolled,
-        expanded: rail.getAttribute('aria-expanded'),
-        panelDisplay: getComputedStyle(panel).display,
       }
     }))
 
@@ -1058,8 +1055,15 @@ test('the closed filter control follows scrolling in Mobile layout', async () =>
     expect(result.afterTop).toBe(result.beforeTop)
     expect(result.afterTop).toBeGreaterThanOrEqual(result.bodyTop)
     expect(result.afterBottom).toBeLessThanOrEqual(result.bodyBottom)
-    expect(result.expanded).toBe('true')
-    expect(result.panelDisplay).toBe('grid')
+
+    await page.locator('lv-dashboard-page lv-filter-dock button.rail').click()
+    await page.waitForFunction(() => {
+      const dock = document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-filter-dock')
+      const rail = dock?.shadowRoot?.querySelector('button.rail')
+      const panel = dock?.shadowRoot?.querySelector('.panel')
+      return rail?.getAttribute('aria-expanded') === 'true'
+        && panel instanceof HTMLElement && getComputedStyle(panel).display === 'grid'
+    })
   } finally {
     await page.close()
   }
