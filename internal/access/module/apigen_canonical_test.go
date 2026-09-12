@@ -311,7 +311,7 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 	identity, snapshot := apigenSnapshot(t, principal.ID, "", resourceID, projectgraph.KindDashboard, true, false)
 	module, err := newSurface(surfaceConfig{
 		Repository: func() (access.Repository, error) { return repository, nil },
-		Auth:       NewAuth(repository, AuthConfig{}),
+		Auth:       mustNewAuth(t, repository, AuthConfig{}),
 		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
 			subject, subjectErr := access.NewSubjectRef(access.SubjectKindPrincipal, principal.ID)
 			if subjectErr != nil {
@@ -545,6 +545,36 @@ func TestAPIGenReplayReevaluatesCurrentPolicyAndRejectsMethodOrPathMismatch(t *t
 	}
 }
 
+func TestAPIGenReplayUsesMostSpecificGeneratedPathPolicy(t *testing.T) {
+	module := browserGuardModule(browserGuardRepository{admin: false}, Principal{ID: "principal", Kind: access.PrincipalKindUser}, true)
+	operations := map[string]APIGenOperationContract{
+		"genericResourcePath": {
+			OperationID: "genericResourcePath", Method: http.MethodGet,
+			Path: "/api/v1/resources/{resource}/special", Protected: true, AuthzMode: "authenticated",
+			Extensions: map[string]any{apiGenObjectScopeExtension: "principal"},
+		},
+		"platformResourcePath": {
+			OperationID: "platformResourcePath", Method: http.MethodGet,
+			Path: "/api/v1/resources/special/special", Protected: true, AuthzMode: "privilege",
+			Command: &APIGenCommandContract{
+				AuthzMode: "privilege", Privilege: "RESOURCE_READ",
+				Target: &APIGenCommandTarget{Parameter: "principal", Type: "principal"},
+			},
+			Extensions: map[string]any{apiGenObjectScopeExtension: "platform"},
+		},
+	}
+	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: "project_demo"}, operations, APIGenResourceResolvers{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/resources/special/special", nil)
+	for attempt := 0; attempt < 100; attempt++ {
+		if authorizer.AuthorizeReplay(request) {
+			t.Fatalf("replay attempt %d selected the less-specific authenticated policy", attempt)
+		}
+	}
+}
+
 func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T) {
 	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
 	if err != nil {
@@ -740,7 +770,7 @@ func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
 func TestAPIGenDeliveryActivePathValidatesTargetForConfiguredDevelopmentBypass(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
 	module := browserGuardModule(nil, LocalDeveloperPrincipal(), true)
-	module.auth = NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "dev"})
+	module.auth = mustNewAuth(t, nil, AuthConfig{DevBypass: true, DevAPIToken: "dev"})
 	contract := APIGenOperationContract{
 		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
 		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",

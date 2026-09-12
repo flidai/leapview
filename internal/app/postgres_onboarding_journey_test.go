@@ -177,8 +177,8 @@ func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisher
 	requestHTTP.Host = "localhost"
 	response := httptest.NewRecorder()
 	target.Handler().ServeHTTP(response, requestHTTP)
-	if response.Code != http.StatusOK {
-		t.Fatalf("onboarded production readiness = %d; body=%s", response.Code, response.Body.String())
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"runtime":"no_active_deployments"`) {
+		t.Fatalf("onboarded production readiness = %d, want %d with no_active_deployments; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
 	}
 
 	instanceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil)
@@ -357,7 +357,8 @@ func postgresOnboardingConfig(t *testing.T, h *postgrestest.Harness, control, ca
 		DuckLakeRetentionInterval: time.Hour, DuckLakeRetentionFileGracePeriod: 24 * time.Hour,
 		QueryResultMaxRows: 10_000, QueryResultMaxBytes: 32 << 20,
 		QueryCacheRuntimeMaxEntries: 16, QueryCacheRuntimeMaxBytes: 4 << 20, QueryCacheNodeMaxEntries: 64, QueryCacheNodeMaxBytes: 16 << 20,
-		CSRFKey: strings.Repeat("c", 32), TokenHashKey: strings.Repeat("t", 32), MetricsBearerToken: strings.Repeat("m", 32),
+		JobExecutionTimeout: 24 * time.Hour,
+		CSRFKey:             strings.Repeat("c", 32), TokenHashKey: strings.Repeat("t", 32), MetricsBearerToken: strings.Repeat("m", 32),
 		APITokenOnlyAuth: true, PublicURL: "https://localhost", AllowedHosts: "localhost",
 	}
 }

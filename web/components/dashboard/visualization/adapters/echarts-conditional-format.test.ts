@@ -17,7 +17,7 @@ test('ECharts keeps point conditional cues visible for null, first-match, and de
         { id: 'score', role: 'metric', dataType: 'decimal', nullable: true, label: 'Score' },
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Health points', description: 'Health points' }, interactions: [],
-      x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
+      identity: [{ dataset: 'primary', field: 'label' }], x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' }, color: { dataset: 'primary', field: 'score' },
       label: { dataset: 'primary', field: 'label' }, tooltip: [{ dataset: 'primary', field: 'score' }], colorScale: { kind: 'quantitative' },
       presentation: { legend: 'bottom', labelPolicy: { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, overplot: 'opacity', opacity: 0.55, largeMode: 'automatic', largeThreshold: 1000, brush: [] },
       conditionalFormatting: [{
@@ -33,7 +33,7 @@ test('ECharts keeps point conditional cues visible for null, first-match, and de
       }],
     },
     dataState: { kind: 'inline', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-points', dataRevision: 1, generation: 1, columns: ['label', 'x', 'y', 'score'], rows: [['Missing', 1, 1, null], ['High', 2, 2, 90], ['Low', 3, 3, -1]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, attention: '#d29922', danger: '#ff7b72', success: '#56d364', muted: '#8b949e' } }
   const series = (echartsOption(envelope, dark) as any).series[0]
@@ -46,7 +46,7 @@ test('ECharts keeps point conditional cues visible for null, first-match, and de
   expect(series.itemStyle.color({ value: ['Low', 3, 3, -1] })).toBe(dark.colors.danger)
 })
 
-test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
+test('ECharts applies conditional colors without adding text glyphs or bypassing label layout', () => {
   const envelope = cartesianFixture('column') as any
   envelope.spec.presentation.labelPolicy.density = 'automatic'
   envelope.spec.presentation.labelPolicy.priority = ['anomaly', 'threshold']
@@ -73,12 +73,13 @@ test('ECharts applies governed row formatting with theme colors and redundant cu
   expect(option.series[0].itemStyle.color({ value: ['A', 25] })).toBe('rgb(162 57 48)')
   expect(option.series[0].itemStyle.color({ value: ['B', 75] })).toBe('rgb(71 104 53)')
   expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
-  expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('↓ 25')
-  expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('↑ 75')
+  expect(option.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: false })
+  expect(option.series[0].labelLayout({ dataIndex: 1 })).toEqual({ hideOverlap: true })
+  expect(option.series[0].label.formatter({ value: ['A', 25] })).toBe('25')
+  expect(option.series[0].label.formatter({ value: ['B', 75] })).toBe('75')
 })
 
-test('ECharts gives explicit icon targets precedence when Cartesian formats share a field', () => {
+test('ECharts keeps values free of text glyphs when Cartesian formats share a field', () => {
   const envelope = cartesianFixture('column') as any
   envelope.spec.presentation.labelPolicy.density = 'always'
   envelope.spec.conditionalFormatting = [
@@ -92,10 +93,10 @@ test('ECharts gives explicit icon targets precedence when Cartesian formats shar
     },
   ]
   const option = echartsOption(envelope, defaultRendererContext) as any
-  expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('↑ 1')
+  expect(option.series[0].label.formatter({ value: ['A', 1] })).toBe('1')
 })
 
-test('ECharts keeps Cartesian conditional icons visible when labels are hidden', () => {
+test('ECharts respects hidden Cartesian labels even with conditional icon metadata', () => {
   const envelope = cartesianFixture('column') as any
   envelope.spec.presentation.labelPolicy.density = 'hidden'
   envelope.spec.conditionalFormatting = [{
@@ -107,8 +108,8 @@ test('ECharts keeps Cartesian conditional icons visible when labels are hidden',
   }]
 
   const series = (echartsOption(envelope, defaultRendererContext) as any).series[0]
-  expect(series).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(series.label.formatter({ value: ['A', 1] })).toBe('↑ 1')
+  expect(series).toMatchObject({ label: { show: false }, labelLayout: { hideOverlap: true } })
+  expect(series.label.formatter({ value: ['A', 1] })).toBe('1')
 })
 
 test('ECharts keeps heatmap visualMap colors with icon-only conditional cues', () => {
@@ -122,9 +123,9 @@ test('ECharts keeps heatmap visualMap colors with icon-only conditional cues', (
     const option = echartsOption(envelope, defaultRendererContext) as any
     expect(option.visualMap).toMatchObject({ type: 'continuous', dimension: 'value', inRange: { color: [expect.any(String), expect.any(String)] }, outOfRange: { opacity: 1 } })
     expect(option.series[0].itemStyle.color({ value: ['A', 'R1', 1] })).toBeTypeOf('string')
-    expect(option.series[0].label.show).toBe(true)
-    expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: false })
-    expect(option.series[0].label.formatter({ value: ['A', 'R1', 1] })).toBe('↑ 1')
+    expect(option.series[0].label.show).toBe(false)
+    expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: true })
+    expect(option.series[0].label.formatter({ value: ['A', 'R1', 1] })).toBe('1')
   }
 })
 
@@ -183,7 +184,7 @@ test('ECharts translates governed heatmap gradients and waterfall rule styles', 
   waterfall.dataState.datasets[0].rows = [['Returns', 10, -4]]
   const waterfallOption = echartsOption(waterfall, defaultRendererContext) as any
   expect(waterfallOption.series[1].itemStyle.color({ value: ['Returns', 10, -4] })).toBe(defaultRendererContext.colors.danger)
-  expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('↓ -4')
+  expect(waterfallOption.series[1].label.formatter({ value: ['Returns', 10, -4] })).toBe('-4')
 })
 
 test('ECharts composes conditional heatmap colors per outcome and keeps null cells visible', () => {
@@ -199,9 +200,9 @@ test('ECharts composes conditional heatmap colors per outcome and keeps null cel
   expect(color({ value: ['B', 'R1', 50] })).toBeTypeOf('string'); expect(color({ value: ['B', 'R1', 50] })).not.toBe(defaultRendererContext.colors.danger)
   expect(color({ value: ['C', 'R1', null] })).toBe(defaultRendererContext.colors.muted); expect(color({ value: ['D', 'R1', 'bad'] })).toBe(defaultRendererContext.colors.muted)
   expect(option.visualMap).toBeUndefined()
-  expect(option.series[0].label.show).toBe(true)
-  expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: false })
-  expect(option.series[0].label.formatter({ value: ['C', 'R1', null] })).toBe('⚠ —')
+  expect(option.series[0].label.show).toBe(false)
+  expect(option.series[0].labelLayout({ dataIndex: 0, rect: { width: 40, height: 24 } })).toMatchObject({ hideOverlap: true })
+  expect(option.series[0].label.formatter({ value: ['C', 'R1', null] })).toBe('—')
 })
 
 test('ECharts uses series color when mark fill only supplies an icon for a row', () => {
@@ -273,7 +274,7 @@ test('ECharts keeps direct-IR waterfall metric before the start offset', () => {
   expect(option.series[1].itemStyle.color({ value: ['Returns', -4, 10] })).toBe(defaultRendererContext.colors.danger)
 })
 
-test('ECharts keeps proportional conditional icon cues visible for null, first-match, and default outcomes', () => {
+test('ECharts keeps proportional conditional colors while labels ignore icon cues', () => {
   const envelope = proportionalFixture('donut') as any
   envelope.spec.presentation.legend = 'bottom'
   envelope.spec.conditionalFormatting = [{
@@ -289,7 +290,7 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
     },
   }]
   envelope.dataState.datasets[0].rows = [['Missing', null], ['High', 90], ['Low', -1]]
-  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  envelope.spec.presentation.labelPolicy.priority = []
 
   const contexts = [
     defaultRendererContext,
@@ -299,16 +300,16 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
     const option = echartsOption(envelope, context) as any
     const formatter = option.series[0].label.formatter
     expect(option.series[0]).toMatchObject({
-      label: { show: true, overflow: 'break', position: 'outside', alignTo: 'edge', edgeDistance: 8 },
-      minShowLabelAngle: 0,
-      labelLayout: { hideOverlap: false },
+      label: { show: true, overflow: 'truncate', position: 'outside', alignTo: 'edge', edgeDistance: 8 },
+      minShowLabelAngle: 3,
       labelLine: { show: true, length: 10, length2: 8 },
       radius: ['54%', '76%'],
     })
+    expect(option.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
     expect(option.graphic?.find((graphic: any) => graphic.id === 'graphic:proportional:center')).toMatchObject({ top: 'middle' })
-    expect(formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
-    expect(formatter({ value: ['High', 90] })).toBe('● High: 90')
-    expect(formatter({ value: ['Low', -1] })).toBe('↓ Low: -1')
+    expect(formatter({ value: ['Missing', null] })).toBe('Missing: —')
+    expect(formatter({ value: ['High', 90] })).toBe('High: 90')
+    expect(formatter({ value: ['Low', -1] })).toBe('Low: -1')
   }
 
   const titled = structuredClone(envelope)
@@ -321,14 +322,15 @@ test('ECharts keeps proportional conditional icon cues visible for null, first-m
   const insideOption = echartsOption(insideEnvelope, defaultRendererContext) as any
   expect(insideOption.series[0]).toMatchObject({
     label: { show: true, overflow: 'truncate', position: 'inside' },
-    labelLayout: { hideOverlap: false },
     labelLine: { show: false, length2: 8 },
   })
+  expect(insideOption.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
 
   envelope.spec.mark = 'funnel'
   const funnel = echartsOption(envelope, defaultRendererContext) as any
-  expect(funnel.series[0]).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('⚠ Missing: —')
+  expect(funnel.series[0]).toMatchObject({ label: { show: true } })
+  expect(funnel.series[0].labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
+  expect(funnel.series[0].label.formatter({ value: ['Missing', null] })).toBe('Missing: —')
 })
 
 test('ECharts preserves typed category colors for proportional icon-only outcomes', () => {

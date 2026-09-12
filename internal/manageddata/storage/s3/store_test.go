@@ -57,6 +57,25 @@ func TestStoreUsesContentAddressedKeyAndStableURI(t *testing.T) {
 	}
 }
 
+func TestOpenUsesHeadAndOneBodyStreamWithoutFullHashVerification(t *testing.T) {
+	client := newFakeClient()
+	store := newStore(t, client, &fakePresigner{})
+	body := []byte("open metadata")
+	expected := blobFor(body)
+	client.objects["managed/blobs/sha256/"+expected.SHA256[:2]+"/"+expected.SHA256] = fakeObject{body: body, metadata: map[string]string{"sha256": expected.SHA256}, modified: time.Now().UTC(), version: "v1"}
+	client.headVersions, client.getVersions = nil, nil
+	reader, err := store.Open(t.Context(), expected.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.headVersions) != 1 || len(client.getVersions) != 1 {
+		t.Fatalf("Open provider calls = head=%d get=%d, want one each", len(client.headVersions), len(client.getVersions))
+	}
+}
+
 func TestStoreCapturesAuthoritativePutResponseVersion(t *testing.T) {
 	client := newFakeClient()
 	capturedAt := time.Date(2026, 9, 10, 9, 30, 0, 0, time.UTC)

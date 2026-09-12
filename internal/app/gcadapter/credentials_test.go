@@ -3,6 +3,7 @@ package gcadapter
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 
@@ -42,6 +43,30 @@ func TestNewPoolStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) {
 	contract := &ducklake.PoolContract{Pool: physicalpool.PhysicalPool{Identity: physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix", StorageNamespace: "delivery"}}, Tuple: physicalpool.Compatibility{StorageImplementation: "s3"}}
 	if _, err := NewPoolStore(context.Background(), contract, S3Config{}); err == nil || !strings.Contains(err.Error(), "target-owned S3 access") {
 		t.Fatalf("missing S3 credentials error = %v", err)
+	}
+}
+
+func TestNewPoolStoreS3ResolvesAdmittedEncryptionKey(t *testing.T) {
+	contract := &ducklake.PoolContract{Pool: physicalpool.PhysicalPool{Identity: physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix", StorageNamespace: "delivery", EncryptionKeyRef: "opaque-epoch-1"}}, Tuple: physicalpool.Compatibility{StorageImplementation: "s3"}}
+	var resolved string
+	_, err := NewPoolStore(context.Background(), contract, S3Config{AccessKeyID: "key", SecretAccessKey: "secret", Endpoint: "http://minio:9000", ResolveEncryptionKey: func(_ context.Context, reference string) (string, error) {
+		resolved = reference
+		return "arn:aws:kms:us-east-1:123:key/real", nil
+	}})
+	if err != nil {
+		t.Fatalf("encrypted pool store = %v", err)
+	}
+	if resolved != "opaque-epoch-1" {
+		t.Fatalf("resolver reference = %q", resolved)
+	}
+}
+
+func TestNewPoolStoreS3EncryptionResolverFailsClosed(t *testing.T) {
+	contract := &ducklake.PoolContract{Pool: physicalpool.PhysicalPool{Identity: physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix", StorageNamespace: "delivery", EncryptionKeyRef: "opaque-epoch-1"}}, Tuple: physicalpool.Compatibility{StorageImplementation: "s3"}}
+	if _, err := NewPoolStore(context.Background(), contract, S3Config{AccessKeyID: "key", SecretAccessKey: "secret", ResolveEncryptionKey: func(context.Context, string) (string, error) {
+		return "", errors.New("resolver unavailable")
+	}}); err == nil || !strings.Contains(err.Error(), "resolve target-owned S3 encryption key") {
+		t.Fatalf("resolver error = %v", err)
 	}
 }
 

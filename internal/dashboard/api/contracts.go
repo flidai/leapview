@@ -10,12 +10,6 @@ type PageInfo struct {
 
 type PublicationStatus string
 
-const (
-	PublicationStatusActive       PublicationStatus = "active"
-	PublicationStatusSuspended    PublicationStatus = "suspended"
-	PublicationStatusUnconfigured PublicationStatus = "unconfigured"
-)
-
 type PublicationResponse struct {
 	ActiveServingStateID *string           `json:"activeServingStateId,omitempty"`
 	AllowedOrigins       []string          `json:"allowedOrigins"`
@@ -125,11 +119,6 @@ type DashboardComponentResponse struct {
 	FilterID    string                       `json:"filterId,omitempty"`
 }
 
-type DashboardComponentListResponse struct {
-	Items []DashboardComponentResponse `json:"items"`
-	Page  PageInfo                     `json:"page"`
-}
-
 type DashboardPageResponse struct {
 	ID          string                       `json:"id"`
 	Title       string                       `json:"title"`
@@ -155,9 +144,10 @@ type DashboardFilterStaticOption struct {
 }
 
 type DashboardFilterOptionSource struct {
-	Kind   string                        `json:"kind"`
-	Limit  int32                         `json:"limit"`
-	Values []DashboardFilterStaticOption `json:"values"`
+	Kind    string                        `json:"kind"`
+	Dataset string                        `json:"dataset,omitempty"`
+	Limit   int32                         `json:"limit"`
+	Values  []DashboardFilterStaticOption `json:"values"`
 }
 
 type DashboardCompiledFilterDefinition struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
 
@@ -27,6 +28,9 @@ type fakeS3 struct {
 	markerMetadata  map[string]string
 	leaseMetadata   map[string]string
 	leaseETag       string
+	leaseHeadErrors []error
+	putEncryption   types.ServerSideEncryption
+	putKMSKey       string
 }
 
 func (f *fakeS3) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ ...func(*awss3.Options)) (*awss3.HeadObjectOutput, error) {
@@ -35,8 +39,15 @@ func (f *fakeS3) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ .
 	}
 	metadata := map[string]string{}
 	if input.Key != nil && strings.HasSuffix(*input.Key, s3DeletionLeaseKey) {
+		if len(f.leaseHeadErrors) > 0 {
+			err := f.leaseHeadErrors[0]
+			f.leaseHeadErrors = f.leaseHeadErrors[1:]
+			if err != nil {
+				return nil, err
+			}
+		}
 		if f.leaseMetadata == nil {
-			return nil, errors.New("not found")
+			return nil, &smithy.GenericAPIError{Code: "NotFound", Message: "lease marker does not exist"}
 		}
 		for k, v := range f.leaseMetadata {
 			metadata[k] = v
@@ -60,6 +71,8 @@ func (f *fakeS3) HeadObject(_ context.Context, input *awss3.HeadObjectInput, _ .
 }
 
 func (f *fakeS3) PutObject(_ context.Context, input *awss3.PutObjectInput, _ ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {
+	f.putEncryption = input.ServerSideEncryption
+	f.putKMSKey = aws.ToString(input.SSEKMSKeyId)
 	if input.Key != nil && strings.HasSuffix(*input.Key, s3DeletionLeaseKey) {
 		if input.IfNoneMatch != nil && f.leaseMetadata != nil {
 			return nil, errors.New("precondition failed")
@@ -82,6 +95,21 @@ func (f *fakeS3) PutObject(_ context.Context, input *awss3.PutObjectInput, _ ...
 		f.markerMetadata[k] = v
 	}
 	return &awss3.PutObjectOutput{}, nil
+}
+
+func TestS3NamespaceMarkersUseResolvedKMSKey(t *testing.T) {
+	f := &fakeS3{}
+	store, err := NewS3WithEncryption(f, "bucket", "pool", "arn:aws:kms:us-east-1:123:key/real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim := physicalpool.OwnershipClaim{PoolID: physicalpool.PoolID("sha256:" + strings.Repeat("a", 64)), CompatibilityDigest: "sha256:" + strings.Repeat("b", 64), EvidenceDigest: "sha256:" + strings.Repeat("c", 64), OwnerID: "instance-a"}
+	if err := store.AcquireNamespaceOwnership(context.Background(), claim); err != nil {
+		t.Fatal(err)
+	}
+	if f.putEncryption != types.ServerSideEncryptionAwsKms || f.putKMSKey != "arn:aws:kms:us-east-1:123:key/real" {
+		t.Fatalf("marker encryption = %q/%q, want SSE-KMS resolved key", f.putEncryption, f.putKMSKey)
+	}
 }
 
 func TestS3NamespaceOwnershipUsesConditionalMarker(t *testing.T) {
@@ -131,6 +159,42 @@ func TestS3DeletionLeaseFencesClonedMetadataDatabases(t *testing.T) {
 	}
 	if _, err := store.AcquireNamespaceDeletionLease(context.Background(), "lvinst_b", time.Minute); err != nil {
 		t.Fatalf("lease after release: %v", err)
+	}
+}
+
+func TestS3DeletionLeaseReleasePropagatesVerifyAndHeadFailures(t *testing.T) {
+	validExpiry := time.Now().UTC().Add(time.Minute).Format(time.RFC3339Nano)
+	newFake := func() *fakeS3 {
+		return &fakeS3{leaseMetadata: map[string]string{
+			"leapview-lease-owner": "owner-a", "leapview-lease-token": "token-a", "leapview-lease-expires": validExpiry,
+		}, leaseETag: "lease-v1"}
+	}
+	for _, test := range []struct {
+		name   string
+		errors []error
+	}{
+		{name: "verify", errors: []error{errors.New("provider unavailable")}},
+		{name: "release head", errors: []error{nil, errors.New("provider unavailable")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFake()
+			f.leaseHeadErrors = test.errors
+			store, err := NewS3(f, "bucket", "pool")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.ReleaseNamespaceDeletionLease(context.Background(), "owner-a", "token-a"); !errors.Is(err, physicalpool.ErrDeletionLeaseConflict) {
+				t.Fatalf("release error = %v, want deletion lease conflict", err)
+			}
+		})
+	}
+	missing := &fakeS3{}
+	store, err := NewS3(missing, "bucket", "pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReleaseNamespaceDeletionLease(context.Background(), "owner-a", "token-a"); err != nil {
+		t.Fatalf("missing lease release = %v, want nil", err)
 	}
 }
 

@@ -146,7 +146,7 @@ func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 				if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE agent_conversations SET transcript_json = ? WHERE id = ?`, tc.transcript, conv.ID); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, tc.transcript); err != nil {
+			} else if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, tc.transcript, conv.TranscriptRevision); err != nil {
 				t.Fatal(err)
 			}
 			if tc.promptErr {
@@ -188,7 +188,7 @@ func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 func TestJobHandlerCancellationLeavesClaimRecoverable(t *testing.T) {
 	f := newModuleJobFixture(t)
 	conv, run := f.run(t, "run_reclaim", agent.RunStatusRunning)
-	if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, `[{"role":"user","content":"retry"}]`); err != nil {
+	if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, `[{"role":"user","content":"retry"}]`, conv.TranscriptRevision); err != nil {
 		t.Fatal(err)
 	}
 	job := f.claim(t, conv, run)

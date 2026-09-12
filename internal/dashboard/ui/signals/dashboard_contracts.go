@@ -9,9 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 )
 
 func optionalValue[T comparable](value T) *T {
@@ -153,7 +151,7 @@ func DashboardFilterContractFromDefinition(definition dashboarddefinition.Defini
 		definitions[id] = DashboardCompiledFilterDefinition{
 			ID: id, Label: item.Label, Description: optionalValue(item.Description), Field: item.Field,
 			Dataset: optionalValue(item.Dataset), ValueKind: string(item.ValueKind), Predicates: predicates,
-			Options:       DashboardFilterOptionSource{Kind: optionKind, Limit: int32(item.Options.Limit), IncludeNull: item.Options.IncludeNull, Values: staticOptions},
+			Options:       DashboardFilterOptionSource{Kind: optionKind, Dataset: optionalValue(item.Options.Dataset), Limit: int32(item.Options.Limit), IncludeNull: item.Options.IncludeNull, Values: staticOptions},
 			FormatPattern: optionalValue(item.Formatting.Pattern), FormatUnit: optionalValue(item.Formatting.Unit),
 			Timezone: item.Time.Timezone, Calendar: item.Time.Calendar, WeekStart: item.Time.WeekStart,
 		}
@@ -206,14 +204,6 @@ func DashboardVisualWindowRequestFromDashboard(value dashboard.TableRequest) vis
 		Start: int64(value.Start), Limit: int64(value.Count), BlockID: value.Block,
 		Sort: []visualizationir.VisualizationSort{{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: value.Sort.Key}, Direction: direction}},
 	}
-}
-
-func DashboardTabularVisualFromDefinitionAtRevision(definition visualizationdefinition.Definition, value dashboard.Table, dataRevision, generation int64) visualizationir.VisualizationEnvelope {
-	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definition, value, dataRevision, generation)
-	if err != nil {
-		panic(fmt.Sprintf("compiled tabular visualization %q reached the signal boundary with invalid data: %v", definition.ID, err))
-	}
-	return envelope
 }
 
 func DashboardVisualizationSignalFromIR(value visualizationir.VisualizationEnvelope) DashboardVisualizationSignal {

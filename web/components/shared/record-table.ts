@@ -1,6 +1,8 @@
 import { LitElement, html, svg, nothing, type TemplateResult } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowUpDown,
   Braces,
   CheckCircle2,
@@ -275,7 +277,7 @@ class RecordTable extends LitElement {
           </tbody>
         </table>
       </div>
-      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
+      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
     `
   }
 
@@ -749,8 +751,8 @@ class RecordTable extends LitElement {
   }
 
   private sortIndicator(direction: false | 'asc' | 'desc'): TemplateResult {
-    if (direction === 'asc') return html`<span>↑</span>`
-    if (direction === 'desc') return html`<span>↓</span>`
+    if (direction === 'asc') return lucideIcon(ArrowUp, { size: 12, strokeWidth: 2 })
+    if (direction === 'desc') return lucideIcon(ArrowDown, { size: 12, strokeWidth: 2 })
     return lucideIcon(ArrowUpDown, { size: 12, strokeWidth: 2 })
   }
 }

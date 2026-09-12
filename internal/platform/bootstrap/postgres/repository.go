@@ -134,11 +134,6 @@ func (r *Repository) UpsertSetting(ctx context.Context, key, value string) error
 	return bootstrapdb.New(r.db).UpsertSetting(ctx, bootstrapdb.UpsertSettingParams{Key: key, Value: value})
 }
 
-// SetSetting is an alias retained for callers using setter vocabulary.
-func (r *Repository) SetSetting(ctx context.Context, key, value string) error {
-	return r.UpsertSetting(ctx, key, value)
-}
-
 // InsertSettingIfMissing installs a setting only when absent and reports
 // whether this call won the insert race.
 func (r *Repository) InsertSettingIfMissing(ctx context.Context, key, value string) (bool, error) {
@@ -171,22 +166,6 @@ func (r *Repository) EnsureInstanceID(ctx context.Context, id string) error {
 		return ErrInvalid
 	}
 	return ensureInstanceID(ctx, r.db, id)
-}
-
-// InstanceIDTx is the caller-owned transaction form of InstanceID. The
-// generated identity is persisted in tx and becomes visible only on commit.
-func (r *Repository) InstanceIDTx(ctx context.Context, tx Tx) (string, error) {
-	if tx == nil {
-		return "", ErrInvalid
-	}
-	return instanceID(ctx, tx)
-}
-
-func (r *Repository) EnsureInstanceIDTx(ctx context.Context, tx Tx, id string) error {
-	if tx == nil {
-		return ErrInvalid
-	}
-	return ensureInstanceID(ctx, tx, id)
 }
 
 // InstanceEnvironment reads the permanent environment binding.

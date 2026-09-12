@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -23,6 +24,8 @@ type admittedMetrics struct {
 	Metrics
 	admitter workload.Admitter
 }
+
+var _ queryruntime.SpatialTileStreamExpirer = admittedMetrics{}
 
 func WithAdmission(metrics Metrics, admitter workload.Admitter) Metrics {
 	if metrics == nil || admitter == nil {
@@ -171,7 +174,7 @@ func (m admittedMetrics) QueryVisualizationTile(ctx context.Context, dashboardID
 }
 
 func (m admittedMetrics) ExpireVisualizationTileStream(streamID string) {
-	if expirer, ok := m.Metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+	if expirer, ok := m.Metrics.(queryruntime.SpatialTileStreamExpirer); ok {
 		expirer.ExpireVisualizationTileStream(streamID)
 	}
 }

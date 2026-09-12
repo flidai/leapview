@@ -96,12 +96,6 @@ func NewNativeCandidateSourceSynchronizer(config NativeCandidateSourceConfig) (*
 	}, nil
 }
 
-// NewNativeCandidateSourceSynchronizerWithPorts is a convenience for callers
-// that already have the four narrow ports and do not need a config struct.
-func NewNativeCandidateSourceSynchronizerWithPorts(begin BeginFunc, sources NativeSourceRepository, objects objectstore.ImmutableStore, compiler CompilerPort, storageSecurityDomain string) (*NativeCandidateSourceSynchronizer, error) {
-	return NewNativeCandidateSourceSynchronizer(NativeCandidateSourceConfig{Begin: begin, Sources: sources, Objects: objects, Compiler: compiler, StorageSecurityDomain: storageSecurityDomain})
-}
-
 func (s *NativeCandidateSourceSynchronizer) Plan(ctx context.Context, scope project.CandidateSourceScope, request project.CandidateSynchronizationRequest) (project.CandidateSynchronizationPlan, error) {
 	if s == nil || s.begin == nil || s.sources == nil || s.objects == nil {
 		return project.CandidateSynchronizationPlan{}, project.ErrCandidateSourceUnavailable

@@ -8,13 +8,13 @@ type PredicatePolicy struct {
 type OptionSourceKind string
 
 const (
-	OptionSourceNone     OptionSourceKind = ""
 	OptionSourceStatic   OptionSourceKind = "static"
 	OptionSourceDistinct OptionSourceKind = "distinct"
 )
 
 type OptionSource struct {
 	Kind        OptionSourceKind `json:"kind,omitempty" yaml:"-"`
+	Dataset     string           `json:"dataset,omitempty" yaml:"-"`
 	Limit       int              `json:"limit,omitempty" yaml:"-"`
 	IncludeNull bool             `json:"includeNull,omitempty" yaml:"-"`
 	Values      []Option         `json:"values,omitempty" yaml:"-"`
@@ -40,6 +40,16 @@ type Definition struct {
 	Predicates  []PredicatePolicy `json:"predicates" yaml:"-"`
 	Options     OptionSource      `json:"options,omitempty" yaml:"-"`
 	Formatting  Formatting        `json:"formatting,omitempty" yaml:"-"`
+}
+
+// OptionDataset returns the dataset used to enumerate dynamic options. The
+// definition-level fallback keeps previously compiled definitions readable;
+// new compilers keep predicate scope and option lookup scope separate.
+func (definition Definition) OptionDataset() string {
+	if definition.Options.Dataset != "" {
+		return definition.Options.Dataset
+	}
+	return definition.Dataset
 }
 
 type SelectionMode string

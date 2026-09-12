@@ -11,6 +11,7 @@ import (
 var ErrNotFound = apigenfailure.New("not_found", "agent record not found")
 var ErrConversationArchived = apigenfailure.New("not_found", "agent conversation is archived")
 var ErrRequestConflict = apigenfailure.New("conflict", "agent request id conflicts with existing run")
+var ErrTranscriptConflict = apigenfailure.New("conflict", "agent conversation transcript is stale")
 
 const (
 	ConversationDefaultTitle   = "New conversation"
@@ -49,9 +50,13 @@ type Conversation struct {
 	Status         string
 	MetadataJSON   string
 	TranscriptJSON string
-	CreatedAt      string
-	UpdatedAt      string
-	ArchivedAt     string
+	// TranscriptRevision increments on every successful transcript CAS write.
+	// It is persisted separately from the transport ETag so prompt workers can
+	// fence transcript state without relying on presentation fields.
+	TranscriptRevision int64
+	CreatedAt          string
+	UpdatedAt          string
+	ArchivedAt         string
 }
 
 type Page struct {
@@ -152,7 +157,7 @@ type RunTerminalWorkflow interface {
 // RunCompletionWorkflow atomically persists newly produced messages and
 // transcript state with a fenced terminal transition and keyed event.
 type RunCompletionWorkflow interface {
-	CompleteRunWorkflow(context.Context, RunFinish, []MessageInput, string, jobs.WorkflowIntent) ([]Message, bool, error)
+	CompleteRunWorkflow(context.Context, RunFinish, []MessageInput, string, int64, jobs.WorkflowIntent) ([]Message, bool, error)
 }
 
 type RunCancellationWorkflow interface {
@@ -199,7 +204,9 @@ type Repository interface {
 	UpdateConversationAtomic(ctx context.Context, input ConversationUpdate, check func(Conversation) error) (Conversation, error)
 	ArchiveConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
 	UpdateDefaultConversationTitle(ctx context.Context, principalID, conversationID, title string) (Conversation, error)
-	UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string) (Conversation, error)
+	// UpdateConversationTranscript applies one compare-and-swap transcript
+	// mutation and returns the incremented persisted revision.
+	UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string, expectedRevision int64) (Conversation, error)
 	AppendMessage(ctx context.Context, input MessageInput) (Message, error)
 	ListMessages(ctx context.Context, principalID, conversationID string) ([]Message, error)
 	ListMessagesPage(ctx context.Context, principalID, conversationID string, page Page) ([]Message, error)

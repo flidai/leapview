@@ -6,7 +6,6 @@ import { Change, defaultRendererContext } from '../host-controller'
 import { captureEChartsViewState, echartsNavigationDefaults, echartsOption, EChartsHandle, preservesEChartsViewState, responsiveEChartsPatch } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { proportionalFixture } from './echarts-test-fixtures'
-import { responsiveEChartsPatchNeedsResize } from './echarts/view-state'
 
 function cartesian(dataZoom = true): VisualizationEnvelope {
   return {
@@ -20,7 +19,7 @@ function cartesian(dataZoom = true): VisualizationEnvelope {
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' },
       accessibility: { title: 'Sales', description: 'Sales over time' }, interactions: [],
       x: { dataset: 'primary', field: 'label' }, y: [{ dataset: 'primary', field: 'value' }],
-      presentation: { labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, dataZoom },
+      presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: [], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom, area: false, step: false },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:echarts-resilience', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:echarts-resilience', dataRevision: 1, generation: 1, columns: ['label', 'value'], rows: [[null, null]], completeness: 'complete' }] },
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
@@ -44,73 +43,21 @@ test('ECharts responsive patch is deterministic and preserves stable option iden
   expect(responsiveEChartsPatch(option, 0, 240)).toEqual({})
 })
 
-test('ECharts responsive pie cue layout reserves dynamic columns and preserves authored radius ratios', () => {
-  const envelope = proportionalFixture('donut') as any
-  envelope.spec.presentation.legend = 'bottom'
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
-  }]
-  envelope.dataState.datasets[0].rows = Array.from({ length: 8 }, (_, index) => [`Status ${index}`, index === 0 ? 96.5 : 0.5])
-  const source = echartsOption(envelope, defaultRendererContext) as Record<string, any>
-  const sourceSeries = source.series[0]
-  const sourceRadius = [...sourceSeries.radius]
-  const sourceLayout = sourceSeries.labelLayout
-  expect(responsiveEChartsPatchNeedsResize(envelope)).toBe(true)
-
-  const compact = responsiveEChartsPatch(source, 320, 240, envelope)
-  const wide = responsiveEChartsPatch(source, 640, 360, envelope)
-  const compactSeries = compact.series[0]
-  const wideSeries = wide.series[0]
-  expect(compactSeries.id).toBe(source.series[0].id)
-  expect(wideSeries.id).toBe(source.series[0].id)
-  expect(compactSeries.left).toBe(compactSeries.right)
-  expect(compactSeries.top).toBe(compactSeries.bottom)
-  expect(wideSeries.left).toBeGreaterThan(compactSeries.left)
-  expect(wideSeries.radius[0] / wideSeries.radius[1]).toBeCloseTo(0.54 / 0.76)
-  expect(compactSeries.radius[0] / compactSeries.radius[1]).toBeCloseTo(0.54 / 0.76)
-  expect(compactSeries.labelLine.length2).toBeTypeOf('number')
-  const leftLayout = compactSeries.labelLayout({ dataIndex: 0, align: 'left' })
-  const rightLayout = compactSeries.labelLayout({ dataIndex: 7, align: 'right' })
-  expect(leftLayout).toMatchObject({ hideOverlap: false, align: 'right' })
-  expect(rightLayout).toMatchObject({ hideOverlap: false, align: 'left' })
-  expect(leftLayout.x).toBeCloseTo(320 / 2 - compactSeries.radius[1] - 8)
-  expect(rightLayout.x).toBeCloseTo(320 / 2 + compactSeries.radius[1] + 8)
-  expect(leftLayout.width).toBeGreaterThan(90)
-  expect(rightLayout.width).toBeGreaterThan(90)
-  expect(compactSeries.labelLayout({ dataIndex: 7 }).y).toBeGreaterThan(compactSeries.labelLayout({ dataIndex: 0 }).y)
-  expect(source.series[0].id).toBe(sourceSeries.id)
-  expect(source.series[0].radius).toEqual(sourceRadius)
-  expect(source.series[0].labelLayout).toBe(sourceLayout)
-})
-
-test('ECharts responsive pie cue layout handles plain pie 0/100% radii and leaves other families unchanged', () => {
-  const envelope = proportionalFixture('pie') as any
-  envelope.spec.presentation.legend = 'bottom'
-  envelope.spec.conditionalFormatting = [{
-    id: 'value-status', target: 'series_color', field: { dataset: 'primary', field: 'value' },
-    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
-  }]
-  envelope.spec.presentation.outerRadius = 1
-  const proportional = echartsOption(envelope, defaultRendererContext) as Record<string, any>
-  const option = responsiveEChartsPatch(proportional, 358, 411, envelope)
-  expect(option.series[0].radius[0]).toBe(0)
-  expect(option.series[0].radius[1]).toBeGreaterThan(0)
-
-  const ordinary = cartesian(false)
-  const ordinaryOption = echartsOption(ordinary, defaultRendererContext) as Record<string, any>
-  expect(responsiveEChartsPatch(ordinaryOption, 358, 411, ordinary)).toMatchObject({ grid: expect.anything() })
-  expect(responsiveEChartsPatch(ordinaryOption, 640, 360, ordinary).series).toBeUndefined()
-
-  const inside = structuredClone(envelope)
-  inside.spec.presentation.labelPosition = 'inside'
-  const insideOption = echartsOption(inside, defaultRendererContext) as Record<string, any>
-  expect(responsiveEChartsPatch(insideOption, 358, 411, inside)).not.toHaveProperty('series')
-
-  const funnel = structuredClone(envelope)
-  funnel.spec.mark = 'funnel'
-  const funnelOption = echartsOption(funnel, defaultRendererContext) as Record<string, any>
-  expect(responsiveEChartsPatch(funnelOption, 358, 411, funnel)).not.toHaveProperty('series')
+test('ECharts responsive patch leaves proportional geometry and legend bands to ECharts', () => {
+  for (const mark of ['pie', 'donut', 'funnel'] as const) {
+    const envelope = proportionalFixture(mark) as any
+    envelope.spec.presentation.legend = 'bottom'
+    envelope.spec.presentation.legendTitle = 'Order status'
+    envelope.spec.conditionalFormatting = [{
+      id: 'value-status', target: 'series_color', field: { dataset: 'primary', field: 'value' },
+      rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'danger', icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
+    }]
+    const option = echartsOption(envelope, defaultRendererContext) as Record<string, any>
+    const before = JSON.stringify(option)
+    expect(responsiveEChartsPatch(option, 320, 240)).toEqual({})
+    expect(option.series[0].id).toBe(`series:primary:${mark}`)
+    expect(JSON.stringify(option)).toBe(before)
+  }
 })
 
 test('heatmap options emit a grid so compact responsive layout is applied', () => {
@@ -170,7 +117,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
     setOption(option: Record<string, any>) { calls.push(option); current = { ...current, ...option } },
     getOption() { return current },
   }
-  const handle = new EChartsHandle({}, {}, chart as any, new CategoryColorRegistry())
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   const initial = cartesian(true)
   handle.mount(initial, defaultRendererContext)
   handle.resize(320, 240)
@@ -187,7 +134,7 @@ test('ECharts handle reapplies compact layout after updates and restores desktop
   expect(calls.at(-1)!.grid).not.toMatchObject({ bottom: 54 })
 })
 
-test('ECharts handle recomputes proportional cue geometry for every size change', () => {
+test('ECharts handle leaves proportional resize geometry to the native chart', () => {
   const calls: Record<string, any>[] = []
   const chart = {
     on() {}, off() {}, resize() {}, dispose() {},
@@ -198,18 +145,18 @@ test('ECharts handle recomputes proportional cue geometry for every size change'
   envelope.spec.presentation.legend = 'bottom'
   envelope.spec.conditionalFormatting = [{
     id: 'value-status', target: 'mark_fill', field: { dataset: 'primary', field: 'value' },
-    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
+    rule: { kind: 'rules', rules: [{ operator: 'greater_than', value: 0, style: { color: 'danger', icon: 'circle' } }], nullStyle: { icon: 'warning' }, defaultStyle: { icon: 'square' } },
   }]
-  const handle = new EChartsHandle({}, {}, chart as any, new CategoryColorRegistry())
+  const handle = new EChartsHandle({} as unknown as HTMLElement, {} as unknown as HTMLElement, chart as any, new CategoryColorRegistry())
   handle.mount(envelope, defaultRendererContext)
   handle.resize(320, 240)
   const first = calls.at(-1)!.series[0]
   const count = calls.length
   handle.resize(420, 240)
-  const second = calls.at(-1)!.series[0]
-  expect(calls.length).toBe(count + 1)
-  expect(second.id).toBe(first.id)
-  expect(second.left).toBeGreaterThan(first.left)
+  expect(calls.length).toBe(count)
+  expect(first.radius).toEqual(['54%', '76%'])
+  expect(first.left).toBeUndefined()
+  expect(first.right).toBeUndefined()
 })
 
 function legendHandle() {

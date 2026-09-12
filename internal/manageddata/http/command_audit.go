@@ -8,6 +8,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 )
 
 func (h *Handler) completeCommand(r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID) error {
@@ -28,13 +29,13 @@ func (h *Handler) buildAuditIntent(
 	if h == nil || h.options.BuildAuditIntent == nil {
 		return nil, nil
 	}
-	requestID := firstCommandHeader(r, "X-Request-Id", "X-Request-ID")
-	correlationID := firstCommandHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
 	surface := "api"
-	if strings.EqualFold(firstCommandHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
+	if strings.EqualFold(platformhttp.FirstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
 		surface = "cli"
 	}
 	return h.options.BuildAuditIntent(r.Context(), CommandAuditInput{
@@ -63,16 +64,4 @@ func (h *Handler) commandAuditActorForOperation(w stdhttp.ResponseWriter, r *std
 		return "", false
 	}
 	return h.actor(w, r)
-}
-
-func firstCommandHeader(r *stdhttp.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
 }

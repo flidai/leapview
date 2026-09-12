@@ -402,15 +402,6 @@ func (r *Repository) PlanSourceObjectRefsTx(ctx context.Context, tx SourceTx, pl
 	return out, nil
 }
 
-// ListMissingSourceBlobDigestsTx checks an explicit project/security-domain
-// digest set inside a caller-owned source transaction.
-func (r *Repository) ListMissingSourceBlobDigestsTx(ctx context.Context, tx SourceTx, projectID, domain string, digests []string) ([]string, error) {
-	if tx == nil {
-		return nil, ErrSourceInvalid
-	}
-	return listMissingSourceBlobDigests(ctx, tx, projectID, domain, digests)
-}
-
 func listMissingSourceBlobDigests(ctx context.Context, db DBTX, projectID, domain string, digests []string) ([]string, error) {
 	projectID, domain, err := normalizeProjectDomain(projectID, domain)
 	if err != nil {

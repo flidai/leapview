@@ -39,6 +39,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
+  private focusReturnTarget: HTMLElement | null = null
 
   static styles = css`
     :host {
@@ -131,6 +132,16 @@ class ChatDrawer extends DatastarLit(LitElement) {
       background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
       outline: 0;
+    }
+
+    button:disabled {
+      color: var(--lv-fg-muted);
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    button:disabled:hover {
+      background: transparent;
     }
 
     .close-action {
@@ -266,11 +277,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
 	}
 
   public openDrawer(): void {
+    if (this.open) this.focusComposer()
     this.open = true
-		void this.updateComplete.then(() => {
-			const composer = this.shadowRoot?.querySelector('lv-chat-composer')
-			composer?.shadowRoot?.querySelector('textarea')?.focus()
-		})
   }
 
   public openWithReference(reference: AgentReferenceSignal): void {
@@ -290,9 +298,27 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   protected updated(changed: Map<string, unknown>): void {
-    if (!changed.has('open') || !this.open) return
-    const composer = this.shadowRoot?.querySelector('lv-chat-composer') as (HTMLElement & { remeasure(): void }) | null
-    composer?.remeasure()
+    if (!changed.has('open')) return
+    if (!this.open) {
+      this.focusReturnTarget?.focus()
+      this.focusReturnTarget = null
+      return
+    }
+    this.focusReturnTarget = deepActiveElement(document)
+    this.focusComposer()
+  }
+
+  private focusComposer(): void {
+    void this.updateComplete.then(async () => {
+      if (!this.open) return
+      const composer = this.shadowRoot?.querySelector('lv-chat-composer') as (LitElement & { remeasure(): void }) | null
+      await composer?.updateComplete
+      if (!this.open) return
+      composer?.remeasure()
+      const textarea = composer?.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)')
+      const fallback = this.shadowRoot?.querySelector<HTMLButtonElement>('.close-action')
+      ;(textarea ?? fallback)?.focus()
+    })
   }
 
   render() {
@@ -311,13 +337,14 @@ class ChatDrawer extends DatastarLit(LitElement) {
     const conversationHref = agent.activeConversationId
       ? `/chats/${encodeURIComponent(agent.activeConversationId)}`
       : '/chats/new'
+    const agentEnabled = Boolean(agent.status?.enabled)
     return html`
-		<aside class="drawer" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open}>
+		<aside class="drawer" role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
             <div class="title">${agentIcon()}<span>Agent</span></div>
             <div class="toolbar-actions">
-              <button type="button" title="New chat" aria-label="New chat" @click=${this.newChat}>${lucideIcon(Plus)}</button>
+              <button type="button" title=${agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled} @click=${this.newChat}>${lucideIcon(Plus)}</button>
               <a href=${conversationHref} title="Open full chat" aria-label="Open full chat">${lucideIcon(ExternalLink)}</a>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
@@ -342,9 +369,9 @@ class ChatDrawer extends DatastarLit(LitElement) {
         ></lv-chat-thread>
         <lv-chat-composer
           .value=${agent.composer.value ?? ''}
-          .disabled=${this.pending || agent.composer.disabled}
+          .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
           .pending=${this.pending}
-          .placeholder=${agent.composer.placeholder || 'Ask about this dashboard…'}
+          .placeholder=${agentEnabled ? agent.composer.placeholder || 'Ask about this dashboard…' : 'Agent is not configured'}
           .references=${this.references}
           .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
           .pinnedSuggestions=${pinnedSuggestions}
@@ -370,6 +397,13 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		emitDomainEvent(this, domainEvents.chatDrawerClose, undefined)
 	}
 
+  private handleKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.open || event.defaultPrevented) return
+    event.preventDefault()
+    event.stopPropagation()
+    this.closeDrawer()
+  }
+
 	private referencesChanged(event: CustomEvent<ChatReferencesChangeDetail>) {
     this.references = event.detail.references ?? []
     this.referenceLimitMessage = ''
@@ -383,6 +417,12 @@ class ChatDrawer extends DatastarLit(LitElement) {
   private notifyReferences() {
     emitDomainEvent<ChatReferencesChangeDetail>(this, domainEvents.agentReferencesChange, { references: this.references })
   }
+}
+
+function deepActiveElement(root: Document | ShadowRoot): HTMLElement | null {
+  let active = root.activeElement
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+  return active instanceof HTMLElement ? active : null
 }
 
 if (!customElements.get('lv-chat-drawer')) customElements.define('lv-chat-drawer', ChatDrawer)

@@ -206,7 +206,7 @@ func nativeCandidateStatusForPreview(status string, attemptState nativepostgres.
 		return deployment.CandidateExpired
 	}
 	switch attemptState {
-	case nativepostgres.AttemptAborted, nativepostgres.AttemptFenced:
+	case nativepostgres.AttemptAborted:
 		return deployment.CandidateFailed
 	default:
 		return deployment.CandidatePreparing

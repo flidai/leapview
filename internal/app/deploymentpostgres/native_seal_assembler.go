@@ -125,61 +125,6 @@ func AssembleRecoveredNativeGenerationAdmissionInput(input NativeRecoveredSealEv
 	return assembled, nil
 }
 
-// AssembleNativeRecoveredGenerationAdmissionInput is a descriptive alias for
-// AssembleRecoveredNativeGenerationAdmissionInput.
-func AssembleNativeRecoveredGenerationAdmissionInput(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeGenerationAdmissionInputForRecovery is a compatibility alias
-// for callers that keep the recovery qualifier at the end of the operation
-// name.
-func AssembleNativeGenerationAdmissionInputForRecovery(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleRecoveredNativeGenerationAdmission is a concise alias for
-// AssembleRecoveredNativeGenerationAdmissionInput.
-func AssembleRecoveredNativeGenerationAdmission(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeGenerationAdmission is a descriptive alias for
-// AssembleNativeGenerationAdmissionInput.
-func AssembleNativeGenerationAdmission(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeSealEvidence is retained for callers that describe this
-// operation as assembling seal evidence.  It returns the full admission input
-// because a seal is not admissible without its generation and artifact proof.
-func AssembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeSnapshotSealEvidence assembles and validates only the seal
-// projection.  It shares all cross-identity checks with the full admission
-// assembler and therefore cannot be used to bypass generation validation.
-func AssembleNativeSnapshotSealEvidence(input NativeSealEvidenceAssemblerInput) (SnapshotSealEvidence, error) {
-	assembled, err := assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
-	if err != nil {
-		return SnapshotSealEvidence{}, err
-	}
-	return assembled.Seal, nil
-}
-
-// NativeSealEvidenceAssembler is a stateless convenience value for callers
-// which prefer a method-shaped API.
-type NativeSealEvidenceAssembler struct{}
-
-func (NativeSealEvidenceAssembler) Assemble(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-func assembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
-}
-
 type nativeSealAssemblerPolicy uint8
 
 const (

@@ -92,12 +92,15 @@ func applyAccessResourceKindPolicy(source []byte) ([]byte, error) {
 	text := string(source)
 	const old = "*ResourceKind"
 	const desired = "*GenSchemaResourceKind"
+	// The two remaining filters are grant listing and authorization checks;
+	// DataPolicy authoring was removed by the semantic-access cutover.
+	const expected = 2
 	oldCount := strings.Count(text, old)
 	desiredCount := strings.Count(text, desired)
 	switch {
-	case oldCount == 0 && desiredCount == 3:
+	case oldCount == 0 && desiredCount == expected:
 		// Already patched; keep the operation idempotent.
-	case oldCount == 3 && desiredCount == 0:
+	case oldCount == expected && desiredCount == 0:
 		text = strings.ReplaceAll(text, old, desired)
 	default:
 		return nil, fmt.Errorf("generated access ResourceKind policy anchor changed: old=%d desired=%d", oldCount, desiredCount)

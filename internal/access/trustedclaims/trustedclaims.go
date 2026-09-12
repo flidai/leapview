@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/internal/semanticvalue"
 )
 
@@ -29,20 +30,12 @@ const (
 	SourceServiceToken SourceKind = "service_token"
 )
 
-const (
-	SourceKindSAML         = SourceSAML
-	SourceKindOIDC         = SourceOIDC
-	SourceKindEmbed        = SourceEmbed
-	SourceKindServiceToken = SourceServiceToken
-)
-
 // Short aliases make the source vocabulary convenient without introducing a
 // second set of wire values.
 const (
-	SAML         = SourceSAML
-	OIDC         = SourceOIDC
-	Embed        = SourceEmbed
-	ServiceToken = SourceServiceToken
+	SAML  = SourceSAML
+	OIDC  = SourceOIDC
+	Embed = SourceEmbed
 )
 
 // Valid reports whether kind is one of the four supported cryptographic
@@ -397,16 +390,7 @@ func lowerHex(value string) bool {
 }
 
 func isNilInterface(value any) bool {
-	if value == nil {
-		return true
-	}
-	rv := reflect.ValueOf(value)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(value)
 }
 
 type storedClaim struct {

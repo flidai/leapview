@@ -9,13 +9,14 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 )
 
 // Adapter appends connection-administration audit intents through the exact
 // transaction supplied by the connection-binding authority. It never owns
 // commit or rollback.
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ connectionbindingpostgres.AuditRepository = (*Adapter)(nil)
@@ -24,20 +25,20 @@ var _ connectionbindingpostgres.AuditRepository = (*Adapter)(nil)
 // NewWithRepository binds the adapter to the exact Access audit authority
 // allocated by application composition.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // Matches proves this adapter retains the exact Access audit repository
 // supplied by application composition rather than a sibling allocation.
 func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
-	return a != nil && a.audit != nil && a.audit == audit
+	return a != nil && a.authority.Matches(audit)
 }
 
 // RecordAuditEvent persists and validates the canonical audit intent in tx.
 func (a *Adapter) RecordAuditEvent(ctx context.Context, tx connectionbindingpostgres.Tx, intent access.AuditIntent) error {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return connectionbinding.ErrAdministrationAuditUnavailable
 	}
-	_, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := a.authority.Record(ctx, tx, intent)
 	return err
 }

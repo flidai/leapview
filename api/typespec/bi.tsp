@@ -131,6 +131,7 @@ model DashboardFilterStaticOption {
 
 model DashboardFilterOptionSource {
   kind: "none" | "static" | "distinct";
+  dataset?: string;
   limit: int32;
   values: DashboardFilterStaticOption[];
 }

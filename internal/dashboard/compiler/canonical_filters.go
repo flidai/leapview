@@ -180,12 +180,6 @@ func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 	return result, nil
 }
 
-// CompileCanonicalDashboardFilterDefinition compiles one DTO filter. It is
-// exported for focused compiler tests and for the LEA-426 document cutover.
-func CompileCanonicalDashboardFilterDefinition(authored document.DashboardFilter, model *semanticmodel.Model) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
-	return compileCanonicalFilter(authored, model, "canonical", 0)
-}
-
 func compileCanonicalFilter(authored document.DashboardFilter, model *semanticmodel.Model, dashboardID string, order int) (dashboardfilter.Definition, dashboardfilter.Binding, error) {
 	id := strings.TrimSpace(authored.ID)
 	if id == "" || strings.TrimSpace(authored.Label) == "" {
@@ -357,8 +351,8 @@ func compileCanonicalOptions(definition *dashboardfilter.Definition, control doc
 		} else if _, err := model.ResolveDimension(binding.Field); err != nil {
 			return fmt.Errorf("distinct options dimension binding %q: %w", definition.Field, err)
 		}
-		definition.Dataset = dataset
 		definition.Options.Kind = dashboardfilter.OptionSourceDistinct
+		definition.Options.Dataset = dataset
 		if value.Limit != nil {
 			if *value.Limit <= 0 || *value.Limit > 500 {
 				return fmt.Errorf("distinct option limit must be between 1 and 500")
@@ -412,8 +406,8 @@ func validateCanonicalOptionDependencies(filters []document.DashboardFilter, def
 			if !ok {
 				return fmt.Errorf("filter %q dependency %q is not a semantic dimension", authored.ID, dependency)
 			}
-			if binding, ok := semantic.Bindings[definition.Dataset]; !ok {
-				return fmt.Errorf("filter %q dependency %q cannot resolve on option dataset %q", authored.ID, dependency, definition.Dataset)
+			if binding, ok := semantic.Bindings[definition.Options.Dataset]; !ok {
+				return fmt.Errorf("filter %q dependency %q cannot resolve on option dataset %q", authored.ID, dependency, definition.Options.Dataset)
 			} else if _, err := model.ResolveDimension(binding.Field); err != nil {
 				return fmt.Errorf("filter %q dependency %q: %w", authored.ID, dependency, err)
 			}

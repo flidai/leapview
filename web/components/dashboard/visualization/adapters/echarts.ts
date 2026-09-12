@@ -15,7 +15,6 @@ import {
   echartsNavigationDefaults,
   overlayDataZoomNavigation,
   responsiveEChartsPatch,
-  responsiveEChartsPatchNeedsResize,
   type EChartsViewState,
 } from './echarts/view-state'
 
@@ -181,10 +180,9 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    const responsiveProportional = responsiveEChartsPatchNeedsResize(envelope)
-    if (!force && compact === this.compactLayout && !responsiveProportional) return
+    if (!force && compact === this.compactLayout) return
     this.compactLayout = compact
-    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight, envelope)
+    const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
     if (patch.dataZoom !== undefined) patch.dataZoom = overlayDataZoomNavigation(patch.dataZoom, this.captureViewState().dataZoom)
     if (Object.keys(patch).length > 0) this.chart.setOption(patch, { notMerge: false, lazyUpdate: !force })
   }
@@ -505,6 +503,11 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption, initial
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []
     replaceMerge.push('dataset', 'visualMap')
+    // Scatter label callbacks capture selection; merge fresh callbacks without resetting native series state.
+    const labels = (source.series ?? [])
+      .filter((series: Record<string, any>) => series.type === 'scatter')
+      .map(({ id, label, labelLayout }: Record<string, any>) => ({ id, label, labelLayout }))
+    if (labels.length > 0) patch.series = labels
   }
   if ((change & Change.Highlight) !== 0) {
     patch.series = source.series

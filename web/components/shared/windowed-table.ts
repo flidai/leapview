@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { createRef, ref, type Ref } from 'lit/directives/ref.js'
-import { Columns3 } from 'lucide'
+import { ArrowDown, ArrowUp, Columns3 } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from './column-resize'
 import { lucideIcon } from './lucide-icons'
 import { virtualRowRange } from './table-window'
@@ -544,6 +544,11 @@ class WindowedTable extends LitElement {
     this.observeViewport()
   }
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.hasUpdated) queueMicrotask(() => this.observeViewport())
+  }
+
   updated(): void {
     if (this.shouldResetScroll) {
       this.shouldResetScroll = false
@@ -577,10 +582,16 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
+    // A matching empty response completes the request even without scrollable content.
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+    }
   }
 
   disconnectedCallback(): void {
     this.resizeObserver?.disconnect()
+    this.resizeObserver = undefined
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
     if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame)
     this.clearJumpTimer()
@@ -671,7 +682,7 @@ class WindowedTable extends LitElement {
             </div>
           ` : nothing}
         </div>
-        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
+        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
         <div class="footer">
           ${this.compact
             ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`
@@ -747,7 +758,11 @@ class WindowedTable extends LitElement {
 
   private ensureBlocksForScroll(): void {
     const table = normalizeTable(this.table)
-    if (table.availableRows <= 0) return
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+      return
+    }
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
     const desired = this.desiredStarts(table, currentStart)
     const desiredSet = new Set(desired)
@@ -771,10 +786,10 @@ class WindowedTable extends LitElement {
   }
 
   private scheduleJumpBlock(start: number): void {
-    if (this.jumpTimer && this.pendingJumpStart === start) return
     this.pendingJumpStart = start
     this.requestUpdate()
-    this.clearJumpTimer()
+    // Keep one bounded trailing request alive; restarting per chunk can postpone loading indefinitely.
+    if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
       const table = normalizeTable(this.table)
@@ -844,11 +859,14 @@ class WindowedTable extends LitElement {
       const cacheIsEmpty = this.blockCache[id].rows.length === 0
       if (carriesRows || carriesNonDefaultStart || cacheIsEmpty) {
         this.blockCache[id] = { ...incoming, rows: incoming.rows }
-        if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
-        const expected = this.expectedBlocks.get(id)
-        if (expected && this.blockMatchesExpected(incoming, expected)) {
-          this.expectedBlocks.delete(id)
-        }
+      }
+      // A matching response fulfils the request even when it contains no
+      // rows. Empty windows are valid after a filter reduces a deeply
+      // scrolled table; leaving them pending keeps loading stuck forever.
+      if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
+      const expected = this.expectedBlocks.get(id)
+      if (expected && this.blockMatchesExpected(incoming, expected)) {
+        this.expectedBlocks.delete(id)
       }
     }
   }
@@ -1004,10 +1022,10 @@ function defaultColumnWidth(column: WindowedTableColumn): number {
   return 168
 }
 
-function sortMarker(sort: WindowedTableSort, column: string): string {
+function sortMarker(sort: WindowedTableSort, column: string) {
   const normalized = normalizeSort(sort)
   if (normalized.key !== column) return ''
-  return normalized.direction === 'desc' ? '↓' : '↑'
+  return lucideIcon(normalized.direction === 'desc' ? ArrowDown : ArrowUp, { size: 12, strokeWidth: 2 })
 }
 
 function renderCell(value: unknown) {

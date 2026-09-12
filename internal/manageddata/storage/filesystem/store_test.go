@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -57,6 +58,50 @@ func TestStoreUsesPrivatePermissionsAndContentAddressedPath(t *testing.T) {
 	}
 	if got := rootInfo.Mode().Perm(); got != 0o700 {
 		t.Fatalf("root permissions = %o, want 700", got)
+	}
+}
+
+func TestOpenUsesFilesystemMetadataWithoutHashingBody(t *testing.T) {
+	store, err := filesystem.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("open metadata")
+	blob := testBlob(body)
+	if _, err := store.Put(t.Context(), blob, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+	// Open is an existence/metadata operation. Corrupting the content after
+	// admission must not make it hash the body before returning a reader;
+	// consumers perform the streaming digest check while materializing it.
+	blobPath := store.BlobPath(blob.SHA256)
+	if err := os.Chmod(blobPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := append([]byte(nil), body...)
+	corrupt[0] ^= 1
+	if err := os.WriteFile(blobPath, corrupt, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(blobPath, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := store.Open(t.Context(), blob.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(got, body) {
+		t.Fatal("Open unexpectedly verified the full body before returning")
+	}
+	if _, err := store.Stat(t.Context(), blob.SHA256); !errors.Is(err, storage.ErrIntegrity) {
+		t.Fatalf("Stat(corrupted blob) error = %v, want integrity error", err)
 	}
 }
 

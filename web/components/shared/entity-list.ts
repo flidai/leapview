@@ -2,6 +2,8 @@ import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { repeat } from 'lit/directives/repeat.js'
 import {
+  ArrowDown,
+  ArrowUp,
   ArrowUpDown,
   Bot,
   BookOpen,
@@ -258,6 +260,7 @@ const entityListStyles = `
   }
 
   .entity-list-table-wrap {
+    position: relative;
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: thin;
@@ -304,6 +307,22 @@ const entityListStyles = `
     height: var(--control-medium-size);
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
+  }
+
+  .entity-list-table thead th:first-child,
+  .entity-list-table-row > th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--lv-bg-page);
+  }
+
+  .entity-list-table thead th:first-child {
+    z-index: 2;
+  }
+
+  .entity-list-table-row > th:first-child {
+    z-index: 1;
+    transition: background-color var(--motion-transition-stateChange);
   }
 
   .entity-list-sort-button {
@@ -438,6 +457,11 @@ const entityListStyles = `
 
   .entity-list-table-row:hover,
   .entity-list-table-row:focus-within {
+    background: var(--lv-bg-control-hover);
+  }
+
+  .entity-list-table-row:hover > th:first-child,
+  .entity-list-table-row:focus-within > th:first-child {
     background: var(--lv-bg-control-hover);
   }
 
@@ -719,7 +743,7 @@ const entityListStyles = `
     z-index: var(--z-index-dropdown);
     top: calc(100% + var(--base-size-8));
     left: 50%;
-    display: inline-flex;
+    display: none;
     width: max-content;
     max-width: 16rem;
     align-items: center;
@@ -744,6 +768,7 @@ const entityListStyles = `
   .entity-list-popularity:focus .entity-list-hover-tooltip,
   .entity-list-datetime:hover .entity-list-hover-tooltip,
   .entity-list-datetime:focus .entity-list-hover-tooltip {
+    display: inline-flex;
     visibility: visible;
     opacity: 1;
   }
@@ -996,7 +1021,7 @@ class EntityList extends LitElement {
                 ? this.groupedItems(items).map((group) => this.renderGroup(group, columns))
                 : html`<tbody>${repeat(items, (item) => item.id, (item) => this.renderItem(item, columns))}</tbody>`}
             </table>
-            <p class="entity-list-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
+            <p class="entity-list-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>
           </div>
         ` : html`<div class="entity-list-empty" role="status">${this.query.trim() ? 'No results match your search.' : this.emptyText}</div>`}
       </section>
@@ -1358,8 +1383,8 @@ class EntityList extends LitElement {
   }
 
   private sortIndicator(direction: false | 'asc' | 'desc') {
-    if (direction === 'asc') return html`<span>↑</span>`
-    if (direction === 'desc') return html`<span>↓</span>`
+    if (direction === 'asc') return lucideIcon(ArrowUp, { size: 12, strokeWidth: 2 })
+    if (direction === 'desc') return lucideIcon(ArrowDown, { size: 12, strokeWidth: 2 })
     return lucideIcon(ArrowUpDown, { size: 12, strokeWidth: 2 })
   }
 

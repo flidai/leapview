@@ -1,6 +1,5 @@
 import type { VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
 import { axis, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legendDecoration, selectedDatasetSource, tooltipFormatterForRow, type EChartsTranslation } from './common'
 import { conditionalCategoryColor, conditionalFormatHasColor, conditionalItemColor, heatmapDefaultColor, seriesColor } from './conditional-color'
 import { constrainEChartsLabelToDataRect, echartsLabelPolicy } from './label-policy'
@@ -295,21 +294,9 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
   const automatic = authored === undefined || authored === 'automatic'
   const position = automatic ? horizontal ? 'insideRight' : undefined : authored === 'outside' ? horizontal ? 'right' : 'top' : authored
   const baseFormatter = labelFormatter(envelope, value, context, axisID, value ? [value] : [])
-  const cue = value ? conditionalCueFormat(envelope, value) : undefined
+  const rowCount = inlineDataset(envelope, value?.dataset ?? spec.x.dataset)?.rows.length ?? 0
   const color = value ? conditionalItemColor(envelope, value, 'label_foreground', context) : undefined, labelColorAuthored = value ? conditionalFormatHasColor(envelope, value, 'label_foreground') : false
-  const formatter = cue
-      ? (params: { value?: unknown }) => {
-          const row = Array.isArray(params.value) ? params.value : []
-          const result = resolveConditionalForRow(envelope, cue, row)
-          const glyph = result?.style.icon ? conditionalIconGlyph(result.style.icon) : ''
-          return [glyph, baseFormatter(params)].filter(Boolean).join(' ')
-        }
-      : baseFormatter
-  const translated = echartsLabelPolicy(envelope, value?.dataset ?? spec.x.dataset, spec.presentation.labelPolicy, formatter, context)
-  if (cue) {
-    translated.label.show = true
-    translated.labelLayout = { hideOverlap: false }
-  }
+  const translated = echartsLabelPolicy(envelope, value?.dataset ?? spec.x.dataset, spec.presentation.labelPolicy, baseFormatter, context)
   translated.label.position = position
   const insideMark = authored !== 'outside' && ['bar', 'column', 'waterfall', 'histogram'].includes(spec.mark)
   if (color) translated.label.color = insideMark ? (params: { value?: unknown }) => color(params) ?? '#fff' : color
@@ -319,6 +306,10 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
       ? { textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 }
       : { textBorderColor: 'rgba(255, 255, 255, 0.45)', textBorderWidth: 1 })
   }
+  if (spec.presentation.labelPolicy.density === 'always' && ['bar', 'column', 'waterfall', 'histogram', 'heatmap'].includes(spec.mark)) {
+    translated.labelLayout = { hideOverlap: true }
+  }
+  if (rowCount > 24 && spec.presentation.labelPolicy.density === 'automatic' && ['bar', 'column'].includes(spec.mark)) translated.label.show = false
   if (spec.mark === 'bar' && horizontal && automatic) {
     translated.labelLayout = constrainEChartsLabelToDataRect(translated.labelLayout, spec.presentation.labelPolicy.minimumSpacing)
   }
@@ -334,7 +325,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
   return {
     left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
-    right: 16 + (spec.presentation.legend === 'right' ? sideInset : 0),
+    right: 28 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
     bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
     containLabel: !titlelessHorizontalBar,
@@ -408,9 +399,7 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     && spec.presentation.labelPolicy.tooltipFallback
     && (values.length > 4 || dataset.rows.length > 24)
   if (crowded) {
-    const cue = conditionalCueFormat(envelope, spec.y[0]!)
     for (const item of series) {
-      if (cue) continue
       item.label = { ...item.label, show: false }
       item.labelLayout = { hideOverlap: true }
     }
@@ -571,26 +560,14 @@ function percentLabel(
     const normalized = Array.isArray(params.value) ? params.value.at(columnIndex) : params.value
     return typeof normalized === 'number' ? `${formatter.format(normalized)}%` : ''
   }
-  const cue = value ? conditionalCueFormat(envelope, value) : undefined
   const color = value ? conditionalItemColor(envelope, value, 'label_foreground', context) : undefined
   const translated = echartsLabelPolicy(
     envelope,
     spec.x.dataset,
     spec.presentation.labelPolicy,
-    cue
-      ? (params: { value?: unknown }) => {
-          const row = Array.isArray(params.value) ? params.value : []
-          const result = resolveConditionalForRow(envelope, cue, row)
-          const glyph = result?.style.icon ? conditionalIconGlyph(result.style.icon) : ''
-          return [glyph, baseFormatter(params)].filter(Boolean).join(' ')
-        }
-      : baseFormatter,
+    baseFormatter,
     context,
   )
-  if (cue) {
-    translated.label.show = true
-    translated.labelLayout = { hideOverlap: false }
-  }
   if (color) translated.label.color = color
   return translated
 }
@@ -625,11 +602,6 @@ function conditionalRuleHasIcon(format: VisualizationConditionalFormat): boolean
   if (rule.defaultStyle.icon) return true
   if (rule.kind === 'rules') return rule.rules.some((candidate) => Boolean(candidate.style.icon))
   return Object.values(rule.values).some((style) => Boolean(style.icon))
-}
-
-function resolveConditionalForRow(envelope: VisualizationEnvelope, format: VisualizationConditionalFormat, row: unknown[]) {
-  const dataset = inlineDataset(envelope, format.field.dataset)
-  return dataset ? resolveConditionalFormat(format, dataset.columns, row) : undefined
 }
 
 

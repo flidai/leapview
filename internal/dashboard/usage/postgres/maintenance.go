@@ -20,12 +20,6 @@ func (m *Maintenance) DeleteBefore(ctx context.Context, cutoff time.Time, batchS
 	return m.deleteBefore(ctx, mDB(m), cutoff, batchSize)
 }
 
-// DeleteBeforeTx executes one bounded batch on a caller-owned transaction and
-// does not commit or roll back it.
-func (m *Maintenance) DeleteBeforeTx(ctx context.Context, tx Tx, cutoff time.Time, batchSize int) (int64, error) {
-	return m.deleteBefore(ctx, tx, cutoff, batchSize)
-}
-
 func (m *Maintenance) deleteBefore(ctx context.Context, db MaintenanceDBTX, cutoff time.Time, batchSize int) (int64, error) {
 	if m == nil || db == nil {
 		return 0, ErrUnavailable

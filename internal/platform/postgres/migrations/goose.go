@@ -25,7 +25,7 @@ const (
 	// CurrentRevision is the latest control-plane schema revision understood by
 	// this binary. Serving admission requires every embedded migration through
 	// this revision to be applied.
-	CurrentRevision int64 = 8
+	CurrentRevision int64 = 12
 	// AdvisoryLockKey serializes migration attempts across instances. Goose
 	// owns acquisition and release of this session-level PostgreSQL lock. The
 	// combined River+Goose path below uses the same key for one shared fence.
@@ -172,6 +172,15 @@ func applyGooseWithoutLock(ctx context.Context, db *sql.DB) error {
 // Goose. The fence session is a short-lived independent pool so a one-
 // connection River/Goose migrator pool remains usable by the operation.
 func WithMigrationFence(ctx context.Context, pool *pgxpool.Pool, fn func() error) (err error) {
+	if fn == nil {
+		return errors.New("PostgreSQL migration fence function is nil")
+	}
+	return withMigrationFence(ctx, pool, func(*pgxpool.Conn) error {
+		return fn()
+	})
+}
+
+func withMigrationFence(ctx context.Context, pool *pgxpool.Pool, fn func(*pgxpool.Conn) error) (err error) {
 	if pool == nil {
 		return errors.New("PostgreSQL migration fence pool is nil")
 	}
@@ -194,25 +203,39 @@ func WithMigrationFence(ctx context.Context, pool *pgxpool.Pool, fn func() error
 	if err != nil {
 		return fmt.Errorf("acquire PostgreSQL migration fence connection: %w", err)
 	}
-	defer conn.Release()
+	// Always attempt the session unlock, including acquisition/query error
+	// paths. A pg_advisory_lock is session-scoped, so returning an uncertain
+	// connection to a pool would let a later caller inherit the fence.
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), migrationUnlockTimeout)
+		defer cleanupCancel()
+		unlockErr := releaseMigrationFence(cleanupCtx, conn)
+		if unlockErr == nil {
+			conn.Release()
+			return
+		}
+		// Unknown unlock state is unsafe to pool. Hijack transfers ownership
+		// away from pgxpool, and Close terminates the session on a detached,
+		// bounded cleanup context.
+		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), migrationUnlockTimeout)
+		cleanupErr := closeMigrationFenceSession(closeCtx, conn)
+		closeCancel()
+		if cleanupErr != nil {
+			unlockErr = errors.Join(unlockErr, fmt.Errorf("close PostgreSQL migration fence session: %w", cleanupErr))
+		}
+		if err == nil {
+			err = fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr)
+		} else {
+			err = errors.Join(err, fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr))
+		}
+	}()
 
 	lockCtx, cancel := context.WithTimeout(ctx, migrationLockTimeout)
 	defer cancel()
 	if err := acquireMigrationFence(lockCtx, conn); err != nil {
 		return fmt.Errorf("acquire PostgreSQL migration fence: %w", err)
 	}
-	defer func() {
-		unlockErr := releaseMigrationFence(conn)
-		if unlockErr != nil {
-			if err == nil {
-				err = fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr)
-			} else {
-				err = errors.Join(err, fmt.Errorf("release PostgreSQL migration fence: %w", unlockErr))
-			}
-		}
-	}()
-
-	return fn()
+	return fn(conn)
 }
 
 func acquireMigrationFence(ctx context.Context, conn *pgxpool.Conn) error {
@@ -239,9 +262,10 @@ func acquireMigrationFence(ctx context.Context, conn *pgxpool.Conn) error {
 	}
 }
 
-func releaseMigrationFence(conn *pgxpool.Conn) error {
-	ctx, cancel := context.WithTimeout(context.Background(), migrationUnlockTimeout)
-	defer cancel()
+func releaseMigrationFence(ctx context.Context, conn *pgxpool.Conn) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var released bool
 	// sqlc-exception: analyzer-incompatible. pg_advisory_unlock is
 	// connection-local migration-fence protocol and must run on the same
@@ -253,6 +277,13 @@ func releaseMigrationFence(conn *pgxpool.Conn) error {
 		return errors.New("migration fence was not held by the current session")
 	}
 	return nil
+}
+
+func closeMigrationFenceSession(ctx context.Context, conn *pgxpool.Conn) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return conn.Hijack().Close(ctx)
 }
 
 // ApplyRiver installs River's upstream-owned schema through the same explicit

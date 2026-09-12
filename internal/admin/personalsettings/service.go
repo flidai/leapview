@@ -19,7 +19,6 @@ var (
 	ErrDisplayNameManaged       = errors.New("display name is managed by the identity provider")
 	ErrLocalPasswordUnavailable = errors.New("local password changes are unavailable for this principal")
 	ErrTokenPrincipal           = errors.New("personal API tokens are only available to user principals")
-	ErrSessionNotOwned          = errors.New("session does not belong to the current principal")
 )
 
 // Repository is intentionally narrower than access.Repository.  It keeps the

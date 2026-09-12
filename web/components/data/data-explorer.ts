@@ -1634,7 +1634,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 : selected && field.kind !== 'metric'
               const compatibilityTitle = compatible
                 ? relationshipPath.length
-                  ? `Related through ${relationshipPath.join(' → ')}`
+                  ? `Related through ${relationshipPath.join(' to ')}`
                   : field.description || field.id
                 : field.compatibilityReason || `Not compatible with ${command.datasetId || objectDatasetID(object)}`
               return html`

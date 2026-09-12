@@ -65,13 +65,13 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
         element.presentation = mode.presentation
         element.readOnly = mode.readOnly
         await element.updateComplete
-        const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+        const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
         deferredByMode[`${mode.presentation}:${mode.readOnly}`] = hosts.length > 0
           && hosts.every((host) => host.deferMount && host.hasAttribute('defer-mount'))
       }
 
       await element.ensureVisualizationsMounted()
-      const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const original = hosts[0].ensureMounted
       hosts[0].ensureMounted = async () => { throw new Error('capture mount failed') }
       let failure = ''
@@ -84,7 +84,7 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
       }
       return {
         deferredByMode,
-        mounted: hosts.every((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0),
+        mounted: hosts.every((host) => ((host.shadowRoot as ShadowRoot)?.querySelector('.renderer')?.childElementCount ?? 0) > 0),
         failure,
       }
     })
@@ -117,8 +117,8 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
         await element.updateComplete
         await element.ensureVisualizationsMounted()
-        const root = element.shadowRoot
-        const hosts = Array.from(root.querySelectorAll('lv-visualization-host')) as any[]
+        const root = (element.shadowRoot as ShadowRoot)
+        const hosts = Array.from(root.querySelectorAll('lv-visualization-host'))
         await Promise.all(hosts.map((host) => host.updateComplete))
         const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
         const table = tableHost?.shadowRoot?.querySelector('lv-report-table') as any
@@ -129,8 +129,8 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
         const kpiValue = kpi?.querySelector('.lv-visualization-kpi') as HTMLElement | null
         const canvas = root.querySelector('lv-report-canvas') as any
         await canvas.updateComplete
-        const canvasViewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
-        const assigned = (canvas.shadowRoot.querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
+        const canvasViewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
+        const assigned = ((canvas.shadowRoot as ShadowRoot).querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
         const visualFrame = (id: string) => assigned.find((item) => (item.querySelector('lv-visualization-host') as any)?.envelope?.visualID === id)?.getBoundingClientRect()
         const chart = visualFrame('orders_chart')
         const tableFrame = visualFrame('orders')
@@ -157,7 +157,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
             valueSize: kpiValue ? Number.parseFloat(getComputedStyle(kpiValue).fontSize) : 0,
             labelSize: kpiLabel ? Number.parseFloat(getComputedStyle(kpiLabel).fontSize) : 0,
           },
-          presentationMode: canvas.shadowRoot.querySelector('.surface')?.dataset.presentationMode,
+          presentationMode: (canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.presentationMode,
           canvasScrollbarWidth: getComputedStyle(canvasViewport, '::-webkit-scrollbar').width,
           canvasScrollbarTrack: getComputedStyle(canvasViewport, '::-webkit-scrollbar-track').backgroundColor,
           canvasScrollbarThumb: getComputedStyle(canvasViewport, '::-webkit-scrollbar-thumb').backgroundColor,
@@ -212,11 +212,11 @@ test('visualization actions keep touch targets and spacing when a report is scal
       document.documentElement.style.setProperty('--control-small-size', '20px')
       document.documentElement.style.setProperty('--lv-button-height-sm', '20px')
       document.dispatchEvent(new CustomEvent('lv-report-zoom-command', { detail: { mode: 'custom', scale: 0.8 } }))
-      const canvas = dashboard.shadowRoot.querySelector('lv-report-canvas') as any
+      const canvas = (dashboard.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await canvas.updateComplete
       await new Promise((resolve) => requestAnimationFrame(resolve))
       await canvas.updateComplete
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const chart = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
       const options = chart?.shadowRoot?.querySelector('.visual-options') as HTMLDetailsElement | null
       if (options) {
@@ -236,8 +236,8 @@ test('visualization actions keep touch targets and spacing when a report is scal
         return { width: rect.width, height: rect.height, top: rect.top, bottom: rect.bottom }
       })
       return {
-        scale: canvas.shadowRoot.querySelector('.surface')?.dataset.scale,
-        inverseScale: getComputedStyle(canvas.shadowRoot.querySelector('.surface')).getPropertyValue('--report-canvas-inverse-scale'),
+        scale: (canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.scale,
+        inverseScale: getComputedStyle((canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')!).getPropertyValue('--report-canvas-inverse-scale'),
         rects,
         menuRects,
         gap: rects.length === 2 ? rects[1].left - rects[0].right : 0,

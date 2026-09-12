@@ -224,7 +224,7 @@ func (r *Repository) ListConversationsPage(ctx context.Context, principalID stri
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
 }
 
 func (r *Repository) GetConversation(ctx context.Context, principalID, conversationID string) (agent.Conversation, error) {
@@ -276,7 +276,7 @@ func (r *Repository) UpdateConversation(ctx context.Context, input agent.Convers
 		if err := tx.Commit(); err != nil {
 			return agent.Conversation{}, err
 		}
-		return mapConversation(row), nil
+		return mapConversationTitle(row), nil
 	}
 	row, err := r.q.UpdateAgentConversationTitle(ctx, platformdb.UpdateAgentConversationTitleParams{
 		Title: title, ConversationID: input.ConversationID, PrincipalID: principalID,
@@ -284,7 +284,7 @@ func (r *Repository) UpdateConversation(ctx context.Context, input agent.Convers
 	if err != nil {
 		return agent.Conversation{}, err
 	}
-	return mapConversation(row), nil
+	return mapConversationTitle(row), nil
 }
 
 // UpdateConversationAtomic serializes the revision check and title mutation
@@ -336,7 +336,7 @@ func (r *Repository) UpdateConversationAtomic(ctx context.Context, input agent.C
 	if err != nil {
 		return agent.Conversation{}, err
 	}
-	updated := mapConversation(row)
+	updated := mapConversationTitle(row)
 	if intent, ok := agent.AuditIntentFromContext(ctx); ok {
 		if err := r.recordAuditIntent(ctx, tx, &intent, input.ConversationID, input.ConversationID); err != nil {
 			return agent.Conversation{}, err
@@ -413,10 +413,13 @@ func (r *Repository) UpdateDefaultConversationTitle(ctx context.Context, princip
 	return mapConversation(row), nil
 }
 
-func (r *Repository) UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string) (agent.Conversation, error) {
+func (r *Repository) UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string, expectedRevision int64) (agent.Conversation, error) {
 	transcript, err := normalizedJSONArray(transcriptJSON)
 	if err != nil {
 		return agent.Conversation{}, err
+	}
+	if expectedRevision <= 0 {
+		return agent.Conversation{}, fmt.Errorf("transcript revision must be positive")
 	}
 	principalID, err = agentPrincipalID(principalID)
 	if err != nil {
@@ -426,11 +429,18 @@ func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal
 		return agent.Conversation{}, fmt.Errorf("conversation id is required")
 	}
 	row, err := r.q.UpdateAgentConversationTranscript(ctx, platformdb.UpdateAgentConversationTranscriptParams{
-		TranscriptJson: transcript,
-		ID:             conversationID,
-		PrincipalID:    principalID,
+		TranscriptJson:             transcript,
+		ExpectedTranscriptRevision: expectedRevision,
+		ID:                         conversationID,
+		PrincipalID:                principalID,
 	})
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			current, getErr := r.q.GetAgentConversation(ctx, platformdb.GetAgentConversationParams{ID: conversationID, PrincipalID: principalID})
+			if getErr == nil && current.Status == agent.ConversationStatusActive {
+				return agent.Conversation{}, agent.ErrTranscriptConflict
+			}
+		}
 		return agent.Conversation{}, err
 	}
 	return mapConversation(row), nil
@@ -489,7 +499,7 @@ func (r *Repository) ListMessagesPage(ctx context.Context, principalID, conversa
 	for _, row := range rows {
 		out = append(out, mapMessage(row))
 	}
-	return pageByID(out, page, func(row agent.Message) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Message) string { return row.ID }), nil
 }
 
 func (r *Repository) CreateRun(ctx context.Context, input agent.RunInput) (agent.Run, error) {
@@ -639,7 +649,7 @@ func (r *Repository) FinishRunWorkflow(ctx context.Context, input agent.RunFinis
 // CompleteRunWorkflow is the fenced durable completion boundary. All output
 // mutations and the terminal event commit together, so a reclaimed worker
 // cannot write messages or transcript state after losing its lease.
-func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcriptJSON string, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
+func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcriptJSON string, expectedTranscriptRevision int64, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
 	if r.workflow == nil {
 		return nil, false, fmt.Errorf("agent workflow recorder is required")
 	}
@@ -650,6 +660,9 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 	transcript, err := normalizedJSONArray(transcriptJSON)
 	if err != nil {
 		return nil, false, err
+	}
+	if expectedTranscriptRevision <= 0 {
+		return nil, false, fmt.Errorf("transcript revision must be positive")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -684,7 +697,10 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 		}
 		rows = append(rows, mapMessage(row))
 	}
-	if _, err := q.UpdateAgentConversationTranscript(ctx, platformdb.UpdateAgentConversationTranscriptParams{TranscriptJson: transcript, ID: input.ConversationID, PrincipalID: principalID}); err != nil {
+	if _, err := q.UpdateAgentConversationTranscript(ctx, platformdb.UpdateAgentConversationTranscriptParams{TranscriptJson: transcript, ExpectedTranscriptRevision: expectedTranscriptRevision, ID: input.ConversationID, PrincipalID: principalID}); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, agent.ErrTranscriptConflict
+		}
 		return nil, false, err
 	}
 	_, err = q.FinishAgentRun(ctx, platformdb.FinishAgentRunParams{Status: input.Status, StopReason: input.StopReason, InputTokens: input.InputTokens, OutputTokens: input.OutputTokens, TotalTokens: input.TotalTokens, Error: input.Error, MetadataJson: input.MetadataJSON, ID: input.RunID, ConversationID: input.ConversationID, PrincipalID: principalID})
@@ -776,28 +792,7 @@ func (r *Repository) VerifyRunLease(ctx context.Context, runID, jobID string, fe
 	if r.events == nil {
 		return nil
 	}
-	job, err := r.events.Get(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID ||
-		job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
-		return fmt.Errorf("stale durable job claim")
-	}
-	return nil
-}
-
-func leaseUnexpired(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed.After(time.Now())
-		}
-	}
-	return false
+	return agent.VerifyRunLease(ctx, runID, jobID, fence, r.events.Get)
 }
 
 func (r *Repository) FinishRun(ctx context.Context, input agent.RunFinish) (agent.Run, error) {
@@ -858,7 +853,7 @@ func (r *Repository) ListRunsPage(ctx context.Context, principalID, conversation
 	for _, row := range rows {
 		out = append(out, mapRun(row))
 	}
-	return pageByID(out, page, func(row agent.Run) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Run) string { return row.ID }), nil
 }
 
 func (r *Repository) GetRun(ctx context.Context, principalID, conversationID, runID string) (agent.Run, error) {
@@ -1006,14 +1001,21 @@ func (r *Repository) agentRunExists(ctx context.Context, principalID, runID stri
 
 func mapConversation(row platformdb.AgentConversation) agent.Conversation {
 	out := agent.Conversation{
-		ID:             row.ID,
-		PrincipalID:    row.PrincipalID,
-		Title:          row.Title,
-		Status:         row.Status,
-		MetadataJSON:   row.MetadataJson,
-		TranscriptJSON: row.TranscriptJson,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID: row.ID, PrincipalID: row.PrincipalID, Title: row.Title, Status: row.Status,
+		MetadataJSON: row.MetadataJson, TranscriptJSON: row.TranscriptJson,
+		TranscriptRevision: row.TranscriptRevision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+	if row.ArchivedAt.Valid {
+		out.ArchivedAt = row.ArchivedAt.String
+	}
+	return out
+}
+
+func mapConversationTitle(row platformdb.UpdateAgentConversationTitleRow) agent.Conversation {
+	out := agent.Conversation{
+		ID: row.ID, PrincipalID: row.PrincipalID, Title: row.Title, Status: row.Status,
+		MetadataJSON: row.MetadataJson, TranscriptJSON: row.TranscriptJson,
+		TranscriptRevision: row.TranscriptRevision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if row.ArchivedAt.Valid {
 		out.ArchivedAt = row.ArchivedAt.String
@@ -1121,32 +1123,6 @@ func validRunStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func pageByID[T any](rows []T, page agent.Page, id func(T) string) []T {
-	limit := page.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
-	start := 0
-	after := strings.TrimSpace(page.After)
-	if after != "" {
-		start = len(rows)
-		for i, row := range rows {
-			if id(row) == after {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(rows) {
-		return []T{}
-	}
-	end := start + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return append([]T(nil), rows[start:end]...)
 }
 
 func newID(prefix string) string {

@@ -12,8 +12,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 )
 
 const (
@@ -129,32 +127,6 @@ type Pipeline struct {
 	ContractPublications []ContractPublication
 }
 
-// FromPipelinePlan adapts the immutable delivery plan to the export context.
-// Project and environment are supplied separately because PipelinePlan is
-// intentionally generation-bound but does not duplicate serving scope.
-func FromPipelinePlan(projectID, environment string, plan projectpipelineplan.Plan) Pipeline {
-	return Pipeline{
-		ProjectID:               projectID,
-		Environment:             environment,
-		ID:                      plan.PipelineID,
-		SemanticModelID:         plan.SemanticModelID,
-		GenerationID:            plan.ServingGenerationID,
-		PlanDigest:              plan.Digest,
-		SelectionDigest:         plan.SelectionDigest,
-		ExecutionDigest:         plan.ExecutionDigest,
-		ProvenanceDigest:        plan.ProvenanceDigest,
-		GovernanceDigest:        plan.GovernanceDigest,
-		EvidenceDigest:          plan.EvidenceDigest,
-		InvocationSource:        plan.InvocationSource,
-		MatchingScheduleIDs:     append([]string(nil), plan.MatchingScheduleIDs...),
-		StartingDeadlineSeconds: plan.StartingDeadlineSeconds,
-		ConcurrencyPolicy:       plan.ConcurrencyPolicy,
-		QualificationChecks:     append([]string(nil), plan.QualificationChecks...),
-		MaterializationScope:    append([]string(nil), plan.MaterializationScope...),
-		SourceInputs:            append([]string(nil), plan.SourceInputs...),
-	}
-}
-
 // PipelineRun is the operational observation of one PipelineRun.  NominalTime
 // is populated for schedule occurrences and is exported through the standard
 // nominalTime run facet.  ModelID and ParentRunID identify a separately
@@ -211,10 +183,6 @@ func JobForPipeline(p Pipeline) (Job, error) {
 		Facets:    Facets{PipelineFacetKey: mustFacet(leapViewFacet(p))},
 	}, nil
 }
-
-// MapPipelineJob is an alias with an action-oriented name for callers that
-// prefer mapping functions over methods.
-func MapPipelineJob(p Pipeline) (Job, error) { return JobForPipeline(p) }
 
 // EventForPipelineRun maps a PipelineRun into one OpenLineage event.  Sources
 // become inputs and the plan's materialized Model relations become outputs.
@@ -331,11 +299,6 @@ func openLineageRunID(internalID string) string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
 }
 
-// MapPipelineRun is an alias with an action-oriented name.
-func MapPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
-	return EventForPipelineRun(p, r)
-}
-
 // ModelRun returns a child Model execution event whose standard parent facet
 // points at the PipelineRun.  The child job name is the Model relation while
 // retaining the Pipeline namespace and scoped LeapView evidence.
@@ -362,11 +325,6 @@ func ModelRun(p Pipeline, r PipelineRun, modelID string) (Event, error) {
 		return Event{}, err
 	}
 	return event, nil
-}
-
-// MapModelRun is an alias for ModelRun.
-func MapModelRun(p Pipeline, r PipelineRun, modelID string) (Event, error) {
-	return ModelRun(p, r, modelID)
 }
 
 func (p Pipeline) validate() error {

@@ -973,10 +973,10 @@ func TestCompileProjectGraphExecutiveSalesFilterControls(t *testing.T) {
 	if !ok {
 		t.Fatal("compiled Executive Sales omitted state filter definition")
 	}
-	if definition.Field != "state" || definition.Dataset != "sales_orders" {
-		t.Fatalf("compiled state filter field/dataset = %q/%q, want state/sales_orders", definition.Field, definition.Dataset)
+	if definition.Field != "state" || definition.Dataset != "" {
+		t.Fatalf("compiled state filter field/predicate dataset = %q/%q, want state with conformed scope", definition.Field, definition.Dataset)
 	}
-	if definition.Options.Kind != dashboardfilter.OptionSourceDistinct || definition.Options.Limit != 50 {
+	if definition.Options.Kind != dashboardfilter.OptionSourceDistinct || definition.Options.Dataset != "sales_orders" || definition.Options.Limit != 50 {
 		t.Fatalf("compiled state filter options = %#v, want distinct limit 50", definition.Options)
 	}
 	binding, ok := dashboard.FilterBindings["state"]
@@ -1112,6 +1112,10 @@ spec:
 	}
 	assertFieldOwner("semantic:sales", "orders", "orders.id")
 	assertFieldOwner("semantic:operations", "order_rows", "order_rows.id")
+	project.Manifest.SemanticModels["semantic:sales"].Tables["orders"].Dimensions["id"] = semanticmodel.MetricDimension{Label: "sales-only"}
+	if got := project.Manifest.SemanticModels["semantic:operations"].Tables["order_rows"].Dimensions["id"].Label; got == "sales-only" {
+		t.Fatal("semantic dataset dimensions share mutable state")
+	}
 	canonical := project.Manifest.Models["model:orders"].Dimensions["id"]
 	if canonical.Table != "orders_model" || canonical.Field != "orders_model.id" {
 		t.Fatalf("canonical Model field was mutated by semantic aliases: %#v", canonical)
@@ -1473,6 +1477,93 @@ spec: {definition: {type: sql, sql: 'SELECT * FROM source.customers JOIN model.o
 			t.Fatalf("LoadSourceRoot() error = %v, want model cycle", err)
 		}
 	})
+}
+
+func TestSourceRootSQLFailureReportsExactFailingModelResource(t *testing.T) {
+	files := map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+`,
+		"models/first.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:first, name: first_model}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.missing_first'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+`,
+		"models/second.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:second, name: second_model}
+spec: {definition: {type: sql, sql: 'SELECT * FROM source.missing_second'}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+`,
+	}
+	for attempt := 0; attempt < 8; attempt++ {
+		root := writeSourceFixture(t, files)
+		_, err := LoadSourceRoot(root)
+		if err == nil {
+			t.Fatal("LoadSourceRoot() accepted unknown SQL source")
+		}
+		diagnostics := configschema.Diagnostics(err)
+		if len(diagnostics) == 0 {
+			t.Fatalf("LoadSourceRoot() error = %v, want diagnostic", err)
+		}
+		got := diagnostics[0]
+		wantPath := filepath.Join(root, "models/first.yaml")
+		if got.File != wantPath || got.ResourceID != "model:first" || !strings.Contains(got.Message, `first_model`) || !strings.Contains(got.Message, `missing_first`) {
+			t.Fatalf("diagnostic = %#v, want first model at %s", got, wantPath)
+		}
+	}
+}
+
+func TestSourceRootRuntimeSQLRewritePreservesNonRelationText(t *testing.T) {
+	root := writeSourceFixture(t, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/olist.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:olist.orders, name: olist.orders}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec:
+  definition:
+    type: sql
+    sql: |
+      -- source.olist.orders
+      WITH source_orders AS (
+        SELECT 'source.olist.orders' AS note
+      )
+      SELECT o.id, source_orders.note
+      FROM source."olist.orders" AS o
+  entities: {id: {type: primary, fields: [id]}}
+  grain: {entity: id}
+  fields: {id: {datatype: String}}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic:sales, name: sales}
+spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
+`,
+	})
+	project, err := LoadSourceRoot(root)
+	if err != nil {
+		t.Fatalf("LoadSourceRoot() error = %v", err)
+	}
+	got := project.Manifest.SemanticModels["semantic:sales"].Tables["orders"].Execution.SQL
+	want := "-- source.olist.orders\nWITH source_orders AS (\n  SELECT 'source.olist.orders' AS note\n)\nSELECT o.id, source_orders.note\nFROM source.olist_orders AS o"
+	if got != want {
+		t.Fatalf("compiled runtime SQL = %q, want %q", got, want)
+	}
 }
 
 func TestSourceRootDashboardAdapterMatchesDirectCompilation(t *testing.T) {

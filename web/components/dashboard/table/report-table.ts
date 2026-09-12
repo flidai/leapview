@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { createRef, ref, type Ref } from 'lit/directives/ref.js'
-import { EllipsisVertical } from 'lucide'
+import { ArrowDown, ArrowUp, EllipsisVertical } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from '../../shared/column-resize'
 import { lucideIcon } from '../../shared/lucide-icons'
 import {
@@ -245,7 +245,7 @@ export class ReportTable extends LitElement {
         var(--base-size-6)
         var(--base-size-8)
         var(--base-size-4)
-        var(--control-small-paddingInline-normal);
+        var(--control-small-paddingInline-normal, var(--base-size-8));
     }
 
     .toolbar::after {
@@ -1423,7 +1423,7 @@ export class ReportTable extends LitElement {
           const column = header.column.columnDef.meta?.column as TableColumn | undefined
           if (!column) return nothing
           const sorted = this.table?.sort?.key === header.column.id
-          const sortMark = this.table?.sort?.direction === 'asc' ? '↑' : '↓'
+          const sortMark = lucideIcon(this.table?.sort?.direction === 'asc' ? ArrowUp : ArrowDown, { size: 12, strokeWidth: 2 })
           return html`
             <div
               class=${`header-cell ${column.role === 'row_header' ? 'row-header' : ''} ${this.pinnedCellClass(header.column)} ${sorted ? 'sorted' : ''}`}
@@ -1529,8 +1529,8 @@ export class ReportTable extends LitElement {
   private renderCellValue(row: TableRow, column: TableColumn, formatted: unknown) {
     const value = row[column.key]
     const conditional = conditionalCellAppearance(row, column)
-    const cue = conditional.icon
-      ? html`<span class="conditional-cue" aria-hidden="true">${conditional.icon}</span><span class="conditional-cue-label">Status: ${conditional.iconLabel}</span>`
+    const cue = conditional.iconLabel
+      ? html`<span class="conditional-cue-label">Status: ${conditional.iconLabel}</span>`
       : nothing
     const badge = this.formattingController.badge(column)
     if (badge?.values) {

@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,86 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestUnreachableFencedAttemptStateMigrationNarrowsTheLiveContract(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "010_remove_unreachable_fenced_attempt_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"delivery_build_attempt_state_allowed_check",
+		"delivery_build_attempt_evidence_state_check",
+		"pg_get_constraintdef",
+		"state IN ('running','committed','aborted','indeterminate')",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("attempt-state migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("attempt-state migration must restore the migrator role")
+	}
+}
+
+func TestManagedDataRetentionLifecycleMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "009_managed_data_retention_lifecycle.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"retention_root_revision_state_idx",
+		"retention_root_generation_state_idx",
+		"retention_root_reachability_epoch",
+		"retention root must begin in live state",
+		"delivery.sync_managed_data_generation_root",
+		"evidence->>'kind' = 'serving-generation'",
+		"REVOKE ALL ON FUNCTION delivery.sync_managed_data_generation_root(uuid, text) FROM PUBLIC",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("retention lifecycle migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("retention lifecycle migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("retention lifecycle Down must refuse instead of deleting evidence")
+	}
+}
+
+func TestCaptureCoreTransportMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "012_recovery_capture_core_transport.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"leapview/managed-capture-core/v2",
+		"receipt_core_digest",
+		"capture_core_required",
+		"worker_fence",
+		"lock_successor_assignment",
+		"NOT VALID",
+		"guard_successor_set_complete",
+		"GRANT SELECT, INSERT",
+		"capture-core transport migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("capture-core migration missing %q", required)
+		}
+	}
+	if strings.Contains(strings.ToUpper(migration[strings.Index(migration, "-- +goose Down"):]), "DROP TABLE") {
+		t.Error("capture-core migration Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("capture-core migration must restore the migrator role")
 	}
 }
 
@@ -121,6 +201,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		t.Fatal(err)
 	}
 	migration := string(migrationBytes)
+	captureCoreBytes, err := fs.ReadFile(MigrationFS(), "012_recovery_capture_core_transport.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentSuccessorMigrations := migration + "\n" + string(captureCoreBytes)
 	owner := recoverypostgres.SuccessorSchemaSQL()
 	for _, marker := range []string{
 		"recovery.set_identity_registry",
@@ -132,10 +217,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		"recovery.recovery_set_v3_root",
 		"successor_domain_sha256",
 		"lock_successor_generation",
+		"lock_successor_assignment",
 		"guard_successor_set_complete",
 		"successor_registry_immutable",
 	} {
-		if !strings.Contains(owner, marker) || !strings.Contains(migration, marker) {
+		if !strings.Contains(owner, marker) || !strings.Contains(currentSuccessorMigrations, marker) {
 			t.Errorf("successor schema/migration missing %q", marker)
 		}
 	}
@@ -155,14 +241,18 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 	for _, pattern := range patterns {
 		matches := func(source string) []string {
 			all := pattern.FindAllStringSubmatch(source, -1)
-			names := make([]string, 0, len(all))
+			unique := make(map[string]struct{}, len(all))
 			for _, match := range all {
-				names = append(names, match[1])
+				unique[match[1]] = struct{}{}
+			}
+			names := make([]string, 0, len(unique))
+			for name := range unique {
+				names = append(names, name)
 			}
 			return names
 		}
 		ownerNames := matches(owner)
-		migrationNames := matches(migration)
+		migrationNames := matches(currentSuccessorMigrations)
 		sort.Strings(ownerNames)
 		sort.Strings(migrationNames)
 		if len(ownerNames) != len(migrationNames) {

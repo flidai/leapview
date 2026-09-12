@@ -175,6 +175,23 @@ func TestReadyzAllowsFreshTargetWithoutRequiredDeployment(t *testing.T) {
 	}
 }
 
+func TestReadyzRejectsFreshTargetWhenDeploymentIsRequired(t *testing.T) {
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform:                func(context.Context) error { return nil },
+		ActiveProjectID:         func(context.Context) (projectgraph.ResourceID, error) { return "", nil },
+		RuntimeReady:            func(context.Context) error { return errors.New("must not run without an active project") },
+		RequireActiveDeployment: true,
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+	want := `{"checks":{"platformStore":"ok","runtime":"no_active_deployments"},"status":"not_ready"}` + "\n"
+	if got := response.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
 func TestReadyzRejectsMalformedNonemptyActiveProject(t *testing.T) {
 	response := httptest.NewRecorder()
 	newHealth(healthConfig{

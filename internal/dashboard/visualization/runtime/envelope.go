@@ -57,12 +57,6 @@ func FrameFromRecords(definition visualizationdefinition.Definition, records []m
 	return Frame{Columns: columns, Rows: rows}, nil
 }
 
-// SelectionEntriesFromDefinition projects canonical dashboard selection state
-// into renderer-independent DatumRef values.
-func SelectionEntriesFromDefinition(definition visualizationdefinition.Definition, entries []dashboard.InteractionSelectionEntry, dataRevision int64) ([]ir.VisualizationSelectionEntry, error) {
-	return compiledSelections(definition.Spec, entries, dataRevision)
-}
-
 // EnvelopeFromFrame creates the canonical inline renderer boundary directly
 // from a compiled query frame. No legacy visual presentation DTO participates
 // in this path.
@@ -368,6 +362,13 @@ func compiledWindowSchema(base ir.VisualizationSpecBase, datasetID string, table
 	fields := make([]ir.VisualizationField, len(table.Columns))
 	for index, column := range table.Columns {
 		if field, ok := compiledFields[column.Key]; ok {
+			fields[index] = field
+			continue
+		}
+		if field, ok := compiledFields[column.Metric]; ok {
+			field.ID = column.Key
+			field.Label = defaultText(column.Label, column.Key)
+			field.Grid = &ir.VisualizationGridFieldMetadata{Group: optional(column.Group), Metric: optional(column.Metric), ColumnValue: optional(column.ColumnValue), Formatting: tableFormatting(column.Formatting)}
 			fields[index] = field
 			continue
 		}

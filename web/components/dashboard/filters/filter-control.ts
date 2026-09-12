@@ -67,6 +67,7 @@ export class DashboardFilterLeaf extends LitElement {
   @state() private dropdownOpen = false
   @state() private dropdownSearch = ''
   private dropdownSearchTimer = 0
+  private dropdownOpenOnPointerDown = false
 
   static styles = css`
     :host { display: block; min-width: 0; font: inherit; }
@@ -165,9 +166,28 @@ export class DashboardFilterLeaf extends LitElement {
       padding: var(--base-size-8);
     }
     .dropdown-popover:popover-open { display: grid; }
+    .dropdown-toolbar {
+      display: grid;
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--base-size-6);
+    }
     .dropdown-search { position: relative; display: flex; align-items: center; }
     .dropdown-search svg { position: absolute; left: var(--base-size-8); width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); pointer-events: none; }
     .dropdown-search input { padding-left: calc(var(--base-size-16) + var(--base-size-12)); }
+    .dropdown-clear {
+      grid-column: 2;
+      justify-self: end;
+      border: 0;
+      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
+      background: transparent;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      padding: 0 var(--base-size-8);
+    }
+    .dropdown-clear:hover:not(:disabled) { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
+    .dropdown-clear:disabled { cursor: default; opacity: .45; }
     .dropdown-options { min-height: 0; overflow: auto; }
     .dropdown-option {
       display: grid;
@@ -178,6 +198,7 @@ export class DashboardFilterLeaf extends LitElement {
       border-radius: var(--lv-radius-tight, var(--lv-radius-default));
       cursor: pointer;
       padding: 0 var(--base-size-8);
+      font: var(--lv-type-body-compact);
     }
     .dropdown-option:hover { background: var(--lv-bg-control-hover); }
     .dropdown-option input { width: auto; min-height: 0; margin: 0; }
@@ -374,6 +395,7 @@ export class DashboardFilterLeaf extends LitElement {
         aria-label=${`${label}: ${summary}`}
         aria-haspopup="dialog"
         aria-expanded=${String(this.dropdownOpen)}
+        @pointerdown=${this.onDropdownTriggerPointerDown}
         @click=${this.toggleDropdown}
       >
         <span class="dropdown-value">${summary}</span>
@@ -386,29 +408,28 @@ export class DashboardFilterLeaf extends LitElement {
         aria-label=${`${label} filter options`}
         @toggle=${this.onDropdownToggle}
       >
-        ${this.presentation?.search ? html`
-          <label class="dropdown-search">
-            ${lucideIcon(Search)}
-            <input
-              type="search"
-              placeholder="Search"
-              aria-label=${`Search ${label}`}
-              .value=${this.dropdownSearch}
-              @input=${this.onDropdownSearch}
-            >
-          </label>
-        ` : nothing}
+        <div class="dropdown-toolbar">
+          ${this.presentation?.search ? html`
+            <label class="dropdown-search">
+              ${lucideIcon(Search)}
+              <input
+                type="search"
+                placeholder="Search"
+                aria-label=${`Search ${label}`}
+                .value=${this.dropdownSearch}
+                @input=${this.onDropdownSearch}
+              >
+            </label>
+          ` : nothing}
+          <button
+            class="dropdown-clear"
+            type="button"
+            aria-label=${`Clear ${label} filter`}
+            ?disabled=${selected.size === 0}
+            @click=${this.clearDropdownSelection}
+          >Clear filter</button>
+        </div>
         <div class="dropdown-options" role="group" aria-label=${`${label} options`}>
-          <label class="dropdown-option">
-            <input
-              type=${multiple ? 'checkbox' : 'radio'}
-              name=${this.binding?.key ?? 'filter'}
-              aria-label=${`All ${label}`}
-              .checked=${selected.size === 0}
-              @change=${this.clearDropdownSelection}
-            >
-            <span class="dropdown-option-label">All</span>
-          </label>
           ${items.map((option) => html`
             <label class="dropdown-option" data-unavailable=${String(!option.available)}>
               <input
@@ -446,10 +467,23 @@ export class DashboardFilterLeaf extends LitElement {
     const popover = this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')
     const trigger = this.renderRoot.querySelector<HTMLElement>('.dropdown-trigger')
     if (!popover || !trigger) return
+    const wasOpenOnPointerDown = this.dropdownOpenOnPointerDown
+    this.dropdownOpenOnPointerDown = false
+    if (wasOpenOnPointerDown) {
+      if (popover.matches(':popover-open')) popover.hidePopover()
+      this.dropdownOpen = false
+      return
+    }
     this.dropdownOpen = toggleAnchoredPopover(trigger, popover)
     if (!this.dropdownOpen) return
     this.requestOptions()
     queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.dropdown-search input')?.focus())
+  }
+
+  private onDropdownTriggerPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0) return
+    const popover = this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')
+    this.dropdownOpenOnPointerDown = Boolean(popover?.matches(':popover-open'))
   }
 
   private onDropdownToggle = (event: Event) => {

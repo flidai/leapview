@@ -1,7 +1,6 @@
 package deployment
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -15,7 +14,6 @@ import (
 var (
 	ErrBootstrapPolicyInvalid  = apigenfailure.New("invalid", "bootstrap activation policy is invalid")
 	ErrBootstrapPolicyConflict = apigenfailure.New("conflict", "bootstrap activation policy conflicts with the bound deployment")
-	ErrBootstrapPolicyNotFound = apigenfailure.New("not_found", "bootstrap activation policy not found")
 )
 
 // BootstrapActivationPolicy is the durable one-shot authorization binding for
@@ -49,9 +47,4 @@ func (policy BootstrapActivationPolicy) Validate() error {
 		return fmt.Errorf("%w: credential expiry must be after arming", ErrBootstrapPolicyInvalid)
 	}
 	return nil
-}
-
-type BootstrapActivationPolicyRepository interface {
-	ArmBootstrapActivation(context.Context, BootstrapActivationPolicy) (BootstrapActivationPolicy, error)
-	BootstrapActivationPolicy(context.Context, string) (BootstrapActivationPolicy, error)
 }

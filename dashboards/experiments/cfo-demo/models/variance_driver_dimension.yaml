@@ -1,0 +1,36 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:variance_driver_dimension
+  name: variance_driver_dimension
+  displayName: Variance Drivers
+  description: Ordered finance-driver dimension used by the EBITDA variance fact.
+spec:
+  fields:
+    driver_order: {datatype: Integer, label: Order}
+    driver: {datatype: String, label: Variance driver}
+  definition:
+    type: sql
+    sql: |
+      WITH source_anchor AS (
+        SELECT 1 AS anchor
+        FROM source."finance.financials"
+        LIMIT 1
+      ),
+      drivers AS (
+        SELECT 10 AS driver_order, 'Revenue' AS driver
+        UNION ALL SELECT 20, 'Cost of goods sold'
+        UNION ALL SELECT 30, 'Sales and marketing'
+        UNION ALL SELECT 40, 'Operations'
+        UNION ALL SELECT 50, 'Research and development'
+        UNION ALL SELECT 60, 'General and administrative'
+      )
+      SELECT drivers.driver_order, drivers.driver
+      FROM drivers
+      INNER JOIN source_anchor ON true
+  entities:
+    variance_driver:
+      type: primary
+      fields: [driver_order]
+  grain:
+    entity: variance_driver

@@ -1,9 +1,10 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Search, Send, X } from 'lucide'
+import { AtSign, Search, Send, X } from 'lucide'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
+import { chatComposerStyles } from './chat-composer-styles'
 import {
   type ChatContextReference,
   type ChatReferenceSearchDetail,
@@ -46,300 +47,7 @@ class ChatComposer extends LitElement {
   private observedWidth = -1
 	private acceptedRunInitialized = false
 
-  static styles = css`
-    :host {
-      position: relative;
-      display: block;
-      background: linear-gradient(to bottom, transparent, var(--lv-bg-app) var(--lv-space-lg));
-      color: var(--lv-fg-default);
-      font-family: var(--fontStack-system);
-    }
-
-    form {
-			position: relative;
-      width: min(calc(100% - var(--lv-space-lg) - var(--lv-space-lg)), var(--lv-chat-stack-width));
-      margin-inline: auto;
-      padding: calc(var(--lv-space-lg) + var(--lv-space-sm)) var(--lv-space-lg) var(--lv-space-lg);
-    }
-
-    .composer-surface {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: end;
-      gap: var(--lv-space-sm);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-large);
-      background: var(--lv-bg-panel);
-      padding: var(--lv-space-sm);
-      box-shadow: none;
-      cursor: text;
-      transition:
-        background var(--lv-transition-fast),
-        border-color var(--lv-transition-fast),
-        box-shadow var(--lv-transition-fast);
-    }
-
-    .composer-surface:hover:not(.is-disabled) {
-      border-color: var(--lv-line-muted);
-      box-shadow: none;
-    }
-
-    .composer-surface:focus-within {
-      border-color: var(--lv-line-accent-muted);
-      box-shadow: 0 0 0 var(--lv-border-width-focus) var(--lv-bg-accent-muted);
-    }
-
-    .composer-surface.is-disabled {
-      background: var(--lv-bg-control);
-      color: var(--lv-fg-muted);
-      box-shadow: none;
-      cursor: not-allowed;
-    }
-
-    textarea {
-      box-sizing: border-box;
-      min-height: calc(var(--lv-control-large) + var(--lv-space-sm));
-      max-height: 160px;
-      width: 100%;
-      grid-column: 1;
-      grid-row: 1;
-      resize: none;
-      overflow-y: auto;
-      border: 0;
-      border-radius: calc(var(--lv-radius-default) - var(--lv-space-2xs));
-      background: transparent;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body);
-      padding: var(--lv-space-xs) var(--lv-space-sm);
-      outline: 0;
-    }
-
-    textarea:focus {
-      outline: 0;
-    }
-
-    textarea::placeholder {
-      color: var(--lv-fg-muted);
-    }
-
-    .actions {
-      display: flex;
-      grid-column: 2;
-      grid-row: 1;
-      min-height: var(--lv-control-medium);
-      align-items: center;
-      justify-content: flex-end;
-    }
-
-		.mention-picker {
-			display: grid;
-			position: absolute;
-			inset: auto var(--lv-space-lg) calc(100% - var(--lv-space-lg) - var(--lv-space-sm));
-			z-index: var(--zIndex-dropdown);
-			max-height: 180px;
-			overflow: auto;
-			border: var(--lv-border-muted);
-			border-radius: var(--lv-radius-large);
-			background: var(--lv-bg-panel);
-			padding: var(--lv-space-xs);
-			box-shadow: var(--lv-shadow-floating-sm);
-		}
-
-		.mention-option {
-			display: grid;
-			width: 100%;
-			height: auto;
-			min-height: var(--lv-control-small);
-			grid-template-columns: 16px minmax(0, 1fr);
-			align-items: center;
-			gap: var(--lv-space-xs);
-			border: 0;
-			border-radius: var(--lv-radius-default);
-			background: transparent;
-			color: var(--lv-fg-default);
-			padding: var(--lv-space-2xs) var(--lv-space-sm);
-			box-shadow: none;
-			text-align: left;
-		}
-
-		.mention-group {
-			display: grid;
-		}
-
-		.mention-section-label {
-			min-width: 0;
-			padding: var(--lv-space-xs) var(--lv-space-sm) var(--lv-space-2xs);
-			color: var(--lv-fg-muted);
-			font: var(--lv-type-caption);
-		}
-
-		.mention-icon {
-			display: grid;
-			width: 16px;
-			height: 16px;
-			place-items: center;
-			color: var(--lv-fg-muted);
-		}
-
-		.mention-icon svg {
-			width: 14px;
-			height: 14px;
-		}
-
-		.mention-copy {
-			display: grid;
-			min-width: 0;
-			align-items: baseline;
-			grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 88px;
-			gap: var(--lv-space-sm);
-		}
-
-		.mention-title,
-		.mention-hierarchy,
-		.mention-type {
-			overflow: hidden;
-			text-overflow: ellipsis;
-			white-space: nowrap;
-		}
-
-		.mention-hierarchy,
-		.mention-type {
-			min-width: 0;
-			color: var(--lv-fg-muted);
-			font: var(--lv-type-caption);
-		}
-
-		.mention-type {
-			text-align: right;
-		}
-
-		.mention-status {
-			display: flex;
-			min-height: var(--lv-control-small);
-			align-items: center;
-			gap: var(--lv-space-sm);
-			padding: var(--lv-space-2xs) var(--lv-space-sm);
-			color: var(--lv-fg-muted);
-			font: var(--lv-type-caption);
-		}
-
-		.mention-status svg {
-			width: 14px;
-			height: 14px;
-		}
-
-		.selected-references {
-			display: flex;
-			grid-column: 1 / -1;
-			grid-row: 1;
-			flex-wrap: wrap;
-			gap: var(--lv-space-xs);
-			padding: var(--lv-space-xs) var(--lv-space-sm) 0;
-		}
-
-		.reference-chip {
-			display: inline-flex;
-			width: auto;
-			height: 24px;
-			max-width: 100%;
-			align-items: center;
-			gap: var(--lv-space-xs);
-			border: 0;
-			border-radius: var(--lv-radius-full);
-			background: var(--lv-bg-control);
-			color: var(--lv-fg-default);
-			padding: 0 var(--lv-space-sm);
-			font: var(--lv-type-caption);
-			cursor: pointer;
-		}
-
-		.reference-chip svg {
-			width: 12px;
-			height: 12px;
-		}
-
-		.composer-surface:has(.selected-references) textarea,
-		.composer-surface:has(.selected-references) .actions {
-			grid-row: 2;
-		}
-
-		.mention-option[data-active='true'],
-		.mention-option:hover {
-			background: var(--lv-bg-control-hover);
-			transform: none;
-		}
-
-    .send-button {
-      display: inline-flex;
-      width: var(--lv-button-height, var(--lv-control-medium));
-      height: var(--lv-button-height, var(--lv-control-medium));
-      min-width: var(--lv-button-height, var(--lv-control-medium));
-      align-items: center;
-      justify-content: center;
-      border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-accent-border-rest, var(--lv-accent));
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      background: var(--lv-button-accent-bg-rest, var(--lv-accent));
-      color: var(--lv-button-accent-fg-rest, var(--lv-accent-fg));
-      cursor: pointer;
-      font: var(--lv-type-body);
-      font-weight: var(--base-text-weight-medium);
-      padding: 0;
-      box-shadow: var(--lv-button-shadow-resting, var(--shadow-resting-small));
-      transition:
-        background var(--duration-fast) var(--ease-lv),
-        border-color var(--duration-fast) var(--ease-lv),
-        color var(--duration-fast) var(--ease-lv),
-        transform var(--duration-fast) var(--ease-lv);
-    }
-
-    .send-button svg {
-      width: var(--lv-button-icon-size, var(--base-size-16));
-      height: var(--lv-button-icon-size, var(--base-size-16));
-    }
-
-    .send-button:hover:not(:disabled) {
-      border-color: var(--lv-button-accent-border-hover, var(--lv-accent));
-      background: var(--lv-button-accent-bg-hover, var(--lv-accent));
-      transform: translateY(-1px);
-    }
-
-    .send-button:focus-visible {
-      outline: var(--focus-outline, var(--lv-border-default));
-      outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
-      outline-offset: var(--focus-outline-offset, var(--lv-space-xs));
-    }
-
-    .send-button:disabled {
-      border-color: var(--lv-button-accent-border-disabled, var(--lv-line-default));
-      background: var(--lv-button-accent-bg-disabled, var(--lv-bg-control));
-      color: var(--lv-button-accent-fg-disabled, var(--lv-fg-muted));
-      cursor: not-allowed;
-      opacity: 1;
-      box-shadow: none;
-    }
-
-    textarea:disabled {
-      cursor: not-allowed;
-      color: var(--lv-fg-muted);
-      opacity: 1;
-    }
-    @media (max-width: 560px) {
-      form {
-        width: min(calc(100% - var(--lv-space-md) - var(--lv-space-md)), var(--lv-chat-stack-width));
-        padding: calc(var(--lv-space-lg) + var(--lv-space-sm)) var(--lv-space-md) var(--lv-space-md);
-      }
-    }
-
-    @media (pointer: coarse) {
-      .actions {
-        min-height: calc(var(--lv-control-large) + var(--lv-space-xs));
-      }
-
-      .send-button {
-        --lv-button-height: calc(var(--lv-control-large) + var(--lv-space-xs));
-      }
-    }
-  `
+  static styles = chatComposerStyles
 
 	protected willUpdate(changed: Map<string, unknown>) {
 		if (!changed.has('acceptedRunId')) return
@@ -392,6 +100,20 @@ class ChatComposer extends LitElement {
     this.resizeTextarea()
   }
 
+  public setDraft(value: string): void {
+    this.draft = value
+    this.mentionIndex = 0
+    this.mentionSearchPending = false
+    this.lastSearchQuery = null
+    void this.updateComplete.then(() => {
+      const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(value.length, value.length)
+      this.resizeTextarea(textarea)
+    })
+  }
+
   render() {
     const blocked = this.disabled || this.pending
 		const activeMention = this.activeMention()
@@ -401,7 +123,7 @@ class ChatComposer extends LitElement {
     return html`
       <form @submit=${this.submit}>
 			${activeMention ? html`
-				<div class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
+				<div id="chat-context-options" class="mention-picker" role="listbox" aria-label="Add LeapView context" aria-busy=${String(this.mentionSearchPending)}>
 					${mentionGroups.pinned.length > 0 ? html`
 						<div class="mention-group" role="group" aria-label="On this page">
 							<div class="mention-section-label">On this page</div>
@@ -440,12 +162,28 @@ class ChatComposer extends LitElement {
             .value=${this.draft}
             ?disabled=${this.disabled}
             aria-label=${this.placeholder.replace(/\.{3}$/, '') || 'Ask about dashboards, metrics, or models'}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded=${String(Boolean(activeMention))}
+            aria-controls=${activeMention ? 'chat-context-options' : nothing}
+            aria-activedescendant=${activeMention && mentions.length > 0 ? this.mentionOptionID(this.mentionIndex) : nothing}
             placeholder=${this.placeholder}
             rows="1"
             @input=${this.input}
             @keydown=${this.keydown}
           ></textarea>
           <div class="actions">
+            <button
+              class="context-button"
+              type="button"
+              aria-label="Add context"
+              title="Add context"
+              ?disabled=${blocked || referenceLimitReached}
+              @click=${this.openContextPicker}
+            >
+              ${lucideIcon(AtSign)}
+            </button>
             <button
 						class="send-button"
               type="submit"
@@ -505,6 +243,24 @@ class ChatComposer extends LitElement {
 		this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
 	}
 
+	private openContextPicker = (): void => {
+		if (this.disabled || this.pending || this.referenceLimitReached()) return
+		const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
+		if (!textarea) return
+		const caret = textarea.selectionStart ?? this.draft.length
+		const prefix = this.draft.slice(0, caret)
+		const suffix = this.draft.slice(caret)
+		const separator = prefix.length > 0 && !/\s$/.test(prefix) ? ' ' : ''
+		const nextCaret = prefix.length + separator.length + 1
+		this.draft = `${prefix}${separator}@${suffix}`
+		textarea.value = this.draft
+		textarea.focus()
+		textarea.setSelectionRange(nextCaret, nextCaret)
+		this.mentionIndex = 0
+		this.requestMentionSearch('')
+		this.resizeTextarea(textarea)
+	}
+
   private submit(event: Event) {
     event.preventDefault()
     this.dispatchSubmit()
@@ -550,9 +306,10 @@ class ChatComposer extends LitElement {
 
 	private renderMentionOption(reference: ChatContextReference, index: number) {
 						const kindLabel = referenceKindLabel(reference.reference.kind)
-		const hierarchy = referenceHierarchy(reference).join(' › ')
+		const hierarchy = referenceHierarchy(reference).join(' / ')
 		return html`
 			<button
+				id=${this.mentionOptionID(index)}
 				type="button"
 				class="mention-option"
 				role="option"
@@ -570,6 +327,10 @@ class ChatComposer extends LitElement {
 				</span>
 			</button>
 		`
+	}
+
+	private mentionOptionID(index: number): string {
+		return `chat-context-option-${index}`
 	}
 
 	private selectMention(reference: ChatContextReference | undefined) {

@@ -1,0 +1,39 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:cash_scenarios
+  name: cash_scenarios
+  displayName: Cash Scenarios
+  description: Planning-scenario dimension used by the cash forecast facts.
+spec:
+  fields:
+    scenario: {datatype: String, label: Scenario}
+    scenario_group: {datatype: String, label: View}
+    collection_factor: {datatype: Decimal, label: Collection factor}
+    payment_factor: {datatype: Decimal, label: Payment factor}
+  definition:
+    type: sql
+    sql: |
+      WITH source_anchor AS (
+        SELECT 1 AS anchor
+        FROM source."finance.financials"
+        LIMIT 1
+      ),
+      scenarios AS (
+        SELECT 'Base' AS scenario, 0.98 AS collection_factor, 1.00 AS payment_factor
+        UNION ALL SELECT 'Upside', 1.06, 0.98
+        UNION ALL SELECT 'Downside', 0.82, 1.04
+      )
+      SELECT
+        scenarios.scenario,
+        'Outlook' AS scenario_group,
+        CAST(scenarios.collection_factor AS DECIMAL(8,4)) AS collection_factor,
+        CAST(scenarios.payment_factor AS DECIMAL(8,4)) AS payment_factor
+      FROM scenarios
+      INNER JOIN source_anchor ON true
+  entities:
+    cash_scenario:
+      type: primary
+      fields: [scenario]
+  grain:
+    entity: cash_scenario

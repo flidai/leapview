@@ -19,6 +19,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -220,6 +221,26 @@ func TestUpdatesPreservesDrawerAgentStateOnReconnect(t *testing.T) {
 	}
 	if bootstrapCalls != 0 {
 		t.Fatalf("AgentBootstrap calls = %d, want 0 on reconnect", bootstrapCalls)
+	}
+}
+
+func TestUpdatesReturnsServiceUnavailableBeforeSSEBootstrapWhenRegistryIsFull(t *testing.T) {
+	registry := dashboardstream.NewRegistryWithLimits(time.Minute, 1)
+	defer registry.Close()
+	_, closeActive := registry.Open("active", context.Background(), func(dashboardstream.RefreshEvent) {})
+	defer closeActive()
+
+	handler := Handler{Metrics: fakeMetrics{}, ProjectID: "workspace", Coordinators: registry}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(nethttp.MethodGet, "/updates?dashboard=dash&page=overview&clientId=client&streamInstance=instance", nil)
+
+	handler.Updates(rec, req)
+
+	if rec.Code != nethttp.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %q; want 503", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); strings.Contains(body, "event:") || strings.Contains(body, "data:") {
+		t.Fatalf("capacity rejection wrote malformed SSE/bootstrap body: %q", body)
 	}
 }
 

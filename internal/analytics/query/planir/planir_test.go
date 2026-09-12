@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestPlanIRAsAcceptsValuesPointersAndRejectsTypedNil(t *testing.T) {
+	want := AggregateMetrics{}
+	if got, ok := as[AggregateMetrics](want); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("as[AggregateMetrics](value) = %#v, %v", got, ok)
+	}
+	if got, ok := as[AggregateMetrics](&want); !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("as[AggregateMetrics](pointer) = %#v, %v", got, ok)
+	}
+	var nilAggregate *AggregateMetrics
+	if got, ok := as[AggregateMetrics](nilAggregate); ok || !reflect.DeepEqual(got, AggregateMetrics{}) {
+		t.Fatalf("as[AggregateMetrics](typed nil) = %#v, %v", got, ok)
+	}
+	if _, ok := as[SortLimit](want); ok {
+		t.Fatal("as[SortLimit](aggregate) unexpectedly succeeded")
+	}
+}
+
 func validPlan() *Graph {
 	lineage := []PhysicalLineage{
 		{Logical: "id", Dataset: "orders", Field: "id"},
@@ -95,6 +112,51 @@ func TestDuckDBRenderRejectsUnavailableGroupField(t *testing.T) {
 
 	if _, err := RenderDuckDB(graph); err == nil || !strings.Contains(err.Error(), `group-by field "missing" is unavailable`) {
 		t.Fatalf("RenderDuckDB() error = %v, want unavailable group field", err)
+	}
+}
+
+func TestAggregateTimeBucketsRequireExactGroupCorrespondence(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.TimeBuckets = []TimeBucket{{Field: "status", Group: "status", Grain: "day"}}
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), `time bucket group "status" is not an aggregate group-by field`) {
+		t.Fatalf("Validate() error = %v, want exact group correspondence failure", err)
+	}
+
+	graph = validPlan()
+	aggregate = graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.GroupBy = []string{"id", "status"}
+	aggregate.AvailableFields = []Field{{Name: "id", Type: "string"}, {Name: "status", Type: "string"}}
+	aggregate.OutputGrain = Grain{Fields: []string{"id", "status"}}
+	aggregate.TimeBuckets = []TimeBucket{{Field: "id", Group: "status", Grain: "day"}}
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), `time bucket field "id" does not match group "status" source "status"`) {
+		t.Fatalf("Validate() error = %v, want field/group identity failure", err)
+	}
+}
+
+func TestAggregateGroupByRejectsDuplicateIdentity(t *testing.T) {
+	graph := validPlan()
+	aggregate := graph.Nodes["aggregate"].(AggregateMetrics)
+	aggregate.GroupBy = []string{"id", "id"}
+	aggregate.GroupByAliases = []string{"day", "month"}
+	aggregate.AvailableFields = []Field{{Name: "day", Type: "string"}, {Name: "month", Type: "string"}}
+	aggregate.OutputGrain = Grain{Fields: []string{"day", "month"}}
+	aggregate.PhysicalLineage = nil
+	graph.Nodes["aggregate"] = aggregate
+	graph.NodeMeta = aggregate.NodeMeta
+	if err := graph.Validate(); err != nil {
+		t.Fatalf("Validate() rejected repeated source fields with distinct identities: %v", err)
+	}
+	rendered, err := RenderDuckDB(graph)
+	if err != nil || !strings.Contains(rendered.SQL, `AS "day"`) || !strings.Contains(rendered.SQL, `AS "month"`) {
+		t.Fatalf("RenderDuckDB() repeated source aliases = %q, error = %v", rendered.SQL, err)
+	}
+	aggregate.GroupByAliases = []string{"day", "day"}
+	graph.Nodes["aggregate"] = aggregate
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), `group-by identity "day" is duplicated`) {
+		t.Fatalf("Validate() error = %v, want duplicate output identity failure", err)
 	}
 }
 

@@ -110,15 +110,6 @@ func diagnostics(cause error, items ...Diagnostic) error {
 	return &DiagnosticsError{Cause: cause, Diagnostics: append([]Diagnostic(nil), items...)}
 }
 
-// DiagnosticsOf returns a copy of fail-closed diagnostics carried by err.
-func DiagnosticsOf(err error) []Diagnostic {
-	var diagnosticErr *DiagnosticsError
-	if !errors.As(err, &diagnosticErr) || diagnosticErr == nil {
-		return nil
-	}
-	return append([]Diagnostic(nil), diagnosticErr.Diagnostics...)
-}
-
 // PoolID is the SHA-256 identity of a canonical PoolIdentity.
 type PoolID string
 

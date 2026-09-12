@@ -32,6 +32,10 @@ const defaultNativeRefreshLeaseTTL = 5 * time.Minute
 type PostgresNativeRefreshFinalizerAdapter struct {
 	Refresh    *refreshpostgres.Repository
 	Deployment *deploymentpostgres.Repository
+	// BeforeActivationCommit applies the same semantic cutover fence as the
+	// coordinator path. Refresh-created generations must not bypass authority
+	// validation merely because their activation transaction is caller-owned.
+	BeforeActivationCommit deploymentpostgres.ActivationPreCommitHook
 	// TargetResolver is the preferred multi-scope seam. It must derive a
 	// target from durable job scope through tx; no browser/payload target is
 	// accepted. TargetID remains an explicit single-target binding for
@@ -69,12 +73,6 @@ func NewPostgresNativeRefreshFinalizer(refresh *refreshpostgres.Repository, depl
 		return nil, err
 	}
 	return finalizer, nil
-}
-
-// NewNativeRefreshFinalizer is kept as a short constructor alias for module
-// composition code.
-func NewNativeRefreshFinalizer(refresh *refreshpostgres.Repository, deployment *deploymentpostgres.Repository, targetID string) (*PostgresNativeRefreshFinalizerAdapter, error) {
-	return NewPostgresNativeRefreshFinalizer(refresh, deployment, targetID)
 }
 
 // NewPostgresNativeRefreshFinalizerWithResolver constructs the preferred
@@ -251,7 +249,7 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 			return err
 		}
 	}
-	if _, err := f.Deployment.ActivateTx(ctx, tx, activation); err != nil {
+	if _, err := f.Deployment.ActivateTxWithPreCommitHook(ctx, tx, activation, f.BeforeActivationCommit); err != nil {
 		return fmt.Errorf("activate native refresh publication: %w", err)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -163,14 +164,14 @@ func (a *APIGenAuthorizer) AuthorizeReplay(r *http.Request) bool {
 		return false
 	}
 	operationID := ""
-	route := routePattern(r)
+	matched := false
+	parameters := 0
 	for id, contract := range a.operations {
-		if strings.EqualFold(contract.Method, r.Method) && (contract.Path == route || matchOperationPath(contract.Path, r.URL.Path)) {
-			if route != "" && !matchOperationPath(contract.Path, r.URL.Path) {
-				continue
+		if strings.EqualFold(contract.Method, r.Method) && apigencommand.MatchPath(contract.Path, r.URL.Path) {
+			count := strings.Count(contract.Path, "{")
+			if !matched || count < parameters {
+				operationID, matched, parameters = id, true, count
 			}
-			operationID = id
-			break
 		}
 	}
 	if operationID == "" {
@@ -772,7 +773,7 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 			}
 		}
 		if resource.Kind() == projectgraph.KindProjectNamespace && !access.SupportsCapability(resource.Kind(), capability) {
-			if !projectRoleAllowsCapability(snapshot, subjects, capability) {
+			if !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
 				return false, nil
 			}
 			continue
@@ -793,25 +794,6 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		}
 	}
 	return true, nil
-}
-
-// Project-scoped authoring APIs target the project root while requiring a
-// resource capability such as RESOURCE_EDIT. Those capabilities belong to an
-// explicit project role bundle, not to direct grants on the project kind.
-func projectRoleAllowsCapability(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
-	for _, binding := range snapshot.RoleBindings() {
-		for _, subject := range subjects {
-			if binding.Subject != subject {
-				continue
-			}
-			for _, captured := range binding.Capabilities {
-				if captured == capability {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGenOperationContract) error {
@@ -1015,33 +997,6 @@ func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope,
 }
 
 func apiGenRequiresCSRF(operationID string) bool { return operationID == "decideDeviceAuthorization" }
-
-func matchOperationPath(pattern, path string) bool {
-	patternParts := strings.Split(strings.Trim(strings.TrimSpace(pattern), "/"), "/")
-	pathParts := strings.Split(strings.Trim(strings.TrimSpace(path), "/"), "/")
-	if len(patternParts) != len(pathParts) {
-		return false
-	}
-	for index, part := range patternParts {
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") && len(part) > 2 {
-			if pathParts[index] == "" {
-				return false
-			}
-			continue
-		}
-		if part != pathParts[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func routePattern(r *http.Request) string {
-	if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
-		return routeContext.RoutePattern()
-	}
-	return ""
-}
 
 type discardAuthorizationResponse struct{ header http.Header }
 

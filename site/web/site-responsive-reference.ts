@@ -43,14 +43,14 @@ const kpiScenarios: readonly KPIScenario[] = [
 const filterBinding: DashboardCompiledFilterBinding = {
   key: 'qa-filter', id: 'qa-filter', filter: 'qa-filter', scope: 'page', pageID: 'responsive-widgets',
   default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
-  readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+  required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
 }
 
 const filterScenarios: readonly FilterScenario[] = [
   {
     id: 'dropdown', label: 'Dropdown', description: 'One categorical selection with static options.', contract: 'slicer.dropdown',
     definition: filterDefinition('state', 'State', 'string', 'set', {
-      kind: 'static', limit: 3, values: [
+      kind: 'static', limit: 3, includeNull: false, values: [
         { value: { kind: 'string', value: 'CA' }, label: 'California' },
         { value: { kind: 'string', value: 'NY' }, label: 'New York' },
         { value: { kind: 'string', value: 'TX' }, label: 'Texas' },
@@ -417,7 +417,7 @@ function filterDefinition(
   label: string,
   valueKind: DashboardCompiledFilterDefinition['valueKind'],
   predicate: 'set' | 'comparison' | 'range' | 'relative_period',
-  options: DashboardCompiledFilterDefinition['options'] = { kind: 'none', limit: 0, values: [] },
+  options: DashboardCompiledFilterDefinition['options'] = { kind: 'none', limit: 0, includeNull: false, values: [] },
 ): DashboardCompiledFilterDefinition {
   return {
     id, label, field: `orders.${id}`, valueKind,

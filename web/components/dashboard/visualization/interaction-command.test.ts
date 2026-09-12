@@ -24,7 +24,7 @@ const envelope = {
     columns: ['customer_id', 'state', 'revenue'], rows: [['c-1', 'SP', 42], ['c-1', 'SP', 42], ['c-2', 'RJ', 18]], completeness: 'complete',
   }] },
   selection: [], status: { kind: 'ready' }, diagnostics: [],
-} as VisualizationEnvelope
+} as unknown as VisualizationEnvelope
 
 test('row-index interaction translation validates the locator and compiled mappings', () => {
   expect(interactionCommandForRowIndex(envelope, 'primary', 0)).toEqual({
@@ -38,7 +38,7 @@ test('row-index interaction translation validates the locator and compiled mappi
   expect(interactionCommandForRowIndex(envelope, 'primary', 3)).toBeUndefined()
   expect(interactionCommandForRowIndex(envelope, 'forged', 0)).toBeUndefined()
   expect(interactionCommandForRowIndex(envelope, 'primary', 0.5)).toBeUndefined()
-  const nullIdentity = structuredClone(envelope) as VisualizationEnvelope
+  const nullIdentity = structuredClone(envelope) as unknown as VisualizationEnvelope
   if (nullIdentity.dataState.kind === 'inline') nullIdentity.dataState.datasets[0]!.rows[0]![0] = null
   expect(interactionCommandForRowIndex(nullIdentity, 'primary', 0)).toBeUndefined()
 })
@@ -52,6 +52,6 @@ test('keyboard interaction options collapse duplicate identity tuples and use co
   const selected = {
     ...envelope,
     selection: [{ datum: { dataset: 'primary', dataRevision: 7, identity: { customer_id: 'c-2', state: 'RJ' } }, label: 'c-2' }],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   expect(interactionOptions(selected).map((option) => option.selected)).toEqual([false, true])
 })

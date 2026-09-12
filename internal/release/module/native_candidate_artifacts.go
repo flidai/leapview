@@ -216,12 +216,11 @@ func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.C
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
 	}
-	if artifact.ServingStateID != state.ID || artifact.ID != nativeServingArtifactID(artifact.Digest) || artifact.Path != "" || artifact.Format != servingstate.ArtifactBundleFormat || platformdigest.ValidateSHA256Identity(artifact.Digest) != nil || artifact.Digest != state.Digest || artifact.ManifestJSON == "" || artifact.ManifestJSON != state.ManifestJSON || artifact.SizeBytes < 1 || artifact.SizeBytes > projectbundle.MaxBundleBytes || artifact.ContentType != nativeServingArtifactContentType || !validNativeStorageDomain(artifact.StorageSecurityDomain) || artifact.StorageSecurityDomain != service.storageDomain || platformdigest.ValidateSHA256Identity(artifact.MetadataDigest) != nil {
+	if err := validateImmutableNativeArtifact(artifact, state, service.storageDomain); err != nil {
+		if errors.Is(err, errImmutableNativeArtifactLocator) {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact locator is not canonical"))
+		}
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact identity or evidence mismatch"))
-	}
-	locator := nativeServingArtifactKey(artifact.Digest)
-	if locator == "" || artifact.Locator != locator || artifact.Locator != strings.TrimSpace(artifact.Locator) {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact locator is not canonical"))
 	}
 	durableManifestJSON, err := projectbundle.CanonicalManifestJSON(artifact.ManifestJSON)
 	if err != nil {

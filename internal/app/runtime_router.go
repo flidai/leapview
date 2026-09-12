@@ -266,7 +266,7 @@ type dataAssemblyInputs struct {
 	// commands whose complete mutation path is durably reentrant. It must stay
 	// narrower than the ordinary required-idempotency command inventory.
 	ReclaimExpiredIdempotency map[string]struct{}
-	// DashboardPublicationReconciler is the explicit activation projection for
+	// DashboardPublicationReconciler is the pre-activation ownership guard for
 	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
 	// DashboardPersistence is the complete native PostgreSQL dashboard
@@ -362,59 +362,6 @@ type runtimeAssemblyInputs struct {
 	// fails closed until an operator admits a physical pool and repairs any
 	// legacy serving rows.
 	DeliveryStartup func(context.Context) error
-}
-
-func logDashboardPublicationReconciliationFailure(logger *slog.Logger, err error, generationID string) {
-	if err == nil {
-		return
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	logger.Warn("dashboard publication reconciliation failed", "generation", generationID, "error", err)
-}
-
-func startupDashboardPublicationActivation(
-	ctx context.Context,
-	runtimeHost *runtimehostmodule.Module,
-	states interface {
-		ByID(context.Context, servingstate.ID) (servingstate.State, error)
-	},
-	targets deliveryTargetReader,
-	sealed bool,
-	instanceID string,
-) (deployment.Deployment, error) {
-	if states == nil {
-		return deployment.Deployment{}, servingstate.ErrNotFound
-	}
-	if sealed && targets != nil {
-		target, err := targets.DeliveryTargetRevision(ctx, instanceID)
-		if err != nil {
-			return deployment.Deployment{}, err
-		}
-		if strings.TrimSpace(target.ActiveGenerationID) == "" {
-			return deployment.Deployment{}, servingstate.ErrNotFound
-		}
-		state, err := states.ByID(ctx, servingstate.ID(target.ActiveGenerationID))
-		if err != nil {
-			return deployment.Deployment{}, err
-		}
-		return deployment.Deployment{
-			ServingIdentity:     projectgraph.ServingIdentity{ProjectID: state.ProjectID, Environment: string(state.Environment), GenerationID: string(state.ID)},
-			ActivationPrincipal: "system:startup-reconcile",
-		}, nil
-	}
-	if runtimeHost == nil {
-		return deployment.Deployment{}, servingstate.ErrNotFound
-	}
-	state, _, err := runtimeHost.ActiveArtifact(ctx)
-	if err != nil {
-		return deployment.Deployment{}, err
-	}
-	return deployment.Deployment{
-		ServingIdentity:     projectgraph.ServingIdentity{ProjectID: state.ProjectID, Environment: string(state.Environment), GenerationID: string(state.ID)},
-		ActivationPrincipal: "system:startup-reconcile",
-	}, nil
 }
 
 type httpAssemblyInputs struct {
@@ -560,6 +507,9 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	}
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
+	}
+	if production && config.BeforeNativeActivationCommit == nil {
+		return errors.New("native delivery composition requires the semantic activation pre-commit fence")
 	}
 	return nil
 }
@@ -1150,6 +1100,29 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Events: platform.asyncJobs,
 			Logger: platform.logger,
 		}
+		if persistence.requireNativeDashboard {
+			config.Jobs.ValidateActivation = func(ctx context.Context, generationID string) error {
+				if runtime.dashboardPublicationReconciler == nil {
+					return errors.New("native dashboard publication ownership guard is unavailable")
+				}
+				if runtime.runtimeHostModule == nil {
+					return errors.New("native dashboard publication ownership validation requires a runtime host")
+				}
+				projectID := runtime.runtimeHostModule.ProjectID()
+				environment := runtime.runtimeHostModule.Environment()
+				if projectID == "" || environment == "" {
+					return errors.New("native dashboard publication ownership validation requires a claimed serving scope")
+				}
+				if environment != servingstate.Environment(policy.defaultEnvironment) {
+					return fmt.Errorf("native dashboard publication ownership validation environment %q does not match deployment environment %q", environment, policy.defaultEnvironment)
+				}
+				return runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, deployment.Deployment{
+					ServingIdentity: projectgraph.ServingIdentity{
+						ProjectID: projectID, Environment: string(environment), GenerationID: generationID,
+					},
+				})
+			}
+		}
 		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Committer: platform.jobModule}
 		// Release linkage remains an independent job-domain input for activation
 		// qualification. Delivery mutations and reads are native-only, but sealed
@@ -1166,32 +1139,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
 		}
-		// Native activation commits the durable PostgreSQL pointer first. The
-		// job is not complete until the exact sealed generation is attached and
-		// dashboard projections are reconciled. A failure is retried; coordinator
-		// replay makes the control transition idempotent.
+		// Candidate ownership validation has already completed before activation.
+		// Post-commit reconciliation therefore performs only the retryable runtime
+		// cutover; deterministic policy rejection cannot strand an active target.
 		config.Jobs.ReconcileActivation = func(ctx context.Context, row apiadapter.Deployment) error {
-			projectID, err := projectgraph.NewResourceID(row.Project)
+			_, err := projectgraph.NewResourceID(row.Project)
 			if err != nil || strings.TrimSpace(row.GenerationID) == "" {
 				return errors.New("native activation returned an invalid serving identity")
-			}
-			activated := deployment.Deployment{
-				ID: row.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: row.Environment, GenerationID: row.GenerationID},
-				ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest,
-				Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
-				ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
 			}
 			if runtime.runtimeHostModule == nil {
 				return errors.New("native activation runtime host is unavailable")
 			}
 			if err := runtime.runtimeHostModule.ReconcileSealed(ctx, servingstate.ID(row.GenerationID)); err != nil {
 				return fmt.Errorf("reconcile native activated runtime: %w", err)
-			}
-			if runtime.dashboardPublicationReconciler == nil {
-				return errors.New("native dashboard publication reconciler is unavailable")
-			}
-			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
-				return fmt.Errorf("reconcile native dashboard publications: %w", err)
 			}
 			return nil
 		}
@@ -1371,15 +1331,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return errors.New("native dashboard composition requires a dashboard appearance store")
 		}
 		routes.projectBrowser.DashboardAppearances = routes.dashboardModule.AppearanceStore()
-	}
-	if routes.dashboardModule != nil && runtime.dashboardPublicationReconciler != nil {
-		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
-			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
-				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
-			}
-		} else if !errors.Is(err, servingstate.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
-			logDashboardPublicationReconciliationFailure(platform.logger, err, "startup")
-		}
 	}
 	if routes.agentModule == nil {
 		documentation, err := buildAgentDocumentation()
@@ -1756,7 +1707,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
@@ -1795,7 +1746,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if len(resources) == 0 {
 				// Unknown/new resources require an explicit target-owned role;
 				// a grant on an unrelated graph object must never widen scope.
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
 		},

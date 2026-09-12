@@ -74,27 +74,6 @@ func (visual visualPlan) Title() string {
 	return base.Title
 }
 
-func (visual visualPlan) KindAndType() (string, string) {
-	switch value := visual.Definition.Spec.Value.(type) {
-	case *visualizationir.KPIVisualizationSpec:
-		return "kpi", "kpi"
-	case *visualizationir.CartesianVisualizationSpec:
-		return "chart", string(value.Mark)
-	case *visualizationir.PointVisualizationSpec:
-		return "chart", "scatter"
-	case *visualizationir.ProportionalVisualizationSpec:
-		return "chart", string(value.Mark)
-	case *visualizationir.HierarchyVisualizationSpec:
-		return "chart", string(value.Mark)
-	case *visualizationir.PolarVisualizationSpec:
-		return "chart", string(value.Mark)
-	case *visualizationir.GeographicVisualizationSpec:
-		return "chart", "map"
-	default:
-		return "chart", ""
-	}
-}
-
 func (visual visualPlan) Interaction() (visualizationir.VisualizationInteraction, bool) {
 	base, err := visualizationir.SpecificationBase(visual.Definition.Spec)
 	if err != nil || len(base.Interactions) == 0 {

@@ -9,11 +9,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	cursordb "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -73,10 +73,6 @@ func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
 // NewMaintenance constructs the bounded cursor-signing retention facade.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
-// NewMaintenanceRepository is a descriptive alias for callers that name all
-// capability adapters as repositories.
-func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
-
 // Configure loads the durable ring and installs it in cursorsigning. The
 // first caller atomically creates a random active key; later callers only
 // reload the existing ring. Configuration commits its durable changes before
@@ -108,16 +104,7 @@ func (r *Repository) Configure(ctx context.Context) error {
 }
 
 func isNilDB(db DBTX) bool {
-	if db == nil {
-		return true
-	}
-	v := reflect.ValueOf(db)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(db)
 }
 
 // Rotate creates and activates a fresh key while retaining prior keys for

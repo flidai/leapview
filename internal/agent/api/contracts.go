@@ -55,13 +55,6 @@ type AgentTurnRequest struct {
 	CorrelationID string `json:"correlationId,omitempty"`
 }
 
-type AgentTurnResponse struct {
-	ConversationID string `json:"conversationId"`
-	RunID          string `json:"runId"`
-	StopReason     string `json:"stopReason"`
-	Content        string `json:"content"`
-}
-
 type AgentEventResponse struct {
 	ID           string         `json:"id"`
 	Event        string         `json:"event"`

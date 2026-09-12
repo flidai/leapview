@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Sun, Trash2, Undo2 } from 'lucide'
+import { Archive, ArrowDown, ArrowLeftRight, ArrowUp, ChartColumn, ChevronDown, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Search, Settings2, Sun, Trash2, Undo2, X } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -33,6 +33,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
+import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
@@ -44,16 +45,6 @@ import '../app/dashboard-icon-picker'
 import '../chat/chat-drawer'
 import { agentIcon } from '../chat/agent-icon'
 import './visual-modal'
-
-const emptyStatus: DashboardStatus = {
-  loading: false,
-  error: '',
-  generation: 0,
-  lastUpdated: '',
-  refreshId: '',
-  setupRequired: false,
-  progressPercent: 100,
-}
 
 type BuilderVisualType = string
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
@@ -2995,7 +2986,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   get status(): DashboardStatus {
-    return this.signal<DashboardStatus>('status', emptyStatus)
+    return this.signal<DashboardStatus>('status', emptyDashboardStatus())
   }
 
   get builderVisuals(): Record<string, VisualizationEnvelope> {
@@ -3228,8 +3219,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
-          <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
-          <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
+          <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl or Cmd + Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
+          <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl or Cmd + Shift + Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
           ${this.renderThemeToggle()}
           ${hasMoreActions ? html`
             <details class="more-actions">
@@ -3785,7 +3776,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <button class="field" type="button" data-used=${usedIn ? 'true' : 'false'} data-dragging=${this.draggedFieldID === field.id ? 'true' : 'false'} draggable=${editable ? 'true' : 'false'} ?disabled=${!editable} title=${field.description || action} aria-label=${accessibleName} @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)} @dragend=${this.clearDraggedField}>
         <span class="field-role-icon" aria-hidden="true">${this.renderFieldRoleIcon(item.group)}</span>
         <span class="field-copy"><span class="field-label">${field.label}</span>${context ? html`<span class="field-context">${context}</span>` : nothing}</span>
-        ${usedIn ? html`<span class="field-used">✓ ${usedIn}</span>` : nothing}
+        ${usedIn ? html`<span class="field-used">${usedIn}</span>` : nothing}
       </button>
     `
   }
@@ -3888,7 +3879,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-range"><span>From</span><span>To</span></div></div>`
     }
     const preview = component.controlType === 'relativePeriod' ? 'Last 30 days' : component.controlType === 'text' ? 'Search values' : 'All'
-    return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${component.controlType === 'text' ? '⌕' : '⌄'}</span></div></div>`
+    return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${lucideIcon(component.controlType === 'text' ? Search : ChevronDown, { size: 13, strokeWidth: 2 })}</span></div></div>`
   }
 
   private renderHeader(header: DashboardBuilderHeaderSignal, page: DashboardBuilderPageSignal) {
@@ -4298,10 +4289,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <span class="field-token field-pill" data-field-id=${fieldID} data-field-role=${role}>
         <span class="field-token-label" title=${label}>${label}</span>
         <span class="field-token-actions" aria-label=${`${label} field actions`}>
-          <button type="button" class="field-token-action" data-field-action="remove" aria-label=${`Remove ${label} field`} title="Remove field" ?disabled=${!editable} @click=${() => this.removeField(visual, role, fieldID, label)}>×</button>
-          <button type="button" class="field-token-action" data-field-action="move-up" aria-label=${`Move ${label} field up`} title="Move field up" ?disabled=${!editable || index === 0} @click=${() => this.moveField(visual, role, fieldID, 'up', label)}>↑</button>
-          <button type="button" class="field-token-action" data-field-action="move-down" aria-label=${`Move ${label} field down`} title="Move field down" ?disabled=${!editable || index === count - 1} @click=${() => this.moveField(visual, role, fieldID, 'down', label)}>↓</button>
-          <button type="button" class="field-token-action" data-field-action="move-role" aria-label=${alternateRole ? `Move ${label} field to ${this.fieldWellLabel(visual, alternateRole)}` : `Move ${label} field to another role`} title=${alternateRole ? `Move to ${this.fieldWellLabel(visual, alternateRole)}` : 'No compatible role for this field'} ?disabled=${!editable || !alternateRole} @click=${() => alternateRole && this.moveFieldRole(visual, role, alternateRole, fieldID, label)}>⇄</button>
+          <button type="button" class="field-token-action" data-field-action="remove" aria-label=${`Remove ${label} field`} title="Remove field" ?disabled=${!editable} @click=${() => this.removeField(visual, role, fieldID, label)}>${lucideIcon(X, { size: 12, strokeWidth: 2 })}</button>
+          <button type="button" class="field-token-action" data-field-action="move-up" aria-label=${`Move ${label} field up`} title="Move field up" ?disabled=${!editable || index === 0} @click=${() => this.moveField(visual, role, fieldID, 'up', label)}>${lucideIcon(ArrowUp, { size: 12, strokeWidth: 2 })}</button>
+          <button type="button" class="field-token-action" data-field-action="move-down" aria-label=${`Move ${label} field down`} title="Move field down" ?disabled=${!editable || index === count - 1} @click=${() => this.moveField(visual, role, fieldID, 'down', label)}>${lucideIcon(ArrowDown, { size: 12, strokeWidth: 2 })}</button>
+          <button type="button" class="field-token-action" data-field-action="move-role" aria-label=${alternateRole ? `Move ${label} field to ${this.fieldWellLabel(visual, alternateRole)}` : `Move ${label} field to another role`} title=${alternateRole ? `Move to ${this.fieldWellLabel(visual, alternateRole)}` : 'No compatible role for this field'} ?disabled=${!editable || !alternateRole} @click=${() => alternateRole && this.moveFieldRole(visual, role, alternateRole, fieldID, label)}>${lucideIcon(ArrowLeftRight, { size: 12, strokeWidth: 2 })}</button>
         </span>
       </span>
     `

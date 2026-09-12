@@ -7,6 +7,20 @@ import { echartsOption, interactionCommandForRow } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import visualDocumentation from '../../../../../docs/visuals/examples.gen.json'
 
+type InternalSeriesModel = {
+  name: string
+  option: { silent?: boolean }
+  getData: () => { count?: () => number; _layout?: { points?: number[] } }
+}
+type InternalEChartsModel = {
+  getComponent: (id: string) => { axis: { scale: { getExtent: () => unknown; getOrdinalMeta: () => { categories: unknown[] } } } }
+  getSeriesCount: () => number
+  getSeriesByIndex: (index: number) => InternalSeriesModel
+}
+function modelOf(chart: echarts.EChartsType): InternalEChartsModel {
+  return (chart as unknown as { getModel: () => InternalEChartsModel }).getModel()
+}
+
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.spec.presentation.stacking = 'percent'
@@ -81,7 +95,7 @@ test('ECharts split series keep the generated source category domain in both ori
     try {
       baseline.setOption({ ...option, series: option.series.filter((series: any) => !series.silent) })
       baseline.renderToSVGString()
-      baselineExtent = baseline.getModel().getComponent(horizontal ? 'xAxis' : 'yAxis').axis.scale.getExtent()
+      baselineExtent = modelOf(baseline).getComponent(horizontal ? 'xAxis' : 'yAxis').axis.scale.getExtent()
     } finally {
       baseline.dispose()
     }
@@ -89,7 +103,7 @@ test('ECharts split series keep the generated source category domain in both ori
     try {
       chart.setOption(option)
       chart.renderToSVGString()
-      const model = chart.getModel()
+      const model = modelOf(chart)
       const categorySeed = option.series.find((series: any) => series.silent === true)
       expect(categorySeed).toMatchObject({ silent: true, __lv_source_row_indices: [], tooltip: { show: false } })
       expect(option.legend.data).not.toContain(categorySeed.id)
@@ -130,7 +144,7 @@ test('ECharts split category domains preserve authored row order and typed/null 
   try {
     nullChart.setOption(nullOption)
     nullChart.renderToSVGString()
-    expect(nullChart.getModel().getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual(['B', null])
+    expect(modelOf(nullChart).getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual(['B', null])
   } finally {
     nullChart.dispose()
   }
@@ -144,7 +158,7 @@ test('ECharts split category domains preserve authored row order and typed/null 
   try {
     chart.setOption(numericOption)
     chart.renderToSVGString()
-    const model = chart.getModel()
+    const model = modelOf(chart)
     expect(model.getComponent('xAxis').axis.scale.getOrdinalMeta().categories).toEqual([1, '1', 2])
     const actualSeries = Array.from({ length: model.getSeriesCount() }, (_, index) => model.getSeriesByIndex(index)).filter((series: any) => !series.option.silent)
     const xPositions = actualSeries.flatMap((series: any) => {
@@ -314,7 +328,7 @@ test('ECharts condenses crowded category-series charts without overlapping label
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', left: 8, right: 8, height: 24, bottom: 0 })
-  expect(option.grid).toMatchObject({ left: 12, right: 16, top: 16, bottom: 44, containLabel: true })
+  expect(option.grid).toMatchObject({ left: 12, right: 28, top: 16, bottom: 44, containLabel: true })
   expect(option.yAxis).toMatchObject({ splitNumber: 4, axisLabel: { hideOverlap: true } })
   expect(option.series.filter((series: any) => !series.silent)).toHaveLength(8)
   expect(option.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === false)).toBe(true)
@@ -324,7 +338,7 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(compact.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === true)).toBe(true)
 })
 
-test('ECharts keeps category-series conditional icon cues visible through crowding and percent labels', () => {
+test('ECharts respects density while preserving plain values in conditionally formatted series', () => {
   const envelope = cartesianSeriesFixture() as any
   envelope.spec.mark = 'column'
   envelope.spec.presentation.stacked = false
@@ -344,16 +358,20 @@ test('ECharts keeps category-series conditional icon cues visible through crowdi
 
   const crowded = echartsOption(envelope, defaultRendererContext) as any
   const crowdedSeries = crowded.series.filter((series: any) => !series.silent)
-  expect(crowdedSeries.every((series: any) => series.label.show === true)).toBe(true)
-  expect(crowdedSeries.every((series: any) => series.labelLayout.hideOverlap === false)).toBe(true)
-  expect(crowdedSeries[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('↑ 1')
+  expect(crowdedSeries.every((series: any) => series.label.show === false)).toBe(true)
+  expect(crowdedSeries.every((series: any) => series.labelLayout.hideOverlap === true)).toBe(true)
+  expect(crowdedSeries[0].label.formatter({ value: ['MG', 'approved', 1] })).toBe('1')
+
+  envelope.spec.presentation.labelPolicy.density = 'always'
+  const explicit = echartsOption(envelope, defaultRendererContext) as any
+  expect(explicit.series.filter((series: any) => !series.silent).every((series: any) => series.label.show === true)).toBe(true)
 
   envelope.spec.presentation.stacking = 'percent'
   envelope.spec.presentation.labelPolicy.density = 'hidden'
   const percent = echartsOption(envelope, defaultRendererContext) as any
   const delivered = percent.series.find((series: any) => series.name === 'approved')
-  expect(delivered).toMatchObject({ label: { show: true }, labelLayout: { hideOverlap: false } })
-  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('↑ 2.8%')
+  expect(delivered).toMatchObject({ label: { show: false }, labelLayout: { hideOverlap: true } })
+  expect(delivered.label.formatter({ value: ['MG', 'approved', 1, 2.7777777777777777] })).toBe('2.8%')
 })
 
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
@@ -407,7 +425,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
   multiMetric.spec.conditionalFormatting = [format]
   const multiOption = echartsOption(multiMetric, dark) as any
   const multiLabel = multiOption.series[0].label
-  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('↑ 75%')
+  expect(multiLabel.formatter({ value: ['Jan', 10, 30, 75, 25] })).toBe('75%')
   expect(multiLabel.color({ value: ['Jan', 10, 30, 75, 25] })).toBe(dark.colors.attention)
 
   const categorySeries = cartesianSeriesFixture() as any
@@ -416,7 +434,7 @@ test('ECharts preserves conditional icon and label color on percent-stack labels
   categorySeries.spec.conditionalFormatting = [{ ...format, id: 'value-status', field: { dataset: 'primary', field: 'value' } }]
   const categoryOption = echartsOption(categorySeries, dark) as any
   const categoryLabel = categoryOption.series.find((series: any) => series.name === 'delivered').label
-  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('↑ 25%')
+  expect(categoryLabel.formatter({ value: ['Jan', 'delivered', 10, 25] })).toBe('25%')
   expect(categoryLabel.color({ value: ['Jan', 'delivered', 10, 25] })).toBe(dark.colors.attention)
 })
 
@@ -434,7 +452,7 @@ test('ECharts translation emits one multi-value financial series', () => {
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows: [['Jan', 1, 2, 0, 3]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope) as any
   expect(option.series).toHaveLength(1)
@@ -460,7 +478,7 @@ test('ECharts candlestick colors use authored intents and a neutral equal-value 
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows: [['Gain', 1, 2, 0, 3], ['Loss', 2, 1, 0, 3], ['Flat', 2, 2, 1, 3]], completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].itemStyle).toEqual({
@@ -515,7 +533,7 @@ test('ECharts renders candlestick colors in large mode, including equal-value ne
       }), completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series[0].large).toBeUndefined()
@@ -560,7 +578,7 @@ test('ECharts keeps exact decimal candlestick direction in normal rendering abov
       { id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['label', 'open', 'close', 'low', 'high'], rows, completeness: 'complete' },
     ] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
   const option = echartsOption(envelope, defaultRendererContext) as any
   const style = (color: string) => ({ color, color0: color, borderColor: color, borderColor0: color, borderColorDoji: color })
   expect(option.series[0].large).toBe(false)
@@ -600,7 +618,7 @@ function cartesianFixture(mark: string, columns = ['label', 'value']): Visualiza
     schemaVersion: 9, visualID: mark, rendererID: 'echarts', specRevision: 'sha256:test', dataRevision: 1,
     spec: { kind: 'cartesian', title: mark, mark, datasets: [{ id: 'primary', fields }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], x: { dataset: 'primary', field: 'label' }, y, presentation: { legend: 'bottom', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, smooth: true, stacked: true, showSymbols: false, dataZoom: true, area: mark === 'area', step: true, symbolSize: 12, labelPosition: 'top', orientation: mark === 'bar' ? 'horizontal' : 'vertical', histogramBins: mark === 'histogram' ? 10 : undefined } },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns, rows: [row], completeness: 'complete' }] }, selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function cartesianSeriesFixture(): VisualizationEnvelope {
@@ -627,5 +645,5 @@ function cartesianSeriesFixture(): VisualizationEnvelope {
       }],
     },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }

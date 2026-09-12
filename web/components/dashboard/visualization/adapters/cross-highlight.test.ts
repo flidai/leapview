@@ -111,7 +111,7 @@ function facetedEnvelope(): VisualizationEnvelope {
     },
     dataState: inlineState(['state', 'status', 'value'], [['SP', 'delivered', 10], ['RJ', 'canceled', 7], ['RJ', 'delivered', 4]]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function tableEnvelope(): VisualizationEnvelope {
@@ -129,7 +129,7 @@ function tableEnvelope(): VisualizationEnvelope {
     },
     dataState: inlineState(['state', 'order_id'], [['SP', 'o1'], ['RJ', 'o2']]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function kpiEnvelope(): VisualizationEnvelope {
@@ -142,7 +142,7 @@ function kpiEnvelope(): VisualizationEnvelope {
     },
     dataState: inlineState(['value'], [[42]]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 function mapEnvelope(): VisualizationEnvelope {
@@ -154,7 +154,7 @@ function mapEnvelope(): VisualizationEnvelope {
     id: 'states', kind: 'choropleth', geometry: {}, join: { dataset: 'primary', field: 'state' }, value: { dataset: 'primary', field: 'value' },
     tooltip: [], position: 'below_labels', visibility: { minimumZoom: 0, maximumZoom: 24 },
     color: { kind: 'sequential', palette: 'blue', reverse: false, nullColor: '#ccc' }, stroke: { color: '#fff', width: 1, opacity: 1 }, opacity: 0.82,
-  } as VisualizationGeographicLayer
+  } as unknown as VisualizationGeographicLayer
   return {
     schemaVersion: 9, visualID: 'map', rendererID: 'maplibre', specRevision: 'sha256:test', dataRevision: 1,
     spec: {
@@ -167,5 +167,5 @@ function mapEnvelope(): VisualizationEnvelope {
     },
     dataState: inlineState(['state', 'value'], [['SP', 10], ['RJ', 7]]),
     selection: [], highlights: highlight, status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }

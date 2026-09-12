@@ -81,7 +81,6 @@ export function resolveKPIState(envelope: VisualizationEnvelope, context: Render
   const deltaText = spec.comparison && comparisonVisible
     ? delta === undefined ? 'Unavailable' : formatDelta(envelope, spec.value, delta, spec.presentation.delta, context, displayUnit)
     : undefined
-  const deltaCue = delta === undefined ? undefined : signKPI(delta) > 0 ? '↑' : signKPI(delta) < 0 ? '↓' : '•'
   const goalText = spec.goal ? formatDisplayField(envelope, spec.goal.field, goal, context, displayUnit) : undefined
   const progress = current === undefined || goal === undefined || toApproximateNumber(goal) <= 0
     ? undefined
@@ -123,7 +122,6 @@ export function resolveKPIState(envelope: VisualizationEnvelope, context: Render
     ...(spec.comparison && comparisonVisible ? { comparisonLabel: spec.comparison.label } : {}),
     ...(delta === undefined ? {} : { delta }),
     ...(deltaText === undefined ? {} : { deltaText }),
-    ...(deltaCue === undefined ? {} : { deltaCue }),
     ...(changeStatus === undefined ? {} : { changeStatus }),
     ...(goal === undefined ? {} : { goal }),
     ...(goalText === undefined ? {} : { goalText }),
@@ -285,6 +283,12 @@ function formatDelta(
     const sign = signKPI(delta)
     const rounded = formatValue(context.locale, { kind: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 1 }, absKPI(delta))
     return `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${rounded}`
+  }
+  const format = fieldFormat(envelope, ref)
+  if (format?.kind === 'percent') {
+    const formatted = formatValue(context.locale, format, absKPI(delta)).replace(/%$/, ' pp')
+    const sign = signKPI(delta)
+    return `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${formatted}`
   }
   const formatted = formatDisplayField(envelope, ref, absKPI(delta), context, displayUnit)
   const sign = signKPI(delta)

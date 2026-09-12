@@ -1,6 +1,6 @@
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext, type RendererAdapter, type RendererContext, type RendererHandle } from '../host-controller'
-import { conditionalIconGlyph, conditionalStyleColor, contrastTextColor, resolveConditionalFormat } from '../conditional-format'
+import { conditionalStyleColor, contrastTextColor, resolveConditionalFormat } from '../conditional-format'
 import { resolveKPIWidgetLayout } from '../kpi-layout'
 import type { WidgetSize } from '../layout'
 import { resolveVisualizationMetadata } from '../metadata'
@@ -231,7 +231,7 @@ export function kpiConditionalPresentation(envelope: VisualizationEnvelope, cont
     ...(background ? { background } : {}),
     ...(foreground ? { foreground } : {}),
     ...(valueColor ? { valueColor } : {}),
-    ...(icon ? { icon: conditionalIconGlyph(icon), iconLabel: iconAccessibleLabel(icon) } : {}),
+    ...(icon ? { iconLabel: iconAccessibleLabel(icon) } : {}),
   }
 }
 

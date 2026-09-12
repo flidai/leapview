@@ -27,15 +27,14 @@ type ActiveScope struct {
 type Status string
 
 const (
-	StatusPending         Status = "pending"
-	StatusValidated       Status = "validated"
-	StatusActive          Status = "active"
-	StatusDraining        Status = "draining"
-	StatusInactive        Status = "inactive"
-	StatusFailed          Status = "failed"
-	StatusExpired         Status = "expired"
-	StatusDeleteScheduled Status = "delete_scheduled"
-	StatusDeleted         Status = "deleted"
+	StatusPending   Status = "pending"
+	StatusValidated Status = "validated"
+	StatusActive    Status = "active"
+	StatusDraining  Status = "draining"
+	StatusInactive  Status = "inactive"
+	StatusFailed    Status = "failed"
+	StatusExpired   Status = "expired"
+	StatusDeleted   Status = "deleted"
 )
 
 const DefaultEnvironment Environment = "dev"
@@ -43,9 +42,7 @@ const DefaultEnvironment Environment = "dev"
 type Source string
 
 const (
-	SourcePublish   Source = "publish"
-	SourceRefresh   Source = "refresh"
-	SourceCandidate Source = "candidate"
+	SourcePublish Source = "publish"
 )
 
 type State struct {

@@ -1,5 +1,5 @@
 import type { VisualizationColorIntent, VisualizationConditionalFormat } from '../../../generated/visualization'
-import { conditionalIconGlyph, resolveConditionalFormat, type ResolvedConditionalStyle } from '../visualization/conditional-format'
+import { resolveConditionalFormat, type ResolvedConditionalStyle } from '../visualization/conditional-format'
 import type { TableColumn, TableRow } from './types'
 
 export type ConditionalCellAppearance = Readonly<{
@@ -20,7 +20,7 @@ export function conditionalCellAppearance(row: TableRow, column: TableColumn): C
     : foreground?.color ? foregroundIntentColor(foreground.color) : undefined
   return {
     ...(backgroundColor ? { background: backgroundColor, foreground: foregroundColor } : foregroundColor ? { foreground: foregroundColor } : {}),
-    ...(icon?.icon ? { icon: conditionalIconGlyph(icon.icon), iconLabel: iconLabel(icon.icon) } : {}),
+    ...(icon?.icon ? { iconLabel: iconLabel(icon.icon) } : {}),
   }
 }
 

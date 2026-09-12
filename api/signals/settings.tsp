@@ -1,7 +1,8 @@
 // Settings surfaces are kept in a separate contract so they can evolve
-// independently from the shared admin page envelope. The admin stream may
-// embed these signals under `adminProjects`, `adminServiceAccounts`, and
-// `adminAuditLog` without introducing ad-hoc browser fetches.
+// independently from the shared admin page envelope. The admin stream
+// publishes service-account and audit signals without introducing ad-hoc
+// browser fetches. `adminProjects` is a retained consumer-only root and has no
+// producer in the canonical app.
 import "@yacobolo/apigen";
 
 namespace LeapViewUISignals;

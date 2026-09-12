@@ -354,12 +354,6 @@ func (f NativeDeliveryMutationFuncs) BuildPlan(ctx context.Context, request Nati
 	return f.Build(ctx, request)
 }
 
-// NewNativeDeliveryMutationAdapter makes callback wiring explicit while
-// retaining a stable interface for application composition.
-func NewNativeDeliveryMutationAdapter(plan func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error), build func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error)) NativeDeliveryMutationPort {
-	return NativeDeliveryMutationFuncs{Plan: plan, Build: build}
-}
-
 func (r NativeDeliveryPlanRequest) validate(environment string) error {
 	if err := r.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
@@ -436,55 +430,37 @@ func (p NativeDeliveryPlan) validate(request NativeDeliveryPlanRequest, environm
 }
 
 func (r NativeDeliveryBuildRequest) validate(environment string) error {
-	if err := r.ProjectID.Validate(); err != nil {
-		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	if r.PlanID == uuid.Nil || r.PlanID.String() != strings.TrimSpace(r.PlanID.String()) {
-		return fmt.Errorf("%w: plan identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
-	}
-	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
-		}
-		if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
-			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
-		}
-	}
-	if environment != "" && r.Environment != environment {
-		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
-	}
-	return nil
+	return validateNativeDeliveryRequest(r.ProjectID, r.TargetID, r.Environment, r.PrincipalID, r.IdempotencyKey, environment, r.PlanID, "plan")
 }
 
 func (r NativeDeliveryPublishRequest) validate(environment string) error {
-	if err := r.ProjectID.Validate(); err != nil {
-		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
-	}
-	if r.CandidateID == uuid.Nil || r.CandidateID.String() != strings.TrimSpace(r.CandidateID.String()) {
-		return fmt.Errorf("%w: candidate identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
-	}
-	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
-		if value == "" || value != strings.TrimSpace(value) {
-			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
-		}
-		if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
-			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
-		}
-	}
-	if environment != "" && r.Environment != environment {
-		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
-	}
-	return nil
+	return validateNativeDeliveryRequest(r.ProjectID, r.TargetID, r.Environment, r.PrincipalID, r.IdempotencyKey, environment, r.CandidateID, "candidate")
 }
 
 func (r NativeDeliveryRollbackRequest) validate(environment string) error {
-	if err := r.ProjectID.Validate(); err != nil {
+	return validateNativeDeliveryRequest(r.ProjectID, r.TargetID, r.Environment, r.PrincipalID, r.IdempotencyKey, environment, r.GenerationID, "generation")
+}
+
+// validateNativeDeliveryRequest contains the request-level contract shared by
+// build, publish, and rollback. The operation-specific UUID and label are
+// supplied by the caller so each public request keeps its exact error text.
+func validateNativeDeliveryRequest(projectID projectgraph.ResourceID, targetID, requestEnvironment, principalID, idempotencyKey, instanceEnvironment string, requestID uuid.UUID, requestIDLabel string) error {
+	if err := projectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
 	}
-	if r.GenerationID == uuid.Nil || r.GenerationID.String() != strings.TrimSpace(r.GenerationID.String()) {
-		return fmt.Errorf("%w: generation identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
+	if requestID == uuid.Nil || requestID.String() != strings.TrimSpace(requestID.String()) {
+		return fmt.Errorf("%w: %s identity must be a canonical UUID", deployment.ErrDeliveryInvalid, requestIDLabel)
 	}
-	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
+	for _, field := range []struct {
+		label string
+		value string
+	}{
+		{label: "target", value: targetID},
+		{label: "environment", value: requestEnvironment},
+		{label: "principal", value: principalID},
+		{label: "idempotency key", value: idempotencyKey},
+	} {
+		label, value := field.label, field.value
 		if value == "" || value != strings.TrimSpace(value) {
 			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
 		}
@@ -492,7 +468,7 @@ func (r NativeDeliveryRollbackRequest) validate(environment string) error {
 			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
 		}
 	}
-	if environment != "" && r.Environment != environment {
+	if instanceEnvironment != "" && requestEnvironment != instanceEnvironment {
 		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
 	}
 	return nil

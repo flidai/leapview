@@ -12,10 +12,15 @@ func (m *Module) PublishSemanticModelRefresh(projectID projectgraph.ResourceID, 
 	if m == nil || m.coordinators == nil {
 		return
 	}
-	for _, streamID := range m.coordinators.RefreshSemanticModel(projectID, environment, modelID) {
-		if m.handler.Broker != nil {
-			m.handler.Broker.PublishEnvelope(streamID, dashboardstream.Envelope{
-				Signals: pagestream.SignalPatch{"status": map[string]any{"lastUpdated": refreshedAt}},
+	for _, target := range m.coordinators.RefreshSemanticModelTargets(projectID, environment, modelID) {
+		broker := m.handler.Broker
+		if target.Publication != "" && m.publicBroker != nil {
+			broker = scopedPublicationBroker(m.publicBroker, target.Publication)
+		}
+		if broker != nil {
+			broker.PublishEnvelope(target.StreamID, dashboardstream.Envelope{
+				Signals:  pagestream.SignalPatch{"status": map[string]any{"lastUpdated": refreshedAt}},
+				Delivery: dashboardstream.DeliveryMetadata{Boundary: true},
 			})
 		}
 	}

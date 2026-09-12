@@ -170,6 +170,41 @@ running_server_pid() {
 
 ensure_port() {
   local candidate="$1"
+
+  if [[ -n "${PORT:-}" ]]; then
+    if [[ ! "$candidate" =~ ^[0-9]+$ ]] || (( candidate < 1 || candidate > 65535 )); then
+      echo "Explicit PORT must be an integer between 1 and 65535 (got ${PORT@Q})" >&2
+      exit 1
+    fi
+
+    local pids
+    pids="$(port_pids "$candidate")"
+    if [[ -z "$pids" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+
+    local stopped=false
+    local blocked=false
+    while read -r pid; do
+      [[ -z "$pid" ]] && continue
+      if same_worktree_pid "$pid"; then
+        stop_pid "$pid" "LeapView dev server on port $candidate"
+        stopped=true
+      else
+        blocked=true
+      fi
+    done <<< "$pids"
+
+    if [[ "$stopped" == true && "$blocked" == false ]] && port_is_free "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+
+    echo "Explicit PORT $candidate is already in use; choose a free port" >&2
+    exit 1
+  fi
+
   local end=$((PORT_START + PORT_COUNT - 1))
   local offset=0
 
@@ -276,6 +311,8 @@ mcp_call() {
 
 mcp_smoke() {
   local port="$1"
+  local model_query="${LEAPVIEW_DEV_MCP_MODEL_QUERY:-sales}"
+  local metric_name="${LEAPVIEW_DEV_MCP_METRIC:-revenue}"
   command -v jq >/dev/null 2>&1 || {
     echo "jq is required for the development MCP smoke check" >&2
     return 1
@@ -307,7 +344,7 @@ mcp_smoke() {
     sleep "$interval"
   done
 
-  local catalog metric query_arguments
+  local catalog metric query_arguments search_body
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     catalog="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-catalog","method":"tools/call","params":{"name":"catalog_list","arguments":{}}}')" || return 1
     if jq -e '(.error == null) and (.result.isError != true) and (.result.structuredContent.count > 0)' <<<"$catalog" >/dev/null; then
@@ -321,11 +358,13 @@ mcp_smoke() {
     sleep "$interval"
   done
 
+  search_body="$(jq -cn --arg query "$model_query" '{jsonrpc:"2.0", id:"dev-semantic-model", method:"tools/call", params:{name:"catalog_search", arguments:{query:$query, kinds:["semantic_model"], limit:1}}}')"
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    metric="$(mcp_call "$port" '{"jsonrpc":"2.0","id":"dev-semantic-model","method":"tools/call","params":{"name":"catalog_search","arguments":{"query":"sales","kinds":["semantic_model"],"limit":1}}}')" || return 1
-    query_arguments="$(jq -ce '
-      .result.structuredContent.items[0] as $item |
-      {model: $item.ref.id, metrics: [{field: "revenue"}], limit: 1}
+    metric="$(mcp_call "$port" "$search_body")" || return 1
+    query_arguments="$(jq -ce --arg metric "$metric_name" '
+      .result.structuredContent.items[0].ref.id as $model |
+      select(($model | type) == "string" and ($model | length) > 0) |
+      {model: $model, metrics: [{field: $metric}], limit: 1}
     ' <<<"$metric" 2>/dev/null || true)"
     if [[ -n "$query_arguments" ]]; then
       break
