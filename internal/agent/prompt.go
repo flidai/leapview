@@ -183,19 +183,22 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				if listErr != nil {
 					return nil, listErr
 				}
-				messagePersisted := false
-				for _, message := range stored {
-					if message.RunID == runID && message.Role == MessageRoleUser && message.ContentText == input.Input {
-						messagePersisted = true
-						break
-					}
-				}
+				persistedPrompt, messagePersisted := storedPromptForRun(stored, runID, input.Input)
 				transcript, transcriptErr := decodeTranscript(latestConversation.TranscriptJSON)
 				if transcriptErr != nil {
 					return nil, transcriptErr
 				}
-				if input.EditMessageID != "" && !messagePersisted {
-					transcript, transcriptErr = prepareEditedTranscript(transcript, stored, input.EditMessageID)
+				promptCoreID := storedMessageCoreID(persistedPrompt.ContentJSON)
+				promptInSnapshot := messagePersisted && transcriptContainsMessageID(transcript, promptCoreID)
+				if input.EditMessageID != "" && !promptInSnapshot {
+					trimStored := stored
+					if messagePersisted {
+						// The replacement row may already be durable while the
+						// old transcript snapshot is still active. Exclude it so
+						// activeMessageProjection can resolve the edit target.
+						trimStored = withoutStoredPrompt(stored, runID, input.Input)
+					}
+					transcript, transcriptErr = prepareEditedTranscript(transcript, trimStored, input.EditMessageID)
 					if transcriptErr != nil {
 						return nil, transcriptErr
 					}
@@ -212,12 +215,15 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				// A previous run may have submitted identical text. Only a
 				// message already bound to this run proves that prompt
 				// preparation committed; otherwise prepare a fresh message.
-				if !messagePersisted || !hasPrompt || lastUser.Content != input.Input {
+				if !promptInSnapshot || !hasPrompt || lastUser.Content != input.Input {
 					if prepErr = prepared.PreparePrompt(agentcore.PromptRequest{Input: input.Input, Context: turnContextItems(input.Context)}); prepErr != nil {
 						return nil, prepErr
 					}
 				}
 				transcript = prepared.Transcript()
+				if !promptInSnapshot && messagePersisted && promptCoreID != "" && !preservePromptMessageID(transcript, promptCoreID) {
+					return nil, fmt.Errorf("persisted prompt has no user message to repair")
+				}
 				if !messagePersisted {
 					if userMessage, ok := lastVisibleUserMessage(transcript); ok {
 						if appendErr := s.appendMessage(ctx, input, runID, userMessage); appendErr != nil {

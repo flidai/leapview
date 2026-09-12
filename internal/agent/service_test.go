@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1379,6 +1381,88 @@ func TestServiceDurableEditResumeUsesTrimmedActiveTranscript(t *testing.T) {
 	}
 }
 
+func TestServiceDurableEditRetryAfterReplacementAppendTrimsIdenticalBranch(t *testing.T) {
+	ctx := context.Background()
+	base := newTestAgentStore()
+	store := &duplicateRunWorkflowAgentStore{workflowAgentStore: &workflowAgentStore{testAgentStore: base}}
+	principal := "principal_edit_retry"
+	store.upsertPrincipal(principal)
+	model := newRecordingAgentModel(
+		agentcore.ModelResponse{Content: "original answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "replacement answer", FinishReason: agentcore.FinishReasonStop},
+	)
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetPromptWorkflow(func(_ PromptInput, _ string, _ PromptDispatch) jobs.WorkflowIntent { return jobs.WorkflowIntent{} })
+	scope := Scope{ProjectID: "test", PrincipalID: principal}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID := state.Transcript[0].ID
+	requestID := "edit-retry"
+	input := PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question", EditMessageID: targetID, RequestID: requestID}
+	hash := sha256.Sum256([]byte(scope.PrincipalID + "\x00" + conversation.ID + "\x00" + requestID))
+	runID := "run_" + hex.EncodeToString(hash[:12])
+	if _, err := store.workflowAgentStore.CreateRun(ctx, RunInput{
+		PrincipalID: scope.PrincipalID, ConversationID: conversation.ID, RunID: runID,
+		Model: service.config.Model, MetadataJSON: metadataJSON(map[string]any{
+			"request_digest": promptDigest(input), "edit_message_id": targetID,
+		}), Status: RunStatusPreparing,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replacementCoreID := "msg_replacement_retry"
+	if _, err := store.AppendMessage(ctx, MessageInput{
+		PrincipalID: scope.PrincipalID, ConversationID: conversation.ID, RunID: runID,
+		Role: MessageRoleUser, ContentText: input.Input,
+		ContentJSON: messageContentJSONWithEdit(agentcore.Message{ID: replacementCoreID, Role: agentcore.RoleUser, Content: input.Input}, nil, targetID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	started, err := service.StartDurablePrompt(ctx, input, PromptDispatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.RunID != runID {
+		t.Fatalf("repaired run ID = %q, want %q", started.RunID, runID)
+	}
+	if _, err := started.Complete(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want original and repaired request", len(requests))
+	}
+	if len(requests[1].Messages) != 2 || requests[1].Messages[1].Content != input.Input {
+		t.Fatalf("repaired request messages = %#v, want system plus replacement", requests[1].Messages)
+	}
+	for _, message := range requests[1].Messages {
+		if message.Content == "original answer" {
+			t.Fatalf("repaired request retained original branch: %#v", requests[1].Messages)
+		}
+	}
+	conversation, err = store.GetConversation(ctx, scope.PrincipalID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := decodeTranscript(conversation.TranscriptJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastUser, ok := lastVisibleUserMessage(transcript)
+	if !ok || lastUser.ID != replacementCoreID {
+		t.Fatalf("repaired prompt ID = %q, want %q; transcript = %#v", lastUser.ID, replacementCoreID, transcript)
+	}
+}
+
 func TestServiceRejectsConcurrentConversationTurns(t *testing.T) {
 	ctx := context.Background()
 	store := openAgentAppStore(t, ctx)
@@ -1660,6 +1744,19 @@ type testAgentStore struct {
 type workflowAgentStore struct {
 	*testAgentStore
 	workflows []jobs.WorkflowIntent
+}
+
+type duplicateRunWorkflowAgentStore struct {
+	*workflowAgentStore
+}
+
+func (s *duplicateRunWorkflowAgentStore) CreateRun(ctx context.Context, input RunInput) (Run, error) {
+	if strings.TrimSpace(input.RunID) != "" {
+		if _, err := s.testAgentStore.GetRun(ctx, input.PrincipalID, input.ConversationID, input.RunID); err == nil {
+			return Run{}, fmt.Errorf("run already exists")
+		}
+	}
+	return s.workflowAgentStore.CreateRun(ctx, input)
 }
 
 type completionWorkflowAgentStore struct {

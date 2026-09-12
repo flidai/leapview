@@ -89,6 +89,55 @@ func storedMessageCoreID(raw string) string {
 	return strings.TrimSpace(payload.MessageID)
 }
 
+func transcriptContainsMessageID(transcript []agentcore.Message, messageID string) bool {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return false
+	}
+	for _, message := range transcript {
+		if strings.TrimSpace(message.ID) == messageID {
+			return true
+		}
+	}
+	return false
+}
+
+func storedPromptForRun(messages []Message, runID, input string) (Message, bool) {
+	runID = strings.TrimSpace(runID)
+	for _, message := range messages {
+		if message.RunID == runID && message.Role == MessageRoleUser && message.ContentText == input {
+			return message, true
+		}
+	}
+	return Message{}, false
+}
+
+func withoutStoredPrompt(messages []Message, runID, input string) []Message {
+	runID = strings.TrimSpace(runID)
+	filtered := make([]Message, 0, len(messages))
+	for _, message := range messages {
+		if message.RunID == runID && message.Role == MessageRoleUser && message.ContentText == input {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	return filtered
+}
+
+func preservePromptMessageID(transcript []agentcore.Message, messageID string) bool {
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return false
+	}
+	for index := len(transcript) - 1; index >= 0; index-- {
+		if transcript[index].Role == agentcore.RoleUser && transcript[index].Kind != agentcore.MessageKindExternalContext {
+			transcript[index].ID = messageID
+			return true
+		}
+	}
+	return false
+}
+
 func activeMessageText(message agentcore.Message) string {
 	if message.Role == agentcore.RoleUser {
 		if visible, ok := message.DisplayContent.(string); ok && strings.TrimSpace(visible) != "" {
