@@ -1954,7 +1954,10 @@ core remains embedded in the detached receipt for signature verification, but
 the transport persistence path now requires the independent
 `leapview.managed-capture-core` version-2 bytes and frozen domain digest. New
 associations retain the core locator and verify its exact bytes and relation to
-the receipt and manifest. An explicit persistence marker distinguishes those
+the receipt and manifest. The association verification metadata records the
+resolved worker fence, and the same transaction locks the authoritative trust
+generation row and rejects a changed generation or fence before inserting any
+evidence. An explicit persistence marker distinguishes those
 associations from the legacy embedded-only form. Historical v3 rows and
 in-flight older writers remain compatible without backfill; they retain the
 original embedded receipt-core behavior, are not presented as independently

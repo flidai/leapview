@@ -66,7 +66,7 @@ func successorInputs(t *testing.T, name string) (recoverypg.Set3Input, recoveryp
 	t.Helper()
 	set, evidence, docs := successorGolden(t, name)
 	reader := &successorPayloadReader{objects: make(map[recoverypg.ValidatedLocator][]byte)}
-	trust := recoverypg.TrustInput{Evidence: evidence, Generation: recoverypg.TrustGeneration{IncarnationID: "11111111-1111-4111-8111-111111111111", Revision: 1, PolicyDigest: "sha256:" + fmt.Sprintf("%064x", 19)}}
+	trust := recoverypg.TrustInput{Evidence: evidence, Generation: recoverypg.TrustGeneration{IncarnationID: "11111111-1111-4111-8111-111111111111", Revision: 1, PolicyDigest: "sha256:" + fmt.Sprintf("%064x", 19)}, WorkerFence: 7}
 	input := recoverypg.Set3Input{Set: set}
 	values := []struct {
 		name, family string
@@ -98,10 +98,10 @@ func successorInputs(t *testing.T, name string) (recoverypg.Set3Input, recoveryp
 	return input, trust, reader
 }
 
-func provisionSuccessorGeneration(t *testing.T, admin *pgxpool.Pool, g recoverypg.TrustGeneration) {
+func provisionSuccessorGeneration(t *testing.T, admin *pgxpool.Pool, trust recoverypg.TrustInput) {
 	t.Helper()
 	// Operator-owned policy provisioning, not a test-only permission grant.
-	_, err := admin.Exec(t.Context(), `INSERT INTO recovery.successor_trust_generation(singleton,incarnation_id,revision,policy_digest) VALUES(true,$1,$2,$3)`, g.IncarnationID, g.Revision, g.PolicyDigest)
+	_, err := admin.Exec(t.Context(), `INSERT INTO recovery.successor_trust_generation(singleton,incarnation_id,revision,policy_digest,worker_fence) VALUES(true,$1,$2,$3,$4)`, trust.Generation.IncarnationID, trust.Generation.Revision, trust.Generation.PolicyDigest, trust.WorkerFence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestSuccessorPersistenceRestartRetryAndExactRead(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			pool, admin, reopenURL := successorDatabase(t)
 			input, trust, reader := successorInputs(t, name)
-			provisionSuccessorGeneration(t, admin, trust.Generation)
+			provisionSuccessorGeneration(t, admin, trust)
 			repo := successorRepo(pool, reader, trust)
 			manifestInput := recoverypg.ManifestInput{Set: input.Set, Payloads: input.Payloads}
 			for range 2 {
@@ -235,7 +235,7 @@ func TestSuccessorPersistenceProcessRestartReadback(t *testing.T) {
 
 	pool, admin, reopenURL := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	if _, err := successorRepo(pool, reader, trust).CreateSet3(t.Context(), input); err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func runSuccessorCoreReadbackHelper(t *testing.T) {
 func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	for _, phase := range []string{"open", "close"} {
 		t.Run("sanitized transport "+phase, func(t *testing.T) {
 			cause := errors.New("provider failure with credential=private-test-sentinel")
@@ -309,7 +309,7 @@ func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"missing manifest", "missing core", "wrong digest", "invalid core digest", "wrong anchor", "core authority mismatch", "invalid receipt", "cache substitution", "locator substitution", "stale generation"} {
+	for _, name := range []string{"missing manifest", "missing core", "wrong digest", "invalid core digest", "wrong anchor", "core authority mismatch", "invalid receipt", "cache substitution", "locator substitution", "stale generation", "missing worker fence"} {
 		t.Run(name, func(t *testing.T) {
 			bad, badTrust, badReader := successorInputs(t, "minimal")
 			switch name {
@@ -346,6 +346,8 @@ func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 				bad.Payloads.Manifest.Locator.Namespace = "unrelated/"
 			case "stale generation":
 				badTrust.Generation.Revision++
+			case "missing worker fence":
+				badTrust.WorkerFence = 0
 			}
 			if _, err := successorRepo(pool, badReader, badTrust).CreateSet3(t.Context(), bad); err == nil {
 				t.Fatal("invalid evidence accepted")
@@ -386,7 +388,7 @@ func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 func TestSuccessorPersistenceConcurrentImmutableWinner(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	repo := successorRepo(pool, reader, trust)
 	run := func(n int, fn func(int) error) []error {
 		result := make([]error, n)
@@ -449,7 +451,7 @@ func TestSuccessorPersistenceConcurrentImmutableWinner(t *testing.T) {
 func TestSuccessorPersistenceAssociationRollback(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	// A storage failure after inserts must abort the entire association transaction.
 	_, err := admin.Exec(t.Context(), `CREATE FUNCTION recovery.qualification_reject_root() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected association failure'; END $$; CREATE TRIGGER qualification_reject_root BEFORE INSERT ON recovery.recovery_set_v3_root FOR EACH ROW EXECUTE FUNCTION recovery.qualification_reject_root()`)
 	if err != nil {
@@ -479,7 +481,7 @@ func TestSuccessorPersistenceAssociationRollback(t *testing.T) {
 func TestSuccessorPersistencePreservesV1AndReservesIdentity(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	raw, err := os.ReadFile("../testdata/successor-legacy/recoveryset-v1.json")
 	if err != nil {
 		t.Fatal(err)
@@ -518,7 +520,7 @@ func TestSuccessorPersistencePreservesV1AndReservesIdentity(t *testing.T) {
 func TestSuccessorPersistenceReadsLegacyV3WithoutFabricatedCoreTransport(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	insertLegacySuccessorSet(t, admin, input, trust)
 
 	repo := successorRepo(pool, reader, trust)
@@ -620,7 +622,7 @@ func insertLegacySuccessorSet(t *testing.T, admin *pgxpool.Pool, input recoveryp
 func TestSuccessorPersistenceGenerationChangesDuringVerification(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	var once sync.Once
 	var advanceErr error
 	changingReader := successorReaderFunc(func(ctx context.Context, l recoverypg.ValidatedLocator) (io.ReadCloser, error) {
@@ -676,10 +678,44 @@ func TestSuccessorPersistenceGenerationChangesDuringVerification(t *testing.T) {
 	}
 }
 
+func TestFAI520SuccessorPersistenceWorkerFenceAdvancesBeforeAssociation(t *testing.T) {
+	pool, admin, _ := successorDatabase(t)
+	input, trust, reader := successorInputs(t, "minimal")
+	provisionSuccessorGeneration(t, admin, trust)
+
+	var once sync.Once
+	var advanceErr error
+	changingReader := successorReaderFunc(func(ctx context.Context, locator recoverypg.ValidatedLocator) (io.ReadCloser, error) {
+		once.Do(func() {
+			_, advanceErr = admin.Exec(ctx, `UPDATE recovery.successor_trust_generation SET worker_fence=worker_fence+1 WHERE singleton=true`)
+		})
+		if advanceErr != nil {
+			return nil, advanceErr
+		}
+		return reader.ReadExact(ctx, locator)
+	})
+	repo := recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{
+		Reader: changingReader,
+		Trust:  func(context.Context, string) (recoverypg.TrustInput, error) { return trust, nil },
+	})
+	if _, err := repo.CreateSet3(t.Context(), input); !errors.Is(err, recoverypg.ErrSuccessorConflict) {
+		t.Fatalf("stale worker fence category: %v", err)
+	}
+	for _, table := range []string{"successor_evidence_v2", "successor_manifest_binding", "recovery_set_v3"} {
+		var count int
+		if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM recovery.`+table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("stale worker fence left partial state in %s", table)
+		}
+	}
+}
+
 func TestSuccessorPersistenceFirstContendedManifestWinner(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	a, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	b := a
 	b.Payloads.Manifest.Locator.VersionID = "second-version-same-bytes"
 	reader.objects[b.Payloads.Manifest.Locator] = bytes.Clone(a.Payloads.Manifest.CanonicalBytes)
@@ -716,7 +752,7 @@ func TestSuccessorPersistenceFirstContendedManifestWinner(t *testing.T) {
 func TestSuccessorPersistenceImmutableRowsAndUntrustedSQL(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	repo := successorRepo(pool, reader, trust)
 	if _, err := repo.CreateSet3(t.Context(), input); err != nil {
 		t.Fatal(err)

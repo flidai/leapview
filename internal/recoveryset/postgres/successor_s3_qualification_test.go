@@ -47,7 +47,7 @@ func TestFAI520SuccessorS3ExactVersionQualification(t *testing.T) {
 	sentinelVersion := putSuccessorS3Object(t, provider, sentinelKey, sentinelBody)
 
 	pool, admin, reopenURL := successorDatabase(t)
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	reader := newSuccessorS3Reader(t, provider.client, provider.config)
 	repo := recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{
 		Reader: reader,
@@ -132,7 +132,7 @@ func TestFAI520SuccessorS3ExactVersionFailures(t *testing.T) {
 	configureSuccessorS3Input(t, provider, &input)
 
 	pool, admin, _ := successorDatabase(t)
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	reader := newSuccessorS3Reader(t, provider.client, provider.config)
 	baseRepo := func(r recoverypg.ExactVersionReader) *recoverypg.SuccessorRepository {
 		return recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{

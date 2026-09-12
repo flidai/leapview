@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS recovery.successor_trust_generation (
     incarnation_id uuid NOT NULL,
     revision bigint NOT NULL CHECK (revision > 0),
     policy_digest text NOT NULL CHECK (policy_digest ~ '^sha256:[0-9a-f]{64}$'),
+    worker_fence bigint CHECK (worker_fence IS NULL OR worker_fence > 0),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
@@ -238,6 +239,17 @@ LANGUAGE sql SECURITY DEFINER
 SET search_path = pg_catalog, recovery
 AS $$
     SELECT g.incarnation_id, g.revision, g.policy_digest
+      FROM recovery.successor_trust_generation AS g
+     WHERE g.singleton = true
+     FOR UPDATE
+$$;
+
+CREATE OR REPLACE FUNCTION recovery.lock_successor_assignment()
+RETURNS TABLE(incarnation_id uuid, revision bigint, policy_digest text, worker_fence bigint)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, recovery
+AS $$
+    SELECT g.incarnation_id, g.revision, g.policy_digest, g.worker_fence
       FROM recovery.successor_trust_generation AS g
      WHERE g.singleton = true
      FOR UPDATE
@@ -376,7 +388,7 @@ REVOKE ALL ON TABLE recovery.set_identity_registry, recovery.successor_evidence_
 REVOKE ALL ON FUNCTION recovery.successor_raw_sha256(bytea), recovery.successor_domain_sha256(text, bytea),
     recovery.reject_successor_mutation(), recovery.guard_successor_set_identity(),
     recovery.guard_successor_locator(), recovery.guard_successor_set_complete(), recovery.guard_v1_set_identity(),
-    recovery.lock_successor_generation() FROM PUBLIC;
+    recovery.lock_successor_generation(), recovery.lock_successor_assignment() FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
@@ -387,6 +399,7 @@ BEGIN
             recovery.successor_evidence_locator_v2, recovery.recovery_set_v3,
             recovery.recovery_set_v3_root, recovery.successor_manifest_binding TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION recovery.lock_successor_generation() TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION recovery.lock_successor_assignment() TO leapview_control_maintenance;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE recovery.set_identity_registry,
             recovery.successor_trust_generation FROM leapview_control_maintenance;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE recovery.successor_evidence_v2,

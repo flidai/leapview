@@ -16,8 +16,9 @@ func TestSuccessorVerificationMetadataIsCanonicalAndGenerationStable(t *testing.
 		Revision:      7,
 		PolicyDigest:  "sha256:" + "a" + "bcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 	}
+	const workerFence int64 = 11
 	verifiedAt := time.Date(2026, 9, 8, 1, 2, 3, 456789000, time.UTC)
-	raw, err := marshalSuccessorVerificationMetadata(generation, verifiedAt)
+	raw, err := marshalSuccessorVerificationMetadata(generation, workerFence, verifiedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,16 +26,19 @@ func TestSuccessorVerificationMetadataIsCanonicalAndGenerationStable(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Generation != generation || !parsed.VerifiedAt.Equal(verifiedAt) {
-		t.Fatalf("parsed metadata = %#v, want generation %#v at %s", parsed, generation, verifiedAt)
+	if parsed.Generation != generation || parsed.WorkerFence != workerFence || !parsed.VerifiedAt.Equal(verifiedAt) {
+		t.Fatalf("parsed metadata = %#v, want generation %#v fence %d at %s", parsed, generation, workerFence, verifiedAt)
 	}
-	if !successorVerificationMetadataGenerationEqual(raw, generation) {
-		t.Fatal("exact generation should match")
+	if !successorVerificationMetadataAssignmentEqual(raw, generation, workerFence) {
+		t.Fatal("exact generation and worker fence should match")
 	}
-	if err := validateSuccessorVerificationMetadataRead(raw, verifiedAt.Add(-time.Microsecond)); err == nil {
+	if successorVerificationMetadataAssignmentEqual(raw, generation, workerFence+1) {
+		t.Fatal("different worker fence compared equal")
+	}
+	if err := validateSuccessorVerificationMetadataRead(raw, verifiedAt.Add(-time.Microsecond), true); err == nil {
 		t.Fatal("future archival verification clock was accepted")
 	}
-	if err := validateSuccessorVerificationMetadataRead(raw, verifiedAt.Add(time.Microsecond)); err != nil {
+	if err := validateSuccessorVerificationMetadataRead(raw, verifiedAt.Add(time.Microsecond), true); err != nil {
 		t.Fatalf("historical verification clock rejected: %v", err)
 	}
 
@@ -55,12 +59,26 @@ func TestSuccessorVerificationMetadataIsCanonicalAndGenerationStable(t *testing.
 		t.Fatal("missing verification clock was accepted")
 	}
 
-	retry, err := marshalSuccessorVerificationMetadata(generation, verifiedAt.Add(time.Hour))
+	retry, err := marshalSuccessorVerificationMetadata(generation, workerFence, verifiedAt.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !successorVerificationMetadataGenerationEqual(retry, generation) {
-		t.Fatal("retry with the same generation should compare equal")
+	if !successorVerificationMetadataAssignmentEqual(retry, generation, workerFence) {
+		t.Fatal("retry with the same assignment should compare equal")
+	}
+
+	legacy, err := marshalSuccessorVerificationMetadataValue(generation, 0, verifiedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseSuccessorVerificationMetadata(legacy); err != nil {
+		t.Fatalf("legacy verification metadata became unreadable: %v", err)
+	}
+	if err := validateSuccessorVerificationMetadataRead(legacy, verifiedAt, true); err == nil {
+		t.Fatal("new capture-core association accepted legacy metadata without worker fence")
+	}
+	if err := validateSuccessorVerificationMetadataRead(legacy, verifiedAt, false); err != nil {
+		t.Fatalf("legacy association metadata rejected: %v", err)
 	}
 }
 

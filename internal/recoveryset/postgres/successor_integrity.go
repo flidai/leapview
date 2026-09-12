@@ -18,24 +18,35 @@ const successorVerificationTimeLayout = "2006-01-02T15:04:05.000000Z"
 // association. It is not a replacement for the independently resolved trust
 // input used during a read.
 type successorVerificationMetadata struct {
-	Generation TrustGeneration
-	VerifiedAt time.Time
+	Generation  TrustGeneration
+	WorkerFence int64
+	VerifiedAt  time.Time
 }
 
 type successorVerificationMetadataJSON struct {
 	IncarnationID string `json:"incarnation_id"`
 	Revision      int64  `json:"revision"`
 	PolicyDigest  string `json:"policy_digest"`
+	WorkerFence   int64  `json:"worker_fence,omitempty"`
 	VerifiedAt    string `json:"verified_at"`
 }
 
-// marshalSuccessorVerificationMetadata emits the current flat metadata
-// format, extending the original generation tuple with a canonical UTC
-// microsecond verification clock. The clock is selected by the trust resolver,
-// never taken from a receipt or request.
-func marshalSuccessorVerificationMetadata(generation TrustGeneration, verifiedAt time.Time) ([]byte, error) {
+// marshalSuccessorVerificationMetadata emits the current flat metadata format,
+// extending the original generation/clock tuple with the independently
+// resolved worker fence. Neither value is taken from a receipt or wire record.
+func marshalSuccessorVerificationMetadata(generation TrustGeneration, workerFence int64, verifiedAt time.Time) ([]byte, error) {
+	if workerFence <= 0 {
+		return nil, fmt.Errorf("%w: malformed successor worker fence", ErrSuccessorInvalid)
+	}
+	return marshalSuccessorVerificationMetadataValue(generation, workerFence, verifiedAt)
+}
+
+func marshalSuccessorVerificationMetadataValue(generation TrustGeneration, workerFence int64, verifiedAt time.Time) ([]byte, error) {
 	if err := validateSuccessorTrustGeneration(generation); err != nil {
 		return nil, err
+	}
+	if workerFence < 0 {
+		return nil, fmt.Errorf("%w: malformed successor worker fence", ErrSuccessorInvalid)
 	}
 	verifiedAt, err := canonicalSuccessorVerificationTime(verifiedAt)
 	if err != nil {
@@ -45,6 +56,7 @@ func marshalSuccessorVerificationMetadata(generation TrustGeneration, verifiedAt
 		IncarnationID: generation.IncarnationID,
 		Revision:      generation.Revision,
 		PolicyDigest:  generation.PolicyDigest,
+		WorkerFence:   workerFence,
 		VerifiedAt:    verifiedAt.Format(successorVerificationTimeLayout),
 	})
 	if err != nil {
@@ -53,10 +65,10 @@ func marshalSuccessorVerificationMetadata(generation TrustGeneration, verifiedAt
 	return raw, nil
 }
 
-// parseSuccessorVerificationMetadata accepts only the exact JSON shape emitted
-// by marshalSuccessorVerificationMetadata. In particular, it rejects unknown
-// fields, duplicate fields (via canonical-byte comparison), trailing values,
-// non-canonical generation values, and non-UTC/microsecond clocks.
+// parseSuccessorVerificationMetadata accepts the exact current JSON shape plus
+// the historical shape without worker_fence. Canonical-byte comparison rejects
+// unknown/duplicate fields, trailing values, non-canonical generation values,
+// and non-UTC/microsecond clocks.
 func parseSuccessorVerificationMetadata(raw []byte) (successorVerificationMetadata, error) {
 	if len(raw) == 0 || len(raw) > successorLocatorLimit {
 		return successorVerificationMetadata{}, errors.New("successor verification metadata is empty")
@@ -79,22 +91,22 @@ func parseSuccessorVerificationMetadata(raw []byte) (successorVerificationMetada
 	if err != nil {
 		return successorVerificationMetadata{}, fmt.Errorf("parse successor verification clock: %w", err)
 	}
-	canonical, err := marshalSuccessorVerificationMetadata(generation, verifiedAt)
+	canonical, err := marshalSuccessorVerificationMetadataValue(generation, encoded.WorkerFence, verifiedAt)
 	if err != nil {
 		return successorVerificationMetadata{}, err
 	}
 	if !bytes.Equal(raw, canonical) {
 		return successorVerificationMetadata{}, errors.New("successor verification metadata is not canonical JSON")
 	}
-	return successorVerificationMetadata{Generation: generation, VerifiedAt: verifiedAt}, nil
+	return successorVerificationMetadata{Generation: generation, WorkerFence: encoded.WorkerFence, VerifiedAt: verifiedAt}, nil
 }
 
-// successorVerificationMetadataGenerationEqual is intended for immutable
+// successorVerificationMetadataAssignmentEqual is intended for immutable
 // write-replay checks. The first winner's VerifiedAt is retained; a retry must
-// match the identity/generation but must not replace that original clock.
-func successorVerificationMetadataGenerationEqual(raw []byte, want TrustGeneration) bool {
+// match the identity/generation/fence but must not replace that original clock.
+func successorVerificationMetadataAssignmentEqual(raw []byte, want TrustGeneration, workerFence int64) bool {
 	got, err := parseSuccessorVerificationMetadata(raw)
-	return err == nil && got.Generation == want
+	return err == nil && got.Generation == want && got.WorkerFence == workerFence
 }
 
 // validateSuccessorVerificationMetadataRead validates historical metadata and
@@ -102,10 +114,13 @@ func successorVerificationMetadataGenerationEqual(raw []byte, want TrustGenerati
 // independently selected trust clock. It intentionally does not require the
 // historical generation to equal the current generation; current-generation
 // fencing is a separate policy check.
-func validateSuccessorVerificationMetadataRead(raw []byte, current time.Time) error {
+func validateSuccessorVerificationMetadataRead(raw []byte, current time.Time, requireWorkerFence bool) error {
 	got, err := parseSuccessorVerificationMetadata(raw)
 	if err != nil {
 		return err
+	}
+	if requireWorkerFence && got.WorkerFence <= 0 {
+		return errors.New("successor verification metadata worker fence is missing")
 	}
 	if current.IsZero() {
 		return errors.New("current successor verification clock is missing")

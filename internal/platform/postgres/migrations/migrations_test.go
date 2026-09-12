@@ -112,6 +112,8 @@ func TestCaptureCoreTransportMigrationIsAdditiveAndImmutable(t *testing.T) {
 		"leapview/managed-capture-core/v2",
 		"receipt_core_digest",
 		"capture_core_required",
+		"worker_fence",
+		"lock_successor_assignment",
 		"NOT VALID",
 		"guard_successor_set_complete",
 		"GRANT SELECT, INSERT",
@@ -199,6 +201,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		t.Fatal(err)
 	}
 	migration := string(migrationBytes)
+	captureCoreBytes, err := fs.ReadFile(MigrationFS(), "012_recovery_capture_core_transport.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentSuccessorMigrations := migration + "\n" + string(captureCoreBytes)
 	owner := recoverypostgres.SuccessorSchemaSQL()
 	for _, marker := range []string{
 		"recovery.set_identity_registry",
@@ -210,10 +217,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		"recovery.recovery_set_v3_root",
 		"successor_domain_sha256",
 		"lock_successor_generation",
+		"lock_successor_assignment",
 		"guard_successor_set_complete",
 		"successor_registry_immutable",
 	} {
-		if !strings.Contains(owner, marker) || !strings.Contains(migration, marker) {
+		if !strings.Contains(owner, marker) || !strings.Contains(currentSuccessorMigrations, marker) {
 			t.Errorf("successor schema/migration missing %q", marker)
 		}
 	}
@@ -233,14 +241,18 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 	for _, pattern := range patterns {
 		matches := func(source string) []string {
 			all := pattern.FindAllStringSubmatch(source, -1)
-			names := make([]string, 0, len(all))
+			unique := make(map[string]struct{}, len(all))
 			for _, match := range all {
-				names = append(names, match[1])
+				unique[match[1]] = struct{}{}
+			}
+			names := make([]string, 0, len(unique))
+			for name := range unique {
+				names = append(names, name)
 			}
 			return names
 		}
 		ownerNames := matches(owner)
-		migrationNames := matches(migration)
+		migrationNames := matches(currentSuccessorMigrations)
 		sort.Strings(ownerNames)
 		sort.Strings(migrationNames)
 		if len(ownerNames) != len(migrationNames) {

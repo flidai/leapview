@@ -82,6 +82,10 @@ type TrustGeneration struct {
 type TrustInput struct {
 	Evidence   successor.Evidence
 	Generation TrustGeneration
+	// WorkerFence is the coordinator-resolved assignment fence that produced
+	// the evidence. PostgreSQL independently locks and compares its current
+	// fence before association; it is not part of the frozen wire contracts.
+	WorkerFence int64
 }
 
 type EvidencePayloads struct {
@@ -137,7 +141,7 @@ func (r *SuccessorRepository) resolveTrust(ctx context.Context, setID string) (T
 	if err != nil {
 		return TrustInput{}, &successorTrustFailure{cause: err}
 	}
-	if !canonicalUUID(input.Generation.IncarnationID) || input.Generation.Revision <= 0 || !domainDigest.MatchString(input.Generation.PolicyDigest) || input.Evidence.VerificationTime.IsZero() {
+	if !canonicalUUID(input.Generation.IncarnationID) || input.Generation.Revision <= 0 || !domainDigest.MatchString(input.Generation.PolicyDigest) || input.WorkerFence <= 0 || input.Evidence.VerificationTime.IsZero() {
 		return TrustInput{}, fmt.Errorf("%w: malformed independent trust", ErrSuccessorUntrusted)
 	}
 	return input, nil
@@ -170,7 +174,7 @@ func (r *SuccessorRepository) InsertManifest(ctx context.Context, input Manifest
 		return err
 	}
 	return r.withTx(ctx, func(tx DBTX) error {
-		if err := checkStoredGeneration(ctx, tx, trust.Generation); err != nil {
+		if err := checkStoredAssignment(ctx, tx, trust); err != nil {
 			return err
 		}
 		return r.insertBundle(ctx, tx, input.Set, checked, trust, true)
@@ -195,7 +199,7 @@ func (r *SuccessorRepository) ReadManifest(ctx context.Context, manifestDigest s
 	if err != nil {
 		return successor.ManagedManifest2{}, err
 	}
-	if err := validateSuccessorVerificationMetadataRead(binding.VerificationMetadata, trust.Evidence.VerificationTime); err != nil {
+	if err := validateSuccessorVerificationMetadataRead(binding.VerificationMetadata, trust.Evidence.VerificationTime, binding.CaptureCoreRequired); err != nil {
 		return successor.ManagedManifest2{}, tampered(err)
 	}
 	set, err := successor.ParseRecoverySet3(setRaw)
@@ -205,7 +209,7 @@ func (r *SuccessorRepository) ReadManifest(ctx context.Context, manifestDigest s
 	if storedManifest != manifestDigest {
 		return successor.ManagedManifest2{}, tampered(errors.New("manifest association digest"))
 	}
-	if err := checkStoredGeneration(ctx, r.db, trust.Generation); err != nil {
+	if err := checkStoredAssignment(ctx, r.db, trust); err != nil {
 		return successor.ManagedManifest2{}, err
 	}
 	if err := r.verifyStoredSet(ctx, set, setLocator, setRaw); err != nil {
@@ -218,7 +222,7 @@ func (r *SuccessorRepository) ReadManifest(ctx context.Context, manifestDigest s
 	if err := verifyEvidence(set, bundle, trust); err != nil {
 		return successor.ManagedManifest2{}, err
 	}
-	if err := checkStoredGeneration(ctx, r.db, trust.Generation); err != nil {
+	if err := checkStoredAssignment(ctx, r.db, trust); err != nil {
 		return successor.ManagedManifest2{}, err
 	}
 	return bundle.Manifest, nil
@@ -246,7 +250,7 @@ func (r *SuccessorRepository) CreateSet3(ctx context.Context, input Set3Input) (
 		return successor.RecoverySet3{}, tampered(errors.New("prepared set cache differs"))
 	}
 	if err := r.withTx(ctx, func(tx DBTX) error {
-		if err := checkStoredGeneration(ctx, tx, trust.Generation); err != nil {
+		if err := checkStoredAssignment(ctx, tx, trust); err != nil {
 			return err
 		}
 		if err := r.insertBundle(ctx, tx, input.Set, checked, trust, true); err != nil {
@@ -279,7 +283,7 @@ func (r *SuccessorRepository) ReadSet3(ctx context.Context, setID string) (succe
 	if err != nil {
 		return successor.RecoverySet3{}, err
 	}
-	if err := checkStoredGeneration(ctx, r.db, trust.Generation); err != nil {
+	if err := checkStoredAssignment(ctx, r.db, trust); err != nil {
 		return successor.RecoverySet3{}, err
 	}
 	if err := verifyStoredSet3Rows(ctx, r.db, set, setRow, trust); err != nil {
@@ -297,7 +301,7 @@ func (r *SuccessorRepository) ReadSet3(ctx context.Context, setID string) (succe
 		(binding.CaptureCoreDigest != nil && *binding.CaptureCoreDigest != *setRow.CaptureCoreDigest) {
 		return successor.RecoverySet3{}, tampered(errors.New("capture core association differs from set"))
 	}
-	if err := validateSuccessorVerificationMetadataRead(binding.VerificationMetadata, trust.Evidence.VerificationTime); err != nil {
+	if err := validateSuccessorVerificationMetadataRead(binding.VerificationMetadata, trust.Evidence.VerificationTime, binding.CaptureCoreRequired); err != nil {
 		return successor.RecoverySet3{}, tampered(err)
 	}
 	if err := r.verifyStoredSet(ctx, set, binding.SetLocator, setRaw); err != nil {
@@ -310,7 +314,7 @@ func (r *SuccessorRepository) ReadSet3(ctx context.Context, setID string) (succe
 	if err := verifyEvidence(set, bundle, trust); err != nil {
 		return successor.RecoverySet3{}, err
 	}
-	if err := checkStoredGeneration(ctx, r.db, trust.Generation); err != nil {
+	if err := checkStoredAssignment(ctx, r.db, trust); err != nil {
 		return successor.RecoverySet3{}, err
 	}
 	return set, nil
@@ -864,7 +868,7 @@ func insertBinding(ctx context.Context, db DBTX, set successor.RecoverySet3, p E
 	if err != nil {
 		return err
 	}
-	metadata, err := marshalSuccessorVerificationMetadata(trust.Generation, trust.Evidence.VerificationTime)
+	metadata, err := marshalSuccessorVerificationMetadata(trust.Generation, trust.WorkerFence, trust.Evidence.VerificationTime)
 	if err != nil {
 		return err
 	}
@@ -890,7 +894,7 @@ func insertBinding(ctx context.Context, db DBTX, set successor.RecoverySet3, p E
 	}
 	if old.ManifestDigest != md || old.SetID != set.ID || old.AnchorDigest != ad || old.ProfileDigest != pd ||
 		!old.CaptureCoreRequired || old.CaptureCoreDigest == nil || *old.CaptureCoreDigest != cd || old.ReceiptDigest != rd || old.AuthorityDigest != au || !bytes.Equal(old.CanonicalSet, setRaw) ||
-		!bytes.Equal(old.SetLocator, locator) || !successorVerificationMetadataGenerationEqual(old.VerificationMetadata, trust.Generation) {
+		!bytes.Equal(old.SetLocator, locator) || !successorVerificationMetadataAssignmentEqual(old.VerificationMetadata, trust.Generation, trust.WorkerFence) {
 		return ErrSuccessorConflict
 	}
 	return nil
@@ -1015,15 +1019,15 @@ func verifyStoredSet3Rows(ctx context.Context, db DBTX, set successor.RecoverySe
 	return nil
 }
 
-func checkStoredGeneration(ctx context.Context, db DBTX, want TrustGeneration) error {
-	row, err := successorQueries(db).LockSuccessorGeneration(ctx)
+func checkStoredAssignment(ctx context.Context, db DBTX, want TrustInput) error {
+	row, err := successorQueries(db).LockSuccessorAssignment(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrSuccessorUntrusted
 	}
 	if err != nil {
 		return err
 	}
-	if row.IncarnationID != want.IncarnationID || row.Revision != want.Revision || row.PolicyDigest != want.PolicyDigest {
+	if row.IncarnationID != want.Generation.IncarnationID || row.Revision != want.Generation.Revision || row.PolicyDigest != want.Generation.PolicyDigest || row.WorkerFence != want.WorkerFence {
 		return ErrSuccessorConflict
 	}
 	return nil

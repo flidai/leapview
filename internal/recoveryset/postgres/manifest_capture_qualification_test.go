@@ -193,8 +193,8 @@ func TestFAI520ManifestCapturePostgreSQLQualification(t *testing.T) {
 	payloads := manifestCapturePayloads(t, result, reader)
 	trust := TrustInput{Evidence: result.Evidence, Generation: TrustGeneration{
 		IncarnationID: assignment.Generation.IncarnationID, Revision: assignment.Generation.Revision, PolicyDigest: assignment.Generation.PolicyDigest,
-	}}
-	if _, err := admin.Exec(ctx, `INSERT INTO recovery.successor_trust_generation(singleton,incarnation_id,revision,policy_digest) VALUES(true,$1,$2,$3)`, trust.Generation.IncarnationID, trust.Generation.Revision, trust.Generation.PolicyDigest); err != nil {
+	}, WorkerFence: assignment.WorkerFence}
+	if _, err := admin.Exec(ctx, `INSERT INTO recovery.successor_trust_generation(singleton,incarnation_id,revision,policy_digest,worker_fence) VALUES(true,$1,$2,$3,$4)`, trust.Generation.IncarnationID, trust.Generation.Revision, trust.Generation.PolicyDigest, trust.WorkerFence); err != nil {
 		t.Fatal(err)
 	}
 	repository := NewSuccessorRepository(pool, SuccessorOptions{Reader: reader,

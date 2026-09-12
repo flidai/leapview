@@ -90,6 +90,30 @@ ALTER TABLE recovery.recovery_set_v3
     REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest)
     ON DELETE RESTRICT NOT VALID;
 
+-- Historical generation rows predate assignment fencing, so the new value is
+-- nullable for read compatibility. New successor associations fail closed
+-- unless the independently managed row carries a positive current fence.
+ALTER TABLE recovery.successor_trust_generation
+    ADD COLUMN IF NOT EXISTS worker_fence bigint;
+ALTER TABLE recovery.successor_trust_generation
+    ADD CONSTRAINT successor_trust_generation_worker_fence_ck
+    CHECK (worker_fence IS NULL OR worker_fence > 0);
+
+-- Preserve the existing three-column function for in-flight older binaries.
+-- New writers lock the same singleton row through this fenced variant.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION recovery.lock_successor_assignment()
+RETURNS TABLE(incarnation_id uuid, revision bigint, policy_digest text, worker_fence bigint)
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, recovery
+AS $$
+    SELECT g.incarnation_id, g.revision, g.policy_digest, g.worker_fence
+      FROM recovery.successor_trust_generation AS g
+     WHERE g.singleton = true
+     FOR UPDATE
+$$;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION recovery.guard_successor_set_complete()
 RETURNS trigger LANGUAGE plpgsql
@@ -123,6 +147,7 @@ $$;
 REVOKE ALL ON TABLE recovery.successor_evidence_v2,
     recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding,
     recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM PUBLIC;
+REVOKE ALL ON FUNCTION recovery.lock_successor_assignment() FROM PUBLIC;
 -- +goose StatementBegin
 DO $$
 BEGIN
@@ -130,6 +155,7 @@ BEGIN
         GRANT SELECT, INSERT ON TABLE recovery.successor_evidence_v2,
             recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding,
             recovery.recovery_set_v3, recovery.recovery_set_v3_root TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION recovery.lock_successor_assignment() TO leapview_control_maintenance;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE recovery.successor_evidence_v2,
             recovery.successor_evidence_locator_v2, recovery.successor_manifest_binding,
             recovery.recovery_set_v3, recovery.recovery_set_v3_root FROM leapview_control_maintenance;

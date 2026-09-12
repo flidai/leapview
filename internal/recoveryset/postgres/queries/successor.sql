@@ -141,8 +141,9 @@ FROM recovery.recovery_set_v3_root
 WHERE set_id::text = sqlc.arg(set_id_text)::varchar
 ORDER BY root_kind;
 
--- name: LockSuccessorGeneration :one
+-- name: LockSuccessorAssignment :one
 SELECT g.incarnation_id::text AS incarnation_id,
        g.revision::bigint AS revision,
-       g.policy_digest::text AS policy_digest
-FROM recovery.lock_successor_generation() AS g(incarnation_id, revision, policy_digest);
+       g.policy_digest::text AS policy_digest,
+       g.worker_fence::bigint AS worker_fence
+FROM recovery.lock_successor_assignment() AS g(incarnation_id, revision, policy_digest, worker_fence);
