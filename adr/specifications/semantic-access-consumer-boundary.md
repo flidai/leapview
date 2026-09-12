@@ -1,7 +1,7 @@
 # FAI-642 discovery and consumer boundary
 
-Status: implementation under validation; publication and exhaustive consumer
-qualification are not claimed complete. The durable boundary is described in
+Status: active within the qualified supported profile; exhaustive consumer
+qualification is not claimed complete. The durable boundary is described in
 [semantic access consumers](../../docs/articles/architecture/semantic-access-consumers.md).
 
 ## Authority and responsibility
@@ -37,21 +37,24 @@ execution.
 
 | Current path | FAI-642 boundary |
 | --- | --- |
-| Dashboard, semantic API, agent/MCP, suggestions and raw values | Shared query authorization and request-bound materialization; metadata is gated before serialization. |
+| Dashboard, semantic API, and agent/MCP | Shared query authorization and request-bound materialization; metadata is gated before serialization. |
+| Suggestions and raw values | Protected paths without named qualification reject or bypass unsupported reuse; no positive qualification is claimed. |
 | Explore and project catalog | Compiled-source discovery and filtered members; catalog authority comes from its exact serving lease. |
 | Public/embedded dashboards | Publication identities cannot supply semantic attribute authority; protected execution is denied, while explicit public models retain existing behavior. |
-| Protected byte/result reuse and bundles | Denied or bypassed until FAI-645 supplies lifecycle-qualified evidence; no invalidation implementation is added here. |
+| Protected byte/result reuse and bundles | Denied or bypassed at this boundary unless the FAI-645 lifecycle-qualified cache path proves exact authorization identity. |
 | Scheduled work and exports | Current refresh scheduling publishes state rather than querying dashboards; dashboard YAML export is authoring, not a data export. No new scheduled-query or data-export implementation is introduced. |
 
 ## Scope exclusions and dependencies
 
-No second registry, compiler or evaluator; no provider adapter, lifecycle
-transition, audit expansion, cache invalidation, production activation or
-cutover. Reuse paths unable to prove protected authorization must fail closed;
-FAI-645 owns policy-aware reuse/lifecycle integration. FAI-648 owns exhaustive
-cross-consumer qualification and FAI-649 owns cutover. VAL-11 remains Partial.
+This FAI-642 boundary added no second registry, compiler or evaluator, provider
+adapter, lifecycle transition, audit subsystem, or cache implementation. Reuse
+paths unable to prove protected authorization still fail closed. FAI-645 now
+supplies the qualified reuse/lifecycle integration, FAI-648 records the
+supported consumer profile, and FAI-649 activates that profile. VAL-11 remains
+Partial.
 Neutral activation verification must not fabricate a subject or bypass FAI-641;
-its remaining design is a dependency, not implicit consumer authorization.
+the unqualified path remains an explicit fail-closed exclusion, not implicit
+consumer authorization.
 
 Historical implementation checkpoints are not qualification evidence for this
 boundary. This implementation uses the FAI-619/636/637/639/641 foundations

@@ -2,8 +2,8 @@
 
 Status: **active for the qualified supported profile**.
 
-This document records the combinations exercised by FAI-648. It does not add
-an authorization mode, change runtime behavior, or make an unsupported
+This document records the combinations exercised by FAI-648 and activated by
+FAI-649. It does not add an authorization mode, change runtime behavior, or make an unsupported
 combination available. A protected request outside this profile must continue
 to fail closed at the existing compiler, consumer, plan, cache, or audit
 boundary. FAI-649 binds this exact profile into immutable plan and final
@@ -14,7 +14,7 @@ pre-commit activation evidence.
 | Area | Included | Excluded or rejected |
 | --- | --- | --- |
 | Attribute authority | Access-owned typed registry, direct assignments, and active-group-derived assignments | Request-supplied attributes, unsigned claims, mutable authored copies, and external trusted-claim provider adapters. The verified-envelope and mapping primitives have component evidence, but no external provider adapter is qualified. |
-| Publication | Canonical FAI-620 projection identity and immutable FAI-622 compatibility, security-impact, validation, widening-approval, and replay evidence | Indeterminate evidence, caller-asserted publication identity, and production cutover |
+| Publication | Canonical FAI-620 projection identity; immutable FAI-622 compatibility, security-impact, validation, widening-approval, and replay evidence; and FAI-649 activation/cutover for this exact profile | Indeterminate evidence, caller-asserted publication identity, and activation outside this qualified profile |
 | Consumers | Request-bound dashboard query authorization, Explore protected catalog projection, Semantic API protected model listing and metadata, agent/MCP semantic resource reads, protected materialize execution, independently admitted totals, and governed Arrow release covered by the matrix's named tests | Suggestions/raw-value and other FLT-09 surfaces without named qualification, scheduled/export/embed paths, new consumers, provider-specific adapters, unrestricted physical preview, and any path without a request-bound semantic consumer |
 | Plans | Governed scans, the tested left-outer relationship join and self-join barrier occurrences, aggregate/count/rows plans, independently admitted totals, tested derived-metric execution, named/intermediate filters, and guarded result-cache reuse | Other outer-join and many-to-many combinations, unqualified PLN-09 shapes, unsupported rollup/substitution, and multi-query/opaque result reuse; these are rejected or bypass the protected cache rather than being treated as qualified |
 | Cache | FAI-645 identity-partitioned result reuse, lifecycle/revision revalidation, waiter revalidation, and protected suggestion-cache bypass | Reuse without exact principal, actor, publication, policy, registry, control, and lifecycle identity |
@@ -38,7 +38,9 @@ SemanticModel canonical projection and publication evidence
 Complete cross-layer qualification remains **PARTIAL**. Current-main evidence
 qualifies the linked component and composition boundaries separately, but no
 single executable qualification test traverses this entire chain. The matrix
-therefore must not be read as end-to-end activation evidence.
+therefore must not be read as one end-to-end qualification test. FAI-649's
+linked activation-fence evidence applies only to the named supported profile
+and does not qualify the excluded paths.
 
 The per-requirement links and statuses are in the
 [qualification matrix](semantic-access-qualification.md). PostgreSQL evidence
