@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 194
+const expectedAPIGenAggregateOperationCount = 189
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -800,8 +800,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 128 {
-		t.Fatalf("UI signal IR contracts = %d, want 128", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 129 {
+		t.Fatalf("UI signal IR contracts = %d, want 129", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
