@@ -47,6 +47,11 @@ tasks:
     cmds:
       - ./scripts/dbt-warehouse-boundary.sh build
 
+  dbt:warehouse:proof:
+    desc: Prove independent physical producers and upstream dbt packages close into one Project
+    cmds:
+      - ./scripts/dbt-warehouse-boundary.sh proof
+
   dbt:warehouse:qualify:
     desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
     cmds:
