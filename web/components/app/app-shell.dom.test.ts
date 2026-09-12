@@ -863,7 +863,7 @@ test('chat deletion requires confirmation and cancel sends no command', async ()
   await page.close()
 })
 
-test('archive persists before showing ten-second Undo and waits for cancellation acknowledgement', async () => {
+test('archive persists before showing five-second Undo and waits for cancellation acknowledgement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
@@ -878,10 +878,10 @@ test('archive persists before showing ten-second Undo and waits for cancellation
     expect(await page.getByRole('button', { name: 'Undo', exact: true }).count()).toBe(0)
     await page.evaluate(async () => {
       const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 10_000).toISOString(), archivedConversations: [] } })
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
-    expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(9_000)
+    expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(4_000)
     await page.locator('button.undo').click()
     expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
     expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
@@ -910,7 +910,7 @@ test('chat actions keep independent Undo notifications without waiting for the f
     await page.waitForFunction(() => (window as any).chatActions.length === 1)
     await page.evaluate(async () => {
       const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 10_000).toISOString(), archivedConversations: [] } })
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
     await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
 
@@ -922,7 +922,7 @@ test('chat actions keep independent Undo notifications without waiting for the f
     await page.waitForFunction(() => (window as any).chatActions.length === 2)
     await page.evaluate(async () => {
       const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-      runtime.mergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 10_000).toISOString(), archivedConversations: [] } })
+      runtime.mergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
     })
 
     await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
