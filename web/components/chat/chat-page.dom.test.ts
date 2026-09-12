@@ -333,7 +333,7 @@ test('active chat shows a submitted turn immediately and replaces it with durabl
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
-    const optimistic = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+    const lifecycle = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
       const composer = element.shadowRoot.querySelector('lv-chat-composer') as HTMLElement
       composer.dispatchEvent(new CustomEvent('lv-chat-submit', {
@@ -344,26 +344,24 @@ test('active chat shows a submitted turn immediately and replaces it with durabl
       await element.updateComplete
       const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
       await thread.updateComplete
-      return {
+      const optimistic = {
         pending: element.pending,
         transcript: thread.transcript,
       }
-    })
-    expect(optimistic.pending).toBe(true)
-    expect(optimistic.transcript.at(-1)).toMatchObject({ kind: 'user', text: 'What changed this month?' })
-
-    await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agent: { transcript: [
         { id: 'ready', kind: 'assistant', markdown: 'Ready.', conversationId: 'c1' },
         { id: 'accepted-user', kind: 'user', text: 'What changed this month?', conversationId: 'c1' },
       ], status: { enabled: true, running: true } } })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await element.updateComplete
+      await thread.updateComplete
+      return { optimistic, durable: thread.transcript }
     })
-    await page.waitForFunction(() => {
-      const element = document.querySelector('lv-chat-page') as any
-      const thread = element?.shadowRoot?.querySelector('lv-chat-thread') as any
-      return thread?.transcript?.at(-1)?.id === 'accepted-user' && !thread.transcript.some((item: any) => item.id?.startsWith('optimistic-'))
-    })
+    expect(lifecycle.optimistic.pending).toBe(true)
+    expect(lifecycle.optimistic.transcript.at(-1)).toMatchObject({ kind: 'user', text: 'What changed this month?' })
+    expect(lifecycle.durable.at(-1)?.id).toBe('accepted-user')
+    expect(lifecycle.durable.some((item: any) => item.id?.startsWith('optimistic-'))).toBe(false)
   } finally {
     await page.close()
   }
