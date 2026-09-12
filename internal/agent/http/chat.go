@@ -270,12 +270,6 @@ func (h *Handler) ChatStop(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *Handler) cancelChatRun(ctx context.Context, service *agent.Service, scope agent.Scope, conversationID, runID string) (active, queued bool, err error) {
-	if err := service.CancelRun(ctx, scope, conversationID, runID); err == nil {
-		return true, false, nil
-	} else if !errors.Is(err, agent.ErrRunNotCancellable) {
-		return false, false, err
-	}
-
 	var queuedErr error
 	if h.options.CancelQueuedRun != nil {
 		queued, queuedErr = h.options.CancelQueuedRun(ctx, scope, conversationID, runID)
@@ -283,9 +277,11 @@ func (h *Handler) cancelChatRun(ctx context.Context, service *agent.Service, sco
 			return false, true, nil
 		}
 	}
-	// A worker may claim the queue item between the first in-process check and
-	// the queued transition. Recheck the service so that race still cancels the
-	// worker context and gets the partial-output terminalization path.
+	// A queued cancellation can legitimately fail because a worker claimed the
+	// item first, or because this is an inline run with no queue row. In either
+	// case, fall back to the in-process cancellation boundary. The queue attempt
+	// must come first because StartDurablePrompt installs a local placeholder
+	// that Service.CancelRun would otherwise mistake for the worker.
 	if err := service.CancelRun(ctx, scope, conversationID, runID); err == nil {
 		return true, false, nil
 	} else if !errors.Is(err, agent.ErrRunNotCancellable) {
@@ -529,12 +525,6 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 	// turns intentionally remain inline so their drawer can stream the answer
 	// directly to its command response.
 	queued := !embedded && h.options.EnqueueChatRun != nil
-	if queued {
-		// Write the running boundary before the durable workflow becomes
-		// visible to a worker. This gives the browser immediate feedback and
-		// prevents a very fast worker from racing a late running:true patch.
-		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, "", true), embedded))
-	}
 	var started *agent.StartedPrompt
 	if queued {
 		started, err = service.StartDurablePrompt(runCtx, prompt, agent.PromptDispatch{ChatClientID: clientID})
@@ -552,6 +542,33 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 			_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 			return
 		}
+		// StartDurablePrompt persists the accepted user turn and run before the
+		// queue callback returns. Reload both after enqueue so ChatSignalWith
+		// observes the accepted run rather than the previous terminal run. The
+		// signal builder also rechecks the latest durable status, allowing a fast
+		// worker to publish a settled state without a stale running patch.
+		accepted, stateErr := service.ConversationTranscriptState(r.Context(), scope, conversationID)
+		if stateErr != nil {
+			_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(stateErr), false), embedded))
+			return
+		}
+		signal := h.chatSignalWith(r.Context(), scope, conversationID, accepted.Transcript, accepted.Artifacts, "", true)
+		// ChatSignalWith normally derives this from the durable store. Refresh
+		// once after the signal is built as well so a worker that settled between
+		// enqueue and acknowledgement cannot be hidden by a stale running:true
+		// transport value. The accepted run ID is carried explicitly for minimal
+		// compositions whose signal builder does not derive it.
+		if latest, latestErr := service.ListRunsPage(r.Context(), scope, conversationID, agent.Page{Limit: 1}); latestErr == nil && len(latest) > 0 {
+			latestRun := latest[0]
+			running := latestRun.Status == agent.RunStatusRunning || latestRun.Status == agent.RunStatusPreparing
+			signal.Agent.Status.Running = running
+			if running {
+				signal.Agent.Status.RunID = ui.Pointer(latestRun.ID)
+			} else {
+				signal.Agent.Status.RunID = nil
+			}
+		}
+		_ = updates.Patch(chatSignalPatch(signal, embedded))
 		return
 	}
 	if h.options.ExecuteStartedChatTurn == nil {

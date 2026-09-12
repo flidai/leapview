@@ -17,7 +17,7 @@ type PendingUndo = {
   deadline: number
 }
 
-type StoredUndo = PendingUndo & { phase: 'waiting' | 'committing' }
+type StoredUndo = PendingUndo & { phase: 'waiting' }
 
 function focusedElement(): HTMLElement | null {
   let element = document.activeElement
@@ -36,7 +36,7 @@ function readStoredUndo(): StoredUndo | null {
     const raw = window.sessionStorage.getItem(pendingUndoStorageKey)
     if (!raw) return null
     const value = JSON.parse(raw) as Partial<StoredUndo>
-    if (!value || (value.phase !== 'waiting' && value.phase !== 'committing') || typeof value.requestId !== 'string' || !value.requestId || typeof value.deadline !== 'number' || !Number.isFinite(value.deadline) || !value.action || !isUndoableAction(value.action)) {
+    if (!value || value.phase !== 'waiting' || typeof value.requestId !== 'string' || !value.requestId || typeof value.deadline !== 'number' || !Number.isFinite(value.deadline) || !value.action || !isUndoableAction(value.action)) {
       window.sessionStorage.removeItem(pendingUndoStorageKey)
       return null
     }
@@ -137,6 +137,7 @@ export class ChatManager extends DatastarLit(LitElement) {
       this.emitRemovalPending('')
     }
     this.failure = failure.message
+    if (action?.action === 'undo' && this.undoPending) this.scheduleUndo(this.undoPending)
   }
 
   private get management(): ChatManagementSignal { return this.signal('chatManagement', emptyManagement) }
@@ -173,21 +174,16 @@ export class ChatManager extends DatastarLit(LitElement) {
     this.opened = true
   }
 
-  private perform(detail: ChatAction, requestId: string = crypto.randomUUID(), persistCommit = false) {
+  private perform(detail: ChatAction, requestId: string = crypto.randomUUID()) {
     this.pendingAction = detail
     this.pending = requestId
     this.failure = ''
-    if (persistCommit && isUndoableAction(detail)) writeStoredUndo({ phase: 'committing', action: detail, requestId, deadline: Date.now() })
+
     this.dispatchEvent(new CustomEvent('lv-chat-management', { bubbles: true, composed: true, detail: { ...detail, requestId: this.pending } }))
   }
 
   private restorePendingUndo() {
     const stored = readStoredUndo()
-    if (stored?.phase === 'committing') {
-      this.emitRemovalPending(stored.action.conversationId)
-      this.perform(stored.action, stored.requestId, true)
-      return
-    }
     if (this.undoPending) {
       this.emitRemovalPending(this.undoPending.action.conversationId)
       this.scheduleUndo(this.undoPending)
@@ -200,12 +196,9 @@ export class ChatManager extends DatastarLit(LitElement) {
   }
 
   private beginUndo(detail: ChatAction) {
-    const pending: PendingUndo = { action: detail, requestId: crypto.randomUUID(), deadline: Date.now() + CHAT_UNDO_WINDOW_MS }
-    this.undoPending = pending
-    writeStoredUndo({ ...pending, phase: 'waiting' })
     this.close()
-    this.emitRemovalPending(detail.conversationId)
-    this.scheduleUndo(pending)
+    // The server owns the operation before the notification promises Undo.
+    this.perform({ ...detail, action: `${detail.action}_pending` })
   }
 
   private scheduleUndo(pending: PendingUndo) {
@@ -225,18 +218,24 @@ export class ChatManager extends DatastarLit(LitElement) {
     if (!pending || pending.requestId !== requestId) return
     this.clearUndoTimer()
     this.undoPending = null
-    writeStoredUndo({ ...pending, phase: 'committing' })
-    this.perform(pending.action, pending.requestId, true)
+    clearStoredUndo(requestId)
+    // Expiry only refreshes the view. Closing this tab cannot cancel the
+    // persisted operation, and no second mutation is needed from the browser.
+    const current = window.location.pathname.match(/^\/chats\/([^/]+)$/)?.[1]
+    if (current && decodeURIComponent(current) === pending.action.conversationId) {
+      window.location.assign('/chats/new')
+      return
+    }
+    this.pending = crypto.randomUUID()
+    this.pendingAction = null
+    this.dispatchEvent(new CustomEvent('lv-chat-management-load', { bubbles: true, composed: true, detail: { requestId: this.pending } }))
   }
 
   private undo = () => {
     const pending = this.undoPending
-    if (!pending) return
+    if (!pending || this.pending) return
     this.clearUndoTimer()
-    this.undoPending = null
-    clearStoredUndo(pending.requestId)
-    this.emitRemovalPending('')
-    this.feedback = pending.action.action === 'archive' ? 'Chat kept in your sidebar.' : 'Chat deletion canceled.'
+    this.perform({ action: 'undo', conversationId: pending.action.conversationId }, pending.requestId)
   }
 
   private emitRemovalPending(conversationId: string) {
@@ -249,6 +248,7 @@ export class ChatManager extends DatastarLit(LitElement) {
     if (!this.opened && dialog?.open) dialog.close()
     const result = this.management
     if (!this.pending || result.completedRequestId !== this.pending) return
+    if (this.pendingAction && !result.error && result.action !== this.pendingAction.action) return
     const completedRequestId = this.pending
     this.pending = ''
     this.failure = result.error || ''
@@ -258,7 +258,30 @@ export class ChatManager extends DatastarLit(LitElement) {
       clearStoredUndo(completedRequestId)
       this.emitRemovalPending('')
     }
-    if (this.failure) return
+    if (this.failure) {
+      if (action?.action === 'undo' && this.undoPending) this.scheduleUndo(this.undoPending)
+      return
+    }
+    if (action?.action === 'archive_pending' || action?.action === 'delete_pending') {
+      const deadline = Date.parse(result.undoDeadline || '')
+      if (!Number.isFinite(deadline)) {
+        this.failure = 'The action was saved, but its Undo deadline could not be loaded.'
+        return
+      }
+      const originalAction = action.action === 'archive_pending' ? 'archive' : 'delete'
+      this.undoPending = { action: { ...action, action: originalAction }, requestId: completedRequestId, deadline }
+      writeStoredUndo({ ...this.undoPending, phase: 'waiting' })
+      this.emitRemovalPending(action.conversationId)
+      this.scheduleUndo(this.undoPending)
+      this.feedback = ''
+      return
+    }
+    if (action?.action === 'undo') {
+      this.undoPending = null
+      clearStoredUndo(completedRequestId)
+      this.emitRemovalPending('')
+    }
+    if (!action) this.emitRemovalPending('')
     this.feedback = result.message || ''
     this.confirmation = null
     if (!this.archivesOpen) this.close()
@@ -307,7 +330,7 @@ export class ChatManager extends DatastarLit(LitElement) {
           `}
         </div>
       </dialog>
-      ${!this.opened && this.undoPending ? html`<div class="toast" role="status">${lucideIcon(this.undoPending.action.action === 'archive' ? Archive : Trash2, { size: 16 })}<span class="toast-label">${this.undoPending.action.action === 'archive' ? 'Archived chat' : 'Deleted chat'}</span><button class="undo" @click=${this.undo}>Undo</button></div>` : nothing}
+      ${!this.opened && this.undoPending ? html`<div class="toast" role="status">${lucideIcon(this.undoPending.action.action === 'archive' ? Archive : Trash2, { size: 16 })}<span class="toast-label">${this.undoPending.action.action === 'archive' ? 'Archived chat' : 'Deleted chat'}</span><button class="undo" ?disabled=${Boolean(this.pending)} @click=${this.undo}>Undo</button></div>` : nothing}
       ${!this.opened && !this.undoPending && this.pending ? html`<div class="toast" role="status">Updating chat…</div>` : nothing}
       ${!this.opened && (this.failure || this.feedback) ? html`<div class=${`toast ${this.failure ? 'error' : ''}`} role=${this.failure ? 'alert' : 'status'}>${this.failure || this.feedback}<button class="icon" aria-label="Dismiss" @click=${() => { this.failure = ''; this.feedback = '' }}>${lucideIcon(X, { size: 14 })}</button></div>` : nothing}
     `

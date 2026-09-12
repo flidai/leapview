@@ -504,6 +504,46 @@ func TestConversationManagementLifecyclePinsArchivesRestoresAndDeletes(t *testin
 	}
 }
 
+func TestPendingConversationActionSurvivesReadModelAndIsPrincipalScoped(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "pending-owner@example.com")
+	other := createAgentPrincipal(t, ctx, store, "pending-other@example.com")
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID, Title: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := agent.PendingConversationAction{PrincipalID: owner.ID, ConversationID: conversation.ID, Action: agent.PendingConversationArchive, RequestID: "request-pending", Deadline: time.Now().UTC().Add(time.Second)}
+	if _, err := repo.BeginPendingConversationAction(ctx, pending); err != nil {
+		t.Fatalf("begin pending archive: %v", err)
+	}
+	if active, err := repo.ListConversations(ctx, owner.ID); err != nil || len(active) != 0 {
+		t.Fatalf("pending conversation leaked into active read model: rows=%#v err=%v", active, err)
+	}
+	if pendingRows, err := repo.ListPendingConversationActions(ctx); err != nil || len(pendingRows) != 1 || pendingRows[0].PrincipalID != owner.ID {
+		t.Fatalf("pending rows=%#v err=%v", pendingRows, err)
+	}
+	if err := repo.CancelPendingConversationAction(ctx, other.ID, conversation.ID, pending.RequestID); !errors.Is(err, agent.ErrNotFound) {
+		t.Fatalf("foreign cancellation error=%v, want not found", err)
+	}
+	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); err != nil {
+		t.Fatalf("cancel pending archive: %v", err)
+	}
+	if active, err := repo.ListConversations(ctx, owner.ID); err != nil || len(active) != 1 || active[0].ID != conversation.ID {
+		t.Fatalf("canceled conversation active rows=%#v err=%v", active, err)
+	}
+	deletePending := agent.PendingConversationAction{PrincipalID: owner.ID, ConversationID: conversation.ID, Action: agent.PendingConversationDelete, RequestID: "request-delete", Deadline: time.Now().UTC().Add(-time.Second)}
+	if _, err := repo.BeginPendingConversationAction(ctx, deletePending); err != nil {
+		t.Fatalf("begin pending delete: %v", err)
+	}
+	if err := repo.FinalizePendingConversationAction(ctx, deletePending); err != nil {
+		t.Fatalf("finalize pending delete: %v", err)
+	}
+	if _, err := repo.GetConversation(ctx, owner.ID, conversation.ID); !errors.Is(err, agent.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted conversation error=%v, want not found", err)
+	}
+}
+
 func TestConversationManagementRejectsDeleteWithRunningRun(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAgentRepo(t, ctx)

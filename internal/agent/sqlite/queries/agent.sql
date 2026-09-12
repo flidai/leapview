@@ -8,6 +8,7 @@ SELECT * FROM agent_conversations
 WHERE principal_id = sqlc.arg(principal_id)
   AND status = 'active'
   AND json_extract(metadata_json, '$._leapview_chat.deletedAt') IS NULL
+  AND json_extract(metadata_json, '$._leapview_chat.pendingAction') IS NULL
 ORDER BY CASE WHEN json_extract(metadata_json, '$._leapview_chat.pinned') = 1 THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 
@@ -16,6 +17,7 @@ SELECT * FROM agent_conversations
 WHERE principal_id = sqlc.arg(principal_id)
   AND status = 'archived'
   AND json_extract(metadata_json, '$._leapview_chat.deletedAt') IS NULL
+  AND json_extract(metadata_json, '$._leapview_chat.pendingAction') IS NULL
 ORDER BY CASE WHEN json_extract(metadata_json, '$._leapview_chat.pinned') = 1 THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 

@@ -26,6 +26,7 @@ SELECT id, principal_id, title, status, metadata_json::text, transcript_json::te
 FROM agent.conversations
 WHERE principal_id = sqlc.arg(principal_id) AND status = 'active'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') = ''
 ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 
@@ -35,6 +36,7 @@ SELECT id, principal_id, title, status, metadata_json::text, transcript_json::te
 FROM agent.conversations
 WHERE principal_id = sqlc.arg(principal_id) AND status = 'archived'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') = ''
 ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
          updated_at DESC, created_at DESC, id;
 

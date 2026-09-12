@@ -866,6 +866,7 @@ model ChatSignal {
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "chat" })
 model ChatManagementSignal {
   `completedRequestId`?: string;
+  `undoDeadline`?: string;
   `action`: string;
   `conversationId`: string;
   `archivedConversations`: ChatConversationSummary[];

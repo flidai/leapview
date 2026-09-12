@@ -51,9 +51,10 @@ type ToolProvider func(scope Scope) []agentcore.ToolDefinition
 type SystemPromptProvider func(ctx context.Context) (string, error)
 
 type Service struct {
-	repo   Repository
-	config Config
-	model  agentcore.Model
+	repo    Repository
+	config  Config
+	model   agentcore.Model
+	pending *pendingConversationLifecycle
 
 	toolProviders        []ToolProvider
 	systemPromptProvider SystemPromptProvider
@@ -136,10 +137,67 @@ func NewService(repo Repository, config Config, options ...ServiceOption) *Servi
 		config:  config,
 		running: map[string]runningPrompt{},
 	}
+	if pending, ok := repo.(PendingConversationRepository); ok {
+		s.pending = newPendingConversationLifecycle(pending)
+	}
 	for _, option := range options {
 		option(s)
 	}
 	return s
+}
+
+// StartPendingConversationLifecycle rehydrates persisted undo windows and
+// starts their server-owned finalization timers. It is safe to call more than
+// once and returns the unsupported error for lightweight repositories that do
+// not implement destructive conversation management.
+func (s *Service) StartPendingConversationLifecycle(ctx context.Context) error {
+	if s == nil || s.pending == nil {
+		return ErrPendingConversationUnsupported
+	}
+	return s.pending.start(ctx)
+}
+
+// StopPendingConversationLifecycle releases timers during application
+// shutdown. Persisted pending rows remain available for the next process to
+// rehydrate.
+func (s *Service) StopPendingConversationLifecycle() {
+	if s != nil && s.pending != nil {
+		s.pending.stop()
+	}
+}
+
+// BeginPendingConversationAction persists the operation before returning to
+// the browser. The browser is therefore only a presentation surface for the
+// undo window, never the owner of its deadline.
+func (s *Service) BeginPendingConversationAction(ctx context.Context, scope Scope, conversationID, action, requestID string) (PendingConversationAction, error) {
+	if s == nil || s.pending == nil {
+		return PendingConversationAction{}, ErrPendingConversationUnsupported
+	}
+	action = strings.TrimSpace(action)
+	requestID = strings.TrimSpace(requestID)
+	if action != PendingConversationArchive && action != PendingConversationDelete {
+		return PendingConversationAction{}, fmt.Errorf("unsupported pending conversation action %q", action)
+	}
+	if requestID == "" {
+		return PendingConversationAction{}, fmt.Errorf("pending conversation request ID is required")
+	}
+	pending := PendingConversationAction{
+		RequestID: requestID, PrincipalID: strings.TrimSpace(scope.PrincipalID), ConversationID: strings.TrimSpace(conversationID),
+		Action: action, Deadline: time.Now().UTC().Add(PendingConversationWindow),
+	}
+	if err := ValidatePendingConversationAction(pending); err != nil {
+		return PendingConversationAction{}, err
+	}
+	return s.pending.begin(ctx, pending)
+}
+
+// CancelPendingConversationAction is principal-scoped and request-bound. A
+// request ID copied from another browser cannot cancel that user's action.
+func (s *Service) CancelPendingConversationAction(ctx context.Context, scope Scope, conversationID, requestID string) error {
+	if s == nil || s.pending == nil {
+		return ErrPendingConversationUnsupported
+	}
+	return s.pending.cancelAction(ctx, scope.PrincipalID, conversationID, requestID)
 }
 
 func (s *Service) SetModel(model agentcore.Model) {
@@ -456,13 +514,41 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 	}
 	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": s.config.Model, "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
 	if cancellation, ok := s.repo.(RunCancellationWorkflow); ok && s.runWorkflowAvailable() {
-		return cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
+		changed, err := cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
+		if err == nil {
+			// A durable start installs a local placeholder before its worker
+			// claims the queue item. Release only that exact run after the
+			// transactional cancellation wins; an unconditional release could
+			// cancel a newer worker that acquired the conversation concurrently.
+			s.releaseRun(conversationID, runID)
+		}
+		return changed, err
 	}
 	if terminalizer, ok := s.repo.(RunTerminalWorkflow); ok && s.runWorkflowAvailable() && workflow.Event.Key != "" {
 		_, _, err := terminalizer.FinishRunWorkflow(context.WithoutCancel(ctx), finish, workflow)
+		if err == nil {
+			s.releaseRun(conversationID, runID)
+		}
 		return true, err
 	}
 	return false, fmt.Errorf("transactional run cancellation workflow is unavailable")
+}
+
+// releaseRun releases a local prompt placeholder only when it still belongs
+// to the run that was terminalized transactionally. A worker may replace the
+// placeholder between queue cancellation and this cleanup, so an
+// unconditional conversation release could cancel unrelated work.
+func (s *Service) releaseRun(conversationID, runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active, ok := s.running[conversationID]
+	if !ok || active.runID != runID {
+		return
+	}
+	if active.cancel != nil {
+		active.cancel()
+	}
+	delete(s.running, conversationID)
 }
 
 // SupportsCancellationWorkflow reports whether queued cancellation can be

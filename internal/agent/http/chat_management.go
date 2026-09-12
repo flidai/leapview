@@ -9,6 +9,7 @@ import (
 	stdhttp "net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/agent"
@@ -18,23 +19,29 @@ import (
 )
 
 const (
-	conversationManagementActionPin        = "pin"
-	conversationManagementActionUnpin      = "unpin"
-	conversationManagementActionArchive    = "archive"
-	conversationManagementActionRestore    = "restore"
-	conversationManagementActionDelete     = "delete"
-	conversationManagementActionArchiveAll = "archive_all"
-	conversationManagementActionDeleteAll  = "delete_all"
+	conversationManagementActionPin            = "pin"
+	conversationManagementActionUnpin          = "unpin"
+	conversationManagementActionArchive        = "archive"
+	conversationManagementActionRestore        = "restore"
+	conversationManagementActionDelete         = "delete"
+	conversationManagementActionArchivePending = "archive_pending"
+	conversationManagementActionDeletePending  = "delete_pending"
+	conversationManagementActionUndo           = "undo"
+	conversationManagementActionArchiveAll     = "archive_all"
+	conversationManagementActionDeleteAll      = "delete_all"
 )
 
 var conversationManagementActions = map[string]struct{}{
-	conversationManagementActionPin:        {},
-	conversationManagementActionUnpin:      {},
-	conversationManagementActionArchive:    {},
-	conversationManagementActionRestore:    {},
-	conversationManagementActionDelete:     {},
-	conversationManagementActionArchiveAll: {},
-	conversationManagementActionDeleteAll:  {},
+	conversationManagementActionPin:            {},
+	conversationManagementActionUnpin:          {},
+	conversationManagementActionArchive:        {},
+	conversationManagementActionRestore:        {},
+	conversationManagementActionDelete:         {},
+	conversationManagementActionArchivePending: {},
+	conversationManagementActionDeletePending:  {},
+	conversationManagementActionUndo:           {},
+	conversationManagementActionArchiveAll:     {},
+	conversationManagementActionDeleteAll:      {},
 }
 
 // conversationManagementService is the narrow storage port used by the HTTP
@@ -42,6 +49,8 @@ var conversationManagementActions = map[string]struct{}{
 // transitions, and the transaction that consumes the audit intent on ctx.
 type conversationManagementService interface {
 	ManageConversation(context.Context, agent.Scope, string, string) error
+	BeginPendingConversationAction(context.Context, agent.Scope, string, string, string) (agent.PendingConversationAction, error)
+	CancelPendingConversationAction(context.Context, agent.Scope, string, string) error
 	ListArchivedConversations(context.Context, agent.Scope) ([]agent.Conversation, error)
 	ListArchivedConversationsPage(context.Context, agent.Scope, agent.Page) ([]agent.Conversation, error)
 }
@@ -131,6 +140,10 @@ func (h *Handler) ManageAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.
 	if targetID == "" {
 		targetID = scope.PrincipalID
 	}
+	requestID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if requestID == "" {
+		requestID = uiRequestIdentity(r, action+"\x00"+conversationID)
+	}
 	if withIntent, intentErr := h.withAuditIntent(r, manageAgentConversationsOperation, scope, "conversation", targetID); intentErr != nil {
 		h.writeCommandFailure(w, r, manageAgentConversationsOperation, apigenfailure.Wrap("unavailable", intentErr))
 		return
@@ -142,7 +155,7 @@ func (h *Handler) ManageAgentConversations(w stdhttp.ResponseWriter, r *stdhttp.
 		h.writeCommandFailure(w, r, manageAgentConversationsOperation, apigenfailure.Wrap("unavailable", fmt.Errorf("agent conversation management is unavailable")))
 		return
 	}
-	if err := manager.ManageConversation(r.Context(), scope, action, conversationID); err != nil {
+	if _, err := h.executeConversationManagement(r.Context(), manager, scope, action, conversationID, requestID); err != nil {
 		h.writeCommandFailure(w, r, manageAgentConversationsOperation, classifyConversationManagementError(err))
 		return
 	}
@@ -177,11 +190,18 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if identity == "" {
 		identity = uiRequestIdentity(r, action+"\x00"+conversationID)
 	}
+	// Begin and Undo intentionally share the persisted request ID so the
+	// lifecycle fence can match them, while the command transport receives a
+	// distinct idempotency identity for each phase.
+	invocationIdentity := identity
+	if action == conversationManagementActionArchivePending || action == conversationManagementActionDeletePending || action == conversationManagementActionUndo {
+		invocationIdentity = action + ":" + identity
+	}
 	targetID := conversationID
 	if targetID == "" {
 		targetID = scope.PrincipalID
 	}
-	ctx, err := beginUICommandInvocation(r, agentUIBinding(manageAgentConversationsOperation), nil, conversationID, action, identity)
+	ctx, err := beginUICommandInvocation(r, agentUIBinding(manageAgentConversationsOperation), nil, conversationID, action, invocationIdentity)
 	if err != nil {
 		h.writeChatManagementFailure(w, r, requestID, err)
 		return
@@ -198,7 +218,8 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		h.writeChatManagementFailure(w, r, requestID, fmt.Errorf("agent conversation management is unavailable"))
 		return
 	}
-	if err := manager.ManageConversation(ctx, scope, action, conversationID); err != nil {
+	pending, err := h.executeConversationManagement(ctx, manager, scope, action, conversationID, requestID)
+	if err != nil {
 		h.writeChatManagementFailure(w, r, requestID, classifyConversationManagementError(err))
 		return
 	}
@@ -209,8 +230,31 @@ func (h *Handler) ChatManagement(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	h.writeChatManagementState(w, r, scope, chatManagementSignal{
-		Action: action, ConversationID: conversationID, ArchivedConversations: chatConversationSummaries(archived), Message: ui.Optional(conversationManagementMessage(action)), RequestID: ui.Optional(requestID), CompletedRequestID: ui.Optional(requestID),
+		Action: action, ConversationID: conversationID, ArchivedConversations: chatConversationSummaries(archived), Message: ui.Optional(conversationManagementMessage(action)), RequestID: ui.Optional(requestID), CompletedRequestID: ui.Optional(requestID), UndoDeadline: pendingDeadline(pending),
 	})
+}
+
+func (h *Handler) executeConversationManagement(ctx context.Context, manager conversationManagementService, scope agent.Scope, action, conversationID, requestID string) (agent.PendingConversationAction, error) {
+	switch action {
+	case conversationManagementActionArchivePending:
+		pending, err := manager.BeginPendingConversationAction(ctx, scope, conversationID, agent.PendingConversationArchive, requestID)
+		return pending, err
+	case conversationManagementActionDeletePending:
+		pending, err := manager.BeginPendingConversationAction(ctx, scope, conversationID, agent.PendingConversationDelete, requestID)
+		return pending, err
+	case conversationManagementActionUndo:
+		return agent.PendingConversationAction{}, manager.CancelPendingConversationAction(ctx, scope, conversationID, requestID)
+	default:
+		return agent.PendingConversationAction{}, manager.ManageConversation(ctx, scope, action, conversationID)
+	}
+}
+
+func pendingDeadline(pending agent.PendingConversationAction) *string {
+	if pending.RequestID == "" || pending.Deadline.IsZero() {
+		return nil
+	}
+	value := pending.Deadline.UTC().Format(time.RFC3339Nano)
+	return ui.Optional(value)
 }
 
 // ChatManagementLoad supplies the archived read model for the settings sheet.
@@ -340,6 +384,12 @@ func conversationManagementMessage(action string) string {
 		return "Conversation restored."
 	case conversationManagementActionDelete:
 		return "Conversation deleted."
+	case conversationManagementActionArchivePending:
+		return "Conversation archive pending."
+	case conversationManagementActionDeletePending:
+		return "Conversation deletion pending."
+	case conversationManagementActionUndo:
+		return "Conversation action canceled."
 	case conversationManagementActionArchiveAll:
 		return "All conversations archived."
 	case conversationManagementActionDeleteAll:

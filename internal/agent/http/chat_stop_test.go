@@ -17,8 +17,10 @@ import (
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/agent/ui"
 	"github.com/flidai/leapview/internal/platform"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestChatStopCancelsActiveRunAndPublishesSettledContinuationState(t *testing.T) {
@@ -127,4 +129,76 @@ func TestChatStopRejectsStaleRunIdentity(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("stale stop status=%d body=%s", response.Code, response.Body.String())
 	}
+}
+
+func TestCancelChatRunCancelsQueuedJobBeforeLocalPlaceholder(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-stop-queued.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-stop@example.com", DisplayName: "Queued Stop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := jobsqlite.NewRepository(store.SQLDB())
+	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "unused", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
+		return jobs.WorkflowIntent{
+			Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{"runId":"` + runID + `"}`)},
+			Job: jobs.EnqueueInput{
+				ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground,
+				PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID,
+				EstimatedMemoryBytes: 1, Payload: []byte(`{"run":"` + runID + `"}`),
+			},
+		}
+	})
+	scope := agent.Scope{ProjectID: "project:queued-stop", PrincipalID: owner.ID}
+	conversation, err := service.CreateConversation(t.Context(), scope, "Queued stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := service.StartDurablePrompt(t.Context(), agent.PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "queued prompt"}, agent.PromptDispatch{ChatClientID: "queued-client"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !started.DurablyQueued() || !service.ConversationRunning(conversation.ID) {
+		t.Fatalf("durable start queued=%v running=%v, want queued placeholder", started.DurablyQueued(), service.ConversationRunning(conversation.ID))
+	}
+
+	var callbackCalls int
+	handler := NewHandler(Options{CancelQueuedRun: func(ctx context.Context, callbackScope agent.Scope, conversationID, runID string) (bool, error) {
+		callbackCalls++
+		return service.CancelPersistedRunWithWorkflow(ctx, callbackScope, conversationID, runID, jobs.WorkflowIntent{Event: jobs.EventInput{
+			Key: "agent_run.canceled:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.canceled", Data: []byte(`{"runId":"` + runID + `"}`),
+		}})
+	}})
+	active, queued, err := handler.cancelChatRun(t.Context(), service, scope, conversation.ID, started.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active || !queued || callbackCalls != 1 {
+		t.Fatalf("cancel result active=%v queued=%v callbackCalls=%d, want false/true/1", active, queued, callbackCalls)
+	}
+	run, err := service.GetRun(t.Context(), scope, conversation.ID, started.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != agent.RunStatusCanceled {
+		t.Fatalf("run status=%q, want canceled", run.Status)
+	}
+	job, err := queue.Get(t.Context(), "agent:"+started.RunID+":run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCancelled {
+		t.Fatalf("queue job status=%q, want cancelled", job.Status)
+	}
+	if service.ConversationRunning(conversation.ID) {
+		t.Fatal("queued cancellation left the local durable placeholder running")
+	}
+
 }

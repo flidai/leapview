@@ -286,6 +286,11 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 	}
 	executed := false
 	var queued *agent.StartedPrompt
+	var observed []struct {
+		transcript []agent.ChatTranscriptItem
+		running    bool
+		statusErr  string
+	}
 	handler := NewHandler(Options{
 		Service: service,
 		EnqueueChatRun: func(_ context.Context, _ agent.Scope, started *agent.StartedPrompt, _ string) error {
@@ -297,6 +302,11 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 			return agent.PromptResult{}, nil
 		},
 		ChatSignalWith: func(_ context.Context, _ agent.Scope, activeID string, transcript []agent.ChatTranscriptItem, _ agent.ChatArtifactSignals, statusErr string, running bool) ui.ChatViewState {
+			observed = append(observed, struct {
+				transcript []agent.ChatTranscriptItem
+				running    bool
+				statusErr  string
+			}{transcript: append([]agent.ChatTranscriptItem(nil), transcript...), running: running, statusErr: statusErr})
 			return ui.ChatViewState{Agent: ui.ChatSignal{ActiveConversationID: activeID, Transcript: ui.ChatTranscriptItems(transcript), Status: ui.ChatStatus{Enabled: true, Running: running, Error: ui.Optional(statusErr)}}}
 		},
 	})
@@ -317,6 +327,19 @@ func TestActiveChatTurnQueuesAndReturnsBeforeProviderExecution(t *testing.T) {
 	}
 	if executed {
 		t.Fatal("active chat turn executed provider work in the command request")
+	}
+	if len(observed) != 1 || !observed[0].running || observed[0].statusErr != "" {
+		t.Fatalf("accepted queued signal = %#v, want one running signal without an error", observed)
+	}
+	foundInput := false
+	for _, item := range observed[0].transcript {
+		if item.Kind == "user" && item.Text == "hello" {
+			foundInput = true
+			break
+		}
+	}
+	if !foundInput {
+		t.Fatalf("accepted queued signal did not include persisted user turn: %#v", observed[0].transcript)
 	}
 }
 

@@ -863,25 +863,34 @@ test('chat deletion requires confirmation and cancel sends no command', async ()
   await page.close()
 })
 
-test('individual chat archive waits ten seconds and exposes Undo before sending a command', async () => {
+test('archive persists before showing ten-second Undo and waits for cancellation acknowledgement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
     await page.evaluate(() => {
       sessionStorage.removeItem('lv-chat-manager.pending-undo')
       ;(window as any).chatActions = []
       document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
       document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
     })
+    expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('archive_pending')
+    expect(await page.getByRole('button', { name: 'Undo', exact: true }).count()).toBe(0)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 10_000).toISOString(), archivedConversations: [] } })
+    })
     await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
-    expect(await page.evaluate(() => (window as any).chatActions)).toEqual([])
-    expect(await page.evaluate(() => {
-      const raw = sessionStorage.getItem('lv-chat-manager.pending-undo')
-      return raw ? JSON.parse(raw).deadline - Date.now() : 0
-    })).toBeGreaterThan(9_000)
+    expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!).deadline - Date.now())).toBeGreaterThan(9_000)
     await page.getByRole('button', { name: 'Undo', exact: true }).click()
-    await page.getByRole('status').filter({ hasText: 'Chat kept in your sidebar.' }).waitFor()
-    expect(await page.evaluate(() => ({ actions: (window as any).chatActions, stored: sessionStorage.getItem('lv-chat-manager.pending-undo') }))).toEqual({ actions: [], stored: null })
+    expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
+    expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[1].requestId, message: 'Conversation action canceled.', archivedConversations: [] } })
+    })
+    await page.getByRole('status').filter({ hasText: 'Conversation action canceled.' }).waitFor()
+    expect(await page.evaluate(() => sessionStorage.getItem('lv-chat-manager.pending-undo'))).toBeNull()
   } finally {
     await page.close()
   }
@@ -907,7 +916,7 @@ test('archived chat manager restores a saved chat and waits for server acknowled
   await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
   await page.evaluate(async () => {
     const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
-    runtime.mergePatch({ chatManagement: { completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
+    runtime.mergePatch({ chatManagement: { action: 'restore', completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
   })
   await page.getByText('No archived chats yet.', { exact: true }).waitFor()
   await page.close()

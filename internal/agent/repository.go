@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
@@ -29,7 +30,6 @@ const (
 	// an internal metadata marker alongside the archived status for schema
 	// compatibility; repositories map it to this public status.
 	ConversationStatusDeleted = "deleted"
-
 
 	RunStatusRunning   = "running"
 	RunStatusPreparing = "preparing"
@@ -70,6 +70,18 @@ type Conversation struct {
 	Pinned         bool
 }
 
+// PendingConversationAction is the server-owned undo window for an archive
+// or delete. The row remains scoped to the conversation owner all the way
+// through cancellation and finalization; request IDs are only operation
+// identities and never grant access by themselves.
+type PendingConversationAction struct {
+	RequestID      string
+	PrincipalID    string
+	ConversationID string
+	Action         string
+	Deadline       time.Time
+}
+
 // ConversationMetadataKey is reserved inside metadata_json for durable chat
 // management state. Keeping this small state in the existing metadata object
 // lets SQLite installations adopt chat management without an unsafe live
@@ -77,8 +89,11 @@ type Conversation struct {
 const ConversationMetadataKey = "_leapview_chat"
 
 type ConversationMetadata struct {
-	Pinned    bool
-	DeletedAt string
+	Pinned         bool
+	DeletedAt      string
+	PendingAction  string
+	PendingRequest string
+	PendingUntil   string
 }
 
 // ParseConversationMetadata reads the repository-owned chat metadata. Older
@@ -101,6 +116,15 @@ func ParseConversationMetadata(raw string) (ConversationMetadata, error) {
 	}
 	if deletedAt, ok := reserved["deletedAt"].(string); ok {
 		state.DeletedAt = strings.TrimSpace(deletedAt)
+	}
+	if pendingAction, ok := reserved["pendingAction"].(string); ok {
+		state.PendingAction = strings.TrimSpace(pendingAction)
+	}
+	if pendingRequest, ok := reserved["pendingRequestId"].(string); ok {
+		state.PendingRequest = strings.TrimSpace(pendingRequest)
+	}
+	if pendingUntil, ok := reserved["pendingUntil"].(string); ok {
+		state.PendingUntil = strings.TrimSpace(pendingUntil)
 	}
 	return state, nil
 }
@@ -126,7 +150,16 @@ func UpdateConversationMetadata(raw string, state ConversationMetadata) (string,
 	} else {
 		reserved["deletedAt"] = strings.TrimSpace(state.DeletedAt)
 	}
-	if !state.Pinned && strings.TrimSpace(state.DeletedAt) == "" && len(reserved) == 1 {
+	if strings.TrimSpace(state.PendingAction) == "" {
+		delete(reserved, "pendingAction")
+		delete(reserved, "pendingRequestId")
+		delete(reserved, "pendingUntil")
+	} else {
+		reserved["pendingAction"] = strings.TrimSpace(state.PendingAction)
+		reserved["pendingRequestId"] = strings.TrimSpace(state.PendingRequest)
+		reserved["pendingUntil"] = strings.TrimSpace(state.PendingUntil)
+	}
+	if !state.Pinned && strings.TrimSpace(state.DeletedAt) == "" && strings.TrimSpace(state.PendingAction) == "" && len(reserved) == 1 {
 		delete(document, ConversationMetadataKey)
 	} else {
 		document[ConversationMetadataKey] = reserved
@@ -312,4 +345,15 @@ type ConversationManagementRepository interface {
 	DeleteConversation(ctx context.Context, principalID, conversationID string) (Conversation, error)
 	BulkArchiveConversations(ctx context.Context, principalID string, conversationIDs []string) ([]Conversation, error)
 	BulkDeleteConversations(ctx context.Context, principalID string, conversationIDs []string) ([]Conversation, error)
+}
+
+// PendingConversationRepository persists the server-owned ten-second undo
+// lifecycle. Implementations must scope begin, cancel, and finalize by both
+// principal and conversation, and must make the request ID an equality check
+// rather than an authorization credential.
+type PendingConversationRepository interface {
+	BeginPendingConversationAction(context.Context, PendingConversationAction) (Conversation, error)
+	CancelPendingConversationAction(context.Context, string, string, string) error
+	FinalizePendingConversationAction(context.Context, PendingConversationAction) error
+	ListPendingConversationActions(context.Context) ([]PendingConversationAction, error)
 }
