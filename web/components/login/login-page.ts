@@ -351,7 +351,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
 
         <div class="panel-heading">
           <h1 id="login-heading">${mustChangePassword ? 'Set a new password' : 'Welcome back'}</h1>
-          <p>${mustChangePassword ? 'Choose a new password to continue to your workspace.' : 'Sign in to your workspace.'}</p>
+          <p>${mustChangePassword ? 'Choose a new password to continue.' : 'Sign in to LeapView.'}</p>
         </div>
         ${this.status.error ? html`<div class="error" role="alert" aria-live="assertive">${this.status.error}</div>` : ''}
         ${mustChangePassword ? html`
@@ -379,7 +379,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
             <span>${page?.providerLabel ?? 'Sign in with Azure Active Directory'}</span>
           </a>
         ` : ''}
-        <p class="access-help">Need access? Contact your workspace administrator.</p>
+        <p class="access-help">Need access? Contact your administrator.</p>
         </section>
       </div>
     `

@@ -21,7 +21,7 @@ beforeAll(async () => {
         localAuth: url.searchParams.get('localAuth') === 'true',
         ssoAuth: url.searchParams.has('ssoAuth') ? url.searchParams.get('ssoAuth') === 'true' : true,
         mustChangePassword: url.searchParams.get('mustChangePassword') === 'true',
-        error: url.searchParams.get('error') ?? '',
+        error: url.searchParams.get('error') === 'invalid_credentials' ? 'The email or password is incorrect.' : '',
       }))
       return
     }
@@ -367,7 +367,7 @@ test('change-password authentication renders only the password recovery contract
 test('login errors stay visible in the local form contract', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
-    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false&error=The%20email%20or%20password%20is%20incorrect.`)
+    await page.goto(`${baseURL}/?localAuth=true&ssoAuth=false&error=invalid_credentials`)
     await page.waitForFunction(() => customElements.get('lv-login-page'))
     await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
 
