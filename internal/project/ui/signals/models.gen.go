@@ -83,6 +83,23 @@ type AssetLineageNodeSignal struct {
 	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty" yaml:"visibleUpstreamCount,omitempty"`
 }
 
+type AssetOverviewLinkSignal struct {
+	Href  string `json:"href" yaml:"href"`
+	Label string `json:"label" yaml:"label"`
+	Type  string `json:"type" yaml:"type"`
+}
+
+type AssetOverviewSignal struct {
+	ActiveVersion        *int64                         `json:"activeVersion,omitempty" yaml:"activeVersion,omitempty"`
+	DownstreamAssets     []AssetOverviewLinkSignal      `json:"downstreamAssets" yaml:"downstreamAssets"`
+	Owner                *string                        `json:"owner,omitempty" yaml:"owner,omitempty"`
+	PipelineMonitor      *PipelineOverviewMonitorSignal `json:"pipelineMonitor,omitempty" yaml:"pipelineMonitor,omitempty"`
+	Pipelines            []AssetOverviewLinkSignal      `json:"pipelines" yaml:"pipelines"`
+	Tags                 *[]string                      `json:"tags,omitempty" yaml:"tags,omitempty"`
+	UpstreamAssets       []AssetOverviewLinkSignal      `json:"upstreamAssets" yaml:"upstreamAssets"`
+	UpstreamDatasetCount *int64                         `json:"upstreamDatasetCount,omitempty" yaml:"upstreamDatasetCount,omitempty"`
+}
+
 type AssetVersionDrawerSignal struct {
 	Open      bool   `json:"open" yaml:"open"`
 	VersionID string `json:"versionId" yaml:"versionId"`
@@ -1305,6 +1322,24 @@ type PipelineMetricSignal struct {
 	Value  string  `json:"value" yaml:"value"`
 }
 
+type PipelineOverviewMonitorSignal struct {
+	LastSuccessfulAt *string                     `json:"lastSuccessfulAt,omitempty" yaml:"lastSuccessfulAt,omitempty"`
+	LatestRun        *PipelineOverviewRunSignal  `json:"latestRun,omitempty" yaml:"latestRun,omitempty"`
+	NextRunAt        *string                     `json:"nextRunAt,omitempty" yaml:"nextRunAt,omitempty"`
+	RecentRuns       []PipelineOverviewRunSignal `json:"recentRuns" yaml:"recentRuns"`
+	Schedule         string                      `json:"schedule" yaml:"schedule"`
+	Status           string                      `json:"status" yaml:"status"`
+}
+
+type PipelineOverviewRunSignal struct {
+	Duration  *string `json:"duration,omitempty" yaml:"duration,omitempty"`
+	Error     *string `json:"error,omitempty" yaml:"error,omitempty"`
+	Href      string  `json:"href" yaml:"href"`
+	ID        string  `json:"id" yaml:"id"`
+	StartedAt *string `json:"startedAt,omitempty" yaml:"startedAt,omitempty"`
+	Status    string  `json:"status" yaml:"status"`
+}
+
 type PipelinePageEnvelope struct {
 	Chrome                ChromeSignal                `json:"chrome" yaml:"chrome"`
 	Page                  PipelinePageSignal          `json:"page" yaml:"page"`
@@ -1383,6 +1418,7 @@ type ResourceAssetDefinitionSignal struct {
 }
 
 type ResourceAssetDetailsSignal struct {
+	AssetOverview      *AssetOverviewSignal          `json:"assetOverview,omitempty" yaml:"assetOverview,omitempty"`
 	Overview           []DefinitionFactSignal        `json:"overview" yaml:"overview"`
 	Sections           []ResourceDetailSectionSignal `json:"sections" yaml:"sections"`
 	SemanticModelGraph *SemanticModelGraphSignal     `json:"semanticModelGraph,omitempty" yaml:"semanticModelGraph,omitempty"`

@@ -253,12 +253,16 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})
 	}
 	page.Actions = uisignals.OptionalSlice(actions)
+	detailsLabel, definitionLabel, dataLabel := "Overview", "Definition", "Data"
+	if asset.Type == string(projectview.AssetTypeSemanticModel) {
+		definitionLabel, dataLabel = "Model", "Explore"
+	}
 	page.Tabs = []uisignals.ResourceTabSignal{
-		{ID: "details", Label: "Details", Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
-		{ID: "definition", Label: "Definition", Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
+		{ID: "details", Label: detailsLabel, Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
+		{ID: "definition", Label: definitionLabel, Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
 	}
 	if assetDataInspectable(asset.Type) {
-		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
+		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: dataLabel, Href: projectAssetDataHref(asset), Active: activeSection == "data"})
 	}
 	if assetHasRefreshHistory(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
@@ -294,7 +298,7 @@ func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asse
 	}
 	page.Actions = uisignals.Pointer([]uisignals.ResourceActionSignal{{Label: "Back to connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("back")}})
 	page.Tabs = []uisignals.ResourceTabSignal{
-		{ID: "details", Label: "Details", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
+		{ID: "details", Label: "Overview", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
 		{ID: "definition", Label: "Definition", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "definition"), Active: activeSection == "definition"},
 		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage"},
 	}
@@ -317,16 +321,17 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 		ActiveSection: activeSection,
 		Asset:         projectAssetSummarySignal(project.ID, asset, assetsByID(assets), edges),
 	}
-	if asset.Type == "refresh_pipeline" || asset.Type == "semantic_model" {
+	if asset.Type == "refresh_pipeline" || asset.Type == "pipeline" || asset.Type == "semantic_model" {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
 	} else if asset.Type == "model" {
 		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
 	}
 	if activeSection == "details" {
-		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))
+		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, refresh, versions))
 	}
 	if activeSection == "definition" {
 		page.Definition = uisignals.Pointer(projectAssetDefinitionSignal(asset))
+		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, refresh, versions))
 	}
 	if activeSection == "lineage" {
 		page.Lineage = uisignals.Pointer(uisignals.ResourceAssetLineageSignal{
@@ -348,16 +353,22 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 }
 
 func projectAssetDetailsSignal(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) uisignals.ResourceAssetDetailsSignal {
-	return projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, AssetRefreshState{})
+	return projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, AssetRefreshState{}, AssetVersionsState{})
 }
 
 func projectAssetDetailsSignalWithRefresh(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState) uisignals.ResourceAssetDetailsSignal {
+	return projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, refresh, AssetVersionsState{})
+}
+
+func projectAssetDetailsSignalWithRefreshAndVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState, versions AssetVersionsState) uisignals.ResourceAssetDetailsSignal {
 	model := assetDetailModelForAssetWithRefresh(project, asset, assets, edges, refresh)
-	return uisignals.ResourceAssetDetailsSignal{
+	details := uisignals.ResourceAssetDetailsSignal{
+		AssetOverview:      uisignals.Pointer(assetOverviewSignal(project.ID, asset, assets, edges, refresh, versions)),
 		Overview:           definitionFactSignals(model.Overview),
 		Sections:           assetDetailSectionSignals(model.Sections),
 		SemanticModelGraph: model.SemanticModelGraph,
 	}
+	return details
 }
 
 func definitionFactSignals(facts []definitionFact) []uisignals.DefinitionFactSignal {

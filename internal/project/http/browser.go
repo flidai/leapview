@@ -870,7 +870,8 @@ func requestedAssetSection(r *stdhttp.Request) string {
 
 func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView, section string) (projectui.AssetVersionsState, error) {
 	state := projectui.AssetVersionsState{CurrentContentHash: asset.ContentHash}
-	if h == nil || h.AssetVersions == nil || (section != "versions" && strings.TrimSpace(asset.ContentHash) != "") {
+	overview := section == "details"
+	if h == nil || h.AssetVersions == nil || (section != "versions" && !overview && strings.TrimSpace(asset.ContentHash) != "") {
 		return state, nil
 	}
 	versions, err := h.AssetVersions.AssetVersions(ctx, projectID, h.Environment, projectgraph.ResourceID(asset.ID))
@@ -893,7 +894,7 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != "pipeline" && asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
@@ -1155,7 +1156,7 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 		}
 		payload = projectview.DashboardAssetPayload(resource)
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		resource, ok := definition.RefreshPipelines[asset.ID]
 		if !ok {
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
@@ -1166,6 +1167,9 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 	}
 	if configuration := definition.AuthoredResourceSources[asset.ID]; configuration != "" {
 		payload["Configuration"] = configuration
+	}
+	if len(payload) == 0 && (asset.Type == string(projectview.AssetTypeRefreshPipeline) || asset.Type == "pipeline") {
+		return asset, nil
 	}
 	return mergeProjectAssetPayload(asset, payload)
 }
@@ -1595,7 +1599,7 @@ func catalogKindForAssetType(typ string) (projectgraph.Kind, bool) {
 		return projectgraph.KindSemanticModel, true
 	case string(projectview.AssetTypeDashboard):
 		return projectgraph.KindDashboard, true
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		return projectgraph.KindPipeline, true
 	default:
 		return "", false

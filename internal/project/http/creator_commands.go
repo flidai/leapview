@@ -378,7 +378,7 @@ func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r
 		return
 	}
 	asset, found := projectview.AssetByID(assets, assetID)
-	if !found || asset.Type != string(projectview.AssetTypeRefreshPipeline) {
+	if !found || (asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != "pipeline") {
 		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
 		return
 	}

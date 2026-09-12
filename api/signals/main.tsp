@@ -2168,9 +2168,45 @@ model ResourceActionSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model ResourceAssetDetailsSignal {
+  `assetOverview`?: AssetOverviewSignal;
   `overview`: DefinitionFactSignal[];
   `sections`: ResourceDetailSectionSignal[];
   `semanticModelGraph`?: SemanticModelGraphSignal;
+}
+
+model AssetOverviewLinkSignal {
+  `href`: string;
+  `label`: string;
+  `type`: string;
+}
+
+model PipelineOverviewRunSignal {
+  `duration`?: string;
+  `error`?: string;
+  `href`: string;
+  `id`: string;
+  `startedAt`?: string;
+  `status`: string;
+}
+
+model PipelineOverviewMonitorSignal {
+  `lastSuccessfulAt`?: string;
+  `latestRun`?: PipelineOverviewRunSignal;
+  `nextRunAt`?: string;
+  `recentRuns`: PipelineOverviewRunSignal[];
+  `schedule`: string;
+  `status`: string;
+}
+
+model AssetOverviewSignal {
+  `activeVersion`?: int64;
+  `downstreamAssets`: AssetOverviewLinkSignal[];
+  `owner`?: string;
+  `pipelineMonitor`?: PipelineOverviewMonitorSignal;
+  `pipelines`: AssetOverviewLinkSignal[];
+  `tags`?: string[];
+  `upstreamAssets`: AssetOverviewLinkSignal[];
+  `upstreamDatasetCount`?: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })

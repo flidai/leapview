@@ -124,7 +124,7 @@ func projectAssetRouteDocument(asset projectview.DevelopAssetView, catalog catal
 			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/asset-lineage-graph.js"))),
 		)
 	}
-	if activeSection == "details" && asset.Type == "semantic_model" {
+	if (activeSection == "details" || activeSection == "definition") && asset.Type == "semantic_model" {
 		extraHead = append(extraHead,
 			h.Link(h.Rel("stylesheet"), h.Href(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.css"))),
 			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.js"))),
@@ -230,7 +230,7 @@ func projectAreaForAssetType(assetType string) string {
 		return "models"
 	case string(projectview.AssetTypeSemanticModel):
 		return "semantic-models"
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		return "pipelines"
 	case string(projectview.AssetTypeConnection):
 		return "connections"
