@@ -21,9 +21,9 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/query/planir"
-	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -87,7 +87,7 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("producer-only provenance: repository=flidai/leapview commit=%s project=proof_consumer target=local invocation=%s manifest=target/manifest.json upstream=upstream_orders (local dbt package)", strings.TrimSpace(string(commit)), invocation)
+	t.Logf("producer-only provenance: repository=flidai/leapview commit=%s project=proof_consumer target=%s invocation=%s manifest=target/manifest.json upstream=upstream_orders (local dbt package)", strings.TrimSpace(string(commit)), dbtProofTarget, invocation)
 
 	// Handoff one dbt-produced Parquet file. No dbt metadata crosses this
 	// boundary.
@@ -122,7 +122,7 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 	if err := os.CopyFS(consumer, os.DirFS(filepath.Join(example, "leapview"))); err != nil {
 		t.Fatal(err)
 	}
-	for _, relative := range []string{"connections/directory.yaml", "sources/dim_customers.yaml"} {
+	for _, relative := range dbtProofConsumerOverlays() {
 		content, err := os.ReadFile(filepath.Join(producer, "consumer-overlay", relative))
 		if err != nil {
 			t.Fatal(err)
@@ -137,6 +137,10 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact, err := projectcompiler.Compile(consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compilerPlan, err := projectcompiler.PlanSourceRoot(consumer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,15 +227,15 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 	for _, forbidden := range []string{
 		authority.ProjectUID, authority.IssuerID, targets[0], targets[1], commerce, directory,
 		invocation, strings.TrimSpace(string(commit)), "flidai/leapview", "manifest.json",
-		"run_results.json", "proof_consumer", "upstream_orders", "resourceUid",
+		"run_results.json", "proof_consumer", "upstream_orders", "resourceUid", dbtProofTarget,
 	} {
-		if bytes.Contains(artifact.Canonical(), []byte(forbidden)) {
-			t.Fatalf("producer/target authority leaked into portable artifact: %q", forbidden)
+		if err := validateDBTProofPortableBytes(artifact.Canonical(), forbidden); err != nil {
+			t.Fatal(err)
 		}
 	}
 
 	admission := newTestExactExtensionAdmission(t, "ducklake")
-	var plans []deployment.DeliveryPlanRequest
+	var plans []deployment.DeliveryPlan
 	for index, environment := range []string{"dev", "prod"} {
 		t.Run(environment, func(t *testing.T) {
 			generation := fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1)
@@ -257,48 +261,50 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, err := appruntimefactory.CandidatePlanRequest(deployment.DeliveryCandidateBuildInput{
-				ProjectID: projectID, OwnerID: "publisher", ArtifactDigest: artifact.Digest(),
-				Candidate: deployment.Candidate{ID: candidate, TargetID: target, Scope: deployment.CandidateScope{ProjectID: projectID, Environment: environment}},
-			}, release.CandidateArtifactSet{
-				Artifact:   release.ProjectArtifactProvenance{SourceDigest: artifact.Digest(), ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
-				Generation: release.CandidateGenerationArtifact{Identity: identity, DataMode: release.GenerationDataRefreshSources, DataRevision: dataRevision, ManagedDataPins: pins, Deterministic: true},
-				Compiler:   release.CandidateCompilerEvidence{Graph: artifact.Graph(), Manifest: manifest, Artifact: artifact},
-			}, "runtime:v1", time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC))
+			authorizationFingerprint, err := dbtProofAuthorizationFingerprint(projectID, environment, artifact.Graph())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if plan.ProjectID != projectID.String() || plan.TargetID != target || plan.Environment != environment || candidate == generation || plan.ID == candidate {
+			candidateArtifacts := release.CandidateArtifactSet{
+				Artifact:                 release.ProjectArtifactProvenance{SourceDigest: artifact.Digest(), ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
+				AuthorizationFingerprint: authorizationFingerprint,
+				Generation:               release.CandidateGenerationArtifact{Identity: identity, DataMode: release.GenerationDataRefreshSources, DataRevision: dataRevision, ManagedDataPins: pins, Deterministic: true},
+				Compiler:                 release.CandidateCompilerEvidence{Graph: artifact.Graph(), Manifest: manifest, Plan: compilerPlan, Artifact: artifact},
+			}
+			buildInput := deployment.DeliveryCandidateBuildInput{
+				ProjectID: projectID, OwnerID: "publisher", ArtifactDigest: artifact.Digest(),
+				Candidate: deployment.Candidate{ID: candidate, TargetID: target, Scope: deployment.CandidateScope{ProjectID: projectID, Environment: environment}},
+				Source: project.CandidateSourceSnapshot{
+					ProjectID: projectID, ArtifactDigest: artifact.Digest(), ProjectDigest: artifact.Digest(),
+					SourceAttestationDigest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(invocation))),
+					SourceRevision:          &project.CandidateSourceRevision{Repository: "flidai/leapview", Revision: strings.TrimSpace(string(commit))},
+				},
+			}
+			bound, err := newDBTProofBoundDelivery(
+				buildInput, candidateArtifacts, "runtime:v1", time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC),
+				map[string]string{"warehouse": commerce, "directory": boundDirectory}, dbtProofAccessPolicy(t),
+				dbtProofTarget,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := bound.Plan
+			if plan.ProjectID != projectID || plan.TargetID != target || plan.Environment != environment || candidate == generation || plan.ID == candidate {
 				t.Fatal("delivery identities collapsed")
+			}
+			if err := plan.Governance.Validate(); err != nil || plan.Governance.AuthorizationDigest != authorizationFingerprint || plan.Governance.PolicyDigest != authorizationFingerprint {
+				t.Fatalf("delivery governance is not exact: %v", err)
+			}
+			if !strings.Contains(plan.Provenance.BuildDefinition, dbtProofTarget) {
+				t.Fatal("dbt target provenance is absent from non-portable delivery metadata")
 			}
 			plans = append(plans, plan)
 
-			// Bind the exact compiled semantic model to this target's two physical
-			// roots. Each environment gets its own runtime generation and target.
-			// Manifest returns a detached copy; keep each target's bound model
-			// independent so a failed replacement cannot mutate a live runtime.
-			targetManifest := artifact.Manifest()
-			model := targetManifest.SemanticModels["semantic-model:warehouse_sales"]
-			if model == nil {
-				t.Fatal("compiled warehouse_sales semantic model is missing")
-			}
-			// Exercise the already-qualified ADR-0017 runtime boundary over this
-			// exact dbt/CRM mapping. Portable policy lowering is covered by the
-			// semantic-access compiler suite; this proof owns only the composition.
-			model.AccessPolicy = dbtProofAccessPolicy(t)
+			// The factory consumes the model, target, serving state, and artifact
+			// derived together from the validated delivery plan above.
+			model := bound.Spec.compiled
 			if !semanticquery.ModelRequiresSemanticAccess(model) {
 				t.Fatal("dbt multi-source qualification model does not require semantic access")
-			}
-			for name, connection := range model.Connections {
-				switch name {
-				case "warehouse":
-					connection.Root = commerce
-				case "directory":
-					connection.Root = boundDirectory
-				default:
-					t.Fatalf("unexpected connection %q", name)
-				}
-				model.Connections[name] = connection
 			}
 			qualificationManifest := artifact.Manifest()
 			qualificationModel := qualificationManifest.SemanticModels["semantic-model:warehouse_sales"]
@@ -307,12 +313,15 @@ func TestDBTMultiSourceProjectClosure(t *testing.T) {
 			}
 			id := servingstate.ID(generation)
 			graph := artifact.Graph()
-			factory := &warehouseBoundaryFactory{admission: admission, specs: map[servingstate.ID]warehouseBoundarySpec{id: {root: t.TempDir(), compiled: model, graph: &graph, targetID: target}}}
+			factory := &warehouseBoundaryFactory{admission: admission, specs: map[servingstate.ID]warehouseBoundarySpec{id: bound.Spec}}
 			repo := &warehouseBoundaryRepo{
-				states:    map[servingstate.ID]servingstate.State{id: {ID: id, ProjectID: projectID, Environment: servingstate.Environment(environment), Status: servingstate.StatusValidated, Digest: artifact.Digest()}},
-				artifacts: map[servingstate.ID]servingstate.Artifact{id: {ID: "artifact-" + generation, ServingStateID: id, Digest: artifact.Digest()}},
+				states:    map[servingstate.ID]servingstate.State{id: bound.State},
+				artifacts: map[servingstate.ID]servingstate.Artifact{id: bound.Artifact},
 			}
-			host := runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{Repo: repo, ProjectID: projectID, Environment: servingstate.Environment(environment), Factory: factory, Authorization: warehouseBoundaryAuthorization{}})
+			host := runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{
+				Repo: repo, ProjectID: projectID, Environment: servingstate.Environment(environment), Factory: factory,
+				ManagedData: dbtProofManagedDataResolver{resolution: bound.ManagedData}, Authorization: warehouseBoundaryAuthorization{},
+			})
 			defer host.Close()
 			prepared, err := host.PrepareServingState(t.Context(), generation)
 			if err != nil {

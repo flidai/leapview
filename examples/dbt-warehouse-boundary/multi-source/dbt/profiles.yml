@@ -1,7 +1,7 @@
 proof_consumer:
-  target: local
+  target: dbt-target-production-boundary-proof
   outputs:
-    local:
+    dbt-target-production-boundary-proof:
       type: duckdb
       path: target/commerce.duckdb
       schema: commerce

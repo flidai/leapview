@@ -145,40 +145,77 @@ func compileResourceUIDMultiSourceBundle(t *testing.T) projectartifact.SourceBun
 
 func assertResourceUIDMultiSourceBindings(t *testing.T, bindings []project.ResourceUIDBinding, graph projectgraph.ProjectGraph, generationID string) {
 	t.Helper()
+	if err := validateResourceUIDMultiSourceBindings(bindings, graph, generationID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func validateResourceUIDMultiSourceBindings(bindings []project.ResourceUIDBinding, graph projectgraph.ProjectGraph, generationID string) error {
 	if len(bindings) != len(graph.Resources()) {
-		t.Fatalf("generation %s bindings=%d, want complete graph closure of %d", generationID, len(bindings), len(graph.Resources()))
+		return fmt.Errorf("generation %s bindings=%d, want complete graph closure of %d", generationID, len(bindings), len(graph.Resources()))
 	}
-	wantKinds := map[projectgraph.Kind]int{
-		projectgraph.KindConnection:    2,
-		projectgraph.KindSource:        2,
-		projectgraph.KindModel:         2,
-		projectgraph.KindSemanticModel: 1,
-		projectgraph.KindDashboard:     1,
+	expectedKinds := make(map[string]projectgraph.Kind, len(graph.Resources()))
+	for _, resource := range graph.Resources() {
+		expectedKinds[resource.ID.String()] = resource.Kind
 	}
-	gotKinds := make(map[projectgraph.Kind]int, len(wantKinds))
 	seen := make(map[string]struct{}, len(bindings))
 	for _, binding := range bindings {
 		if binding.GenerationID != generationID || binding.InstanceID != resourceUIDQualificationInstance || binding.TargetID != resourceUIDQualificationInstance || binding.ProjectID != resourceUIDMultiSourceProject {
-			t.Fatalf("binding scope=%#v", binding)
+			return fmt.Errorf("binding scope=%#v", binding)
 		}
 		if err := binding.Validate(); err != nil {
-			t.Fatalf("invalid ResourceUID binding %#v: %v", binding, err)
+			return fmt.Errorf("invalid ResourceUID binding %#v: %v", binding, err)
+		}
+		wantKind, ok := expectedKinds[binding.AuthoredID]
+		if !ok {
+			return fmt.Errorf("binding authored ID %q is not in graph", binding.AuthoredID)
+		}
+		if binding.Kind != wantKind {
+			return fmt.Errorf("binding authored ID %q kind=%s, want graph kind %s", binding.AuthoredID, binding.Kind, wantKind)
 		}
 		if _, duplicate := seen[binding.AuthoredID]; duplicate {
-			t.Fatalf("duplicate binding for %q", binding.AuthoredID)
+			return fmt.Errorf("duplicate binding for %q", binding.AuthoredID)
 		}
 		seen[binding.AuthoredID] = struct{}{}
-		gotKinds[binding.Kind]++
 	}
 	for _, resource := range graph.Resources() {
 		if _, ok := seen[resource.ID.String()]; !ok {
-			t.Fatalf("graph resource %q (%s) has no generation binding", resource.ID, resource.Kind)
+			return fmt.Errorf("graph resource %q (%s) has no generation binding", resource.ID, resource.Kind)
 		}
 	}
-	for kind, want := range wantKinds {
-		if gotKinds[kind] != want {
-			t.Fatalf("generation %s kind %s bindings=%d, want %d", generationID, kind, gotKinds[kind], want)
-		}
+	return nil
+}
+
+func TestResourceUIDMultiSourceBindingsRequireExactGraphKinds(t *testing.T) {
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "connection:warehouse", Kind: projectgraph.KindConnection, Name: "warehouse"},
+		{ID: "source:orders", Kind: projectgraph.KindSource, Name: "orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationID := "0198f2c0-7c7a-7f00-8a11-000000001000"
+	valid := []project.ResourceUIDBinding{
+		{
+			ResourceUID: "0198f2c0-7c7a-7f00-8a11-000000001001", InstanceID: resourceUIDQualificationInstance, ProjectID: resourceUIDMultiSourceProject,
+			Environment: "prod", TargetID: resourceUIDQualificationInstance, GenerationID: generationID,
+			AuthoredID: "connection:warehouse", Kind: projectgraph.KindConnection, ContractStatus: "not_contract_bearing",
+		},
+		{
+			ResourceUID: "0198f2c0-7c7a-7f00-8a11-000000001002", InstanceID: resourceUIDQualificationInstance, ProjectID: resourceUIDMultiSourceProject,
+			Environment: "prod", TargetID: resourceUIDQualificationInstance, GenerationID: generationID,
+			AuthoredID: "source:orders", Kind: projectgraph.KindSource, ContractStatus: "unversioned",
+		},
+	}
+	if err := validateResourceUIDMultiSourceBindings(valid, graph, generationID); err != nil {
+		t.Fatalf("valid bindings rejected: %v", err)
+	}
+
+	swapped := append([]project.ResourceUIDBinding(nil), valid...)
+	swapped[0].Kind, swapped[1].Kind = swapped[1].Kind, swapped[0].Kind
+	swapped[0].ContractStatus, swapped[1].ContractStatus = swapped[1].ContractStatus, swapped[0].ContractStatus
+	if err := validateResourceUIDMultiSourceBindings(swapped, graph, generationID); err == nil || !strings.Contains(err.Error(), "want graph kind") {
+		t.Fatalf("swapped binding kinds error = %v, want exact graph-kind mismatch", err)
 	}
 }
 
