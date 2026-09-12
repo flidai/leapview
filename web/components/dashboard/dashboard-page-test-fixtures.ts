@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 import type { DashboardVisualizationSignal } from '../../generated/signals'
 import type {
@@ -7,6 +8,19 @@ import type {
   VisualizationField,
   VisualizationSpecBase,
 } from '../../generated/visualization'
+
+export async function evaluateAcrossContextTurnover<T>(page: Page, operation: () => Promise<T>): Promise<T> {
+  const expectedURL = page.url()
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      const contextTurnedOver = error instanceof Error && error.message.includes('Execution context was destroyed')
+      if (!contextTurnedOver || attempt === 2 || page.url() !== expectedURL) throw error
+      await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    }
+  }
+}
 
 export function testDocument(): string {
   const page = {

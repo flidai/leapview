@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { testDocument } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -623,7 +623,10 @@ test('side agent keeps the composer visible and starter prompts never submit aut
     const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))
     expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport + 1)
     expect(geometry.composerBottom).toBeLessThanOrEqual(geometry.viewport + 1)
-    await page.evaluate(async () => { const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev'); mergePatch({ agentTurnPending: true }) })
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agentTurnPending: true })
+    }))
     expect(await drawer.getByRole('button', { name: 'New chat', exact: true }).isDisabled()).toBe(true)
     await drawer.getByRole('status').filter({ hasText: 'Working' }).waitFor()
   } finally { await page.close() }
