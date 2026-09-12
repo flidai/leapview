@@ -50,7 +50,7 @@ explicit scan/barrier input rendered as a derived relation on the joined side.
 This implementation does not introduce new relationship join kinds or claim
 provider-specific optimizer security guarantees.
 
-## Consumer composition and deferred lifecycle
+## Consumer composition and lifecycle boundary
 
 FAI-642 provides the [shared consumer boundary](/docs/architecture/semantic-access-consumers)
 for authoritative instance/generation, principal/group, registry/control,
@@ -62,7 +62,8 @@ VAL-11 remains Partial.
 Authorization is sampled at plan admission. These seals do not constitute a
 runtime revocation watcher or permission to reuse an old plan after authority
 changes. FAI-642 revalidates consumer execution and Arrow delivery;
-policy-aware lifecycle/cache reuse remains FAI-645 work.
+FAI-645 supplies policy-aware lifecycle/cache revalidation for the qualified
+reuse path.
 
 One concrete deferred path is `query.PrepareRepresentativePlans`, including
 its explicit-relationship verification helper. It constructs new planners
@@ -71,6 +72,6 @@ Policy-bearing models therefore fail closed there until the verification and
 consumer composition work supplies an appropriate trusted context. Even a
 configured planner's explicit-relationship verification currently constructs
 a separate candidate planner. This is a neutral activation-context dependency,
-not permission for FAI-642 to fabricate a subject. FAI-648/FAI-649 own the
-remaining qualification/cutover work; FAI-641 does not bypass admission for
-verification or claim protected-model deployment qualification.
+not permission for FAI-642 to fabricate a subject. FAI-648 records the qualified
+plan boundary and FAI-649 activates that supported profile; FAI-641 does not
+bypass admission for verification or broaden protected-model qualification.

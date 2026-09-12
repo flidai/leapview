@@ -93,11 +93,11 @@ PostgreSQL appends and replays that evidence through caller-owned transactions.
 Reusing a version with different bytes, using a stale or mismatched baseline,
 omitting required widening approval, or reading tampered evidence fails closed.
 
-Publication does not authorize activation. The approval evidence is an exact,
-bounded input to later deployment policy, not an approval workflow or a
-consumer authorization decision. FAI-645 consumes the stable publication and
-policy identities for lifecycle/history integration; FAI-649 owns activation
-and cutover.
+Publication alone does not authorize activation. The approval evidence is an
+exact, bounded input to deployment policy, not a consumer authorization
+decision. FAI-645 consumes the stable publication and policy identities for
+lifecycle/history integration; FAI-649 binds them into qualified activation and
+cutover.
 
 FAI-662's sealed-input and coverage safeguards remain at this boundary. Its
 database publication-integrity requirements are enforced by append-only
@@ -107,7 +107,9 @@ ResourceUID. FAI-670 retains
 [Project-qualified ResourceUID authority](/docs/architecture/resource-uid-registry).
 Its inventory distinguishes canonical contract evidence from unversioned and
 non-contract-bearing resources; allocation does not invent publication
-authority. FAI-645 remains a downstream consumer; its cache, lifecycle, and
-audit implementation is not part of FAI-622.
+authority. FAI-645 is a downstream consumer; its cache, lifecycle, and audit
+implementation remains outside FAI-622.
 
-This boundary is not a claim that ADR-0016 or ADR-0017 qualification is complete.
+This component boundary alone is not a conformance claim. ADR-0017's current
+supported-profile status is recorded by its qualification matrix and activation
+contract; broader ADR-0016 status remains separate.
