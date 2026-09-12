@@ -339,6 +339,10 @@ func manifestCapturePayloads(t *testing.T, result capture.Result, reader *manife
 	if err != nil {
 		t.Fatal(err)
 	}
+	coreDigest, err := result.Evidence.Receipt.Core.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	receiptDigest, err := result.Evidence.Receipt.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -352,6 +356,7 @@ func manifestCapturePayloads(t *testing.T, result capture.Result, reader *manife
 		Manifest:  manifestCapturePayloadRef(t, PayloadFamilyManifest, successor.ManagedManifestVersion, manifestDigest, result.Documents.Manifest, reader, "manifest"),
 		Anchor:    manifestCapturePayloadRef(t, PayloadFamilyAnchor, successor.SourceAnchorVersion, anchorDigest, result.Documents.Anchor, reader, "anchor"),
 		Profiles:  manifestCapturePayloadRef(t, PayloadFamilyProfiles, successor.ProviderProfileVersion, profilesDigest, result.Documents.Profiles, reader, "profiles"),
+		Core:      manifestCapturePayloadRef(t, PayloadFamilyCore, successor.ReceiptCoreVersion, coreDigest, result.Documents.Core, reader, "core"),
 		Receipt:   manifestCapturePayloadRef(t, PayloadFamilyReceipt, successor.ReceiptVersion, receiptDigest, result.Documents.Receipt, reader, "receipt"),
 		Authority: manifestCapturePayloadRef(t, PayloadFamilyAuthority, successor.AuthorityRegistryVersion, authorityDigest, result.Documents.Authorities, reader, "authority"),
 	}

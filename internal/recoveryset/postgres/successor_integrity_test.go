@@ -70,7 +70,7 @@ func TestSuccessorSet3ScalarAndRootIntegrityComparisons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := successorSet3ScalarsForOwner(set, TrustInput{Evidence: trust}, canonical)
+	want, err := successorSet3ScalarsForOwner(set, TrustInput{Evidence: trust}, canonical, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSuccessorSet3ScalarAndRootIntegrityComparisons(t *testing.T) {
 	if successorSet3ScalarsEqual(badCanonical, want) {
 		t.Fatal("canonical set corruption was accepted")
 	}
-	if _, err := successorSet3ScalarsForOwner(set, TrustInput{Evidence: trust}, []byte("{}")); err == nil {
+	if _, err := successorSet3ScalarsForOwner(set, TrustInput{Evidence: trust}, []byte("{}"), true); err == nil {
 		t.Fatal("caller-supplied non-owner canonical bytes were accepted")
 	}
 

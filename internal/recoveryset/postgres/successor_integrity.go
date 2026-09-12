@@ -151,10 +151,12 @@ type successorSet3ScalarRow struct {
 	ProfileVersion int32
 	ProfileDigest  string
 
-	ReceiptFamily     string
-	ReceiptVersion    int32
-	ReceiptDigest     string
-	ReceiptCoreDigest string
+	ReceiptFamily       string
+	ReceiptVersion      int32
+	ReceiptDigest       string
+	ReceiptCoreDigest   string
+	CaptureCoreDigest   string
+	CaptureCoreRequired bool
 
 	AuthorityFamily  string
 	AuthorityVersion int32
@@ -171,7 +173,7 @@ type successorSet3ScalarRow struct {
 // canonical successor set and independently selected evidence.  canonical is
 // checked against the owner serialization so a caller cannot accidentally
 // compare SQL metadata against a different byte representation.
-func successorSet3ScalarsForOwner(set successor.RecoverySet3, trust TrustInput, canonical []byte) (successorSet3ScalarRow, error) {
+func successorSet3ScalarsForOwner(set successor.RecoverySet3, trust TrustInput, canonical []byte, captureCoreRequired bool) (successorSet3ScalarRow, error) {
 	ownerCanonical, err := set.CanonicalJSON()
 	if err != nil {
 		return successorSet3ScalarRow{}, err
@@ -214,6 +216,10 @@ func successorSet3ScalarsForOwner(set successor.RecoverySet3, trust TrustInput, 
 	if err != nil {
 		return successorSet3ScalarRow{}, err
 	}
+	captureCoreDigest := ""
+	if captureCoreRequired {
+		captureCoreDigest = receiptCoreDigest
+	}
 	return successorSet3ScalarRow{
 		SetID: set.ID,
 
@@ -231,10 +237,12 @@ func successorSet3ScalarsForOwner(set successor.RecoverySet3, trust TrustInput, 
 		ProfileVersion: familyVersion(PayloadFamilyProfiles),
 		ProfileDigest:  profileDigest,
 
-		ReceiptFamily:     dbFamily(PayloadFamilyReceipt),
-		ReceiptVersion:    familyVersion(PayloadFamilyReceipt),
-		ReceiptDigest:     receiptDigest,
-		ReceiptCoreDigest: receiptCoreDigest,
+		ReceiptFamily:       dbFamily(PayloadFamilyReceipt),
+		ReceiptVersion:      familyVersion(PayloadFamilyReceipt),
+		ReceiptDigest:       receiptDigest,
+		ReceiptCoreDigest:   receiptCoreDigest,
+		CaptureCoreDigest:   captureCoreDigest,
+		CaptureCoreRequired: captureCoreRequired,
 
 		AuthorityFamily:  dbFamily(PayloadFamilyAuthority),
 		AuthorityVersion: familyVersion(PayloadFamilyAuthority),
@@ -264,6 +272,8 @@ func successorSet3ScalarsEqual(stored, want successorSet3ScalarRow) bool {
 		stored.ReceiptVersion == want.ReceiptVersion &&
 		stored.ReceiptDigest == want.ReceiptDigest &&
 		stored.ReceiptCoreDigest == want.ReceiptCoreDigest &&
+		stored.CaptureCoreDigest == want.CaptureCoreDigest &&
+		stored.CaptureCoreRequired == want.CaptureCoreRequired &&
 		stored.AuthorityFamily == want.AuthorityFamily &&
 		stored.AuthorityVersion == want.AuthorityVersion &&
 		stored.AuthorityDigest == want.AuthorityDigest &&

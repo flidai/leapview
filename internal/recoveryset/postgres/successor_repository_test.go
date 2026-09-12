@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/recoveryset"
 	recoverypg "github.com/flidai/leapview/internal/recoveryset/postgres"
@@ -76,6 +78,7 @@ func successorInputs(t *testing.T, name string) (recoverypg.Set3Input, recoveryp
 		{"manifest", recoverypg.PayloadFamilyManifest, 2, evidence.Manifest, &input.Payloads.Manifest},
 		{"anchor", recoverypg.PayloadFamilyAnchor, 2, evidence.Anchor, &input.Payloads.Anchor},
 		{"profiles", recoverypg.PayloadFamilyProfiles, 2, evidence.Profiles, &input.Payloads.Profiles},
+		{"core", recoverypg.PayloadFamilyCore, 2, evidence.Receipt.Core, &input.Payloads.Core},
 		{"receipt", recoverypg.PayloadFamilyReceipt, 2, evidence.Receipt, &input.Payloads.Receipt},
 		{"authority", recoverypg.PayloadFamilyAuthority, 2, evidence.Authorities, &input.Payloads.Authority},
 	}
@@ -224,6 +227,61 @@ func TestSuccessorPersistenceRestartRetryAndExactRead(t *testing.T) {
 	}
 }
 
+func TestSuccessorPersistenceProcessRestartReadback(t *testing.T) {
+	if os.Getenv("LEAPVIEW_FAI520_CORE_READBACK_HELPER") == "1" {
+		runSuccessorCoreReadbackHelper(t)
+		return
+	}
+
+	pool, admin, reopenURL := successorDatabase(t)
+	input, trust, reader := successorInputs(t, "minimal")
+	provisionSuccessorGeneration(t, admin, trust.Generation)
+	if _, err := successorRepo(pool, reader, trust).CreateSet3(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSuccessorPersistenceProcessRestartReadback$", "-test.count=1")
+	cmd.Env = append(os.Environ(),
+		"LEAPVIEW_FAI520_CORE_READBACK_HELPER=1",
+		"LEAPVIEW_FAI520_CORE_READBACK_DSN="+reopenURL,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("fresh-process capture-core readback failed: %v\n%s", err, output)
+	}
+}
+
+func runSuccessorCoreReadbackHelper(t *testing.T) {
+	dsn := os.Getenv("LEAPVIEW_FAI520_CORE_READBACK_DSN")
+	if dsn == "" {
+		t.Fatal("readback DSN is required")
+	}
+	pool, err := pgxpool.New(t.Context(), dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	input, trust, reader := successorInputs(t, "minimal")
+	got, err := successorRepo(pool, reader, trust).ReadSet3(t.Context(), input.Set.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRaw, err := got.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotRaw, input.Payloads.Set.CanonicalBytes) {
+		t.Fatal("set bytes changed after process restart")
+	}
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	if reader.reads != 7 || reader.closes != reader.reads {
+		t.Fatalf("fresh process did not read and close all seven exact payloads: read=%d close=%d", reader.reads, reader.closes)
+	}
+}
+
 func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
@@ -251,16 +309,33 @@ func TestSuccessorPersistenceRejectsInvalidEvidence(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"missing manifest", "wrong digest", "wrong anchor", "invalid receipt", "cache substitution", "locator substitution", "stale generation"} {
+	for _, name := range []string{"missing manifest", "missing core", "wrong digest", "invalid core digest", "wrong anchor", "core authority mismatch", "invalid receipt", "cache substitution", "locator substitution", "stale generation"} {
 		t.Run(name, func(t *testing.T) {
 			bad, badTrust, badReader := successorInputs(t, "minimal")
 			switch name {
 			case "missing manifest":
 				delete(badReader.objects, bad.Payloads.Manifest.Locator)
+			case "missing core":
+				delete(badReader.objects, bad.Payloads.Core.Locator)
 			case "wrong digest":
 				bad.Payloads.Manifest.Locator.PayloadDigest = "sha256:" + fmt.Sprintf("%064x", 22)
+			case "invalid core digest":
+				locator := bad.Payloads.Core.Locator
+				core := badTrust.Evidence.Receipt.Core
+				core.CaptureID = "different-capture"
+				raw, err := core.CanonicalJSON()
+				if err != nil {
+					t.Fatal(err)
+				}
+				sum := sha256.Sum256(raw)
+				bad.Payloads.Core.Locator.PayloadSHA256 = hex.EncodeToString(sum[:])
+				bad.Payloads.Core.Locator.PayloadSize = int64(len(raw))
+				delete(badReader.objects, locator)
+				badReader.objects[bad.Payloads.Core.Locator] = raw
 			case "wrong anchor":
 				bad.Set.SourceFrontierAnchorDigest = "sha256:" + fmt.Sprintf("%064x", 23)
+			case "core authority mismatch":
+				badTrust.Evidence.Receipt.Core.AuthorityID = "authority-b"
 			case "invalid receipt":
 				raw := bytes.Clone(badReader.objects[bad.Payloads.Receipt.Locator])
 				raw[len(raw)-3] ^= 1
@@ -440,6 +515,108 @@ func TestSuccessorPersistencePreservesV1AndReservesIdentity(t *testing.T) {
 	}
 }
 
+func TestSuccessorPersistenceReadsLegacyV3WithoutFabricatedCoreTransport(t *testing.T) {
+	pool, admin, _ := successorDatabase(t)
+	input, trust, reader := successorInputs(t, "minimal")
+	provisionSuccessorGeneration(t, admin, trust.Generation)
+	insertLegacySuccessorSet(t, admin, input, trust)
+
+	repo := successorRepo(pool, reader, trust)
+	if _, err := repo.ReadManifest(t.Context(), input.Set.ManagedObservationManifestDigest); err != nil {
+		t.Fatalf("legacy v3 manifest became unreadable: %v", err)
+	}
+	if _, err := repo.ReadSet3(t.Context(), input.Set.ID); err != nil {
+		t.Fatalf("legacy v3 set became unreadable: %v", err)
+	}
+	if _, err := repo.CreateSet3(t.Context(), input); !errors.Is(err, recoverypg.ErrSuccessorConflict) {
+		t.Fatalf("legacy evidence was silently upgraded instead of conflicting: %v", err)
+	}
+	var cores int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM recovery.successor_evidence_v2 WHERE payload_family='core'`).Scan(&cores); err != nil {
+		t.Fatal(err)
+	}
+	if cores != 0 {
+		t.Fatal("legacy v3 evidence gained a fabricated capture-core transport")
+	}
+}
+
+func insertLegacySuccessorSet(t *testing.T, admin *pgxpool.Pool, input recoverypg.Set3Input, trust recoverypg.TrustInput) {
+	t.Helper()
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	for _, item := range []struct {
+		family string
+		ref    recoverypg.PayloadReference
+	}{
+		{"manifest", input.Payloads.Manifest},
+		{"anchor", input.Payloads.Anchor},
+		{"profile", input.Payloads.Profiles},
+		{"receipt", input.Payloads.Receipt},
+		{"authority", input.Payloads.Authority},
+	} {
+		ref := item.ref
+		if _, err := tx.Exec(t.Context(), `INSERT INTO recovery.successor_evidence_v2(payload_family,payload_version,payload_digest,canonical_bytes) VALUES($1,2,$2,$3)`, item.family, ref.Locator.PayloadDigest, ref.CanonicalBytes); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), `INSERT INTO recovery.successor_evidence_locator_v2(payload_family,payload_version,payload_digest,backend,storage_profile_id,storage_profile_revision,account_identity,endpoint,region,bucket,namespace,object_key,version_id,byte_length,raw_sha256) VALUES($1,2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+			item.family, ref.Locator.PayloadDigest, ref.Locator.Backend, ref.Locator.StorageProfileID, ref.Locator.StorageProfileRevision, ref.Locator.AccountIdentity, ref.Locator.Endpoint, ref.Locator.Region, ref.Locator.Bucket, ref.Locator.Namespace, ref.Locator.Key, ref.Locator.VersionID, ref.Locator.PayloadSize, strings.TrimPrefix(ref.Locator.PayloadSHA256, "sha256:")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRaw, err := input.Set.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	setLocator, err := json.Marshal(input.Payloads.Set.Locator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := json.Marshal(struct {
+		IncarnationID string `json:"incarnation_id"`
+		Revision      int64  `json:"revision"`
+		PolicyDigest  string `json:"policy_digest"`
+		VerifiedAt    string `json:"verified_at"`
+	}{trust.Generation.IncarnationID, trust.Generation.Revision, trust.Generation.PolicyDigest, trust.Evidence.VerificationTime.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest, _ := trust.Evidence.Manifest.Digest()
+	anchorDigest, _ := trust.Evidence.Anchor.Digest()
+	profileDigest, _ := trust.Evidence.Profiles.Digest()
+	receiptDigest, _ := trust.Evidence.Receipt.Digest()
+	coreDigest, _ := trust.Evidence.Receipt.Core.Digest()
+	authorityDigest, _ := trust.Evidence.Authorities.Digest()
+	if _, err := tx.Exec(t.Context(), `INSERT INTO recovery.successor_manifest_binding(manifest_digest,set_id,anchor_digest,profile_digest,receipt_digest,authority_digest,canonical_set,set_locator,verification_metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, manifestDigest, input.Set.ID, anchorDigest, profileDigest, receiptDigest, authorityDigest, setRaw, setLocator, metadata); err != nil {
+		t.Fatal(err)
+	}
+	frontier, err := input.Set.CommitmentBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontierDigest, err := input.Set.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `INSERT INTO recovery.recovery_set_v3(set_id,schema_version,manifest_digest,anchor_digest,profile_digest,receipt_digest,receipt_core_digest,authority_digest,frontier_projection,frontier_digest,canonical_bytes,created_by) VALUES($1,3,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, input.Set.ID, manifestDigest, anchorDigest, profileDigest, receiptDigest, coreDigest, authorityDigest, frontier, frontierDigest, setRaw, input.Set.CreatedBy); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range input.Set.ObjectRoots {
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), `INSERT INTO recovery.recovery_set_v3_root(set_id,root_kind,root_uri,version_id,root_digest,provider_recovery_frontier,canonical_bytes) VALUES($1,$2,$3,$4,$5,$6,$7)`, input.Set.ID, root.Kind, root.URI, root.VersionID, root.Digest, root.ProviderRecoveryFrontier, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSuccessorPersistenceGenerationChangesDuringVerification(t *testing.T) {
 	pool, admin, _ := successorDatabase(t)
 	input, trust, reader := successorInputs(t, "minimal")
@@ -559,6 +736,40 @@ func TestSuccessorPersistenceImmutableRowsAndUntrustedSQL(t *testing.T) {
 	}
 	if _, err := repo.ReadSet3(t.Context(), input.Set.ID); err != nil {
 		t.Fatal(err)
+	}
+	conflictingCore := input
+	conflictingCore.Payloads.Core.Locator.VersionID = "different-immutable-core-version"
+	reader.mu.Lock()
+	reader.objects[conflictingCore.Payloads.Core.Locator] = bytes.Clone(input.Payloads.Core.CanonicalBytes)
+	reader.mu.Unlock()
+	if _, err := repo.CreateSet3(t.Context(), conflictingCore); !errors.Is(err, recoverypg.ErrSuccessorConflict) {
+		t.Fatalf("conflicting capture-core retry category: %v", err)
+	}
+	reader.mu.Lock()
+	storedCore := reader.objects[input.Payloads.Core.Locator]
+	delete(reader.objects, input.Payloads.Core.Locator)
+	reader.mu.Unlock()
+	if _, err := repo.ReadManifest(t.Context(), input.Set.ManagedObservationManifestDigest); !errors.Is(err, recoverypg.ErrSuccessorTampered) {
+		t.Fatalf("manifest read trusted missing capture-core transport: %v", err)
+	}
+	if _, err := repo.ReadSet3(t.Context(), input.Set.ID); !errors.Is(err, recoverypg.ErrSuccessorTampered) {
+		t.Fatalf("set read trusted missing capture-core transport: %v", err)
+	}
+	reader.mu.Lock()
+	reader.objects[input.Payloads.Core.Locator] = storedCore
+	reader.mu.Unlock()
+	if _, err := repo.ReadSet3(t.Context(), input.Set.ID); err != nil {
+		t.Fatalf("repaired capture-core transport did not read deterministically: %v", err)
+	}
+	if _, err := admin.Exec(t.Context(), `ALTER TABLE recovery.successor_manifest_binding DISABLE TRIGGER successor_manifest_binding_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	_, nullCoreErr := admin.Exec(t.Context(), `UPDATE recovery.successor_manifest_binding SET capture_core_digest=NULL WHERE manifest_digest=$1`, input.Set.ManagedObservationManifestDigest)
+	if _, err := admin.Exec(t.Context(), `ALTER TABLE recovery.successor_manifest_binding ENABLE TRIGGER successor_manifest_binding_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if nullCoreErr == nil {
+		t.Fatal("capture-core required marker allowed a new binding to lose its transport reference")
 	}
 	// Fault injection explicitly disables a guard using the disposable database
 	// administrator. A damaged SQL scalar must still not be trusted on read.

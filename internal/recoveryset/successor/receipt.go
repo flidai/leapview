@@ -114,6 +114,41 @@ func (c ReceiptCore) Digest() (string, error) {
 	return hash(coreDomain, raw), nil
 }
 
+// ParseReceiptCore parses the standalone capture-core transport document. The
+// core is also embedded in SignedReceipt for signature verification, but this
+// parser intentionally verifies the independently retained canonical bytes.
+func ParseReceiptCore(raw []byte) (ReceiptCore, error) {
+	var core ReceiptCore
+	if err := strictDecode(raw, &core, MaxDocumentBytes); err != nil {
+		return core, err
+	}
+	if _, err := exactObject(raw, map[string]bool{
+		"core_version": true, "authority_id": true, "key_id": true,
+		"capture_id": true, "set_id": true, "started_at": true,
+		"completed_at": true, "source_frontier_anchor_digest": true,
+		"managed_closure_digest": true, "provider_profile_digest": true,
+		"observation_projection_digest": true, "membership_count": true,
+		"object_count": true, "result": true,
+	}, map[string]bool{
+		"core_version": true, "authority_id": true, "key_id": true,
+		"capture_id": true, "set_id": true, "started_at": true,
+		"completed_at": true, "source_frontier_anchor_digest": true,
+		"managed_closure_digest": true, "provider_profile_digest": true,
+		"observation_projection_digest": true, "membership_count": true,
+		"object_count": true, "result": true,
+	}, "receipt core"); err != nil {
+		return core, err
+	}
+	canonical, err := core.CanonicalJSON()
+	if err != nil {
+		return core, err
+	}
+	if !bytes.Equal(raw, canonical) {
+		return core, invalid("receipt core is not canonical JSON")
+	}
+	return core, nil
+}
+
 func (r SignedReceipt) Validate() error {
 	if r.ReceiptVersion != ReceiptVersion {
 		return fmt.Errorf("%w: receipt version %d", ErrUnsupportedVersion, r.ReceiptVersion)

@@ -1,7 +1,8 @@
 -- Static sqlc leaves for the additive RecoverySet v3 evidence graph.
 
 -- name: GetSuccessorEvidenceDigests :one
-SELECT anchor_digest, profile_digest, receipt_digest, authority_digest
+SELECT anchor_digest, profile_digest, capture_core_digest, capture_core_required,
+       receipt_digest, authority_digest
 FROM recovery.successor_manifest_binding
 WHERE manifest_digest = sqlc.arg(manifest_digest);
 
@@ -51,11 +52,11 @@ ON CONFLICT (payload_family, payload_version, payload_digest) DO NOTHING;
 
 -- name: InsertSuccessorBinding :exec
 INSERT INTO recovery.successor_manifest_binding
-    (manifest_digest, set_id, anchor_digest, profile_digest, receipt_digest,
+    (manifest_digest, set_id, anchor_digest, profile_digest, capture_core_digest, capture_core_required, receipt_digest,
      authority_digest, canonical_set, set_locator, verification_metadata)
 VALUES (sqlc.arg(manifest_digest), sqlc.arg(set_id)::text::uuid,
         sqlc.arg(anchor_digest), sqlc.arg(profile_digest),
-        sqlc.arg(receipt_digest), sqlc.arg(authority_digest),
+        sqlc.arg(capture_core_digest), true, sqlc.arg(receipt_digest), sqlc.arg(authority_digest),
         sqlc.arg(canonical_set), sqlc.arg(set_locator),
         sqlc.arg(verification_metadata))
 ON CONFLICT (manifest_digest) DO NOTHING;
@@ -65,6 +66,8 @@ SELECT manifest_digest,
        set_id::text AS set_id,
        anchor_digest,
        profile_digest,
+       capture_core_digest,
+       capture_core_required,
        receipt_digest,
        authority_digest,
        canonical_set,
@@ -76,11 +79,13 @@ WHERE manifest_digest = sqlc.arg(manifest_digest);
 -- name: InsertRecoverySet3 :exec
 INSERT INTO recovery.recovery_set_v3
     (set_id, schema_version, manifest_digest, anchor_digest, profile_digest,
-     receipt_digest, receipt_core_digest, authority_digest, frontier_projection,
+     receipt_digest, receipt_core_digest, capture_core_digest, capture_core_required,
+     authority_digest, frontier_projection,
      frontier_digest, canonical_bytes, created_by)
 VALUES (sqlc.arg(set_id)::text::uuid, 3, sqlc.arg(manifest_digest),
         sqlc.arg(anchor_digest), sqlc.arg(profile_digest),
         sqlc.arg(receipt_digest), sqlc.arg(receipt_core_digest),
+        sqlc.arg(capture_core_digest), true,
         sqlc.arg(authority_digest), sqlc.arg(frontier_projection),
         sqlc.arg(frontier_digest), sqlc.arg(canonical_bytes),
         sqlc.arg(created_by))
@@ -111,6 +116,8 @@ SELECT set_id::text AS set_id,
        receipt_version::integer AS receipt_version,
        receipt_digest,
        receipt_core_digest,
+       capture_core_digest,
+       capture_core_required,
        authority_family,
        authority_version::integer AS authority_version,
        authority_digest,

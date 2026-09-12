@@ -39,7 +39,7 @@ END
 $$;
 
 CREATE TABLE IF NOT EXISTS recovery.successor_evidence_v2 (
-    payload_family text NOT NULL CHECK (payload_family IN ('manifest', 'anchor', 'profile', 'receipt', 'authority')),
+    payload_family text NOT NULL CHECK (payload_family IN ('manifest', 'anchor', 'profile', 'core', 'receipt', 'authority')),
     payload_version smallint NOT NULL CHECK (payload_version = 2),
     payload_digest text NOT NULL CHECK (payload_digest ~ '^sha256:[0-9a-f]{64}$'),
     canonical_bytes bytea NOT NULL CHECK (octet_length(canonical_bytes) BETWEEN 2 AND 8388608),
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS recovery.successor_evidence_v2 (
                 WHEN 'manifest' THEN 'leapview/managed-observations/v2'
                 WHEN 'anchor' THEN 'leapview/recovery-source-anchor/v2'
                 WHEN 'profile' THEN 'leapview/managed-provider-profiles/v2'
+                WHEN 'core' THEN 'leapview/managed-capture-core/v2'
                 WHEN 'receipt' THEN 'leapview/managed-capture-receipt/v2'
                 WHEN 'authority' THEN 'leapview/authority-registry/v2'
             END || chr(10), canonical_bytes
@@ -82,7 +83,7 @@ CREATE TABLE IF NOT EXISTS recovery.successor_evidence_locator_v2 (
     FOREIGN KEY (payload_family, payload_version, payload_digest)
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest)
         ON DELETE RESTRICT,
-    CHECK (payload_family IN ('manifest', 'anchor', 'profile', 'receipt', 'authority')),
+    CHECK (payload_family IN ('manifest', 'anchor', 'profile', 'core', 'receipt', 'authority')),
     CHECK (storage_profile_id = btrim(storage_profile_id) AND storage_profile_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
     CHECK (account_identity = btrim(account_identity) AND octet_length(account_identity) BETWEEN 1 AND 4096),
     CHECK (endpoint = btrim(endpoint) AND octet_length(endpoint) BETWEEN 1 AND 2048),
@@ -104,6 +105,10 @@ CREATE TABLE IF NOT EXISTS recovery.successor_manifest_binding (
     profile_digest text NOT NULL CHECK (profile_digest ~ '^sha256:[0-9a-f]{64}$'),
     profile_family text GENERATED ALWAYS AS ('profile') STORED,
     profile_version smallint GENERATED ALWAYS AS (2) STORED,
+	capture_core_digest text,
+	capture_core_required boolean NOT NULL DEFAULT false,
+	core_family text GENERATED ALWAYS AS ('core') STORED,
+	core_version smallint GENERATED ALWAYS AS (2) STORED,
     receipt_digest text NOT NULL CHECK (receipt_digest ~ '^sha256:[0-9a-f]{64}$'),
     receipt_family text GENERATED ALWAYS AS ('receipt') STORED,
     receipt_version smallint GENERATED ALWAYS AS (2) STORED,
@@ -123,6 +128,10 @@ CREATE TABLE IF NOT EXISTS recovery.successor_manifest_binding (
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest) ON DELETE RESTRICT,
     FOREIGN KEY (profile_family, profile_version, profile_digest)
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest) ON DELETE RESTRICT,
+	CHECK ((capture_core_required AND capture_core_digest IS NOT NULL AND capture_core_digest ~ '^sha256:[0-9a-f]{64}$') OR
+	       (NOT capture_core_required AND capture_core_digest IS NULL)),
+	FOREIGN KEY (core_family, core_version, capture_core_digest)
+		REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest) ON DELETE RESTRICT,
     FOREIGN KEY (receipt_family, receipt_version, receipt_digest)
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest) ON DELETE RESTRICT,
     FOREIGN KEY (authority_family, authority_version, authority_digest)
@@ -152,8 +161,12 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_set_v3 (
     profile_digest text NOT NULL,
     receipt_family text NOT NULL DEFAULT 'receipt' CHECK (receipt_family = 'receipt'),
     receipt_version smallint NOT NULL DEFAULT 2 CHECK (receipt_version = 2),
-    receipt_digest text NOT NULL,
-    receipt_core_digest text NOT NULL CHECK (receipt_core_digest ~ '^sha256:[0-9a-f]{64}$'),
+	receipt_digest text NOT NULL,
+	receipt_core_digest text NOT NULL CHECK (receipt_core_digest ~ '^sha256:[0-9a-f]{64}$'),
+	capture_core_digest text,
+	capture_core_required boolean NOT NULL DEFAULT false,
+	core_family text GENERATED ALWAYS AS ('core') STORED,
+	core_version smallint GENERATED ALWAYS AS (2) STORED,
     authority_family text NOT NULL DEFAULT 'authority' CHECK (authority_family = 'authority'),
     authority_version smallint NOT NULL DEFAULT 2 CHECK (authority_version = 2),
     authority_digest text NOT NULL,
@@ -178,6 +191,11 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_set_v3 (
         ON DELETE RESTRICT,
     FOREIGN KEY (receipt_family, receipt_version, receipt_digest)
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest)
+        ON DELETE RESTRICT,
+	CHECK ((capture_core_required AND capture_core_digest IS NOT NULL AND capture_core_digest = receipt_core_digest) OR
+	       (NOT capture_core_required AND capture_core_digest IS NULL)),
+	FOREIGN KEY (core_family, core_version, capture_core_digest)
+		REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest)
         ON DELETE RESTRICT,
     FOREIGN KEY (authority_family, authority_version, authority_digest)
         REFERENCES recovery.successor_evidence_v2(payload_family, payload_version, payload_digest)
@@ -282,6 +300,9 @@ BEGIN
                    WHERE l.payload_family = s.profile_family AND l.payload_version = s.profile_version AND l.payload_digest = s.profile_digest)
        OR NOT EXISTS (SELECT 1 FROM recovery.successor_evidence_locator_v2 l JOIN recovery.recovery_set_v3 s ON s.set_id = NEW.set_id
                    WHERE l.payload_family = s.receipt_family AND l.payload_version = s.receipt_version AND l.payload_digest = s.receipt_digest)
+	   OR EXISTS (SELECT 1 FROM recovery.recovery_set_v3 s WHERE s.set_id = NEW.set_id AND s.capture_core_required)
+	      AND NOT EXISTS (SELECT 1 FROM recovery.successor_evidence_locator_v2 l JOIN recovery.recovery_set_v3 s ON s.set_id = NEW.set_id
+				   WHERE l.payload_family = 'core' AND l.payload_version = 2 AND l.payload_digest = s.capture_core_digest)
        OR NOT EXISTS (SELECT 1 FROM recovery.successor_evidence_locator_v2 l JOIN recovery.recovery_set_v3 s ON s.set_id = NEW.set_id
                    WHERE l.payload_family = s.authority_family AND l.payload_version = s.authority_version AND l.payload_digest = s.authority_digest) THEN
         RAISE EXCEPTION 'prepared successor recovery set requires exact locators for every selected evidence payload';

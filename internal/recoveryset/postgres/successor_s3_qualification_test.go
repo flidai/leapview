@@ -332,7 +332,7 @@ func configureSuccessorS3Input(t *testing.T, provider successorS3Provider, input
 	t.Helper()
 	values := []*recoverypg.PayloadReference{
 		&input.Payloads.Set, &input.Payloads.Manifest, &input.Payloads.Anchor,
-		&input.Payloads.Profiles, &input.Payloads.Receipt, &input.Payloads.Authority,
+		&input.Payloads.Profiles, &input.Payloads.Core, &input.Payloads.Receipt, &input.Payloads.Authority,
 	}
 	for _, ref := range values {
 		if ref.Locator.Key == "" || len(ref.CanonicalBytes) == 0 {
@@ -395,7 +395,7 @@ func overwriteAndDeleteCurrent(t *testing.T, provider successorS3Provider, input
 	t.Helper()
 	refs := []*recoverypg.PayloadReference{
 		&input.Payloads.Set, &input.Payloads.Manifest, &input.Payloads.Anchor,
-		&input.Payloads.Profiles, &input.Payloads.Receipt, &input.Payloads.Authority,
+		&input.Payloads.Profiles, &input.Payloads.Core, &input.Payloads.Receipt, &input.Payloads.Authority,
 	}
 	for _, ref := range refs {
 		putSuccessorS3Object(t, provider, ref.Locator.Key, []byte("mutable current replacement"))

@@ -37,6 +37,7 @@ const (
 	PayloadFamilyManifest  = "leapview.managed-observation-manifest"
 	PayloadFamilyAnchor    = "leapview.recovery-source-anchor"
 	PayloadFamilyProfiles  = "leapview.managed-provider-profiles"
+	PayloadFamilyCore      = "leapview.managed-capture-core"
 	PayloadFamilyReceipt   = "leapview.managed-capture-receipt"
 	PayloadFamilyAuthority = "leapview.authority-registry"
 )
@@ -88,6 +89,7 @@ type EvidencePayloads struct {
 	Manifest  PayloadReference
 	Anchor    PayloadReference
 	Profiles  PayloadReference
+	Core      PayloadReference
 	Receipt   PayloadReference
 	Authority PayloadReference
 }
@@ -290,6 +292,11 @@ func (r *SuccessorRepository) ReadSet3(ctx context.Context, setID string) (succe
 	if binding.SetID != setID || !bytes.Equal(binding.CanonicalSet, setRaw) {
 		return successor.RecoverySet3{}, tampered(errors.New("stored association differs from set"))
 	}
+	if binding.CaptureCoreRequired != setRow.CaptureCoreRequired ||
+		(binding.CaptureCoreDigest == nil) != (setRow.CaptureCoreDigest == nil) ||
+		(binding.CaptureCoreDigest != nil && *binding.CaptureCoreDigest != *setRow.CaptureCoreDigest) {
+		return successor.RecoverySet3{}, tampered(errors.New("capture core association differs from set"))
+	}
 	if err := validateSuccessorVerificationMetadataRead(binding.VerificationMetadata, trust.Evidence.VerificationTime); err != nil {
 		return successor.RecoverySet3{}, tampered(err)
 	}
@@ -313,6 +320,7 @@ type readBundle struct {
 	Manifest  successor.ManagedManifest2
 	Anchor    successor.SourceAnchor
 	Profiles  successor.ProviderProfileSet
+	Core      *successor.ReceiptCore
 	Receipt   successor.SignedReceipt
 	Authority successor.AuthorityRegistry
 }
@@ -348,6 +356,7 @@ func (r *SuccessorRepository) verifyBundle(ctx context.Context, set successor.Re
 		{PayloadFamilyManifest, p.Manifest, trust.Evidence.Manifest},
 		{PayloadFamilyAnchor, p.Anchor, trust.Evidence.Anchor},
 		{PayloadFamilyProfiles, p.Profiles, trust.Evidence.Profiles},
+		{PayloadFamilyCore, p.Core, trust.Evidence.Receipt.Core},
 		{PayloadFamilyReceipt, p.Receipt, trust.Evidence.Receipt},
 		{PayloadFamilyAuthority, p.Authority, trust.Evidence.Authorities},
 	}
@@ -370,8 +379,10 @@ func (r *SuccessorRepository) verifyBundle(ctx context.Context, set successor.Re
 		case 2:
 			checked.Profiles = ref
 		case 3:
-			checked.Receipt = ref
+			checked.Core = ref
 		case 4:
+			checked.Receipt = ref
+		case 5:
 			checked.Authority = ref
 		}
 	}
@@ -426,6 +437,25 @@ func (r *SuccessorRepository) readBundle(ctx context.Context, set successor.Reco
 	if err != nil {
 		return b, tampered(err)
 	}
+	if refs.CoreRequired {
+		coreRaw, err := r.readReference(ctx, PayloadFamilyCore, refs.Core, nil)
+		if err != nil {
+			return b, err
+		}
+		core, err := successor.ParseReceiptCore(coreRaw)
+		if err != nil {
+			return b, tampered(err)
+		}
+		coreDigest, err := core.Digest()
+		receiptCoreDigest, receiptCoreErr := b.Receipt.Core.Digest()
+		if err != nil || receiptCoreErr != nil || coreDigest != refs.Core.Locator.PayloadDigest || coreDigest != receiptCoreDigest {
+			return b, tampered(errors.New("capture core relationship"))
+		}
+		if coreDigest != b.Manifest.Capture.ReceiptDigest {
+			return b, tampered(errors.New("capture core manifest relationship"))
+		}
+		b.Core = &core
+	}
 	authorityRaw, err := r.readReference(ctx, PayloadFamilyAuthority, refs.Authority, nil)
 	if err != nil {
 		return b, err
@@ -440,7 +470,10 @@ func (r *SuccessorRepository) readBundle(ctx context.Context, set successor.Reco
 	return b, nil
 }
 
-type evidenceRefs struct{ Manifest, Anchor, Profiles, Receipt, Authority PayloadReference }
+type evidenceRefs struct {
+	Manifest, Anchor, Profiles, Core, Receipt, Authority PayloadReference
+	CoreRequired                                         bool
+}
 
 func (r *SuccessorRepository) loadEvidenceRefs(ctx context.Context, manifestDigest string) (evidenceRefs, error) {
 	var refs evidenceRefs
@@ -463,6 +496,19 @@ func (r *SuccessorRepository) loadEvidenceRefs(ctx context.Context, manifestDige
 	refs.Profiles, err2 = r.loadRef(ctx, PayloadFamilyProfiles, digests.ProfileDigest)
 	if err2 != nil {
 		return refs, err2
+	}
+	refs.CoreRequired = digests.CaptureCoreRequired
+	if refs.CoreRequired && digests.CaptureCoreDigest == nil {
+		return refs, ErrSuccessorTampered
+	}
+	if !refs.CoreRequired && digests.CaptureCoreDigest != nil {
+		return refs, ErrSuccessorTampered
+	}
+	if digests.CaptureCoreDigest != nil {
+		refs.Core, err2 = r.loadRef(ctx, PayloadFamilyCore, *digests.CaptureCoreDigest)
+		if err2 != nil {
+			return refs, err2
+		}
 	}
 	refs.Receipt, err2 = r.loadRef(ctx, PayloadFamilyReceipt, digests.ReceiptDigest)
 	if err2 != nil {
@@ -641,6 +687,19 @@ func parsePayload(family string, raw []byte, expected any) error {
 			}
 		}
 		return nil
+	case PayloadFamilyCore:
+		v, err := successor.ParseReceiptCore(raw)
+		if err != nil {
+			return err
+		}
+		if x, ok := expected.(successor.ReceiptCore); ok {
+			a, _ := v.Digest()
+			b, _ := x.Digest()
+			if a != b {
+				return errors.New("capture core identity mismatch")
+			}
+		}
+		return nil
 	case PayloadFamilyReceipt:
 		v, err := successor.ParseReceipt(raw)
 		if err != nil {
@@ -694,6 +753,12 @@ func payloadDigest(family string, raw []byte) (string, error) {
 		return v.Digest()
 	case PayloadFamilyProfiles:
 		v, err := successor.ParseProviderProfileSet(raw)
+		if err != nil {
+			return "", err
+		}
+		return v.Digest()
+	case PayloadFamilyCore:
+		v, err := successor.ParseReceiptCore(raw)
 		if err != nil {
 			return "", err
 		}
@@ -775,7 +840,7 @@ func insertEvidence(ctx context.Context, db DBTX, ref PayloadReference) error {
 }
 
 func (r *SuccessorRepository) insertBundle(ctx context.Context, db DBTX, set successor.RecoverySet3, p EvidencePayloads, trust TrustInput, bind bool) error {
-	refs := []PayloadReference{p.Manifest, p.Anchor, p.Profiles, p.Receipt, p.Authority}
+	refs := []PayloadReference{p.Manifest, p.Anchor, p.Profiles, p.Core, p.Receipt, p.Authority}
 	for _, ref := range refs {
 		if err := insertEvidence(ctx, db, ref); err != nil {
 			return err
@@ -791,6 +856,7 @@ func insertBinding(ctx context.Context, db DBTX, set successor.RecoverySet3, p E
 	md, _ := trust.Evidence.Manifest.Digest()
 	ad, _ := trust.Evidence.Anchor.Digest()
 	pd, _ := trust.Evidence.Profiles.Digest()
+	cd, _ := trust.Evidence.Receipt.Core.Digest()
 	rd, _ := trust.Evidence.Receipt.Digest()
 	au, _ := trust.Evidence.Authorities.Digest()
 	setRaw, _ := set.CanonicalJSON()
@@ -808,6 +874,7 @@ func insertBinding(ctx context.Context, db DBTX, set successor.RecoverySet3, p E
 		SetID:                set.ID,
 		AnchorDigest:         ad,
 		ProfileDigest:        pd,
+		CaptureCoreDigest:    &cd,
 		ReceiptDigest:        rd,
 		AuthorityDigest:      au,
 		CanonicalSet:         setRaw,
@@ -822,7 +889,7 @@ func insertBinding(ctx context.Context, db DBTX, set successor.RecoverySet3, p E
 		return err
 	}
 	if old.ManifestDigest != md || old.SetID != set.ID || old.AnchorDigest != ad || old.ProfileDigest != pd ||
-		old.ReceiptDigest != rd || old.AuthorityDigest != au || !bytes.Equal(old.CanonicalSet, setRaw) ||
+		!old.CaptureCoreRequired || old.CaptureCoreDigest == nil || *old.CaptureCoreDigest != cd || old.ReceiptDigest != rd || old.AuthorityDigest != au || !bytes.Equal(old.CanonicalSet, setRaw) ||
 		!bytes.Equal(old.SetLocator, locator) || !successorVerificationMetadataGenerationEqual(old.VerificationMetadata, trust.Generation) {
 		return ErrSuccessorConflict
 	}
@@ -849,6 +916,7 @@ func insertSet3(ctx context.Context, db DBTX, set successor.RecoverySet3, p Evid
 		ProfileDigest:      pd,
 		ReceiptDigest:      rd,
 		ReceiptCoreDigest:  cd,
+		CaptureCoreDigest:  &cd,
 		AuthorityDigest:    au,
 		FrontierProjection: frontier,
 		FrontierDigest:     fd,
@@ -885,34 +953,38 @@ func frontierProjection(set successor.RecoverySet3) ([]byte, error) {
 }
 
 func verifyStoredSet3Rows(ctx context.Context, db DBTX, set successor.RecoverySet3, row recoverydb.GetRecoverySet3Row, trust TrustInput) error {
-	want, err := successorSet3ScalarsForOwner(set, trust, row.CanonicalBytes)
+	want, err := successorSet3ScalarsForOwner(set, trust, row.CanonicalBytes, row.CaptureCoreRequired)
 	if err != nil {
 		return tampered(err)
 	}
 	stored := successorSet3ScalarRow{
-		SetID:              row.SetID,
-		SchemaVersion:      row.SchemaVersion,
-		ManifestFamily:     row.ManifestFamily,
-		ManifestVersion:    row.ManifestVersion,
-		ManifestDigest:     row.ManifestDigest,
-		AnchorFamily:       row.AnchorFamily,
-		AnchorVersion:      row.AnchorVersion,
-		AnchorDigest:       row.AnchorDigest,
-		ProfileFamily:      row.ProfileFamily,
-		ProfileVersion:     row.ProfileVersion,
-		ProfileDigest:      row.ProfileDigest,
-		ReceiptFamily:      row.ReceiptFamily,
-		ReceiptVersion:     row.ReceiptVersion,
-		ReceiptDigest:      row.ReceiptDigest,
-		ReceiptCoreDigest:  row.ReceiptCoreDigest,
-		AuthorityFamily:    row.AuthorityFamily,
-		AuthorityVersion:   row.AuthorityVersion,
-		AuthorityDigest:    row.AuthorityDigest,
-		FrontierProjection: row.FrontierProjection,
-		FrontierDigest:     row.FrontierDigest,
-		CanonicalBytes:     row.CanonicalBytes,
-		Status:             row.Status,
-		CreatedBy:          row.CreatedBy,
+		SetID:               row.SetID,
+		SchemaVersion:       row.SchemaVersion,
+		ManifestFamily:      row.ManifestFamily,
+		ManifestVersion:     row.ManifestVersion,
+		ManifestDigest:      row.ManifestDigest,
+		AnchorFamily:        row.AnchorFamily,
+		AnchorVersion:       row.AnchorVersion,
+		AnchorDigest:        row.AnchorDigest,
+		ProfileFamily:       row.ProfileFamily,
+		ProfileVersion:      row.ProfileVersion,
+		ProfileDigest:       row.ProfileDigest,
+		ReceiptFamily:       row.ReceiptFamily,
+		ReceiptVersion:      row.ReceiptVersion,
+		ReceiptDigest:       row.ReceiptDigest,
+		ReceiptCoreDigest:   row.ReceiptCoreDigest,
+		CaptureCoreRequired: row.CaptureCoreRequired,
+		AuthorityFamily:     row.AuthorityFamily,
+		AuthorityVersion:    row.AuthorityVersion,
+		AuthorityDigest:     row.AuthorityDigest,
+		FrontierProjection:  row.FrontierProjection,
+		FrontierDigest:      row.FrontierDigest,
+		CanonicalBytes:      row.CanonicalBytes,
+		Status:              row.Status,
+		CreatedBy:           row.CreatedBy,
+	}
+	if row.CaptureCoreDigest != nil {
+		stored.CaptureCoreDigest = *row.CaptureCoreDigest
 	}
 	if !successorSet3ScalarsEqual(stored, want) {
 		return ErrSuccessorConflict
@@ -987,7 +1059,7 @@ func familyVersion(f string) int32 {
 	switch f {
 	case PayloadFamilySet:
 		return successor.RecoverySetVersion
-	case PayloadFamilyManifest, PayloadFamilyAnchor, PayloadFamilyProfiles, PayloadFamilyReceipt, PayloadFamilyAuthority:
+	case PayloadFamilyManifest, PayloadFamilyAnchor, PayloadFamilyProfiles, PayloadFamilyCore, PayloadFamilyReceipt, PayloadFamilyAuthority:
 		return 2
 	}
 	return 0
@@ -1000,6 +1072,8 @@ func dbFamily(f string) string {
 		return "anchor"
 	case PayloadFamilyProfiles:
 		return "profile"
+	case PayloadFamilyCore:
+		return "core"
 	case PayloadFamilyReceipt:
 		return "receipt"
 	case PayloadFamilyAuthority:
@@ -1017,6 +1091,8 @@ func publicFamily(f string) string {
 		return PayloadFamilyAnchor
 	case "profile":
 		return PayloadFamilyProfiles
+	case "core":
+		return PayloadFamilyCore
 	case "receipt":
 		return PayloadFamilyReceipt
 	case "authority":
@@ -1042,6 +1118,13 @@ func verifyEvidence(set successor.RecoverySet3, b readBundle, trust TrustInput) 
 			return fmt.Errorf("%w: persisted evidence differs from independent trust", ErrSuccessorUntrusted)
 		}
 	}
+	if b.Core != nil {
+		persistedCoreDigest, persistedCoreErr := b.Core.Digest()
+		trustedCoreDigest, trustedCoreErr := trusted.Receipt.Core.Digest()
+		if persistedCoreErr != nil || trustedCoreErr != nil || persistedCoreDigest != trustedCoreDigest || persistedCoreDigest != trusted.Manifest.Capture.ReceiptDigest {
+			return fmt.Errorf("%w: persisted capture core differs from independent trust", ErrSuccessorUntrusted)
+		}
+	}
 	if err := set.ValidateEvidence(trusted); err != nil {
 		return fmt.Errorf("%w: %v", ErrSuccessorUntrusted, err)
 	}
@@ -1051,6 +1134,7 @@ func verifyEvidence(set successor.RecoverySet3, b readBundle, trust TrustInput) 
 func mustDigestManifest(v successor.ManagedManifest2) string   { d, _ := v.Digest(); return d }
 func mustDigestAnchor(v successor.SourceAnchor) string         { d, _ := v.Digest(); return d }
 func mustDigestProfiles(v successor.ProviderProfileSet) string { d, _ := v.Digest(); return d }
+func mustDigestCore(v successor.ReceiptCore) string            { d, _ := v.Digest(); return d }
 func mustDigestReceipt(v successor.SignedReceipt) string       { d, _ := v.Digest(); return d }
 func mustDigestAuthority(v successor.AuthorityRegistry) string { d, _ := v.Digest(); return d }
 func mustCanonicalSet(v successor.RecoverySet3) []byte         { b, _ := v.CanonicalJSON(); return b }
