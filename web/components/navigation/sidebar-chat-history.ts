@@ -94,12 +94,13 @@ export const sidebarChatHistoryStyles = css`
 
 export function renderSidebarChatHistory(
   history: SidebarHistory | undefined,
-  pendingRemovalId: string,
+  pendingRemovalIds: readonly string[],
   followInternalLink: (event: MouseEvent, href: string) => void,
   chatAction: (action: string, item: SidebarHistoryItem) => void,
 ) {
   if (!history) return null
-  const items = (Array.isArray(history.items) ? history.items : []).filter(item => item.id !== pendingRemovalId)
+  const pending = new Set(pendingRemovalIds)
+  const items = (Array.isArray(history.items) ? history.items : []).filter(item => !pending.has(item.id))
   return html`
     <section class="history" aria-label=${history.label || 'Chats'}>
       <strong class="history-label">${history.label || 'Chats'}</strong>
