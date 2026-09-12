@@ -141,16 +141,16 @@ class SiteFlowBackground extends LitElement {
       this.draw(this.motionQuery?.matches ? 0 : this.elapsedSeconds)
       return
     }
-    if (this.animationFrame === undefined) this.animationFrame = requestAnimationFrame(this.animate)
+    if (this.animationFrame === undefined) this.animationFrame = requestAnimationFrame(this.animateFrame)
   }
 
-  private readonly animate = (timestamp: number): void => {
+  private readonly animateFrame = (timestamp: number): void => {
     if (this.previousTimestamp !== undefined) {
       this.elapsedSeconds += Math.min(timestamp - this.previousTimestamp, 50) / 1000
     }
     this.previousTimestamp = timestamp
     this.draw(this.elapsedSeconds)
-    this.animationFrame = requestAnimationFrame(this.animate)
+    this.animationFrame = requestAnimationFrame(this.animateFrame)
   }
 
   private stopAnimation(): void {

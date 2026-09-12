@@ -138,6 +138,80 @@ func TestNewManagedDataStorageRejectsUnknownBackend(t *testing.T) {
 	}
 }
 
+func TestManagedDataS3ObservationProfileUsesResolvedNamespace(t *testing.T) {
+	profile, err := managedDataS3ObservationProfile(ProductConfig{
+		S3ObservationProfileID: "managed-data-prod",
+		S3ObservationAccount:   "aws-account-prod",
+		S3Endpoint:             "https://S3.example.com/",
+		S3Region:               "eu-west-1",
+		S3Bucket:               "managed-data",
+	}, "/managed-data/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile == nil {
+		t.Fatal("observation profile is nil")
+	}
+	want := storage.ProviderProfileIdentity{
+		ProfileID:       "managed-data-prod",
+		Implementation:  "s3",
+		AccountIdentity: "aws-account-prod",
+		Endpoint:        "https://s3.example.com",
+		Region:          "eu-west-1",
+		Bucket:          "managed-data",
+		Namespace:       "managed-data",
+	}
+	if *profile != want {
+		t.Fatalf("observation profile = %#v, want %#v", *profile, want)
+	}
+}
+
+func TestManagedDataS3ObservationProfileRequiresCompleteIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cfg  ProductConfig
+	}{
+		{name: "profile without account", cfg: ProductConfig{S3ObservationProfileID: "profile"}},
+		{name: "account without profile", cfg: ProductConfig{S3ObservationAccount: "account"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if profile, err := managedDataS3ObservationProfile(test.cfg, "managed-data"); profile != nil || !errors.Is(err, storage.ErrProviderVersion) {
+				t.Fatalf("profile = %#v, error = %v; want provider-version error", profile, err)
+			}
+		})
+	}
+}
+
+func TestManagedDataS3ObservationProfileDefaultsAWSEndpoint(t *testing.T) {
+	profile, err := managedDataS3ObservationProfile(ProductConfig{
+		S3ObservationProfileID: "managed-data-prod",
+		S3ObservationAccount:   "aws-account-prod",
+		S3Region:               "eu-west-1",
+		S3Bucket:               "managed-data",
+	}, "managed-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.Endpoint != "https://s3.eu-west-1.amazonaws.com" {
+		t.Fatalf("default AWS endpoint = %q", profile.Endpoint)
+	}
+}
+
+func TestValidateManagedDataObservationConfigurationRequiresProductionProfile(t *testing.T) {
+	cfg := ProductConfig{Backend: "s3", S3Region: "eu-west-1", S3Bucket: "managed-data", S3Prefix: "managed-data"}
+	if err := validateManagedDataObservationConfiguration(cfg, true); !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("missing production observation profile error = %v", err)
+	}
+	cfg.S3ObservationProfileID = "profile"
+	cfg.S3ObservationAccount = "account"
+	if err := validateManagedDataObservationConfiguration(cfg, true); err != nil {
+		t.Fatalf("complete production observation profile rejected: %v", err)
+	}
+	if err := validateManagedDataObservationConfiguration(ProductConfig{Backend: "s3"}, false); err != nil {
+		t.Fatalf("development S3 without observation profile rejected: %v", err)
+	}
+}
+
 func TestNewManagedDataControlRequiresStorage(t *testing.T) {
 	_, err := newManagedDataControl(nil, nil, nil, managedDataStorage{}, ProductConfig{})
 	if err == nil || !errors.Is(err, control.ErrInvalid) {

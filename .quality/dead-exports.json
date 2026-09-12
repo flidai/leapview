@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "boundaryPolicy": {
+    "reflection": "Dynamic lookup and registry references require a declaration-specific review entry when textual scanning cannot observe the name.",
+    "generated": "Generated Go, TypeScript, schema, and documentation artifacts are included in the reference corpus; generated-only boundaries require a declaration-specific review entry.",
+    "interface": "In-repository interfaces and standard interface method names are suppressed conservatively; external interface satisfaction requires a declaration-specific review entry.",
+    "public-api": "Public package compatibility is not inferred from repository references; a retained public declaration requires a declaration-specific review entry and owner review."
+  },
+  "entries": [
+    {
+      "file": "internal/access/http/mcpoauth/postgres_store.go",
+      "kind": "method",
+      "name": "CreatePKCERequestSession",
+      "receiver": "PostgresStore",
+      "boundary": "interface",
+      "reason": "Required by fosite PKCE storage interface and reached through OAuth server dispatch."
+    },
+    {
+      "file": "internal/access/http/mcpoauth/postgres_store.go",
+      "kind": "method",
+      "name": "DeleteAccessTokenSession",
+      "receiver": "PostgresStore",
+      "boundary": "interface",
+      "reason": "Required by fosite OAuth2 storage interface and reached through token revocation dispatch."
+    },
+    {
+      "file": "internal/access/http/mcpoauth/postgres_store.go",
+      "kind": "method",
+      "name": "DeletePKCERequestSession",
+      "receiver": "PostgresStore",
+      "boundary": "interface",
+      "reason": "Required by fosite PKCE storage interface and reached through authorization request dispatch."
+    },
+    {
+      "file": "internal/access/http/mcpoauth/postgres_store.go",
+      "kind": "method",
+      "name": "DeleteRefreshTokenSession",
+      "receiver": "PostgresStore",
+      "boundary": "interface",
+      "reason": "Required by fosite OAuth2 storage interface and reached through refresh-token dispatch."
+    },
+    {
+      "file": "internal/access/http/mcpoauth/postgres_store.go",
+      "kind": "method",
+      "name": "GetPKCERequestSession",
+      "receiver": "PostgresStore",
+      "boundary": "interface",
+      "reason": "Required by fosite PKCE storage interface and reached through authorization request dispatch."
+    },
+    {
+      "file": "internal/access/scimprov/server.go",
+      "kind": "method",
+      "name": "GetAll",
+      "receiver": "groupHandler",
+      "boundary": "interface",
+      "reason": "Required by the external SCIM group resource handler interface during directory requests."
+    },
+    {
+      "file": "internal/access/scimprov/server.go",
+      "kind": "method",
+      "name": "GetAll",
+      "receiver": "userHandler",
+      "boundary": "interface",
+      "reason": "Required by the external SCIM user resource handler interface during directory requests."
+    },
+    {
+      "file": "internal/analytics/connectionbinding/binding.go",
+      "kind": "method",
+      "name": "LogValue",
+      "receiver": "CredentialSnapshot",
+      "boundary": "interface",
+      "reason": "Implements slog LogValuer and is invoked by structured logging reflection."
+    },
+    {
+      "file": "internal/analytics/connectionbinding/binding.go",
+      "kind": "method",
+      "name": "MarshalYAML",
+      "receiver": "CredentialSnapshot",
+      "boundary": "interface",
+      "reason": "Implements the external YAML marshaler contract invoked by configuration serialization."
+    },
+    {
+      "file": "internal/app/site/http/markdown_table.go",
+      "kind": "method",
+      "name": "RegisterFuncs",
+      "receiver": "semanticTableCellRenderer",
+      "boundary": "interface",
+      "reason": "Implements goldmark renderer registration and is discovered by Markdown rendering."
+    }
+  ]
+}

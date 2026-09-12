@@ -11,12 +11,10 @@ const (
 	ErrorCodeCanceled        ErrorCode = "canceled"
 	ErrorCodeBusy            ErrorCode = "busy"
 	ErrorCodeInvalidArgument ErrorCode = "invalid_argument"
-	ErrorCodeInvalidState    ErrorCode = "invalid_state"
 	ErrorCodeModel           ErrorCode = "model"
 	ErrorCodeTool            ErrorCode = "tool"
 	ErrorCodeCompaction      ErrorCode = "compaction"
 	ErrorCodeLimit           ErrorCode = "limit"
-	ErrorCodeUnknown         ErrorCode = "unknown"
 )
 
 var ErrContextLength = errors.New("context length exceeded")

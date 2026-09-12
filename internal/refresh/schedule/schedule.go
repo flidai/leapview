@@ -21,9 +21,6 @@ const (
 	// These values deliberately use the authored Argo/Kubernetes spelling.
 	ConcurrencyForbid  = "Forbid"
 	ConcurrencyReplace = "Replace"
-	// Verbose aliases make call sites self-documenting.
-	ConcurrencyPolicyForbid  = ConcurrencyForbid
-	ConcurrencyPolicyReplace = ConcurrencyReplace
 )
 
 // Definition is the deployable description of one semantic-model refresh

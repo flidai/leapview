@@ -3,7 +3,6 @@ package chi
 
 import (
 	"fmt"
-	"math"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -91,17 +90,6 @@ func BindHeaderParameter(values http.Header, name string, required bool, dest an
 	}
 
 	return nil
-}
-
-// SafeIntToInt32 converts an int to int32 while clamping to the int32 range.
-func SafeIntToInt32(v int) int32 {
-	if v > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if v < math.MinInt32 {
-		return math.MinInt32
-	}
-	return int32(v)
 }
 
 func bindParameterValues(dest any, rawValues []string) error {

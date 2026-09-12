@@ -50,7 +50,6 @@ func TestIdealV1Surface(t *testing.T) {
 		"/api/v1/agent/conversations/{conversation}/runs":                                                     {"get", "post"},
 		"/api/v1/agent/conversations/{conversation}/runs/{run}/cancel":                                        {"post"},
 		"/api/v1/projects/{project}/grants/{grant}":                                                           {"get", "patch", "delete"},
-		"/api/v1/projects/{project}/data-policies/{policy}":                                                   {"get", "patch", "delete"},
 	}
 	for path, methods := range required {
 		for _, method := range methods {
@@ -68,6 +67,8 @@ func TestIdealV1Surface(t *testing.T) {
 		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/filters/{filter}/options",
 		"/api/v1/workspaces/{workspace}/semantic-models/{model}/datasets/{dataset}/query",
 		"/api/v1/agent/conversations/{conversation}/turns",
+		"/api/v1/projects/{project}/data-policies",
+		"/api/v1/projects/{project}/data-policies/{policy}",
 	}
 	for _, path := range removed {
 		if _, ok := paths[path]; ok {
@@ -291,7 +292,6 @@ func TestIdealAPIUsesBoundedInputsAndBodylessDeletes(t *testing.T) {
 		"/api/v1/service-principals/{servicePrincipal}",
 		"/api/v1/groups/{group}",
 		"/api/v1/projects/{project}/grants/{grant}",
-		"/api/v1/projects/{project}/data-policies/{policy}",
 	} {
 		op := openAPIOperation(t, paths, path, "delete")
 		responses := openAPIMap(t, op, "responses")

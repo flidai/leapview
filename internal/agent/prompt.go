@@ -49,6 +49,10 @@ type StartedPrompt struct {
 	EditMessageID  string
 	CorrelationID  string
 	RequestID      string
+	// transcriptRevision fences the persisted snapshot used to start this
+	// prompt. Completion must compare-and-swap against it so a stale worker
+	// cannot overwrite a newer turn from another replica.
+	transcriptRevision int64
 
 	service       *Service
 	systemPrompt  string
@@ -231,8 +235,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 						}
 					}
 				}
-				if persistErr := s.persistTranscript(ctx, input, transcript); persistErr != nil {
-					return nil, persistErr
+				transcriptRevision := conversation.TranscriptRevision
+				// A running run is durable evidence that preparation, including
+				// its transcript CAS, already committed. Rewriting the identical
+				// snapshot here would advance the revision and invalidate an
+				// active worker's completion CAS. Preparing runs still need the
+				// repair write before they can be activated.
+				if existing.Status == RunStatusPreparing {
+					var persistErr error
+					transcriptRevision, persistErr = s.persistTranscript(ctx, input, transcript, conversation.TranscriptRevision)
+					if persistErr != nil {
+						return nil, persistErr
+					}
 				}
 				if existing.Status == RunStatusPreparing {
 					unit, ok := s.repo.(RunWorkflowUnitOfWork)
@@ -314,7 +328,8 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	}, run.ID, userMessage); err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
-	if err := s.persistTranscript(ctx, input, initial); err != nil {
+	transcriptRevision, err := s.persistTranscript(ctx, input, initial, conversation.TranscriptRevision)
+	if err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
 	durablyQueued := false
@@ -554,7 +569,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 			}
 			encodedEventData, _ := json.Marshal(eventData)
 			finishInput := RunFinish{PrincipalID: input.Scope.PrincipalID, ConversationID: input.ConversationID, RunID: p.RunID, Status: status, StopReason: string(result.StopReason), InputTokens: int64(sink.usage.InputTokens), OutputTokens: int64(sink.usage.OutputTokens), TotalTokens: int64(sink.usage.TotalTokens), MetadataJSON: metadataJSON(meta), Error: errorText(promptErr), JobID: p.claimID, JobFence: p.claimFence, Cause: cause}
-			rows, changed, err := completion.CompleteRunWorkflow(context.WithoutCancel(executionContext), finishInput, messages, string(raw), jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run." + status + ":" + p.RunID, ResourceKind: "agent_run", ResourceID: p.RunID, EventType: "agent_run." + status, Data: encodedEventData}})
+			rows, changed, err := completion.CompleteRunWorkflow(context.WithoutCancel(executionContext), finishInput, messages, string(raw), p.transcriptRevision, jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run." + status + ":" + p.RunID, ResourceKind: "agent_run", ResourceID: p.RunID, EventType: "agent_run." + status, Data: encodedEventData}})
 			if err != nil {
 				if promptErr == nil {
 					promptErr = err
@@ -570,16 +585,24 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 			if err := s.persistNewMessages(ctx, input, p.RunID, p.initial, transcript); err != nil && promptErr == nil {
 				promptErr = err
 			}
-			if err := s.persistTranscript(ctx, input, transcript); err != nil && promptErr == nil {
-				promptErr = err
+			if nextRevision, err := s.persistTranscript(ctx, input, transcript, p.transcriptRevision); err != nil {
+				if promptErr == nil {
+					promptErr = err
+				}
+			} else {
+				p.transcriptRevision = nextRevision
 			}
 		}
 	} else {
 		if err := s.persistNewMessages(ctx, input, p.RunID, p.initial, transcript); err != nil && promptErr == nil {
 			promptErr = err
 		}
-		if err := s.persistTranscript(ctx, input, transcript); err != nil && promptErr == nil {
-			promptErr = err
+		if nextRevision, err := s.persistTranscript(ctx, input, transcript, p.transcriptRevision); err != nil {
+			if promptErr == nil {
+				promptErr = err
+			}
+		} else {
+			p.transcriptRevision = nextRevision
 		}
 	}
 	if !atomicCompletion {
@@ -775,13 +798,16 @@ func lastVisibleUserMessage(messages []agentcore.Message) (agentcore.Message, bo
 	return agentcore.Message{}, false
 }
 
-func (s *Service) persistTranscript(ctx context.Context, input PromptInput, transcript []agentcore.Message) error {
+func (s *Service) persistTranscript(ctx context.Context, input PromptInput, transcript []agentcore.Message, expectedRevision int64) (int64, error) {
 	bytes, err := json.Marshal(compactTranscriptForStorage(transcript))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = s.repo.UpdateConversationTranscript(ctx, input.Scope.PrincipalID, input.ConversationID, string(bytes))
-	return err
+	conversation, err := s.repo.UpdateConversationTranscript(ctx, input.Scope.PrincipalID, input.ConversationID, string(bytes), expectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return conversation.TranscriptRevision, nil
 }
 
 func compactTranscriptForStorage(transcript []agentcore.Message) []agentcore.Message {

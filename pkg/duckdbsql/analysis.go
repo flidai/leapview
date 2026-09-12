@@ -12,7 +12,6 @@ const (
 	RelationCTE           RelationKind = "cte"
 	RelationSubquery      RelationKind = "subquery"
 	RelationTableFunction RelationKind = "table_function"
-	RelationOther         RelationKind = "other"
 )
 
 type RelationRef struct {

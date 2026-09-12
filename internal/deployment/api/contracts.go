@@ -85,11 +85,6 @@ type PublishEvidenceResponse struct {
 	SourceRevision           *CandidateSourceRevision `json:"sourceRevision,omitempty"`
 }
 
-type ManagedDataPinEvidence struct {
-	ConnectionID string `json:"connectionId"`
-	RevisionID   string `json:"revisionId"`
-}
-
 type BindingEvidence struct {
 	BindingID          string `json:"bindingId"`
 	ConnectionID       string `json:"connectionId"`

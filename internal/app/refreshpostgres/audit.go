@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/google/uuid"
 )
@@ -31,6 +32,11 @@ func NewPostgresCancelAuditWriterAdapter(audit *accesspostgres.AuditRepository) 
 	return &PostgresCancelAuditWriterAdapter{Audit: audit}, nil
 }
 
+// Matches proves composition retained the exact Access audit authority.
+func (w *PostgresCancelAuditWriterAdapter) Matches(audit *accesspostgres.AuditRepository) bool {
+	return w != nil && auditadapter.New(w.Audit).Matches(audit)
+}
+
 func (w *PostgresCancelAuditWriterAdapter) RecordRefreshCancelAuditTx(ctx context.Context, tx refreshpostgres.Tx, intent access.AuditIntent) error {
 	if w == nil || w.Audit == nil {
 		return errors.New("access PostgreSQL audit repository is required")
@@ -38,7 +44,7 @@ func (w *PostgresCancelAuditWriterAdapter) RecordRefreshCancelAuditTx(ctx contex
 	if tx == nil {
 		return errors.New("refresh cancellation audit transaction is required")
 	}
-	_, err := w.Audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := auditadapter.New(w.Audit).Record(ctx, tx, intent)
 	return err
 }
 
@@ -55,7 +61,7 @@ func (w *PostgresCancelAuditWriterAdapter) RecordRefreshAuditTx(ctx context.Cont
 		return errors.New("refresh audit transaction is required")
 	}
 	intent.EventID = nativeAuditEventID(intent.EventID)
-	_, err := w.Audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := auditadapter.New(w.Audit).Record(ctx, tx, intent)
 	return err
 }
 

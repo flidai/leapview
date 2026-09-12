@@ -73,6 +73,7 @@ SELECT EXISTS (
 -- name: UpdateAgentConversationTranscript :one
 UPDATE agent_conversations
 SET transcript_json = sqlc.arg(transcript_json),
+    transcript_revision = transcript_revision + 1,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id)
   AND principal_id = sqlc.arg(principal_id)
@@ -177,7 +178,7 @@ UPDATE agent_conversations
 SET title = sqlc.arg(title), updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(conversation_id)
   AND principal_id = sqlc.arg(principal_id) AND status = 'active'
-RETURNING id, principal_id, title, status, metadata_json, transcript_json, created_at, updated_at, archived_at;
+RETURNING id, principal_id, title, status, metadata_json, transcript_json, transcript_revision, created_at, updated_at, archived_at;
 
 -- name: AcquireAgentConversationMutationLock :exec
 UPDATE agent_conversations

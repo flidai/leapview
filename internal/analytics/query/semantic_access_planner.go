@@ -3,6 +3,7 @@ package query
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -324,15 +325,7 @@ func semanticAccessMetricClosure(p *Planner, refs []semanticAccessMemberRef) map
 }
 
 func sameSemanticAccessRoute(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func expandSemanticMetricDependencies(p *Planner, refs []semanticAccessMemberRef) []semanticAccessMemberRef {

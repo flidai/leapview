@@ -407,35 +407,16 @@
       "x-error-message": "production serve requires OIDC auth env vars, Azure auth env vars, LEAPVIEW_LOCAL_AUTH, or LEAPVIEW_API_TOKEN_ONLY_AUTH"
     },
     {
-      "description": "Production requires a CSRF key with at least 32 characters.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_PRODUCTION": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_PRODUCTION"
-        ]
+      "description": "A CSRF key must contain at least 32 characters.",
+      "properties": {
+        "LEAPVIEW_CSRF_KEY": {
+          "minLength": 32
+        }
       },
-      "then": {
-        "properties": {
-          "LEAPVIEW_CSRF_KEY": {
-            "minLength": 32
-          }
-        },
-        "required": [
-          "LEAPVIEW_CSRF_KEY"
-        ]
-      },
-      "x-error-message": "production serve requires LEAPVIEW_CSRF_KEY with at least 32 characters"
+      "required": [
+        "LEAPVIEW_CSRF_KEY"
+      ],
+      "x-error-message": "serve requires LEAPVIEW_CSRF_KEY with at least 32 characters"
     },
     {
       "description": "Production requires a metrics bearer token with at least 32 characters.",
@@ -1444,6 +1425,65 @@
       "x-error-message": "production managed-data S3 custom endpoints must use HTTPS"
     },
     {
+      "description": "Production managed-data S3 writes require an explicit provider observation profile.",
+      "if": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_PRODUCTION": {
+                "enum": [
+                  "1",
+                  "t",
+                  "T",
+                  "true",
+                  "TRUE",
+                  "True"
+                ]
+              }
+            },
+            "required": [
+              "LEAPVIEW_PRODUCTION"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_BACKEND": {
+                "const": "s3"
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_BACKEND"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT"
+            ]
+          },
+          {
+            "properties": {
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID": {
+                "minLength": 1
+              }
+            },
+            "required": [
+              "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"
+            ]
+          }
+        ]
+      },
+      "x-error-message": "production managed-data S3 requires LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT and LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"
+    },
+    {
       "description": "Managed-data S3 credentials are either omitted or configured as a complete key pair.",
       "if": {
         "properties": {
@@ -2257,7 +2297,7 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_CSRF_KEY": {
-      "description": "Key used for CSRF protection and OAuth state cookies; production requires at least 32 characters.",
+      "description": "Key used for CSRF protection and OAuth state cookies; requires at least 32 characters.",
       "type": "string",
       "writeOnly": true,
       "x-lifecycle": "supported",
@@ -2602,6 +2642,14 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_JOB_EXECUTION_TIMEOUT": {
+      "default": "24h",
+      "description": "River worker execution deadline, independent of renewable capability leases.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_LOCAL_AUTH": {
       "description": "Enable administrator-managed local browser authentication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
@@ -2685,6 +2733,18 @@
     },
     "LEAPVIEW_MANAGED_DATA_S3_ENDPOINT": {
       "description": "Optional S3-compatible endpoint URL.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT": {
+      "description": "Non-secret provider account identity used to bind managed-data S3 write observations.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID": {
+      "description": "Non-secret stable provider profile identity used to bind managed-data S3 write observations.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -3447,6 +3507,14 @@
       "default": "2m",
       "description": "Lease duration before an abandoned refresh job may be reclaimed.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_REQUIRE_ACTIVE_DEPLOYMENT": {
+      "default": "false",
+      "description": "Require an active serving deployment before readiness succeeds; production always enables this contract.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

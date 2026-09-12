@@ -57,12 +57,6 @@ func FrameFromRecords(definition visualizationdefinition.Definition, records []m
 	return Frame{Columns: columns, Rows: rows}, nil
 }
 
-// SelectionEntriesFromDefinition projects canonical dashboard selection state
-// into renderer-independent DatumRef values.
-func SelectionEntriesFromDefinition(definition visualizationdefinition.Definition, entries []dashboard.InteractionSelectionEntry, dataRevision int64) ([]ir.VisualizationSelectionEntry, error) {
-	return compiledSelections(definition.Spec, entries, dataRevision)
-}
-
 // EnvelopeFromFrame creates the canonical inline renderer boundary directly
 // from a compiled query frame. No legacy visual presentation DTO participates
 // in this path.

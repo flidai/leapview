@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -140,10 +139,6 @@ func NewService(repo Repository, config Config, options ...ServiceOption) *Servi
 		option(s)
 	}
 	return s
-}
-
-func (s *Service) SetModel(model agentcore.Model) {
-	s.model = model
 }
 
 func (s *Service) ConfigureDefaultModel(factory func(Config) agentcore.Model) {
@@ -430,18 +425,6 @@ func (s *Service) CancelRun(ctx context.Context, scope Scope, conversationID, ru
 	return nil
 }
 
-func (s *Service) CancelPersistedRun(ctx context.Context, scope Scope, conversationID, runID string) error {
-	run, err := s.GetRun(ctx, scope, conversationID, runID)
-	if err != nil {
-		return err
-	}
-	if run.Status != RunStatusRunning {
-		return ErrRunNotCancellable
-	}
-	s.release(conversationID)
-	return s.finishRun(ctx, PromptInput{Scope: scope, ConversationID: conversationID}, runID, RunStatusCanceled, "", agentcore.Usage{}, context.Canceled)
-}
-
 // CancelPersistedRunWithWorkflow atomically records an explicit cancellation
 // and its terminal event when the repository supports transactional workflow
 // intents. Queued jobs have no worker lease to fence, but cancellation still
@@ -463,36 +446,6 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 		return true, err
 	}
 	return false, fmt.Errorf("transactional run cancellation workflow is unavailable")
-}
-
-// SupportsCancellationWorkflow reports whether queued cancellation can be
-// committed atomically with its domain run and event.
-func (s *Service) SupportsCancellationWorkflow() bool {
-	if s == nil || s.repo == nil {
-		return false
-	}
-	_, ok := s.repo.(RunCancellationWorkflow)
-	return ok && s.runWorkflowAvailable()
-}
-
-// FailPersistedRun is the capability-owned recovery path for durable jobs
-// that cannot reconstruct a StartedPrompt. It is deliberately idempotent:
-// terminal runs are left untouched, while running/preparing runs transition
-// exactly once using a bounded context independent of the worker lease.
-func (s *Service) FailPersistedRun(ctx context.Context, scope Scope, conversationID, runID string, runErr error) error {
-	_, err := s.FinalizePersistedRunFailure(ctx, scope, conversationID, runID, runErr)
-	return err
-}
-
-// FinalizePersistedRunFailure reports whether this call performed the
-// terminal transition. The boolean lets durable event publishers suppress
-// duplicate notifications on redelivery.
-func (s *Service) FinalizePersistedRunFailure(ctx context.Context, scope Scope, conversationID, runID string, runErr error) (bool, error) {
-	return s.FinalizePersistedRunFailureWithWorkflow(ctx, scope, conversationID, runID, runErr, jobs.WorkflowIntent{})
-}
-
-func (s *Service) FinalizePersistedRunFailureWithWorkflow(ctx context.Context, scope Scope, conversationID, runID string, runErr error, workflow jobs.WorkflowIntent) (bool, error) {
-	return s.finalizePersistedRunFailure(ctx, scope, conversationID, runID, runErr, workflow, "", jobs.Fence{})
 }
 
 func (s *Service) FinalizePersistedRunFailureWithClaim(ctx context.Context, scope Scope, conversationID, runID string, runErr error, workflow jobs.WorkflowIntent, jobID string, fence jobs.Fence) (bool, error) {
@@ -534,40 +487,6 @@ func (s *Service) ListRunEventsPage(ctx context.Context, scope Scope, conversati
 		return nil, err
 	}
 	return s.repo.ListEventsPage(ctx, scope.PrincipalID, runID, normalizePage(page))
-}
-
-func (s *Service) ConversationEvents(ctx context.Context, scope Scope, conversationID string) ([]EventEnvelope, error) {
-	if _, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID); err != nil {
-		return nil, err
-	}
-	messages, err := s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	events := make([]EventEnvelope, 0, len(messages))
-	for _, message := range messages {
-		events = append(events, messageEnvelope(conversationID, message))
-	}
-	runs, err := s.repo.ListRuns(ctx, scope.PrincipalID, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	for _, run := range runs {
-		runEvents, err := s.repo.ListEvents(ctx, scope.PrincipalID, run.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range runEvents {
-			events = append(events, eventEnvelope(conversationID, event))
-		}
-	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].CreatedAt == events[j].CreatedAt {
-			return events[i].ID < events[j].ID
-		}
-		return events[i].CreatedAt < events[j].CreatedAt
-	})
-	return events, nil
 }
 
 func normalizePage(page Page) Page {

@@ -167,12 +167,6 @@ func CompileDashboardPageLayout(page document.DashboardPage, defaults definition
 	return compiled, nil
 }
 
-// CompileCanonicalDashboardPageLayout accepts generated defaults for callers
-// compiling a page in isolation.
-func CompileCanonicalDashboardPageLayout(page document.DashboardPage, defaults document.DashboardLayoutDefaults) (dashboard.Page, error) {
-	return CompileDashboardPageLayout(page, definition.LayoutDefaults{Columns: int(defaults.Columns), RowHeight: int(defaults.RowHeight), Gap: int(defaults.Gap), Padding: int(defaults.Padding)})
-}
-
 func validateCanonicalLayoutDefaults(scope string, value definition.LayoutDefaults) error {
 	if value.Columns <= 0 {
 		return fmt.Errorf("%s columns must be greater than zero", scope)

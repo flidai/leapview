@@ -277,7 +277,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	// Native serving state is immutable and already persisted by the graph
 	// authority. The verifier only reads the admitted state and artifact; there
 	// is deliberately no upload/materialization service in this mode.
-	validator = immutableArtifactValidator{reader: config.States}
+	validator = immutableArtifactValidator{reader: config.States, storageDomain: config.StorageSecurityDomain}
 	service, err := release.NewService(release.ServiceOptions{
 		Releases: releases, Finalization: finalization,
 		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: environment,

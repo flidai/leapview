@@ -1,7 +1,6 @@
 package project
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -36,43 +35,6 @@ type DevelopEdgeRecord struct {
 	FromAssetID    AssetID
 	ToAssetID      AssetID
 	Type           AssetEdgeType
-}
-
-// DevelopGraphReader exposes the active serving graph for the server-bound
-// project.  It is intentionally a narrow canonical read port and does not
-// reintroduce the removed container repository/read-model abstraction.
-type DevelopGraphReader interface {
-	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (DevelopAssetGraph, bool, error)
-}
-
-type DevelopCatalogService struct {
-	repo DevelopGraphReader
-}
-
-func NewDevelopCatalogService(repo DevelopGraphReader) *DevelopCatalogService {
-	return &DevelopCatalogService{repo: repo}
-}
-
-type DevelopCatalogReader interface {
-	ActiveAssetCatalog(ctx context.Context, id projectgraph.ResourceID, environment string) (DevelopCatalog, bool, error)
-}
-
-func (s *DevelopCatalogService) ActiveAssetCatalog(ctx context.Context, id projectgraph.ResourceID, environment string) (DevelopCatalog, bool, error) {
-	if s == nil {
-		return DevelopCatalog{}, false, nil
-	}
-	if s.repo == nil {
-		return DevelopCatalog{}, false, nil
-	}
-	graph, ok, err := s.repo.ActiveServingStateGraph(ctx, id, environment)
-	if err != nil {
-		return DevelopCatalog{}, false, err
-	}
-	if !ok {
-		return DevelopCatalog{}, false, nil
-	}
-	catalog, err := DecodeDevelopCatalog(graph)
-	return catalog, true, err
 }
 
 func DecodeDevelopCatalog(graph DevelopAssetGraph) (DevelopCatalog, error) {

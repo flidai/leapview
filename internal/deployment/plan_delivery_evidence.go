@@ -270,6 +270,10 @@ type DeliveryPlanEvidence struct {
 	StalePolicy           DeliveryStalePolicy           `json:"stalePolicy,omitempty"`
 	Rollback              DeliveryRollbackEvidence      `json:"rollback,omitempty"`
 	Restatement           *DeliveryRestatementEvidence  `json:"restatement,omitempty"`
+	// SemanticActivation is present only when the candidate contains protected
+	// SemanticModels. It is immutable approval and cutover evidence, not a
+	// request-time authorization decision.
+	SemanticActivation *SemanticActivationEvidence `json:"semanticActivation,omitempty"`
 	// PipelinePlan is duplicated in evidence JSON so older delivery storage
 	// rows can persist the immutable refresh selection without a migration.
 	// DeliveryPlan mirrors this pointer as the execution-facing contract.
@@ -340,6 +344,11 @@ func (e DeliveryPlanEvidence) canonical() DeliveryPlanEvidence {
 		canonical := e.PipelinePlan.Canonical()
 		e.PipelinePlan = &canonical
 	}
+	if e.SemanticActivation != nil {
+		copy := *e.SemanticActivation
+		copy.Models = append([]SemanticActivationModelEvidence(nil), copy.Models...)
+		e.SemanticActivation = &copy
+	}
 	return e
 }
 
@@ -401,6 +410,11 @@ func (e DeliveryPlanEvidence) Validate() error {
 			if err := ValidateDeliveryID(e.Restatement.IdempotencyKey); err != nil {
 				return fmt.Errorf("restatement idempotency key: %w", err)
 			}
+		}
+	}
+	if e.SemanticActivation != nil {
+		if err := e.SemanticActivation.Validate(); err != nil {
+			return err
 		}
 	}
 	return nil

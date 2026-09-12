@@ -30,7 +30,6 @@ import (
 const (
 	NativeQualificationSchemaVersion = 1
 	NativeQualificationMaxBytes      = 128 * 1024
-	NativeQualificationMaxFieldBytes = 4096
 )
 
 var (
@@ -295,12 +294,6 @@ func checkedNativeQualificationInt64Add(total, value int64) (int64, error) {
 		return 0, errors.New("integer overflow")
 	}
 	return total + value, nil
-}
-
-// QualifyNative is a command-style alias retained for callers which use the
-// build/qualify verb pair.
-func QualifyNative(ctx context.Context, request NativeQualificationRequest, factory NativeQualificationEnvironmentFactory) (NativeQualificationEvidence, error) {
-	return QualifyNativeSnapshot(ctx, request, factory)
 }
 
 // DuckLakeNativeQualificationEnvironmentFactory is the executable production

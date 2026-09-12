@@ -75,7 +75,6 @@ describe("parseDesktopDeepLink", () => {
     for (const candidate of candidates) {
       expect(() => parseDesktopDeepLink(candidate)).toThrow(
         "invalid",
-        candidate,
       );
     }
   });
@@ -117,7 +116,9 @@ describe("routeDesktopDeepLink", () => {
 
     await routeDesktopDeepLink(request, "second-instance", {
       listProfiles: async () => [profile],
-      openKnown: async (...arguments_) => opened.push(arguments_),
+      openKnown: async (...arguments_) => {
+        opened.push(arguments_);
+      },
       confirmUnknown: async () => {
         confirmations += 1;
         return true;

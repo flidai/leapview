@@ -55,7 +55,7 @@ test('configuration viewer toggles between outline and authored YAML/JSON', asyn
       element.configuration = 'kind: Model\nspec:\n  displayName: Customers\n'
       element.language = 'yaml'
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const waitFor = async (predicate: () => boolean): Promise<void> => {
         const started = performance.now()
         while (!predicate()) {

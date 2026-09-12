@@ -29,11 +29,6 @@ var (
 	ErrDeliveryTransition       = errors.New("invalid delivery transition")
 	ErrDeliveryStale            = errors.New("delivery object is stale")
 	ErrDeliveryPlanExpired      = errors.New("delivery plan has expired")
-	// ErrDeliveryOutcomeUnknown is returned when durable target state proves
-	// that an indeterminate publication is neither the requested commit nor a
-	// proven non-commit. Callers must preserve the indeterminate row and may
-	// not activate, retire, or clean the candidate as a guess.
-	ErrDeliveryOutcomeUnknown = errors.New("delivery publication outcome is unknown")
 )
 
 var deliveryIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$`)

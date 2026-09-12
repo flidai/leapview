@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 const (
@@ -445,7 +447,7 @@ func (s *FilesystemStore) validateMetadata(metadata ObjectMetadata) error {
 	if s.securityDomain != "" && metadata.StorageSecurityDomain != s.securityDomain {
 		return fmt.Errorf("%w: got %q want %q", ErrDomainMismatch, metadata.StorageSecurityDomain, s.securityDomain)
 	}
-	if !isSHA256Identity(metadata.Digest) || !isSHA256Identity(metadata.MetadataDigest) {
+	if platformdigest.ValidateSHA256Identity(metadata.Digest) != nil || platformdigest.ValidateSHA256Identity(metadata.MetadataDigest) != nil {
 		return fmt.Errorf("%w: digest and metadata digest must be canonical sha256 identities", ErrInvalid)
 	}
 	if metadata.SizeBytes < 0 || metadata.SizeBytes > s.maxObjectBytes {
@@ -711,7 +713,7 @@ func (s *FilesystemStore) verifyEnvelope(ctx context.Context, file *os.File, key
 }
 
 func validateStoredInfo(info ObjectInfo, key string, max int64) error {
-	if info.Key != key || validateKey(info.Key) != nil || !isSHA256Identity(info.Digest) || !isSHA256Identity(info.MetadataDigest) || info.SizeBytes < 0 || info.SizeBytes > max || !utf8.ValidString(info.ContentType) || len(info.ContentType) > MaxContentTypeBytes || hasControl(info.ContentType) || info.CreatedAt.IsZero() {
+	if info.Key != key || validateKey(info.Key) != nil || platformdigest.ValidateSHA256Identity(info.Digest) != nil || platformdigest.ValidateSHA256Identity(info.MetadataDigest) != nil || info.SizeBytes < 0 || info.SizeBytes > max || !utf8.ValidString(info.ContentType) || len(info.ContentType) > MaxContentTypeBytes || hasControl(info.ContentType) || info.CreatedAt.IsZero() {
 		return fmt.Errorf("%w: key %q metadata evidence", ErrCorrupt, key)
 	}
 	if err := validateSecurityDomain(info.StorageSecurityDomain); err != nil {

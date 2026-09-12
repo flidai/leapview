@@ -65,6 +65,7 @@ type CompiledSemanticAccessPolicy struct {
 	semanticGeneration string
 	registry           access.SemanticAttributeRegistryState
 	digest             string
+	definitionDigest   string
 	canonical          []byte
 	grants             map[string]CompiledSemanticAccessGrant
 	datasets           map[string]CompiledSemanticDatasetAccess
@@ -112,6 +113,18 @@ func (policy *CompiledSemanticAccessPolicy) Digest() string {
 		return ""
 	}
 	return policy.digest
+}
+
+// DefinitionDigest is the generation-independent identity of the compiled
+// policy definition. Activation approval binds this digest before a serving
+// generation exists; the final fence recomputes it from the generation-bound
+// policy before cutover. Digest remains generation-qualified for request and
+// cache isolation.
+func (policy *CompiledSemanticAccessPolicy) DefinitionDigest() string {
+	if policy == nil {
+		return ""
+	}
+	return policy.definitionDigest
 }
 
 func (policy *CompiledSemanticAccessPolicy) Canonical() []byte {
@@ -213,7 +226,33 @@ func CompileSemanticAccessPolicy(targetInstanceID, modelID, semanticGeneration s
 	}
 	policy.canonical = canonical
 	policy.digest = semanticAccessDigest(canonical)
+	definitionCanonical, err := policy.canonicalBytesForGeneration("")
+	if err != nil {
+		return nil, err
+	}
+	policy.definitionDigest = semanticAccessDigest(definitionCanonical)
 	return policy, nil
+}
+
+// SemanticAccessActivationPolicyIdentity names both identities of the policy
+// compiled for activation. DefinitionDigest is approval-stable before a
+// generation exists; GenerationDigest is the exact request/cache identity of
+// the deployed generation.
+type SemanticAccessActivationPolicyIdentity struct {
+	DefinitionDigest string
+	GenerationDigest string
+}
+
+// QualifySemanticAccessActivation is the deployment-facing, value-free
+// compiler boundary. It proves that the exact authored model and registry can
+// produce the qualified FAI-639 policy without exposing compiler internals or
+// principal evidence to activation orchestration.
+func QualifySemanticAccessActivation(targetInstanceID, modelID, semanticGeneration string, model *semanticmodel.Model, compiled *CompiledModel, registry access.SemanticAttributeRegistrySnapshot) (SemanticAccessActivationPolicyIdentity, error) {
+	policy, err := CompileSemanticAccessPolicy(targetInstanceID, modelID, semanticGeneration, model, compiled, registry)
+	if err != nil {
+		return SemanticAccessActivationPolicyIdentity{}, err
+	}
+	return SemanticAccessActivationPolicyIdentity{DefinitionDigest: policy.DefinitionDigest(), GenerationDigest: policy.Digest()}, nil
 }
 
 func (policy *CompiledSemanticAccessPolicy) compileGrants(authored semanticmodel.SemanticAccessPolicy, definitions map[string]access.SemanticAttributeDefinition) error {
@@ -560,8 +599,12 @@ func semanticFilterDimensionReferences(filter semanticmodel.SemanticFilterSpec, 
 }
 
 func (policy *CompiledSemanticAccessPolicy) canonicalBytes() ([]byte, error) {
+	return policy.canonicalBytesForGeneration(policy.semanticGeneration)
+}
+
+func (policy *CompiledSemanticAccessPolicy) canonicalBytesForGeneration(semanticGeneration string) ([]byte, error) {
 	wire := semanticAccessPolicyWire{Profile: policy.profile, TargetInstanceID: policy.targetInstanceID, SemanticModelID: policy.semanticModelID,
-		SemanticGeneration: policy.semanticGeneration, RegistryProfile: policy.registry.Profile,
+		SemanticGeneration: semanticGeneration, RegistryProfile: policy.registry.Profile,
 		RegistryRevision: policy.registry.Revision, RegistryDigest: policy.registry.Digest}
 	for _, name := range sortedStringKeys(policy.grants) {
 		grant := policy.grants[name]

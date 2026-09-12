@@ -3,10 +3,10 @@ package module
 import (
 	"context"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/flidai/leapview/internal/manageddata/control"
+	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
 )
 
 type MaintenanceLease interface {
@@ -25,14 +25,10 @@ type uploadExpirer interface {
 }
 
 type maintenanceWorker struct {
-	expirer  uploadExpirer
-	interval time.Duration
-	acquire  func(context.Context) (MaintenanceLease, error)
-	logger   *slog.Logger
-
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	expirer   uploadExpirer
+	acquire   func(context.Context) (MaintenanceLease, error)
+	logger    *slog.Logger
+	lifecycle *platformlifecycle.IntervalWorker
 }
 
 func newMaintenanceWorker(expirer uploadExpirer, config MaintenanceWorkerConfig) *maintenanceWorker {
@@ -47,69 +43,26 @@ func newMaintenanceWorker(expirer uploadExpirer, config MaintenanceWorkerConfig)
 	// Always return a worker, including for the disabled managed-data surface.
 	// This makes Module.Start/Stop safe by construction and avoids a lifecycle
 	// caller having to special-case an optional worker.
-	return &maintenanceWorker{expirer: expirer, interval: interval, acquire: config.Acquire, logger: logger}
+	worker := &maintenanceWorker{expirer: expirer, acquire: config.Acquire, logger: logger}
+	worker.lifecycle = platformlifecycle.NewIntervalWorker(interval, worker.runPass)
+	return worker
 }
 
 func (w *maintenanceWorker) Start(ctx context.Context) {
-	if w == nil || w.expirer == nil || w.acquire == nil {
+	if w == nil || w.expirer == nil || w.acquire == nil || w.lifecycle == nil {
 		return
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w.mu.Lock()
-	if w.cancel != nil {
-		w.mu.Unlock()
-		return
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	w.cancel, w.done = cancel, done
-	w.mu.Unlock()
-
-	go func() {
-		defer close(done)
-		w.runPass(runCtx)
-		ticker := time.NewTicker(w.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-runCtx.Done():
-				return
-			case <-ticker.C:
-				w.runPass(runCtx)
-			}
-		}
-	}()
+	_ = w.lifecycle.Start(ctx)
 }
 
 func (w *maintenanceWorker) Stop(ctx context.Context) error {
 	if w == nil {
 		return nil
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w.mu.Lock()
-	cancel, done := w.cancel, w.done
-	if cancel == nil {
-		w.mu.Unlock()
+	if w.lifecycle == nil {
 		return nil
 	}
-	cancel()
-	w.mu.Unlock()
-
-	select {
-	case <-done:
-		w.mu.Lock()
-		if w.done == done {
-			w.cancel, w.done = nil, nil
-		}
-		w.mu.Unlock()
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return w.lifecycle.Stop(ctx)
 }
 
 func (w *maintenanceWorker) runPass(ctx context.Context) {

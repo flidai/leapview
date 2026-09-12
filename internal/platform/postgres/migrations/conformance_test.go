@@ -366,8 +366,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeCatalogIdentitySelect || !runtimeDeliveryAttemptSelect || !runtimeDeliverySealSelect || !runtimeServingBundleSelect {
 		t.Fatalf("native delivery identity reads missing: catalog_identity=%t delivery_attempt=%t delivery_seal=%t serving_bundle=%t", runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect)
 	}
-	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain bool
-	var maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain bool
+	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, runtimeManagedRootSync bool
+	var maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, maintenanceManagedRootSync bool
 	var readonlyPhysicalRootLock, backupPhysicalRootLock bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'SELECT'),
@@ -379,18 +379,20 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		       has_function_privilege('leapview_control_runtime', 'delivery.retire_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.sync_managed_data_generation_root(uuid,text)', 'EXECUTE'),
 		       has_table_privilege('leapview_control_maintenance', 'delivery.delivery_retention_root', 'SELECT'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.sync_managed_data_generation_root(uuid,text)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_readonly', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_backup', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE')`).
-		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimePhysicalRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootLock, &maintenancePhysicalRootLock, &maintenanceRootExpire, &maintenanceRootMaintain, &readonlyPhysicalRootLock, &backupPhysicalRootLock); err != nil {
+		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimePhysicalRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &runtimeManagedRootSync, &maintenanceRootSelect, &maintenanceRootLock, &maintenancePhysicalRootLock, &maintenanceRootExpire, &maintenanceRootMaintain, &maintenanceManagedRootSync, &readonlyPhysicalRootLock, &backupPhysicalRootLock); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimePhysicalRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootLock || !maintenancePhysicalRootLock || !maintenanceRootExpire || !maintenanceRootMaintain || readonlyPhysicalRootLock || backupPhysicalRootLock {
-		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock/physical-lock=%t/%t/%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/lock/physical-lock/expire/maintain=%t/%t/%t/%t/%t readonly/backup physical-lock=%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, readonlyPhysicalRootLock, backupPhysicalRootLock)
+	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimePhysicalRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || runtimeManagedRootSync || !maintenanceRootSelect || !maintenanceRootLock || !maintenancePhysicalRootLock || !maintenanceRootExpire || !maintenanceRootMaintain || maintenanceManagedRootSync || readonlyPhysicalRootLock || backupPhysicalRootLock {
+		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock/physical-lock=%t/%t/%t/%t/%t/%t retire/expire/maintain/sync=%t/%t/%t/%t maintenance select/lock/physical-lock/expire/maintain/sync=%t/%t/%t/%t/%t/%t readonly/backup physical-lock=%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, runtimeManagedRootSync, maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, maintenanceManagedRootSync, readonlyPhysicalRootLock, backupPhysicalRootLock)
 	}
 	var runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute bool
 	var readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute bool

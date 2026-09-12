@@ -88,12 +88,6 @@ func NewPostgresCatalog(config PostgresCatalogConfig) (*PostgresCatalog, error) 
 	return &PostgresCatalog{projects: config.Projects, bindings: config.Bindings, targetID: config.TargetID, latestReleaseID: config.LatestReleaseID, activeDeploymentID: config.ActiveDeploymentID}, nil
 }
 
-// NewNativeCatalog is an expressive alias for composition code that already
-// distinguishes native capability construction.
-func NewNativeCatalog(config PostgresCatalogConfig) (*PostgresCatalog, error) {
-	return NewPostgresCatalog(config)
-}
-
 func (*PostgresCatalog) PostgreSQLAuthority() {}
 
 func (c *PostgresCatalog) Configured() bool {

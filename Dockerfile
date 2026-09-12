@@ -41,7 +41,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       go run ./internal/app/tools/mapassets --out .data/map-assets; \
     fi
 
-FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS web
+FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS web
 WORKDIR /src
 
 COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt

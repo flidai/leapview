@@ -15,7 +15,6 @@ const (
 	Version            = "3.1.0"
 	APIVersion         = "v3.1.0"
 	Kind               = "DataContract"
-	SchemaCommit       = "b9d3ffc5aabe9e058afe4469cabe5a218fe9946d"
 	SchemaSHA256       = "2cb7dd6fe43344d2233e0406438622681dc3ebadcf8f0d606a15b40c8f6752c0"
 	ExtensionProperty  = "leapviewContract"
 	ExtensionNamespace = "leapview.dev/odcs-extension/v1"

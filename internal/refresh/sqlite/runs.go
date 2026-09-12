@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -863,10 +864,8 @@ func (r *SQLRunRepository) LatestTargetRun(ctx context.Context, scope refreshrun
 	if err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	if len(runs) == 0 {
-		return refreshrun.RunRecord{}, false, nil
-	}
-	return runs[0], true, nil
+	latest, ok := refreshrun.LatestRecord(runs)
+	return latest, ok, nil
 }
 
 func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, scope refreshrun.ReadScope, targetType string, targetID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
@@ -1153,34 +1152,6 @@ func (r *SQLRunRepository) cancelRun(ctx context.Context, identity projectgraph.
 		return refreshrun.RunRecord{}, err
 	}
 	return r.getRunForIdentity(ctx, identity, runID)
-}
-
-func (r *SQLRunRepository) FailRunsForTerminalServingStates(ctx context.Context, environment, message string) error {
-	if r == nil || r.db == nil {
-		return fmt.Errorf("refresh run database is required")
-	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "refresh did not complete"
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	q := r.q.WithTx(tx)
-	if err := q.FailTerminalServingStateRuns(ctx, platformdb.FailTerminalServingStateRunsParams{
-		FailedStatus: refreshrun.RunStatusFailed, ErrorMessage: message,
-		QueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning, Environment: environment,
-	}); err != nil {
-		return err
-	}
-	if err := q.FailTerminalServingStateJobs(ctx, platformdb.FailTerminalServingStateJobsParams{
-		FailedStatus: refreshrun.RunStatusFailed, QueuedStatus: refreshrun.RunStatusQueued, RunningStatus: refreshrun.RunStatusRunning, Environment: environment,
-	}); err != nil {
-		return err
-	}
-	return tx.Commit()
 }
 
 func (r *SQLRunRepository) markRun(ctx context.Context, identity projectgraph.ServingIdentity, runID, status, message string) (refreshrun.RunRecord, error) {
@@ -1610,15 +1581,7 @@ func validateRunScheduleIDs(ids []string) error {
 }
 
 func sameStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func sqliteLeaseModifier(duration time.Duration) string {

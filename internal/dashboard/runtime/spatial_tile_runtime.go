@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/querymap"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -53,7 +54,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	query := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialMetadata,
 		ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialMetadata,
-		Fields: fieldBindingsToDataFields(spatial.Dimensions), Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
+		Fields: fieldBindingsToDataFields(spatial.Dimensions), Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: querymap.FiltersWithSpatial(queryFilters),
 		SpatialMetadata: &dataquery.SpatialMetadata{
 			Latitude:   dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias},
 			Longitude:  dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
@@ -234,7 +235,7 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTile,
 			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTile,
-			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
+			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: querymap.FiltersWithSpatial(queryFilters),
 			SpatialTile: &dataquery.SpatialTile{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
 				Dimensions: fieldBindingsToDataFields(spatial.Dimensions), Identity: identity, Zoom: zoom, TargetZoom: targetZoom, MetatileX: metatileX, MetatileY: metatileY, MetatileSize: metatileSize,
@@ -386,7 +387,7 @@ func (s *VisualizationDataService) spatialRawMinimumZoomByByteBudget(ctx context
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
 			ModelID: definition.Query.ModelID, Kind: dataquery.KindSemanticSpatialTileBudget,
-			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: reportFiltersToDataFilters(queryFilters),
+			Fields: fields, Metrics: fieldBindingsToDataFields(spatial.Metrics), Filters: querymap.FiltersWithSpatial(queryFilters),
 			SpatialTileBudget: &dataquery.SpatialTileBudget{
 				Latitude: dataquery.Field{Field: spatial.Tiles.Latitude.FieldID, Alias: spatial.Tiles.Latitude.Alias}, Longitude: dataquery.Field{Field: spatial.Tiles.Longitude.FieldID, Alias: spatial.Tiles.Longitude.Alias},
 				Identity: identity, Zoom: zoom, Buffer: buffer, FeatureCap: int(spatial.Tiles.FeatureCap), MaximumBytes: spatial.Tiles.MaximumBytes,

@@ -509,13 +509,6 @@ func validateDashboardMapCamera(camera *document.DashboardMapCamera) error {
 	return nil
 }
 
-// ValidateCanonicalPresentationResultReferences keeps any future result-name
-// presentation bindings on the governed lowered query boundary. Semantic
-// members and physical fields are never re-resolved here.
-func ValidateCanonicalPresentationResultReferences(query LoweredDashboardQuery, names []string) error {
-	return query.ValidateDownstreamReferences(DashboardResultReferences{Presentation: names})
-}
-
 // LowerCanonicalDashboardPresentationForQuery composes the closed
 // visual/presentation lowering with the already lowered governed query, so a
 // renderer cannot receive a presentation for an incompatible query shape.

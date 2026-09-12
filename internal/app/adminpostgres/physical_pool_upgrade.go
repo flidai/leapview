@@ -280,10 +280,7 @@ func admitCatalogUpgradeTarget(
 			return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, "", nil, "", gcadapter.S3Config{}, fmt.Errorf("create local physical-pool namespace: %w", err)
 		}
 	}
-	s3Config := gcadapter.S3Config{
-		Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey,
-		SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply,
-	}
+	s3Config := physicalPoolS3Config(cfg, extensionSupply)
 	store, err := gcadapter.NewPoolStore(ctx, contract, s3Config)
 	if err != nil {
 		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, "", nil, "", gcadapter.S3Config{}, err

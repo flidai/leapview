@@ -117,7 +117,7 @@ test('chat thread uses the surrounding app surface background', async () => {
   await page.waitForFunction(() => customElements.get('lv-chat-thread'))
 
   const background = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const thread = element.shadowRoot.querySelector('.thread') as HTMLElement
+    const thread = (element.shadowRoot as ShadowRoot).querySelector('.thread') as HTMLElement
     return getComputedStyle(thread).backgroundColor
   })
 
@@ -170,7 +170,7 @@ test('chat thread preserves plain user message text without template whitespace'
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const bubble = element.shadowRoot.querySelector('.message.user .bubble.plain') as HTMLElement
+    const bubble = (element.shadowRoot as ShadowRoot).querySelector('.message.user .bubble.plain') as HTMLElement
     const rect = bubble.getBoundingClientRect()
     return {
       text: bubble.textContent,
@@ -209,7 +209,7 @@ test('chat thread renders turn-scoped references inside the user message bubble'
   })
 
   const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
-    const bubble = element.shadowRoot.querySelector('.message.user .bubble')
+    const bubble = (element.shadowRoot as ShadowRoot).querySelector('.message.user .bubble') as HTMLElement
     const reference = bubble.querySelector('.turn-reference') as HTMLAnchorElement
     return {
       bubbleText: bubble.textContent.replace(/\s+/g, ' ').trim(),
@@ -263,7 +263,7 @@ test('chat thread uses the shared visual identity and color for references', asy
   })
 
   const icons = await page.locator('lv-chat-thread').evaluate((element: any) => (
-    Array.from(element.shadowRoot.querySelectorAll('.turn-reference-icon svg'))
+    Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.turn-reference-icon svg'))
       .map((icon: any) => ({ className: icon.getAttribute('class'), color: icon.style.color }))
   ))
   expect(icons).toEqual([
@@ -437,15 +437,15 @@ test('chat thread renders assistant markdown through shared markdown view', asyn
   })
 
   const state = await page.locator('lv-chat-thread').evaluate(async (element: any) => {
-    const markdownView = element.shadowRoot.querySelector('lv-markdown-view') as any
+    const markdownView = (element.shadowRoot as ShadowRoot).querySelector('lv-markdown-view') as any
     await markdownView.updateComplete
     return {
       hasMarkdownView: Boolean(markdownView),
       value: markdownView.value,
-      h1Text: markdownView.shadowRoot.querySelector('h1')?.textContent,
-      hasStrong: Boolean(markdownView.shadowRoot.querySelector('strong')),
-      hasCode: Boolean(markdownView.shadowRoot.querySelector('code')),
-      hasList: Boolean(markdownView.shadowRoot.querySelector('ul')),
+      h1Text: (markdownView.shadowRoot as ShadowRoot).querySelector('h1')?.textContent,
+      hasStrong: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('strong')),
+      hasCode: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('code')),
+      hasList: Boolean((markdownView.shadowRoot as ShadowRoot).querySelector('ul')),
     }
   })
 
@@ -501,8 +501,8 @@ test('chat thread rejects payloads embedded in artifact metadata', async () => {
   const artifact = page.locator('lv-chat-thread').locator('lv-visual-artifact[artifact-id="legacy_chart_1"]')
   await artifact.waitFor()
   const state = await artifact.evaluate((element) => ({
-    hasChart: Boolean(element.shadowRoot?.querySelector('lv-echart')),
-    text: element.shadowRoot?.textContent?.trim(),
+    hasChart: Boolean((element.shadowRoot as ShadowRoot)?.querySelector('lv-echart')),
+    text: (element.shadowRoot as ShadowRoot)?.textContent?.trim(),
   }))
   expect(state.hasChart).toBe(false)
   expect(state.text).toBe('Artifact data is unavailable.')

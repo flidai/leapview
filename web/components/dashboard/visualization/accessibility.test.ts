@@ -34,7 +34,7 @@ function fixture(rows: unknown[][], completeness: 'complete' | 'partial' | 'trun
       datasets: [{ id: 'primary', specRevision: 'sha256:accessibility', dataRevision: 1, generation: 1, columns: ['label', 'amount'], rows, completeness }],
     },
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 }
 
 test('accessible preview formats null values and preserves metric alignment', () => {
@@ -163,10 +163,10 @@ test('empty previews expose no data and change announcements honor announceChang
   expect(data.totalRows).toBe(0)
   expect(accessibleDataStatus(empty, data)).toBe('No data rows are available.')
 
-  const updated = { ...fixture([['North', 2]]), dataRevision: 2, dataState: { ...fixture([['North', 2]]).dataState, dataRevision: 2 } } as VisualizationEnvelope
+  const updated = { ...fixture([['North', 2]]), dataRevision: 2, dataState: { ...fixture([['North', 2]]).dataState, dataRevision: 2 } } as unknown as VisualizationEnvelope
   expect(visualizationChangeAnnouncement(empty, updated)).toContain('Orders updated.')
   expect(visualizationChangeAnnouncement(empty, { ...updated, spec: { ...updated.spec, accessibility: { ...updated.spec.accessibility, announceChanges: false } } })).toBe('')
-  const omitted = { ...updated, spec: { ...updated.spec, accessibility: { title: 'Orders', description: 'Orders by label' } } } as VisualizationEnvelope
+  const omitted = { ...updated, spec: { ...updated.spec, accessibility: { title: 'Orders', description: 'Orders by label' } } } as unknown as VisualizationEnvelope
   expect(visualizationChangeAnnouncement(empty, omitted)).toBe('')
 })
 

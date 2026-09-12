@@ -21,7 +21,8 @@ test('ECharts explicit empty tooltips suppress rows and omitted items retain leg
   envelope.spec.tooltipItems = []
   expect((echartsOption(envelope, defaultRendererContext) as any).tooltip.formatter({ value: ['open', 12.5, null, '<unsafe>'] })).toBe('')
   envelope.spec.tooltipItems = undefined
-  envelope.spec.tooltip = [{ dataset: 'primary', field: 'note' }]
+  const cartesianSpec = envelope.spec as Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' }>
+  cartesianSpec.tooltip = [{ dataset: 'primary', field: 'note' }]
   expect((echartsOption(envelope, defaultRendererContext) as any).tooltip.formatter({ value: ['open', 12.5, null, '<unsafe>'] })).toBe('Note: &lt;unsafe&gt;')
   const defaultEnvelope = tooltipFixture()
   expect((echartsOption(defaultEnvelope, defaultRendererContext) as any).tooltip.formatter({ value: ['open', 12.5, null, '<unsafe>'] })).toContain('Status: open')

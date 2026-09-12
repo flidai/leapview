@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: partial
+Implementation: active for the qualified supported profile
 
 Deciders: LeapView maintainers
 
@@ -16,6 +16,7 @@ Related: [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md);
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md);
 [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md);
 [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md);
+[Semantic access activation and cutover](specifications/semantic-access-activation-cutover.md);
 [Looker `access_grant`](https://docs.cloud.google.com/looker/docs/reference/param-model-access-grant);
 [Looker `access_filter`](https://docs.cloud.google.com/looker/docs/reference/param-explore-access-filter);
 [Looker access control](https://docs.cloud.google.com/looker/docs/access-control-and-permission-management);
@@ -340,21 +341,17 @@ Normative changes to its shape, canonicalization, evaluation, planner,
 discovery, cache, or compatibility behavior require a new profile; new policy
 concepts, targets, bypasses, precedence, or masking require another ADR.
 
-### FAI-637 implementation boundary
+### Implemented authority and activation boundary
 
-ADR-0017 remains **Implementation: partial**. FAI-637 implements the
-access-owned PostgreSQL control-plane slice: the profile-qualified definition
-registry, direct principal/group assignment rows, trusted claim-mapping rows,
-their lifecycle/version/digest/audit invariants, typed value ingress, a
-source-bound trusted-claim verifier boundary, effective direct/group
-resolution behind the opaque `trustedclaims.Envelope` boundary, and
-platform-admin management endpoints. FAI-639 now implements the bounded
-SemanticModel policy compiler/evaluator handoff described below, including
-target qualification and typed PlanIR predicates. It does not implement the
-planner security barrier, catalog or query enforcement, semantic generation
-references, cache/event invalidation, or ordinary semantic consumer
-integration. FAI-641 supplies the separate planner barrier boundary; consumer
-integration and the remaining lifecycle capabilities belong to later slices.
+FAI-637 owns the PostgreSQL registry/control plane; FAI-639 compiles and
+evaluates typed policy; FAI-641 places SecurityBarriers; FAI-642 routes the
+qualified consumers; and FAI-645 binds cache, lifecycle, and audit evidence.
+FAI-649 activates that already-qualified chain by sealing FAI-622 publication,
+policy, approval, registry/control, compiled-policy, and enforcement-profile
+identities into the delivery plan and revalidating them immediately before the
+activation CAS. The exact cutover and rollback rules are in the linked
+activation specification. Unsupported provider, consumer, and plan paths
+remain fail closed rather than being activated implicitly.
 
 The source names SAML, OIDC, embed, and service token are accepted as closed
 mapping/verifier vocabulary only. FAI-637 does not claim an OIDC, SAML, embed,
@@ -363,12 +360,10 @@ input is the opaque `trustedclaims.Envelope` boundary; wiring a real provider
 through the verifier and into a principal authorization context remains
 pending.
 
-FAI-619 qualifies only the generated structural SemanticModel contract and
-compatibility lowering boundary. Its fixtures do not claim semantic access
-policy compilation, planner security barriers, or consumer admission. FAI-639
-now supplies the compiler/evaluator boundary described below; FAI-641 supplies
-planner security-barrier construction, while FAI-642 consumer admission remains
-pending. VAL-11 remains Partial until generated canonicalization and complete
+FAI-619 qualifies the generated structural SemanticModel contract and
+compatibility lowering boundary. FAI-639 supplies compiler/evaluator behavior,
+FAI-641 supplies planner barriers, and FAI-642 supplies consumer admission.
+VAL-11 remains Partial until generated canonicalization and complete
 control-plane/runtime equivalence are evidenced.
 
 ### FAI-639 compiler/evaluator boundary
@@ -516,11 +511,10 @@ future explicit decision.
 
 FAI-637 supplies a typed, versioned attribute registry, direct assignment and
 trusted claim-mapping lifecycle, typed ingress, durable revision/digest
-identities, and transactional audit evidence. Candidate preparation must still
-prove that every referenced attribute exists and is type-compatible without
-embedding instance values in portable artifacts. Consumer integration must
-invalidate affected authorization and result caches promptly using the
-identity above; that propagation is not implemented by FAI-637.
+identities, and transactional audit evidence. FAI-649 candidate preparation
+proves that every referenced attribute exists and is type-compatible without
+embedding instance values in portable artifacts. FAI-645 keeps authorization
+and result-cache reuse partitioned by the resulting authority identity.
 
 Removing Source and Model policy targets means every consumer-visible query
 must pass through SemanticModel. Any raw Source or Model preview remains an
@@ -535,15 +529,16 @@ its own governed consumption contract rather than reuse of internal resources.
   documentation, and browser types contain the same closed contract.
 - The accepted authoring contract rejects standalone `DataPolicy` resources and
   rejects access-policy fields on every resource other than SemanticModel. The
-  current FAI-637 slice does not claim that the existing legacy compiler and
-  consumer paths have completed this migration.
+  public legacy API surface is removed, and FAI-649 rejects retained standalone
+  policies on new activation while preserving their restrictions for explicit
+  historical rollback.
 - FAI-619's generated-boundary, structural, extracted-YAML, and compiler
   compatibility fixtures cover the migrated structural surface. FAI-639's
   compiler/evaluator fixtures cover the lowering, registry qualification,
   opaque assignment/envelope evidence, trusted snapshot checks, complete
   multi-dataset predicate maps, bounded reader/admission checks, deterministic
-  identities, grant evaluation, and typed PlanIR predicate handoff. Neither
-  slice claims FAI-641 planner or consumer integration.
+  identities, grant evaluation, and typed PlanIR predicate handoff. FAI-641
+  and FAI-642 provide the qualified planner and consumer integration.
 - Future query authorization tests must prove fail-closed scalar and list
   matching, all-grants and all-filters composition, discovery filtering,
   direct-reference rejection, parameterized planning, and identical

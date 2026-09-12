@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -41,6 +42,7 @@ type RunPersistence interface {
 	refreshrun.LeaseFencedSupersedeRepository
 	refreshrun.InvocationAdmissionChecker
 	refreshrun.ScheduledInvocationAdmissionChecker
+	RenewJobLease(context.Context, refreshrun.JobRecord, time.Duration) error
 	ListTargetRuns(context.Context, refreshrun.ReadScope, string, projectgraph.ResourceID, refreshrun.RunPage) ([]refreshrun.RunRecord, error)
 	LatestSuccessfulTargetRun(context.Context, refreshrun.ReadScope, string, projectgraph.ResourceID) (refreshrun.RunRecord, bool, error)
 	ListSemanticModelRuns(context.Context, refreshrun.ReadScope, projectgraph.ResourceID, refreshrun.RunPage) ([]refreshrun.RunRecord, error)

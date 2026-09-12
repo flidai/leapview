@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
@@ -133,19 +134,19 @@ func publicationOperationID(action publication.Action) (dashboardgen.GenCommandO
 }
 
 func publicationAuditRequestInput(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID, targetID string) publicationCommandAuditInput {
-	requestID := firstPublicationHeader(r, "X-Request-Id", "X-Request-ID")
-	correlationID := firstPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
 	surface := "api"
-	if strings.EqualFold(firstPublicationHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
+	if strings.EqualFold(platformhttp.FirstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
 		surface = "cli"
 	}
 	return publicationCommandAuditInput{
 		operationID: operationID, projectID: projectID, principalID: strings.TrimSpace(principalID),
 		targetID: strings.TrimSpace(targetID), requestID: requestID, correlationID: correlationID, surface: surface,
-		idempotencyKey: firstPublicationHeader(r, "Idempotency-Key"),
+		idempotencyKey: platformhttp.FirstNonEmptyHeader(r, "Idempotency-Key"),
 	}
 }
 
@@ -169,16 +170,4 @@ func canonicalPublicationAuditMetadata(raw string) (string, error) {
 		return "", fmt.Errorf("dashboard publication audit metadata: %w", err)
 	}
 	return string(encoded), nil
-}
-
-func firstPublicationHeader(r *http.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
 }

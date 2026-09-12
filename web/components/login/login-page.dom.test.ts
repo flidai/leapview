@@ -65,7 +65,7 @@ test('login page composes route UI', async () => {
     await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-login-page').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const panel = root.querySelector('.panel') as HTMLElement
       const hostRect = element.getBoundingClientRect()
       const panelRect = panel.getBoundingClientRect()
@@ -144,9 +144,9 @@ test('login theme toggle cycles shadow DOM icon and dispatches theme change', as
     await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-login-page').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const changes: string[] = []
-      document.addEventListener('leapview-theme-change', (event: CustomEvent) => changes.push(event.detail?.mode), { once: true })
+      document.addEventListener('leapview-theme-change', (event: Event) => { changes.push((event as CustomEvent<{ mode?: string }>).detail?.mode ?? '') }, { once: true })
       const toggle = root.querySelector('[data-theme-toggle]') as HTMLButtonElement
       toggle.click()
       await element.updateComplete
@@ -179,8 +179,8 @@ test('login theme toggle preserves an accessibility theme until the user changes
     await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-login-page').evaluate((element: any) => {
-      const toggle = element.shadowRoot.querySelector('[data-theme-toggle]') as HTMLButtonElement
-      const visibleThemeIcon = element.shadowRoot.querySelector('[data-theme-icon]:not([hidden])') as HTMLElement | null
+      const toggle = (element.shadowRoot as ShadowRoot).querySelector('[data-theme-toggle]') as HTMLButtonElement
+      const visibleThemeIcon = (element.shadowRoot as ShadowRoot).querySelector('[data-theme-icon]:not([hidden])') as HTMLElement | null
       return {
         mode: toggle.dataset.themeMode,
         label: toggle.getAttribute('aria-label'),

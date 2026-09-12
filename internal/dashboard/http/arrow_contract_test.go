@@ -9,6 +9,7 @@ import (
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -870,13 +871,5 @@ func consumeDashboardNativeArrow(body io.Reader) error {
 }
 
 func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }

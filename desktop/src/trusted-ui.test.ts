@@ -9,8 +9,12 @@ const trustedAssets = {
 };
 
 type TrustedUIActions = ConstructorParameters<typeof TrustedUI>[0];
-type TrustedUITestActions = Omit<TrustedUIActions, "policy"> & {
+type TrustedUITestActions = Omit<
+  TrustedUIActions,
+  "policy" | "renameProfile"
+> & {
   policy?: TrustedUIActions["policy"];
+  renameProfile?: TrustedUIActions["renameProfile"];
 };
 
 const openPolicy: TrustedUIActions["policy"] = {
@@ -22,8 +26,15 @@ const openPolicy: TrustedUIActions["policy"] = {
 };
 
 function trustedUI(actions: TrustedUITestActions) {
-  const { policy = openPolicy, ...testActions } = actions;
-  return new TrustedUI({ ...testActions, policy }, trustedAssets);
+  const {
+    policy = openPolicy,
+    renameProfile = async () => undefined,
+    ...testActions
+  } = actions;
+  return new TrustedUI(
+    { ...testActions, policy, renameProfile },
+    trustedAssets,
+  );
 }
 
 describe("TrustedUI", () => {
@@ -366,6 +377,7 @@ describe("TrustedUI", () => {
           instanceId: "instance_0123456789abcdef0123456789abcdef",
           displayName: `<img src=x onerror="alert(1)">`,
           lastSafePath: "/",
+          partitionVersion: 1,
         },
       ],
     });
@@ -537,6 +549,7 @@ describe("TrustedUI", () => {
           instanceId: "instance_0123456789abcdef0123456789abcdef",
           displayName: "Managed Analytics",
           lastSafePath: "/",
+          partitionVersion: 1,
         },
         {
           id: "profile_abcdef0123456789abcdef0123456789",
@@ -544,6 +557,7 @@ describe("TrustedUI", () => {
           instanceId: "instance_abcdef0123456789abcdef0123456789",
           displayName: "Personal Analytics",
           lastSafePath: "/",
+          partitionVersion: 1,
         },
       ],
     });
@@ -582,6 +596,7 @@ describe("TrustedUI", () => {
           instanceId: "instance_0123456789abcdef0123456789abcdef",
           displayName: "Personal instance",
           lastSafePath: "/",
+          partitionVersion: 1,
         },
       ],
     });

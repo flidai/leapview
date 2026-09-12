@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { InlineVisualizationDataState, VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import {
   accessibleLabel,
@@ -25,7 +25,7 @@ test('HTML KPI values compose governed display units with the field formatting c
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [], tone: 'success' },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:test', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:test', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1234.5]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 
   expect(kpiText(envelope)).toBe('R$1.23K')
@@ -52,7 +52,7 @@ test('HTML KPI formatting resolves semantic backgrounds, readable text, and redu
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [], tone: 'danger' },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:health', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health', dataRevision: 1, generation: 1, columns: ['value'], rows: [[35]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 
   expect(kpiConditionalPresentation(envelope, defaultRendererContext)).toEqual({
@@ -84,14 +84,14 @@ test('HTML KPI conditional value formatting preserves null, first-match, default
       presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [] },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:health-cues', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:health-cues', dataRevision: 1, generation: 1, columns: ['value'], rows: [[null]], completeness: 'complete' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, danger: '#ff7b72', attention: '#d29922', success: '#56d364' } }
 
   expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ iconLabel: 'warning' })
-  envelope.dataState.datasets[0]!.rows = [[90]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0]!.rows = [[90]]
   expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.attention, iconLabel: 'circle' })
-  envelope.dataState.datasets[0]!.rows = [[-1]]
+  ;(envelope.dataState as InlineVisualizationDataState).datasets[0]!.rows = [[-1]]
   expect(kpiConditionalPresentation(envelope, dark)).toMatchObject({ valueColor: dark.colors.danger, iconLabel: 'decreasing' })
 })
 
@@ -136,7 +136,7 @@ test('HTML KPI layout requirements come only from explicitly configured features
     },
     dataState: { kind: 'inline', specRevision: 'sha256:responsive', dataRevision: 1, generation: 1, datasets: [] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(kpiLayoutFeatures(envelope)).toEqual([
     'subtitle',
@@ -170,9 +170,10 @@ test('HTML KPI status layout is driven by qualitative ranges', () => {
     },
     dataState: { kind: 'inline', specRevision: 'sha256:status', dataRevision: 1, generation: 1, datasets: [] },
     selection: [], status: { kind: 'ready' }, diagnostics: [],
-  } as VisualizationEnvelope
+  } as unknown as VisualizationEnvelope
 
   expect(kpiLayoutFeatures(envelope)).not.toContain('status')
-  envelope.spec.presentation.ranges = [{ minimum: 0, maximum: 100, label: 'On track', tone: 'success' }]
+  const presentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'kpi' }>['presentation']
+  presentation.ranges = [{ minimum: 0, maximum: 100, label: 'On track', tone: 'success' }]
   expect(kpiLayoutFeatures(envelope)).toContain('status')
 })

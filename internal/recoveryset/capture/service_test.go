@@ -34,6 +34,7 @@ func TestFAI520CaptureCanonicalizesSameFixedCapturedEvidence(t *testing.T) {
 	for name, pair := range map[string][2][]byte{
 		"set": {first.Documents.Set, second.Documents.Set}, "manifest": {first.Documents.Manifest, second.Documents.Manifest},
 		"anchor": {first.Documents.Anchor, second.Documents.Anchor}, "profiles": {first.Documents.Profiles, second.Documents.Profiles},
+		"core":    {first.Documents.Core, second.Documents.Core},
 		"receipt": {first.Documents.Receipt, second.Documents.Receipt}, "authorities": {first.Documents.Authorities, second.Documents.Authorities},
 	} {
 		if !bytes.Equal(pair[0], pair[1]) {
@@ -51,6 +52,21 @@ func TestFAI520CaptureCanonicalizesSameFixedCapturedEvidence(t *testing.T) {
 	}
 	if bytes.Contains(first.Documents.Receipt, []byte("PRIVATE")) {
 		t.Fatal("receipt persisted private key material")
+	}
+}
+
+func TestCaptureNormalizesPlainClockPrecisionAtPersistenceBoundary(t *testing.T) {
+	service, request, _ := captureFixture(t)
+	service.clock = ClockFunc(func() time.Time {
+		return time.Date(2026, 9, 10, 2, 0, 0, 123456789, time.FixedZone("plain-clock", 3600))
+	})
+	result, err := service.Capture(t.Context(), request)
+	if err != nil {
+		t.Fatalf("plain time.Now-style clock rejected: %v", err)
+	}
+	want := time.Date(2026, 9, 10, 1, 0, 0, 123456000, time.UTC)
+	if !result.Evidence.VerificationTime.Equal(want) || result.Evidence.VerificationTime.Location() != time.UTC {
+		t.Fatalf("verification time = %v (%s), want %v UTC", result.Evidence.VerificationTime, result.Evidence.VerificationTime.Location(), want)
 	}
 }
 

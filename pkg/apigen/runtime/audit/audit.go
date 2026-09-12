@@ -91,6 +91,9 @@ func encode(contract Contract, payload any, safeLog bool) (string, error) {
 	if err := contract.Validate(); err != nil {
 		return "", err
 	}
+	// This nested module cannot import leapview/internal platform packages;
+	// retain its local pointer-only payload boundary rather than introducing a
+	// cross-module dependency from the reusable APIGen runtime.
 	if payload == nil || (reflect.ValueOf(payload).Kind() == reflect.Pointer && reflect.ValueOf(payload).IsNil()) {
 		return "", fmt.Errorf("%w: payload is required", ErrInvalidContract)
 	}

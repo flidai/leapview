@@ -79,9 +79,3 @@ func digestResultEquivalence(canonical []byte) string {
 	_, _ = hash.Write(canonical)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
-
-// CanonicalResultDigest is a convenience wrapper for callers that hold a
-// plan value rather than a planner instance.
-func CanonicalResultDigest(plan Plan) (string, error) {
-	return plan.ResultEquivalenceDigest()
-}

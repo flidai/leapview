@@ -54,6 +54,26 @@ type RoleBinding struct {
 	Capabilities []access.Capability
 }
 
+// RoleAllowsCapability reports whether any supplied subject has the captured
+// capability in an explicit project-wide role binding. Role capabilities are
+// immutable snapshot data, so callers do not consult mutable role templates
+// while authorizing a serving generation.
+func RoleAllowsCapability(snapshot AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
+	for _, binding := range snapshot.RoleBindings() {
+		for _, subject := range subjects {
+			if binding.Subject != subject {
+				continue
+			}
+			for _, captured := range binding.Capabilities {
+				if captured == capability {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 type DataPolicy struct {
 	ID             string
 	Name           string

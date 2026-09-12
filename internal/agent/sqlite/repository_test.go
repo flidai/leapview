@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,8 +55,8 @@ func (r *panicPhaseRepository) AppendMessage(ctx context.Context, input agent.Me
 	return message, err
 }
 
-func (r *panicPhaseRepository) UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string) (agent.Conversation, error) {
-	conversation, err := r.Repository.UpdateConversationTranscript(ctx, principalID, conversationID, transcriptJSON)
+func (r *panicPhaseRepository) UpdateConversationTranscript(ctx context.Context, principalID, conversationID, transcriptJSON string, expectedRevision int64) (agent.Conversation, error) {
+	conversation, err := r.Repository.UpdateConversationTranscript(ctx, principalID, conversationID, transcriptJSON, expectedRevision)
 	if r.phase == "transcript" {
 		panic("simulated crash after transcript persistence")
 	}
@@ -151,6 +152,85 @@ func TestDurablePromptRetryAfterActivationResponseLossConverges(t *testing.T) {
 	}
 }
 
+func TestDurablePromptRetryWhileWorkerResumesPreservesCompletionCAS(t *testing.T) {
+	ctx := context.Background()
+	store, base := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "active-retry@example.com")
+	conversation, err := base.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := jobsqlite.NewRepository(store.SQLDB())
+	repo := NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	workflow := func(_ agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
+		return jobs.WorkflowIntent{
+			Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{}`)},
+			Job:   jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: runID, Payload: []byte(`{}`)},
+		}
+	}
+	unusedModel := agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{}, errors.New("unused")
+	})
+	input := agent.PromptInput{Scope: agent.Scope{ProjectID: "test", PrincipalID: owner.ID}, ConversationID: conversation.ID, Input: "same request", RequestID: "active-retry-key"}
+	first := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(unusedModel))
+	first.SetPromptWorkflow(workflow)
+	queued, err := first.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
+	if err != nil {
+		t.Fatalf("initial durable prompt: %v", err)
+	}
+	prepared, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := queue.Get(ctx, "agent:"+queued.RunID+":run")
+	if err != nil {
+		t.Fatalf("get durable job: %v", err)
+	}
+	job, ok, err := queue.ClaimByID(ctx, job.ID, jobplatform.WorkloadClassBackground, "worker-a", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim durable job: %#v ok=%v err=%v", job, ok, err)
+	}
+
+	worker := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "completed", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	worker.SetPromptWorkflow(workflow)
+	resumed, err := worker.ResumePrompt(ctx, input.Scope, conversation.ID, queued.RunID, "")
+	if err != nil {
+		t.Fatalf("resume active worker: %v", err)
+	}
+	resumed.SetDurableClaim(job.ID, job.Fence())
+
+	retryService := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(unusedModel))
+	retryService.SetPromptWorkflow(workflow)
+	retry, err := retryService.StartDurablePrompt(ctx, input, agent.PromptDispatch{})
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if retry.RunID != queued.RunID {
+		t.Fatalf("retry run = %q, want %q", retry.RunID, queued.RunID)
+	}
+	afterRetry, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterRetry.TranscriptRevision != prepared.TranscriptRevision || afterRetry.TranscriptJSON != prepared.TranscriptJSON {
+		t.Fatalf("retry changed prepared transcript: before=%d/%s after=%d/%s", prepared.TranscriptRevision, prepared.TranscriptJSON, afterRetry.TranscriptRevision, afterRetry.TranscriptJSON)
+	}
+
+	result, err := resumed.Complete(ctx, nil)
+	if err != nil {
+		t.Fatalf("complete resumed worker: %v", err)
+	}
+	if result.RunID != queued.RunID || result.Content != "completed" {
+		t.Fatalf("completed result = %#v, want run %q and content %q", result, queued.RunID, "completed")
+	}
+	run, err := repo.GetRun(ctx, owner.ID, conversation.ID, queued.RunID)
+	if err != nil || run.Status != agent.RunStatusCompleted {
+		t.Fatalf("run after completion = %#v err=%v", run, err)
+	}
+}
+
 func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 	ctx := context.Background()
 	store, base := openAgentRepo(t, ctx)
@@ -183,6 +263,39 @@ func TestDurablePromptRetryMismatchedDigestConflicts(t *testing.T) {
 	}
 }
 
+func TestTranscriptCASIncrementsAndRejectsStaleWriter(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "transcript-cas@example.com")
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.TranscriptRevision != 1 {
+		t.Fatalf("initial transcript revision = %d, want 1", conversation.TranscriptRevision)
+	}
+	updated, err := repo.UpdateConversationTranscript(ctx, owner.ID, conversation.ID, `[{"role":"user","content":"new"}]`, conversation.TranscriptRevision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.TranscriptRevision != 2 {
+		t.Fatalf("updated transcript revision = %d, want 2", updated.TranscriptRevision)
+	}
+	if _, err := repo.UpdateConversationTranscript(ctx, owner.ID, conversation.ID, `[{"role":"user","content":"stale"}]`, conversation.TranscriptRevision); !errors.Is(err, agent.ErrTranscriptConflict) {
+		t.Fatalf("stale transcript update = %v, want ErrTranscriptConflict", err)
+	}
+	current, err := repo.GetConversation(ctx, owner.ID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.TranscriptRevision != 2 || current.TranscriptJSON != updated.TranscriptJSON {
+		t.Fatalf("stale writer changed conversation = %#v, want revision 2 and newer transcript", current)
+	}
+	if next, err := repo.UpdateConversationTranscript(ctx, owner.ID, conversation.ID, `[]`, updated.TranscriptRevision); err != nil || next.TranscriptRevision != 3 {
+		t.Fatalf("next transcript update = %#v, err=%v", next, err)
+	}
+}
+
 func TestRepositoryPersistsConversationRunMessagesAndEvents(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAgentRepo(t, ctx)
@@ -203,7 +316,7 @@ func TestRepositoryPersistsConversationRunMessagesAndEvents(t *testing.T) {
 	if conversation.Status != agent.ConversationStatusActive || conversation.TranscriptJSON != "[]" {
 		t.Fatalf("conversation = %#v", conversation)
 	}
-	conversation, err = repo.UpdateConversationTranscript(ctx, owner.ID, conversation.ID, `[{"role":"user","content":"seed"}]`)
+	conversation, err = repo.UpdateConversationTranscript(ctx, owner.ID, conversation.ID, `[{"role":"user","content":"seed"}]`, conversation.TranscriptRevision)
 	if err != nil {
 		t.Fatalf("update transcript: %v", err)
 	}
@@ -881,7 +994,7 @@ func TestCompleteRunWorkflowAtomicSuccessPersistsAllState(t *testing.T) {
 	msg2.ToolCallID = "call-2"
 	msg2.ToolName = "lookup"
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.completed:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.completed", Data: []byte(`{"runId":"run_complete_success"}`)}}
-	rows, changed, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg, msg2}, `[{"role":"assistant","content":"done"}]`, workflow)
+	rows, changed, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg, msg2}, `[{"role":"assistant","content":"done"}]`, conv.TranscriptRevision, workflow)
 	if err != nil || !changed || len(rows) != 2 {
 		t.Fatalf("complete rows=%d changed=%v err=%v", len(rows), changed, err)
 	}
@@ -897,8 +1010,53 @@ func TestCompleteRunWorkflowAtomicSuccessPersistsAllState(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("events=%d", len(events))
 	}
-	if _, changed, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg}, `[]`, workflow); err != nil || changed {
+	if _, changed, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg}, `[]`, conv.TranscriptRevision, workflow); err != nil || changed {
 		t.Fatalf("terminal replay changed=%v err=%v", changed, err)
+	}
+}
+
+func TestCompleteRunWorkflowRejectsStaleTranscriptAtomically(t *testing.T) {
+	ctx := context.Background()
+	store, base := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "complete-stale@example.com")
+	conv, err := base.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := jobsqlite.NewRepository(store.SQLDB())
+	repo := NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	run, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: "run_complete_stale", Status: agent.RunStatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpdateConversationTranscript(ctx, owner.ID, conv.ID, `[{"role":"user","content":"newer"}]`, conv.TranscriptRevision); err != nil {
+		t.Fatal(err)
+	}
+	msg := agent.MessageInput{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Role: agent.MessageRoleAssistant, ContentText: "stale", ContentJSON: `{"content":"stale"}`}
+	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.completed:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.completed", Data: []byte(`{}`)}}
+	if _, _, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, MetadataJSON: `{}`}, []agent.MessageInput{msg}, `[{"role":"assistant","content":"stale"}]`, conv.TranscriptRevision, workflow); !errors.Is(err, agent.ErrTranscriptConflict) {
+		t.Fatalf("stale durable completion = %v, want ErrTranscriptConflict", err)
+	}
+	gotRun, err := repo.GetRun(ctx, owner.ID, conv.ID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRun.Status != agent.RunStatusRunning {
+		t.Fatalf("stale completion changed run status to %q", gotRun.Status)
+	}
+	messages, err := repo.ListMessages(ctx, owner.ID, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("stale completion left %d messages", len(messages))
+	}
+	current, err := repo.GetConversation(ctx, owner.ID, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.TranscriptRevision != 2 || !strings.Contains(current.TranscriptJSON, "newer") {
+		t.Fatalf("stale completion changed transcript = %#v", current)
 	}
 }
 
@@ -926,7 +1084,7 @@ func TestCompleteRunWorkflowFailureRollsBackAndRejectsStaleBinding(t *testing.T)
 	job, _, _ = queue.ClaimByID(ctx, job.ID, jobplatform.WorkloadClassBackground, "worker", time.Minute)
 	msg := agent.MessageInput{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Role: agent.MessageRoleAssistant, ContentText: "done", ContentJSON: `{"content":"done"}`}
 	workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.completed:" + run.ID, ResourceKind: "agent_run", ResourceID: run.ID, EventType: "agent_run.completed", Data: []byte(`{}`)}}
-	if _, _, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg}, `[{"role":"assistant"}]`, workflow); err == nil {
+	if _, _, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{msg}, `[{"role":"assistant"}]`, conv.TranscriptRevision, workflow); err == nil {
 		t.Fatal("expected workflow failure")
 	}
 	got, _ := repo.GetRun(ctx, owner.ID, conv.ID, run.ID)
@@ -940,7 +1098,7 @@ func TestCompleteRunWorkflowFailureRollsBackAndRejectsStaleBinding(t *testing.T)
 	// Binding mismatch is rejected before any write.
 	bad := msg
 	bad.RunID = "other-run"
-	if _, _, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{bad}, `[]`, workflow); err == nil {
+	if _, _, err := repo.CompleteRunWorkflow(ctx, agent.RunFinish{PrincipalID: owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: agent.RunStatusCompleted, JobID: job.ID, JobFence: job.Fence(), MetadataJSON: `{}`}, []agent.MessageInput{bad}, `[]`, conv.TranscriptRevision, workflow); err == nil {
 		t.Fatal("expected binding mismatch")
 	}
 }
@@ -972,7 +1130,7 @@ func TestRepositoryRejectsInvalidJSON(t *testing.T) {
 	}); err == nil {
 		t.Fatal("AppendMessage accepted invalid content JSON")
 	}
-	if _, err := repo.UpdateConversationTranscript(ctx, principal.ID, conversation.ID, `{}`); err == nil {
+	if _, err := repo.UpdateConversationTranscript(ctx, principal.ID, conversation.ID, `{}`, conversation.TranscriptRevision); err == nil {
 		t.Fatal("UpdateConversationTranscript accepted non-array transcript JSON")
 	}
 }

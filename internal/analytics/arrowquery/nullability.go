@@ -25,9 +25,9 @@ func (e *NullabilityViolationError) Error() string {
 }
 
 // OutputSchemaSink applies a governed output descriptor to one borrowed Arrow
-// stream. It is a foundation component only: no production route constructs
-// it yet. Schema and records are inspected and forwarded synchronously, and no
-// borrowed Arrow object survives a callback.
+// stream. The native materialization executor constructs it at the production
+// Arrow boundary. Schema and records are inspected and forwarded synchronously,
+// and no borrowed Arrow object survives a callback.
 type OutputSchemaSink struct {
 	descriptor semanticquery.OutputSchemaDescriptor
 	downstream Sink

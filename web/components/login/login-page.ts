@@ -1,9 +1,10 @@
 import { LitElement, css, html } from 'lit'
 import { Monitor, Moon, Sun } from 'lucide'
-import type { LoginPageSignal } from '../../generated/signals'
+import type { DashboardStatus, LoginPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { checkSignalContract } from '../shared/signal-contract'
+import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { lucideIcon } from '../shared/lucide-icons'
 
 type ThemeMode = 'system' | 'light' | 'dark'
@@ -277,8 +278,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     return this.signal<LoginPageSignal | null>('page', null)
   }
 
-  get status(): { error?: string } {
-    return this.signal<{ error?: string }>('status', { error: '' })
+  get status(): DashboardStatus {
+    return this.signal<DashboardStatus>('status', emptyDashboardStatus())
   }
 
   render() {

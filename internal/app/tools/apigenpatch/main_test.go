@@ -52,8 +52,8 @@ func TestAccessServerResourceKindPolicy(t *testing.T) {
 	if got := strings.Count(source, "*ResourceKind"); got != 0 {
 		t.Fatalf("generated access server still contains %d unqualified ResourceKind parameters", got)
 	}
-	if got := strings.Count(source, "*GenSchemaResourceKind"); got != 3 {
-		t.Fatalf("generated access server has %d qualified ResourceKind parameters, want 3", got)
+	if got := strings.Count(source, "*GenSchemaResourceKind"); got != 2 {
+		t.Fatalf("generated access server has %d qualified ResourceKind parameters, want 2", got)
 	}
 }
 

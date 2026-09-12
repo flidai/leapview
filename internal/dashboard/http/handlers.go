@@ -49,8 +49,9 @@ type publicPresentationContextKey struct{}
 var ErrDashboardAuthorizationUnavailable = errors.New("dashboard authorization is unavailable")
 
 type PublicPresentation struct {
-	PublicID     string
-	Presentation string
+	PublicID      string
+	PublicationID string
+	Presentation  string
 }
 
 func WithPublicPresentation(ctx context.Context, value PublicPresentation) context.Context {
@@ -60,6 +61,19 @@ func WithPublicPresentation(ctx context.Context, value PublicPresentation) conte
 func publicPresentationFromContext(ctx context.Context) (PublicPresentation, bool) {
 	value, ok := ctx.Value(publicPresentationContextKey{}).(PublicPresentation)
 	return value, ok
+}
+
+// privateStreamActive rejects command requests that do not have a matching
+// live /updates coordinator. Commands must not create durable orphan entries
+// from forged client-selected stream identities.
+func (h Handler) privateStreamActive(streamID string) bool {
+	if h.CommandGuard != nil {
+		return true
+	}
+	return h.Coordinators != nil && func() bool {
+		_, active := h.Coordinators.Get(streamID)
+		return active
+	}()
 }
 
 type Metrics interface {

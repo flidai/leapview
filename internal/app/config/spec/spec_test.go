@@ -132,6 +132,8 @@ func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 		"LEAPVIEW_MANAGED_DATA_BACKEND",
 		"LEAPVIEW_MANAGED_DATA_DIR",
 		"LEAPVIEW_MANAGED_DATA_S3_BUCKET",
+		"LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT",
+		"LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID",
 		"LEAPVIEW_MANAGED_DATA_MAX_FILE_BYTES",
 		"LEAPVIEW_MANAGED_DATA_UPLOAD_SESSION_TTL",
 		"LEAPVIEW_MANAGED_DATA_GC_INTERVAL",
@@ -143,6 +145,7 @@ func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 	}
 
 	valid := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                        "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_MANAGED_DATA_BACKEND":            "local",
 		"LEAPVIEW_MANAGED_DATA_DIR":                "/var/lib/leapview/managed-data",
 		"LEAPVIEW_MANAGED_DATA_MAX_FILES":          100,
@@ -200,8 +203,41 @@ func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 	s3["LEAPVIEW_MANAGED_DATA_S3_REGION"] = "eu-west-1"
 	s3["LEAPVIEW_MANAGED_DATA_S3_ACCESS_KEY_ID"] = "key"
 	s3["LEAPVIEW_MANAGED_DATA_S3_SECRET_ACCESS_KEY"] = "secret"
+	s3["LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT"] = "account"
+	s3["LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"] = "profile"
 	if err := Validate(s3); err != nil {
 		t.Fatalf("valid S3 managed data config: %v", err)
+	}
+}
+
+func TestProductionManagedDataS3RequiresObservationProfile(t *testing.T) {
+	values := map[string]any{
+		"LEAPVIEW_PRODUCTION":                             true,
+		"LEAPVIEW_MANAGED_DATA_BACKEND":                   "s3",
+		"LEAPVIEW_MANAGED_DATA_S3_BUCKET":                 "managed-data",
+		"LEAPVIEW_MANAGED_DATA_S3_REGION":                 "eu-west-1",
+		"LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT":    "account",
+		"LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID": "profile",
+	}
+	var observationRule Rule
+	for _, rule := range Rules() {
+		if rule.ID == "production-managed-data-s3-observation-profile" {
+			observationRule = rule
+			break
+		}
+	}
+	if observationRule.ID == "" {
+		t.Fatal("production observation-profile rule is missing")
+	}
+	if !observationRule.When.Evaluate(values) || !observationRule.Assert.Evaluate(values) {
+		t.Fatal("complete production observation profile was rejected")
+	}
+	for _, name := range []string{"LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_ACCOUNT", "LEAPVIEW_MANAGED_DATA_S3_OBSERVATION_PROFILE_ID"} {
+		delete(values, name)
+		if observationRule.Assert.Evaluate(values) {
+			t.Fatalf("production S3 accepted missing %s", name)
+		}
+		values[name] = "configured"
 	}
 }
 

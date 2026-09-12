@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -336,7 +338,10 @@ func createPlanningTable(ctx context.Context, db *sql.DB, schema string, table s
 		if err := validateIdentifier(column.Name); err != nil {
 			return fmt.Errorf("planning table %s.%s column %q is invalid: %w", schema, table, column.Name, err)
 		}
-		columnType := planningColumnType(column.PhysicalType)
+		columnType, err := planningColumnType(column.PhysicalType)
+		if err != nil {
+			return fmt.Errorf("planning table %s.%s column %q: %w", schema, table, column.Name, err)
+		}
 		definitions = append(definitions, quoteIdentifier(column.Name)+" "+columnType)
 		values = append(values, planningLiteral(columnType))
 	}
@@ -354,12 +359,123 @@ func createPlanningTable(ctx context.Context, db *sql.DB, schema string, table s
 	return nil
 }
 
-func planningColumnType(physicalType string) string {
-	value := strings.TrimSpace(physicalType)
+// planningColumnType is the trust boundary for types discovered from an
+// external source. DuckDB type names are interpolated into CREATE TABLE DDL,
+// so accepting arbitrary text here would turn source metadata into executable
+// SQL. Keep this grammar deliberately closed and bounded; nested STRUCT/MAP
+// declarations are not needed by the planner stub and are therefore rejected.
+func planningColumnType(physicalType string) (string, error) {
+	value := strings.Join(strings.Fields(strings.TrimSpace(physicalType)), " ")
 	if value == "" {
-		return "VARCHAR"
+		return "VARCHAR", nil
 	}
-	return value
+	if len(value) > 128 || strings.ContainsAny(value, ";'\"`\\") {
+		return "", fmt.Errorf("discovered physical type %q is not an allowed DuckDB type", physicalType)
+	}
+	return parsePlanningColumnType(value, 0)
+}
+
+func parsePlanningColumnType(value string, arrayDepth int) (string, error) {
+	if strings.HasSuffix(value, "[]") {
+		if arrayDepth >= 2 {
+			return "", fmt.Errorf("discovered physical type %q has too many array dimensions", value)
+		}
+		base, err := parsePlanningColumnType(strings.TrimSpace(strings.TrimSuffix(value, "[]")), arrayDepth+1)
+		if err != nil {
+			return "", err
+		}
+		return base + "[]", nil
+	}
+	upper := strings.ToUpper(value)
+	open := strings.IndexByte(upper, '(')
+	if open < 0 {
+		if !allowedPlanningType(upper) {
+			return "", fmt.Errorf("discovered physical type %q is not an allowed DuckDB type", value)
+		}
+		return upper, nil
+	}
+	if !strings.HasSuffix(upper, ")") || strings.ContainsAny(upper[open+1:len(upper)-1], "()") {
+		return "", fmt.Errorf("discovered physical type %q has invalid parameters", value)
+	}
+	base := strings.TrimSpace(upper[:open])
+	if !allowedPlanningParameterizedType(base) {
+		return "", fmt.Errorf("discovered physical type %q does not support parameters", value)
+	}
+	parts := strings.Split(upper[open+1:len(upper)-1], ",")
+	if len(parts) > 2 || len(parts) == 0 {
+		return "", fmt.Errorf("discovered physical type %q has invalid parameter count", value)
+	}
+	parameters := make([]int, len(parts))
+	for index, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return "", fmt.Errorf("discovered physical type %q has an empty parameter", value)
+		}
+		for _, char := range part {
+			if char < '0' || char > '9' {
+				return "", fmt.Errorf("discovered physical type %q has a non-numeric parameter", value)
+			}
+		}
+		parameter, err := strconv.Atoi(part)
+		if err != nil {
+			return "", fmt.Errorf("discovered physical type %q has an invalid parameter", value)
+		}
+		parameters[index] = parameter
+	}
+	switch base {
+	case "DECIMAL", "NUMERIC":
+		if len(parameters) == 0 || len(parameters) > 2 || parameters[0] < 1 || parameters[0] > 38 {
+			return "", fmt.Errorf("discovered physical type %q has precision outside 1..38", value)
+		}
+		scale := 0
+		if len(parameters) == 2 {
+			scale = parameters[1]
+		}
+		if scale > parameters[0] {
+			return "", fmt.Errorf("discovered physical type %q has scale greater than precision", value)
+		}
+	case "VARCHAR", "CHAR", "BPCHAR":
+		if len(parameters) != 1 || parameters[0] < 1 || parameters[0] > 1_000_000 {
+			return "", fmt.Errorf("discovered physical type %q has length outside 1..1000000", value)
+		}
+	case "BIT":
+		if len(parameters) != 1 || parameters[0] < 1 || parameters[0] > 1_000_000 {
+			return "", fmt.Errorf("discovered physical type %q has length outside 1..1000000", value)
+		}
+	case "TIMESTAMP", "TIME":
+		if len(parameters) != 1 || parameters[0] < 0 || parameters[0] > 9 {
+			return "", fmt.Errorf("discovered physical type %q has precision outside 0..9", value)
+		}
+	default:
+		return "", fmt.Errorf("discovered physical type %q does not support parameters", value)
+	}
+	return base + "(" + joinPlanningTypeParameters(parameters) + ")", nil
+}
+
+func joinPlanningTypeParameters(parameters []int) string {
+	values := make([]string, len(parameters))
+	for index, parameter := range parameters {
+		values[index] = strconv.Itoa(parameter)
+	}
+	return strings.Join(values, ",")
+}
+
+func allowedPlanningParameterizedType(value string) bool {
+	switch value {
+	case "DECIMAL", "NUMERIC", "VARCHAR", "CHAR", "BPCHAR", "BIT", "TIMESTAMP", "TIME":
+		return true
+	default:
+		return false
+	}
+}
+
+func allowedPlanningType(value string) bool {
+	switch value {
+	case "BOOLEAN", "BOOL", "TINYINT", "SMALLINT", "INTEGER", "INT", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "INT1", "INT2", "INT4", "INT8", "FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION", "DECIMAL", "NUMERIC", "VARCHAR", "STRING", "TEXT", "CHAR", "BPCHAR", "BLOB", "BYTEA", "DATE", "TIME", "TIME WITH TIME ZONE", "TIMETZ", "TIME_TZ", "TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS", "TIMESTAMP_US", "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ", "TIMESTAMP_TZ", "INTERVAL", "UUID", "JSON", "BIT", "VARINT", "BIGNUM":
+		return true
+	default:
+		return false
+	}
 }
 
 func planningLiteral(columnType string) string {
@@ -571,13 +687,5 @@ func sortedSet(values map[string]struct{}) []string {
 }
 
 func sameStringSet(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }

@@ -2,6 +2,7 @@ package openlineage
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -687,15 +688,7 @@ func schemaFieldSet(fields []schemaField) map[string]struct{} {
 }
 
 func sameLineage(left, right PhysicalLineage) bool {
-	if left.Logical != right.Logical || left.Dataset != right.Dataset || left.Field != right.Field || len(left.Route) != len(right.Route) {
-		return false
-	}
-	for index := range left.Route {
-		if left.Route[index] != right.Route[index] {
-			return false
-		}
-	}
-	return true
+	return left.Logical == right.Logical && left.Dataset == right.Dataset && left.Field == right.Field && slices.Equal(left.Route, right.Route)
 }
 
 func validateDatasetStatistics(stats DatasetStatistics) error {
