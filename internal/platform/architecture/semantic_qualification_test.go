@@ -117,16 +117,16 @@ func TestSemanticQualificationMatrixCoversEveryRequirement(t *testing.T) {
 			t.Errorf("qualification matrix omits %s", id)
 		}
 	}
-	if got := [4]int{statusCounts["PASS"], statusCounts["PARTIAL"], statusCounts["FAIL"], statusCounts["NOT APPLICABLE"]}; got != [4]int{49, 51, 2, 0} {
-		t.Errorf("qualification status totals = %v, want [49 51 2 0]", got)
+	if got := [4]int{statusCounts["PASS"], statusCounts["PARTIAL"], statusCounts["FAIL"], statusCounts["NOT APPLICABLE"]}; got != [4]int{51, 51, 0, 0} {
+		t.Errorf("qualification status totals = %v, want [51 51 0 0]", got)
 	}
-	for id, want := range map[string]string{"VAL-11": "PARTIAL", "STR-08": "FAIL", "ENF-06": "FAIL"} {
+	for id, want := range map[string]string{"VAL-11": "PARTIAL", "STR-08": "PASS", "ENF-06": "PASS"} {
 		if statuses[id] != want {
 			t.Errorf("%s status = %q, want %q", id, statuses[id], want)
 		}
 	}
 	for _, boundary := range []string{
-		"qualification boundary only; no production activation",
+		"active for the qualified supported profile",
 		"Request-bound dashboard query authorization",
 		"Explore protected catalog projection",
 		"agent/MCP semantic resource reads",
@@ -134,7 +134,7 @@ func TestSemanticQualificationMatrixCoversEveryRequirement(t *testing.T) {
 		"Complete cross-layer qualification remains **PARTIAL**",
 		"unsupported rollup/substitution",
 		"Audit persistence failure prevents protected admission or release",
-		"FAI-649 owns activation and cutover",
+		"FAI-649 binds this exact profile",
 	} {
 		if !strings.Contains(profile, boundary) {
 			t.Errorf("supported profile omits boundary %q", boundary)

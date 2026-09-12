@@ -30,6 +30,7 @@ import (
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
+	semanticactivation "github.com/flidai/leapview/internal/app/semanticactivation"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -708,14 +709,27 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	}
 	identity := buildinfo.Current()
 	runtimeVersion := identity.Version + ":" + identity.Revision
+	semanticActivationAudit, ok := accessBundle.Repository.(interface {
+		access.CanonicalAuditRecorder
+		RecordCanonicalAuditEventTx(context.Context, deploymentpostgres.Tx, access.CanonicalAuditEvent) error
+	})
+	if !ok {
+		return fail(errors.New("semantic activation requires canonical audit persistence"))
+	}
+	semanticActivation, err := semanticactivation.New(instanceID, graph.Project, graph.Access, graph.ServingState, graph.DeploymentRepository, nativeProjectSource.Objects, semanticActivationAudit)
+	if err != nil {
+		return fail(fmt.Errorf("build semantic activation fence: %w", err))
+	}
+	nativeRefreshFinalizer.BeforeActivationCommit = semanticActivation.ValidatePublication
 	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
-		Repository:      graph.DeploymentRepository,
-		TargetID:        instanceID,
-		Environment:     string(environment),
-		Sources:         nativeProjectSource.CandidateSourceReader,
-		Artifacts:       release,
-		BindingEvidence: candidateConnections,
-		RuntimeVersion:  runtimeVersion,
+		Repository:         graph.DeploymentRepository,
+		TargetID:           instanceID,
+		Environment:        string(environment),
+		Sources:            nativeProjectSource.CandidateSourceReader,
+		Artifacts:          release,
+		BindingEvidence:    candidateConnections,
+		RuntimeVersion:     runtimeVersion,
+		SemanticActivation: semanticActivation.PlanEvidence,
 		PolicyResolver: func(operation deployment.DeliveryOperationKind) (appruntimefactory.CandidateDeliveryPolicy, error) {
 			return appruntimefactory.CandidateDeliveryPolicy{
 				// Local development is an unprotected target: publish queues the
@@ -887,10 +901,16 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 			return deploymentmodule.ApprovalActor{PrincipalID: evidence.PrincipalID, CredentialClass: deploymentmodule.CredentialClass(evidence.Class), CredentialID: evidence.ID, CredentialExpiresAt: evidence.ExpiresAt}, true
 		},
 	}
-	if string(environment) == "evaluation" {
-		deploymentConfig.BeforeNativeActivationCommit = func(ctx context.Context) error {
-			return deploymentmodule.WaitBeforeQualificationActivation(ctx, string(environment))
+	deploymentConfig.BeforeNativeActivationCommit = func(ctx context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
+		if string(environment) == "evaluation" {
+			// The evaluation pause precedes the semantic fence. A control-plane
+			// mutation released during the pause is therefore observed by the
+			// final transaction-bound validation rather than crossing the CAS.
+			if err := deploymentmodule.WaitBeforeQualificationActivation(ctx, string(environment)); err != nil {
+				return err
+			}
 		}
+		return semanticActivation.ValidatePublication(ctx, tx, publication)
 	}
 	canonicalCompletionCoordinator := func(completionCtx context.Context, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, complete func() error) error {
 		if result.ServingStateID == "" || result.ServingStateID != result.NativeGenerationID {

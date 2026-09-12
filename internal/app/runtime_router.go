@@ -508,6 +508,9 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
 	}
+	if production && config.BeforeNativeActivationCommit == nil {
+		return errors.New("native delivery composition requires the semantic activation pre-commit fence")
+	}
 	return nil
 }
 

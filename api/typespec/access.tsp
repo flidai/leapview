@@ -266,14 +266,6 @@ model GroupNotMutableFailure {}
 })
 model GrantNotFoundFailure {}
 
-@apigen.failureDefinition(#{
-  kind: "not_found",
-  statusCode: 404,
-  code: "DATA_POLICY_NOT_FOUND",
-  publicDetail: "Data policy not found.",
-})
-model DataPolicyNotFoundFailure {}
-
 // Durable, typed payloads for Access command audit records.  Every field is
 // required so the generated encoder can reject incomplete audit events before
 // they reach the repository.
@@ -407,16 +399,6 @@ model GrantAuditPayload {
   surface: string;
 }
 
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model DataPolicyAuditPayload {
-  @apigen.auditInternal
-  resourceId: ResourceId;
-  @apigen.auditPublic
-  resourceKind: ResourceKind;
-  @apigen.auditPublic
-  policyType: string;
-}
-
 model GrantRequest {
   resourceKind: ResourceKind;
   resourceId: ResourceId;
@@ -441,32 +423,6 @@ model GrantResponse {
 
 model GrantListResponse {
   items: GrantResponse[];
-  page: PageInfo;
-}
-
-model DataPolicyRequest {
-  resourceKind: ResourceKind;
-  resourceId: ResourceId;
-  subjectType?: string;
-  subjectId?: string;
-  policyType: string;
-  expression: JSONObject;
-}
-
-model DataPolicyResponse {
-  id: string;
-  resourceId: ResourceId;
-  resourceKind: ResourceKind;
-  subjectType?: string;
-  subjectId?: string;
-  policyType: string;
-  expression: JSONObject;
-  createdAt: utcDateTime;
-  updatedAt: utcDateTime;
-}
-
-model DataPolicyListResponse {
-  items: DataPolicyResponse[];
   page: PageInfo;
 }
 
@@ -967,65 +923,6 @@ interface Grants {
   @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
   deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
-}
-
-alias ListDataPoliciesOK = OkJson<DataPolicyListResponse>;
-alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
-
-@tag("Access")
-@route("/projects/{project}/data-policies")
-@apigen.commandDefaults(#{ guarantee: "transactional" })
-interface DataPolicies {
-  @summary("List data policies")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  listDataPolicies(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
-
-  @summary("Create a data policy")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "data_policy.created",
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "DATA_POLICY_INVALID", publicDetail: "The data policy request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  createDataPolicy(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
-
-  @summary("Get a data policy")
-  @route("/{policy}")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getDataPolicy(@path project: ResourceId, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
-
-  @summary("Update a data policy")
-  @route("/{policy}")
-  @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "data_policy.updated",
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "DATA_POLICY_INVALID", publicDetail: "The data policy is invalid." },
-    ],
-  })
-  @apigen.failsWith(DataPolicyNotFoundFailure)
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  updateDataPolicy(@path @apigen.target project: ResourceId, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
-
-  @summary("Delete a data policy")
-  @route("/{policy}")
-  @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{ auditAction: "data_policy.deleted" })
-  @apigen.failsWith(DataPolicyNotFoundFailure)
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  deleteDataPolicy(@path @apigen.target project: ResourceId, @path policy: string): EmptyResponse | CommonErrors;
 }
 
 @tag("Access")

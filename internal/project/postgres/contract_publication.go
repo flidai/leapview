@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -187,6 +188,49 @@ func (r *Repository) ContractPublicationTx(ctx context.Context, tx Tx, instanceI
 // ReplayContractPublicationTx is the explicit exact-replay alias.
 func (r *Repository) ReplayContractPublicationTx(ctx context.Context, tx Tx, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind, version string) (contractpublication.ContractPublication, error) {
 	return r.ContractPublicationTx(ctx, tx, instanceID, authoredID, kind, version)
+}
+
+// ContractPublication replays one immutable publication through the
+// repository's configured read authority. Activation uses this read-only form
+// to validate an already-persisted baseline; publication mutations continue to
+// require a caller-owned transaction.
+func (r *Repository) ContractPublication(ctx context.Context, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind, version string) (contractpublication.ContractPublication, error) {
+	if r == nil || r.db == nil {
+		return contractpublication.ContractPublication{}, contractpublication.ErrInvalidPublication
+	}
+	return r.ContractPublicationTx(ctx, r.db, instanceID, authoredID, kind, version)
+}
+
+// ContractPublications replays the immutable history for one exact scope in
+// semantic-version order. Activation uses the bounded history to match a
+// rollback candidate to its original publication; it never treats a mutable
+// latest pointer as historical evidence.
+func (r *Repository) ContractPublications(ctx context.Context, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind) ([]contractpublication.ContractPublication, error) {
+	if r == nil || r.db == nil || instanceID == "" || instanceID != strings.TrimSpace(instanceID) || authoredID.Validate() != nil || !contractPublicationKind(kind) {
+		return nil, contractpublication.ErrInvalidPublication
+	}
+	rows, err := projectdb.New(r.db).ListContractPublications(ctx, projectdb.ListContractPublicationsParams{InstanceID: instanceID, AuthoredID: authoredID.String(), ResourceKind: string(kind)})
+	if err != nil {
+		return nil, fmt.Errorf("list contract publications: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, ErrContractPublicationNotFound
+	}
+	publications := make([]contractpublication.ContractPublication, 0, len(rows))
+	for _, stored := range rows {
+		publication, err := contractPublicationFromModel(stored)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateStoredPublicationTx(ctx, r.db, publication); err != nil {
+			return nil, err
+		}
+		publications = append(publications, publication)
+	}
+	sort.Slice(publications, func(i, j int) bool {
+		return semver.Compare("v"+publications[i].VersionBaseline, "v"+publications[j].VersionBaseline) < 0
+	})
+	return publications, nil
 }
 
 func latestContractPublication(ctx context.Context, queries *projectdb.Queries, instanceID string, authoredID projectgraph.ResourceID, kind projectgraph.Kind) (contractpublication.ContractPublication, bool, error) {
