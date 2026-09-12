@@ -209,6 +209,85 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
   }
 })
 
+test('composer exposes stop only after a run is accepted and protects an unsent draft from Continue', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+    const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+      const root = element.shadowRoot as ShadowRoot
+      const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+      textarea.value = 'Keep this new question'
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await element.updateComplete
+
+      element.pending = true
+      await element.updateComplete
+      const beforeAcceptedRun = Boolean(root.querySelector('.stop-button'))
+
+      element.running = true
+      element.runId = 'run-accepted'
+      await element.updateComplete
+      const stop = root.querySelector('.stop-button') as HTMLButtonElement
+      const stopEvents: any[] = []
+      element.addEventListener('lv-chat-stop', (event: CustomEvent) => stopEvents.push({ detail: event.detail, bubbles: event.bubbles, composed: event.composed }))
+      stop.click()
+      await element.updateComplete
+
+      element.running = false
+      element.pending = false
+      element.canContinue = true
+      await element.updateComplete
+      const continueButton = root.querySelector('.continue-button') as HTMLButtonElement
+      const submits: any[] = []
+      element.addEventListener('lv-chat-submit', (event: CustomEvent) => submits.push(event.detail))
+      continueButton.click()
+      await element.updateComplete
+      const draftBeforeContinue = root.querySelector('textarea')?.value
+      const continueDisabledWithDraft = continueButton.disabled
+      const continueTitleWithDraft = continueButton.title
+
+      element.setDraft('')
+      await element.updateComplete
+      const continueEnabledWithoutDraft = !continueButton.disabled
+      continueButton.click()
+      await element.updateComplete
+      const draftAfterContinue = root.querySelector('textarea')?.value
+
+      element.pending = true
+      await element.updateComplete
+      const continueDisabledWhilePending = (root.querySelector('.continue-button') as HTMLButtonElement).disabled
+
+      return {
+        beforeAcceptedRun,
+        stop: { disabled: stop.disabled, label: stop.getAttribute('aria-label'), events: stopEvents },
+        continue: { disabledWithDraft: continueDisabledWithDraft, titleWithDraft: continueTitleWithDraft, enabledWithoutDraft: continueEnabledWithoutDraft, submits, draftBeforeContinue, draftAfterContinue },
+        continueDisabledWhilePending,
+      }
+    })
+
+    expect(result).toEqual({
+      beforeAcceptedRun: false,
+      stop: {
+        disabled: false,
+        label: 'Stop response',
+        events: [{ detail: { runId: 'run-accepted' }, bubbles: true, composed: true }],
+      },
+      continue: {
+        disabledWithDraft: true,
+        titleWithDraft: 'Clear your draft to continue the previous response',
+        enabledWithoutDraft: true,
+        submits: [{ input: 'Continue your previous response from where you stopped.', references: [] }],
+        draftBeforeContinue: 'Keep this new question',
+        draftAfterContinue: '',
+      },
+      continueDisabledWhilePending: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('touch-primary composer reserves Return for newlines and enlarges the send target', async () => {
   const context = await browser.newContext({
 	viewport: { width: 390, height: 844 },
@@ -266,7 +345,7 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = element.shadowRoot as ShadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const contextButton = root.querySelector('.context-button') as HTMLButtonElement
       textarea.value = 'Compare revenue'
@@ -289,6 +368,52 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
       expanded: 'true',
       controls: 'chat-context-options',
       pickerLabel: 'Add LeapView context',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('composer presents edit mode, targets the selected message, and cancels safely', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+    const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+      element.editMessageId = 'user-1'
+      element.editing = true
+      element.setDraft('Rewrite this answer')
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const submit = new Promise<any>((resolve) => element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true }))
+      const editState = {
+        banner: root.querySelector('.edit-banner')?.textContent?.replace(/\s+/g, ' ').trim(),
+        sendLabel: root.querySelector('.send-button')?.getAttribute('aria-label'),
+        cancel: root.querySelector('.cancel-edit')?.textContent?.trim(),
+      }
+      root.querySelector<HTMLFormElement>('form')?.requestSubmit()
+      const submitted = await submit
+      let cancelCount = 0
+      element.addEventListener('lv-chat-edit-cancel', () => cancelCount += 1)
+      root.querySelector<HTMLButtonElement>('.cancel-edit')?.click()
+      await element.updateComplete
+      return {
+        editState,
+        submitted,
+        afterCancel: {
+          editMessageId: element.editMessageId,
+          editing: element.editing,
+          draft: root.querySelector<HTMLTextAreaElement>('textarea')?.value,
+          hasBanner: Boolean(element.shadowRoot.querySelector('.edit-banner')),
+          cancelCount,
+        },
+      }
+    })
+
+    expect(result).toEqual({
+      editState: { banner: 'Editing message Cancel', sendLabel: 'Save & send', cancel: 'Cancel' },
+      submitted: { input: 'Rewrite this answer', references: [], editMessageId: 'user-1' },
+      afterCancel: { editMessageId: '', editing: false, draft: '', hasBanner: false, cancelCount: 1 },
     })
   } finally {
     await page.close()
@@ -378,6 +503,8 @@ test('composer consumes attachments only after a user turn is accepted', async (
       }
       element.acceptedRunId = 'run_previous'
       await element.updateComplete
+	  element.editMessageId = 'user-1'
+	  element.editing = true
 	  element.references = [reference]
 	  await element.updateComplete
       const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
@@ -387,26 +514,26 @@ test('composer consumes attachments only after a user turn is accepted', async (
       element.addEventListener('lv-chat-references-change', (event: CustomEvent) => changes.push(event.detail.references))
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       await element.updateComplete
-      const afterSubmit = { draft: textarea.value, references: element.references.length, changes: changes.length }
+	  const afterSubmit = { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, changes: changes.length }
 
       // A rejected request returns no newly persisted user run.
       element.value = ''
       await element.updateComplete
-      const afterRejected = { draft: textarea.value, references: element.references.length, changes: changes.length }
+	  const afterRejected = { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, changes: changes.length }
 
       // The persisted user message identifies the accepted turn before model completion.
       element.acceptedRunId = 'run_new'
       await element.updateComplete
-      return {
-        afterSubmit,
-        afterRejected,
-        afterAccepted: { draft: textarea.value, references: element.references.length, changes },
-      }
+	  return {
+		  afterSubmit,
+		  afterRejected,
+		  afterAccepted: { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, editing: element.editing, changes },
+	  }
     })
 
-    expect(result.afterSubmit).toEqual({ draft: 'Why did revenue fall?', references: 1, changes: 0 })
-    expect(result.afterRejected).toEqual({ draft: 'Why did revenue fall?', references: 1, changes: 0 })
-    expect(result.afterAccepted).toEqual({ draft: '', references: 0, changes: [[]] })
+	 expect(result.afterSubmit).toEqual({ draft: 'Why did revenue fall?', references: 1, editMessageId: 'user-1', changes: 0 })
+	 expect(result.afterRejected).toEqual({ draft: 'Why did revenue fall?', references: 1, editMessageId: 'user-1', changes: 0 })
+	 expect(result.afterAccepted).toEqual({ draft: '', references: 0, editMessageId: '', editing: false, changes: [[]] })
   } finally {
     await page.close()
   }

@@ -103,8 +103,9 @@ SET search_path = pg_catalog
 AS $$
 BEGIN
     IF TG_OP = 'DELETE'
-       AND current_setting('agent.retention', true) = 'on'
-       AND session_user = 'leapview_control_maintenance' THEN
+       AND ((current_setting('agent.retention', true) = 'on'
+             AND session_user = 'leapview_control_maintenance')
+            OR current_setting('agent.chat_delete', true) = 'on') THEN
         RETURN OLD;
     END IF;
     RAISE EXCEPTION 'agent history is immutable';
@@ -127,6 +128,46 @@ DROP TRIGGER IF EXISTS events_append_only ON agent.events;
 CREATE TRIGGER events_append_only
     BEFORE UPDATE OR DELETE ON agent.events
     FOR EACH ROW EXECUTE FUNCTION agent.reject_history_mutation();
+
+-- Runtime callers deliberately have no table DELETE privilege. This narrow
+-- security-definer function is the only runtime deletion path; it validates
+-- the owner scope, locks the conversation, rejects active runs, and enables
+-- the trigger marker only for its own cascading delete. Audit rows live in
+-- the caller-owned audit authority and are recorded after this row is gone.
+CREATE OR REPLACE FUNCTION agent.delete_agent_conversation(
+    p_id text,
+    p_principal_id text
+)
+RETURNS SETOF agent.conversations
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, agent
+AS $$
+DECLARE
+    deleted agent.conversations%ROWTYPE;
+BEGIN
+    SELECT c.* INTO deleted
+    FROM agent.conversations AS c
+    WHERE c.id = p_id
+      AND c.principal_id = p_principal_id
+      AND c.status IN ('active', 'archived')
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM agent.runs
+        WHERE conversation_id = deleted.id
+          AND status IN ('preparing', 'running')
+    ) THEN
+        RAISE EXCEPTION 'conversation has an active run' USING ERRCODE = '55006';
+    END IF;
+    PERFORM set_config('agent.chat_delete', 'on', true);
+    DELETE FROM agent.conversations WHERE id = deleted.id;
+    RETURN NEXT deleted;
+    RETURN;
+END;
+$$;
 
 -- Remove one bounded batch of run-stream events.  The target is capped by the
 -- database clock and cannot move backwards from a previously drained floor.
@@ -438,6 +479,7 @@ BEGIN
         GRANT USAGE ON SCHEMA agent TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON agent.conversations, agent.runs TO leapview_control_runtime;
         GRANT SELECT, INSERT ON agent.messages, agent.events TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION agent.delete_agent_conversation(text, text) TO leapview_control_runtime;
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA agent TO leapview_control_runtime;
         REVOKE DELETE ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION agent.prune_archived_run_events(timestamptz, integer), agent.prune_archived_conversations(timestamptz, integer), agent.prune_archived_agent_history(timestamptz, integer) FROM leapview_control_runtime;

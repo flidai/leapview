@@ -24,14 +24,14 @@ import {
 	UsersRound,
 	User,
 	Waypoints,
-  Workflow,
-  X,
-  type IconNode,
+	Workflow,
+	X,
+	type IconNode,
 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { leapViewBrandName } from '../shared/brand-mark'
 import { sidebarControlStyles } from './sidebar-controls'
-import '../shared/loading-spinner'
+import { renderSidebarChatHistory, sidebarChatHistoryStyles, type SidebarHistory, type SidebarHistoryItem } from './sidebar-chat-history'
 import '../shared/user-avatar'
 
 type NavItem = {
@@ -81,20 +81,6 @@ type SidebarAction = {
   label: string
   href: string
   icon: IconName
-}
-
-type SidebarHistory = {
-  label: string
-  emptyText?: string
-  items: SidebarHistoryItem[]
-}
-
-type SidebarHistoryItem = {
-  id: string
-  title: string
-  href: string
-  active?: boolean
-  pending?: boolean
 }
 
 type SidebarStatus = {
@@ -186,6 +172,7 @@ const statusConverter = {
 class LeapViewSidebar extends LitElement {
   @property({ attribute: 'config', converter: configConverter }) config: SidebarConfig = defaultConfig
   @property({ attribute: 'status', converter: statusConverter }) status: SidebarStatus = {}
+  @property({ attribute: false }) pendingRemovalId = ''
   @state() private collapsed = storedCollapsed()
   @state() private peeking = false
   @state() private mobileOpen = false
@@ -197,7 +184,7 @@ class LeapViewSidebar extends LitElement {
   private mobileMediaQuery?: MediaQueryList
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = [sidebarControlStyles, css`
+  static styles = [sidebarControlStyles, sidebarChatHistoryStyles, css`
     :host {
       --lv-sidebar-width-default: var(--lv-sidebar-width-expanded);
       --lv-sidebar-width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
@@ -640,51 +627,6 @@ class LeapViewSidebar extends LitElement {
       transform: rotate(-3deg) scale(1.06);
     }
 
-    .history {
-      display: grid;
-      gap: var(--base-size-4);
-      min-height: 0;
-      padding-top: var(--base-size-8);
-    }
-
-    .history-label {
-      overflow: hidden;
-      margin:
-        0
-        var(--control-xsmall-paddingInline-normal)
-        0
-        calc(var(--base-size-12) + var(--lv-border-width));
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-caption);
-      letter-spacing: 0;
-    }
-
-    .history-list {
-      display: grid;
-      gap: var(--base-size-2);
-      min-height: 0;
-    }
-
-    .nav-item.history-item {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .history-title {
-      overflow: hidden;
-      min-width: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body);
-    }
-
-    .history-empty {
-      padding: var(--base-size-4) var(--base-size-12);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
     a,
     button {
       font: inherit;
@@ -1104,11 +1046,6 @@ class LeapViewSidebar extends LitElement {
       .mobile-drawer-title {
         font: var(--lv-type-body-large);
         font-weight: var(--base-text-weight-semibold);
-      }
-
-      .history,
-      :host([data-collapsed]) .history {
-        display: grid;
       }
 
       .nav-group,
@@ -1720,28 +1657,11 @@ class LeapViewSidebar extends LitElement {
   }
 
   private renderHistory() {
-    const history = this.config.history
-    if (!history) return null
-    const items = Array.isArray(history.items) ? history.items : []
-    return html`
-      <section class="history" aria-label=${history.label || 'Chats'}>
-        <strong class="history-label">${history.label || 'Chats'}</strong>
-        <div class="history-list">
-          ${items.length === 0 ? html`<span class="history-empty">${history.emptyText || 'No chats yet.'}</span>` : null}
-          ${items.map((item) => this.renderHistoryItem(item))}
-        </div>
-      </section>
-    `
+    return renderSidebarChatHistory(this.config.history, this.pendingRemovalId, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
   }
 
-  private renderHistoryItem(item: SidebarHistoryItem) {
-    const title = item.title || 'Conversation'
-    return html`
-      <a class="nav-item history-item" href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => this.followInternalLink(event, item.href)}>
-        <span class="history-title">${title}</span>
-        ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
-      </a>
-    `
+  private chatAction(action: string, item: SidebarHistoryItem) {
+    this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: item.id, title: item.title } }))
   }
 
   private followInternalLink(event: MouseEvent, href: string): void {

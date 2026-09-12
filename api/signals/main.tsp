@@ -844,6 +844,7 @@ model AgentContextSignal {
 }
 
 model ChatConversationSummary {
+  `pinned`?: boolean;
   `archivedAt`?: string;
   `createdAt`: string;
   `id`: string;
@@ -859,6 +860,8 @@ model ChatConversationSummary {
 @apigen.contract(#{ kind: "ui-envelope", tags: #["chat", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "chat" })
 model ChatEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chatManagement" })
+  `chatManagement`?: ChatManagementSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agent" })
   `agent`: ChatSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentContext" })
@@ -894,13 +897,29 @@ model ChatSignal {
   `transcript`: ChatTranscriptItemSignal[];
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["chat", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "chat" })
+model ChatManagementSignal {
+  `completedRequestId`?: string;
+  `undoDeadline`?: string;
+  `action`: string;
+  `conversationId`: string;
+  `archivedConversations`: ChatConversationSummary[];
+  `error`?: string;
+  `message`?: string;
+  `requestId`?: string;
+}
+
 model ChatStatus {
+  `canContinue`?: boolean;
+  `runId`?: string;
   `enabled`: boolean;
   `error`?: string;
   `running`: boolean;
 }
 
 model ChatTranscriptItemSignal {
+  `edited`?: boolean;
   `argumentsJson`?: string;
   `artifact`?: ChatArtifactSignal;
   `conversationId`?: string;
@@ -933,6 +952,7 @@ model ChromeSignal {
 }
 
 model ComposerSignal {
+  `editMessageId`?: string;
   `disabled`: boolean;
   `placeholder`: string;
   `value`: string;
@@ -2059,6 +2079,7 @@ model SidebarGroupSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
 model SidebarHistoryItemSignal {
+  `pinned`?: boolean;
   `active`: boolean;
   `href`: string;
   `id`: string;

@@ -7,6 +7,7 @@ import type {
 	AgentReferenceSearchSignal,
 	AgentReferenceSignal,
 	ChatSignal,
+	ChatTranscriptItemSignal,
 } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -39,7 +40,10 @@ class ChatDrawer extends DatastarLit(LitElement) {
   @property({ attribute: false }) suggestions: AgentReferenceSignal[] = []
   @state() private references: AgentReferenceSignal[] = []
   @state() private referenceLimitMessage = ''
+	@state() private editMessageId = ''
   private focusReturnTarget: HTMLElement | null = null
+	private trackedConversationID: string | null = null
+	private trackedAcceptedRunID: string | null = null
 
   static styles = css`
     :host {
@@ -134,6 +138,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
       outline: 0;
     }
 
+    a[aria-disabled="true"] { opacity: 0.5; cursor: wait; }
+
     button:disabled {
       color: var(--lv-fg-muted);
       cursor: not-allowed;
@@ -143,6 +149,15 @@ class ChatDrawer extends DatastarLit(LitElement) {
     button:disabled:hover {
       background: transparent;
     }
+
+    .text-action { font: var(--lv-type-caption); width: auto; display: inline-flex; gap: var(--lv-space-xs); padding-inline: var(--lv-space-sm); }
+    .welcome { min-height: 0; overflow: auto; padding: var(--lv-space-lg); display: flex; flex-direction: column; justify-content: center; gap: var(--lv-space-md); }
+    .welcome h2 { margin: 0; font: var(--lv-type-section-title); }
+    .welcome p { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-body); }
+    .prompts { display: grid; gap: var(--lv-space-sm); }
+    .prompt { width: 100%; height: auto; min-height: var(--control-large-size); padding: var(--lv-space-md); text-align: left; justify-content: start; border: var(--lv-border-muted); background: var(--lv-bg-panel); color: var(--lv-fg-default); font: inherit; }
+    .context-hint { color: var(--lv-fg-muted); }
+    button:focus-visible, a:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-line-accent); outline-offset: var(--lv-space-2xs); }
 
     .close-action {
       margin-left: var(--lv-space-xs);
@@ -204,6 +219,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
       min-height: 0;
       overflow: hidden;
     }
+
+    lv-chat-thread[hidden] { display: none; }
 
     lv-chat-composer {
       display: block;
@@ -298,6 +315,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
   protected updated(changed: Map<string, unknown>): void {
+		this.syncEditState()
     if (!changed.has('open')) return
     if (!this.open) {
       this.focusReturnTarget?.focus()
@@ -338,40 +356,54 @@ class ChatDrawer extends DatastarLit(LitElement) {
       ? `/chats/${encodeURIComponent(agent.activeConversationId)}`
       : '/chats/new'
     const agentEnabled = Boolean(agent.status?.enabled)
+    const showWelcome = agentEnabled && !this.pending && !agent.status.error && !(agent.transcript?.length)
     return html`
 		<aside class="drawer" role="dialog" aria-modal="false" aria-label="Dashboard agent" aria-hidden=${String(!this.open)} ?inert=${!this.open} @keydown=${this.handleKeydown}>
         <header class="header">
           <div class="toolbar">
-            <div class="title">${agentIcon()}<span>Agent</span></div>
+            <div class="title">${agentIcon()}<span>Dashboard agent</span></div>
             <div class="toolbar-actions">
-              <button type="button" title=${agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled} @click=${this.newChat}>${lucideIcon(Plus)}</button>
-              <a href=${conversationHref} title="Open full chat" aria-label="Open full chat">${lucideIcon(ExternalLink)}</a>
+              <button class="text-action" type="button" title=${this.pending ? 'Wait for the current answer to finish' : agentEnabled ? 'New chat' : 'Agent is not configured'} aria-label="New chat" ?disabled=${!agentEnabled || this.pending} @click=${this.newChat}>${lucideIcon(Plus)}<span>New chat</span></button>
+              <a class="text-action" href=${conversationHref} title="Open full chat" aria-label="Open full chat" aria-disabled=${String(this.pending && !agent.activeConversationId)} @click=${(event: MouseEvent) => { if (this.pending && !agent.activeConversationId) event.preventDefault() }}>${lucideIcon(ExternalLink)}<span>Full chat</span></a>
 					  <button class="close-action" type="button" title="Close" aria-label="Close agent" @click=${this.closeDrawer}>${lucideIcon(X)}</button>
             </div>
           </div>
           <section class="context" aria-label="Included dashboard context">
             <div class="context-line">
               <span class="page-context">${context?.pageTitle || 'Current page'}</span>
-              <span class="context-separator" aria-hidden="true">·</span>
-              <span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>
+              ${controls || selections ? html`<span class="context-separator" aria-hidden="true">·</span><span class="filter-context">${controls} ${controls === 1 ? 'filter' : 'filters'} · ${selections} ${selections === 1 ? 'selection' : 'selections'}</span>` : html`<span class="context-hint">· Page included</span>`}
             </div>
             ${this.referenceLimitMessage ? html`
               <div class="reference-limit-status" data-reference-limit-status role="status" aria-live="polite">${this.referenceLimitMessage}</div>
             ` : null}
           </section>
         </header>
-        <lv-chat-thread
+        ${showWelcome ? html`
+          <section class="welcome" aria-label="Start a dashboard conversation">
+            <h2>What would you like to understand?</h2>
+            <p>Ask about ${context?.exploration ? 'this data' : context?.dashboardTitle || 'this dashboard'}. Your current page, filters, and selections are included.</p>
+            <div class="prompts">
+              ${['Summarize the key takeaways on this page.', 'Explain how the main metrics are calculated.', 'Which results stand out, and why?'].map(prompt => html`<button class="prompt" @click=${() => this.fillPrompt(prompt)}>${prompt}</button>`)}
+            </div>
+            <p>Choose a question to edit, or use @ to attach a specific chart.</p>
+          </section>
+        ` : null}
+        <lv-chat-thread ?hidden=${showWelcome}
           surface="drawer"
           .transcript=${agent.transcript ?? []}
           .visuals=${this.visuals}
-          .status=${agent.status}
+          .status=${this.pending ? { ...agent.status, running: true } : agent.status}
           conversation-id=${agent.activeConversationId ?? ''}
+          @lv-chat-reuse=${this.reuseDraft}
         ></lv-chat-thread>
         <lv-chat-composer
           .value=${agent.composer.value ?? ''}
           .disabled=${this.pending || agent.composer.disabled || !agentEnabled}
           .pending=${this.pending}
-          .placeholder=${agentEnabled ? agent.composer.placeholder || 'Ask about this dashboard…' : 'Agent is not configured'}
+          .running=${Boolean(agent.status.running)}
+          .runId=${agent.status.runId ?? ''}
+          .canContinue=${Boolean(agent.status.canContinue)}
+          .placeholder=${agentEnabled ? context?.exploration ? 'Ask about this data…' : 'Ask about this dashboard…' : 'Agent is not configured'}
           .references=${this.references}
           .referenceLimit=${context?.referenceLimit ?? defaultAgentReferenceLimit}
           .pinnedSuggestions=${pinnedSuggestions}
@@ -379,13 +411,24 @@ class ChatDrawer extends DatastarLit(LitElement) {
           .suggestionQuery=${this.referenceSearch.query}
           .suggestionRequestId=${this.referenceSearch.requestId}
 			.acceptedRunId=${latestAcceptedRunId(agent.transcript ?? [])}
+			.editMessageId=${this.editMessageId}
+			.editing=${Boolean(this.editMessageId)}
           @lv-chat-references-change=${this.referencesChanged}
+			@lv-chat-edit-cancel=${this.cancelEdit}
         ></lv-chat-composer>
       </aside>
     `
   }
 
+  private fillPrompt(prompt: string) {
+    const composer = this.shadowRoot?.querySelector('lv-chat-composer') as (HTMLElement & { setDraft(value: string): void }) | null
+    composer?.setDraft(prompt)
+  }
+
   private newChat() {
+    if (this.pending) return
+		this.clearEditMessage()
+    this.fillPrompt('')
     this.references = []
     this.referenceLimitMessage = ''
     this.notifyReferences()
@@ -410,6 +453,59 @@ class ChatDrawer extends DatastarLit(LitElement) {
     this.notifyReferences()
   }
 
+	private reuseDraft(event: CustomEvent<ChatReuseDetail>): void {
+		if (this.pending) return
+		const detail = event.detail ?? { text: '', references: [] }
+		const hasEditTarget = Object.prototype.hasOwnProperty.call(detail, 'editMessageId')
+		if (hasEditTarget) {
+			const editMessageId = typeof detail.editMessageId === 'string' ? detail.editMessageId.trim() : ''
+			if (!editMessageId || !this.canEditMessage(editMessageId)) return
+			this.editMessageId = editMessageId
+		} else {
+			this.clearEditMessage()
+		}
+		this.references = mergeReferences(detail.references ?? []).slice(0, this.normalizedReferenceLimit())
+		this.referenceLimitMessage = ''
+		this.notifyReferences()
+		this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(detail.text ?? '')
+	}
+
+	private syncEditState(): void {
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const acceptedRunID = latestAcceptedRunId(this.agent.transcript ?? [])
+		if (this.editMessageId && this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
+			this.references = []
+			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
+		}
+		if (
+			(this.trackedConversationID !== null && this.trackedConversationID !== conversationID)
+			|| (this.trackedAcceptedRunID !== null && acceptedRunID && this.trackedAcceptedRunID !== acceptedRunID)
+		) {
+			this.clearEditMessage()
+		}
+		this.trackedConversationID = conversationID
+		this.trackedAcceptedRunID = acceptedRunID
+	}
+
+	private canEditMessage(editMessageId: string): boolean {
+		const conversationID = this.agent.activeConversationId?.trim()
+		if (!conversationID) return false
+		return (this.agent.transcript ?? []).some((item) =>
+			item.kind === 'user'
+			&& typeof item.id === 'string'
+			&& item.id.trim() === editMessageId
+			&& (!item.conversationId?.trim() || item.conversationId.trim() === conversationID),
+		)
+	}
+
+	private clearEditMessage(): void {
+		if (this.editMessageId) this.editMessageId = ''
+	}
+
+	private cancelEdit = (): void => {
+		this.clearEditMessage()
+	}
+
   private normalizedReferenceLimit(): number {
 		return normalizeReferenceLimit(this.context?.referenceLimit ?? defaultAgentReferenceLimit)
   }
@@ -417,6 +513,12 @@ class ChatDrawer extends DatastarLit(LitElement) {
   private notifyReferences() {
     emitDomainEvent<ChatReferencesChangeDetail>(this, domainEvents.agentReferencesChange, { references: this.references })
   }
+}
+
+type ChatReuseDetail = {
+	text: string
+	references?: ChatTranscriptItemSignal['references']
+	editMessageId?: string
 }
 
 function deepActiveElement(root: Document | ShadowRoot): HTMLElement | null {

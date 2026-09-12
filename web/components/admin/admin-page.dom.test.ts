@@ -177,7 +177,7 @@ test('profile settings renders the signed-in identity and editable local fields'
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
         text: profileRoot.textContent?.replace(/\s+/g, ' ').trim(),
-        nestedHeadings: profileRoot.querySelectorAll('h2').length,
+        sectionHeadings: Array.from(profileRoot.querySelectorAll('h2'), heading => heading.textContent?.trim()),
         mainCentered: Math.abs((main.getBoundingClientRect().left + main.getBoundingClientRect().width / 2) - (route.getBoundingClientRect().left + route.getBoundingClientRect().width / 2)) <= 1,
         mainWidth: Math.round(main.getBoundingClientRect().width),
         headerGap: Math.round(profile.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
@@ -245,7 +245,10 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.themeTriggerFocusedAfterEscape).toBe(true)
     expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
     expect(state.appliedTheme).toBe('dark_colorblind')
-    expect(state.nestedHeadings).toBe(0)
+    expect(state.sectionHeadings).toEqual(['Chat history'])
+    expect(state.text).toContain('Archived chats')
+    expect(state.text).toContain('Archive all chats')
+    expect(state.text).toContain('Delete all chats')
     expect(state.mainCentered).toBe(true)
     expect(state.mainWidth).toBe(640)
     expect(state.headerGap).toBeGreaterThanOrEqual(16)

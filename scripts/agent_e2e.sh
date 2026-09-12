@@ -4,10 +4,40 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-DEEPSEEK_KEY="${DEEPSEEK_API_TOKEN:-${DEEPSEEK_API_KEY:-}}"
-if [[ -z "$DEEPSEEK_KEY" ]]; then
-  echo "DEEPSEEK_API_TOKEN or DEEPSEEK_API_KEY is required" >&2
-  exit 1
+configure_agent_provider() {
+  # A generic agent key is authoritative. It must travel with an explicit
+  # model so a non-DeepSeek provider can never silently inherit the legacy
+  # DeepSeek model default.
+  if [[ -n "${LEAPVIEW_AGENT_API_KEY:-}" ]]; then
+    if [[ -z "${LEAPVIEW_AGENT_MODEL:-}" ]]; then
+      echo "LEAPVIEW_AGENT_MODEL is required when LEAPVIEW_AGENT_API_KEY is set" >&2
+      exit 1
+    fi
+    export LEAPVIEW_AGENT_BASE_URL="${LEAPVIEW_AGENT_BASE_URL:-https://api.openai.com/v1}"
+    return 0
+  fi
+
+  # Keep the existing DeepSeek environment names as a compatibility fallback
+  # only when the generic provider key is absent. Explicit generic base/model
+  # values remain intact when callers use the legacy key names.
+  local deepseek_key="${DEEPSEEK_API_TOKEN:-${DEEPSEEK_API_KEY:-}}"
+  if [[ -z "$deepseek_key" ]]; then
+    echo "LEAPVIEW_AGENT_API_KEY or DEEPSEEK_API_TOKEN/DEEPSEEK_API_KEY is required" >&2
+    exit 1
+  fi
+  export LEAPVIEW_AGENT_API_KEY="$deepseek_key"
+  export LEAPVIEW_AGENT_BASE_URL="${LEAPVIEW_AGENT_BASE_URL:-https://api.deepseek.com}"
+  export LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"
+}
+
+configure_agent_provider
+
+# Keep provider resolution independently testable without bootstrapping
+# PostgreSQL, building binaries, or making provider calls.
+if [[ "${1:-}" == "--check-config" ]]; then
+  printf 'api_key_configured=%s\nbase_url=%s\nmodel=%s\n' \
+    "${LEAPVIEW_AGENT_API_KEY:+true}" "$LEAPVIEW_AGENT_BASE_URL" "$LEAPVIEW_AGENT_MODEL"
+  exit 0
 fi
 
 REPORT_PATH="${AGENT_EVAL_REPORT:-$ROOT/.data/agent-e2e/report.json}"
@@ -58,9 +88,6 @@ export LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES=536870912
 export LEAPVIEW_DEV_API_TOKEN="agent-e2e-dev-token"
 export LEAPVIEW_CSRF_KEY="agent-e2e-csrf-key-agent-e2e-csrf-key"
 export LEAPVIEW_METRICS_BEARER_TOKEN="agent-e2e-metrics-token-agent-e2e"
-export LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_KEY"
-export LEAPVIEW_AGENT_BASE_URL="https://api.deepseek.com"
-export LEAPVIEW_AGENT_MODEL="${LEAPVIEW_AGENT_MODEL:-deepseek-v4-flash}"
 
 TOKEN="$LEAPVIEW_DEV_API_TOKEN"
 PROJECT_ID="${LEAPVIEW_DEV_PROJECT_ID:-project:leapview-showcase}"
@@ -72,7 +99,7 @@ SERVER_PID="$!"
 
 ready=false
 for _ in {1..120}; do
-  if [[ -f "$ROOT/.tmp/dev-server.port" ]] && [[ "$(cat "$ROOT/.tmp/dev-server.port" 2>/dev/null || true)" == "$PORT" ]] && curl -fsS -H "Authorization: Bearer $TOKEN" "$TARGET/api/v1/projects?limit=1" >/dev/null 2>&1; then
+  if [[ -f "$ROOT/.tmp/dev-server.port" ]] && [[ "$(cat "$ROOT/.tmp/dev-server.port" 2>/dev/null || true)" == "$PORT" ]] && curl -fsS "$TARGET/healthz" >/dev/null 2>&1; then
     ready=true
     break
   fi

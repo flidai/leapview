@@ -201,6 +201,14 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 		stream := &eventModelStream{run: run, turnID: turnID, messageID: messageID}
 		resp, err := a.completeTurn(ctx, run, turnID, stream, false)
 		if err != nil {
+			// Keep text already shown to the user when they stop generation.
+			// Incomplete tool calls are deliberately excluded from the transcript.
+			if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+				if content := stream.partialContent(); strings.TrimSpace(content) != "" {
+					part := stream.finish(context.WithoutCancel(ctx), content)
+					a.appendTranscript(Message{ID: messageID, OutputPartID: part.ID, OutputOrdinal: part.Ordinal, ParentMessageID: messageID, Role: RoleAssistant, Content: content, FinishReason: FinishReasonTruncated})
+				}
+			}
 			if errors.Is(err, errContextLimitStop) {
 				result.StopReason = StopReasonContextLimit
 				_ = run.emit(ctx, Event{Type: EventTypeTurnEnd, Severity: SeverityWarn, TurnID: turnID, StopReason: result.StopReason})

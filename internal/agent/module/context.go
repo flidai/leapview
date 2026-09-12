@@ -330,7 +330,9 @@ func ResolveDashboardTurnReferences(candidates []agent.TurnReference, context Da
 		if strings.ToLower(strings.TrimSpace(candidate.Reference.Kind)) != "visual" {
 			continue
 		}
-		if strings.TrimSpace(candidate.Resource.ID) != context.Resource.ID {
+		candidateResourceID := strings.TrimSpace(candidate.Resource.ID)
+		contextResourceID := strings.TrimSpace(context.Resource.ID)
+		if candidateResourceID != "" && candidateResourceID != contextResourceID {
 			continue
 		}
 		visualID := lastAgentContextReferencePart(candidate.Reference.ID)

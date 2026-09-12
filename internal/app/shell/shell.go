@@ -4,12 +4,15 @@ import (
 	"net/url"
 	"strings"
 
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
+	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	g "maragu.dev/gomponents"
 )
 
 type Conversation struct {
+	Pinned       *bool
 	ID           string
 	Title        string
 	TitlePending *bool
@@ -97,6 +100,7 @@ type History struct {
 }
 
 type HistoryItem struct {
+	Pinned  *bool  `json:"pinned,omitempty"`
 	Active  bool   `json:"active"`
 	Href    string `json:"href"`
 	ID      string `json:"id"`
@@ -145,7 +149,12 @@ func Provider(config Config) webpage.Provider {
 			Signal:       Chrome{Sidebar: sidebar},
 			Scripts:      []string{"/static/app-shell.js"},
 			Mount: func(content g.Node, attrs ...g.Node) g.Node {
-				return g.El("lv-app-shell", append(attrs, content)...)
+				bindings := []g.Node{
+					g.Attr("data-on:lv-chat-management", "$chatManagement = {action: evt.detail.action, conversationId: evt.detail.conversationId, requestId: evt.detail.requestId, archivedConversations: []}; "+uiactions.CommandPost(agentgen.GenUIActionManageAgentConversations(), "/chats/manage", "chatManagement")),
+					g.Attr("data-on:lv-chat-management-load", "$chatManagement = {action: '', conversationId: '', requestId: evt.detail.requestId, archivedConversations: []}; "+uiactions.Get("/chats/management", "chatManagement")),
+				}
+				bindings = append(bindings, attrs...)
+				return g.El("lv-app-shell", append(bindings, content)...)
 			},
 		}
 	}
@@ -276,7 +285,7 @@ func historyItems(config Config, activeConversationID string) []HistoryItem {
 		items = append(items, HistoryItem{
 			ID: conversation.ID, Title: firstNonEmpty(conversation.Title, "Conversation"),
 			Href:   "/chats/" + url.PathEscape(conversation.ID),
-			Active: conversation.ID == activeConversationID, Pending: conversation.TitlePending,
+			Active: conversation.ID == activeConversationID, Pending: conversation.TitlePending, Pinned: conversation.Pinned,
 		})
 	}
 	return items

@@ -598,7 +598,11 @@ func categoryDimension(visual visualPlan, alias string) ([]reportdef.QueryField,
 	if len(visual.Dimensions) == 0 {
 		return nil, reportdef.QueryTime{}
 	}
-	return []reportdef.QueryField{fieldRef(visual.Dimensions[0].FieldID, alias)}, reportdef.QueryTime{}
+	dimension := visual.Dimensions[0]
+	if dimension.Grain != "" {
+		return nil, reportdef.QueryTime{Field: dimension.FieldID, Grain: dimension.Grain, Alias: alias}
+	}
+	return []reportdef.QueryField{fieldRef(dimension.FieldID, alias)}, reportdef.QueryTime{}
 }
 
 func (s *VisualizationDataService) categoryDeltaData(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, visualID string, visual visualPlan, filters dashboard.Filters) ([]dashboard.Datum, error) {

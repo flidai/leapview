@@ -1,7 +1,7 @@
 import { LitElement, css, html } from 'lit'
 import { state } from 'lit/decorators.js'
 import { CircleHelp, LayoutDashboard, TrendingUp, type IconNode } from 'lucide'
-import type { AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal } from '../../generated/signals'
+import type { AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -9,7 +9,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
-import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId } from './reference'
+import { type ChatReferencesChangeDetail, defaultAgentReferenceLimit, latestAcceptedRunId, mergeReferences, normalizeReferenceLimit } from './reference'
 import './chat-composer'
 import './chat-list'
 
@@ -30,6 +30,13 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
   @state() private references: AgentReferenceSignal[] = []
+	@state() private editMessageId = ''
+	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
+	private optimisticConversationID = ''
+	private optimisticEditMessageID = ''
+	private optimisticBaselineMessageIDs = new Set<string>()
+	private trackedConversationID: string | null = null
+	private trackedAcceptedRunID: string | null = null
 
   static styles = css`
     :host {
@@ -312,11 +319,6 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         grid-template-columns: 1fr;
       }
 
-      .main {
-        height: auto;
-        min-height: 100svh;
-      }
-
       .main.new-main {
         height: 100svh;
       }
@@ -345,8 +347,40 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       status: 'required',
       composer: 'required',
     })
+		this.syncEditState()
+		this.syncOptimisticTurn()
     this.navigateFromDraft()
   }
+
+	private syncOptimisticTurn(): void {
+		if (!this.optimisticTurn) return
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const accepted = (this.agent.transcript ?? []).some((item) =>
+			item.kind === 'user'
+			&& Boolean(item.id?.trim())
+			&& !this.optimisticBaselineMessageIDs.has(item.id.trim()),
+		)
+		if (conversationID !== this.optimisticConversationID || accepted || Boolean(this.agent.status?.error)) {
+			this.clearOptimisticTurn()
+		}
+	}
+
+	private syncEditState(): void {
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const acceptedRunID = latestAcceptedRunId(this.agent.transcript ?? [])
+		if (this.editMessageId && this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
+			this.references = []
+			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
+		}
+		if (
+			(this.trackedConversationID !== null && this.trackedConversationID !== conversationID)
+			|| (this.trackedAcceptedRunID !== null && acceptedRunID && this.trackedAcceptedRunID !== acceptedRunID)
+		) {
+			this.clearEditMessage()
+		}
+		this.trackedConversationID = conversationID
+		this.trackedAcceptedRunID = acceptedRunID
+	}
 
   private navigateFromDraft(): void {
     const conversationID = this.agent.activeConversationId?.trim()
@@ -368,7 +402,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   get pending(): boolean {
-    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running)
+    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running) || Boolean(this.optimisticTurn)
   }
 
 	get referenceSearch(): AgentReferenceSearchSignal {
@@ -396,7 +430,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isNew = view === 'new'
     const title = conversationTitle(agent)
     return html`
-      <div class="route">
+      <div class="route" @lv-chat-submit=${this.showOptimisticTurn}>
         <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
           ${isList || isNew ? null : this.renderConversationTitlebar(title)}
           <div class="body">
@@ -458,10 +492,11 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return html`
       <div class="thread-stack">
         <lv-chat-thread
-          .transcript=${agent.transcript ?? []}
+          .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .visuals=${this.visuals ?? {}}
           .status=${status}
           conversation-id=${agent.activeConversationId ?? ''}
+          @lv-chat-reuse=${this.reuseDraft}
         >${status.error ?? ''}</lv-chat-thread>
         ${status.enabled ? this.renderComposer(composer, status) : null}
       </div>
@@ -475,6 +510,9 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         .value=${composer.value ?? ''}
         .disabled=${this.composerDisabled || status.running || composer.disabled}
         .pending=${this.pending || status.running}
+        .running=${Boolean(status.running)}
+        .runId=${status.runId ?? ''}
+        .canContinue=${Boolean(status.canContinue)}
         .placeholder=${composer.placeholder ?? emptyAgent.composer.placeholder}
         .references=${this.references}
         .referenceLimit=${this.context?.referenceLimit ?? defaultAgentReferenceLimit}
@@ -482,7 +520,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
         .suggestionQuery=${this.referenceSearch.query}
         .suggestionRequestId=${this.referenceSearch.requestId}
 		.acceptedRunId=${latestAcceptedRunId(this.agent.transcript ?? [])}
+		.editMessageId=${this.editMessageId}
+		.editing=${Boolean(this.editMessageId)}
         @lv-chat-references-change=${this.referencesChanged}
+		@lv-chat-edit-cancel=${this.cancelEdit}
       ></lv-chat-composer>
     `
   }
@@ -491,9 +532,85 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(prompt)
   }
 
+	private showOptimisticTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string }>): void => {
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const input = event.detail?.input?.trim() ?? ''
+		if (!conversationID || !input) return
+		const transcript = this.agent.transcript ?? []
+		this.optimisticConversationID = conversationID
+		this.optimisticEditMessageID = event.detail?.editMessageId?.trim() ?? ''
+		this.optimisticBaselineMessageIDs = new Set(transcript.map(item => item.id?.trim()).filter((id): id is string => Boolean(id)))
+		this.optimisticTurn = {
+			id: `optimistic-${crypto.randomUUID()}`,
+			kind: 'user',
+			text: input,
+			conversationId: conversationID,
+			references: [...(event.detail?.references ?? [])],
+			...(this.optimisticEditMessageID ? { edited: true } : {}),
+		}
+	}
+
+	private displayTranscript(transcript: ChatTranscriptItemSignal[]): ChatTranscriptItemSignal[] {
+		if (!this.optimisticTurn || this.optimisticConversationID !== (this.agent.activeConversationId?.trim() ?? '')) return transcript
+		if (this.optimisticEditMessageID) {
+			const target = transcript.findIndex(item => item.kind === 'user' && item.id?.trim() === this.optimisticEditMessageID)
+			if (target >= 0) return [...transcript.slice(0, target), this.optimisticTurn]
+		}
+		return [...transcript, this.optimisticTurn]
+	}
+
+	private clearOptimisticTurn(): void {
+		this.optimisticTurn = null
+		this.optimisticConversationID = ''
+		this.optimisticEditMessageID = ''
+		this.optimisticBaselineMessageIDs = new Set()
+	}
+
 	private referencesChanged(event: CustomEvent<ChatReferencesChangeDetail>) {
 		this.references = [...(event.detail.references ?? [])]
 	}
+
+	private reuseDraft(event: CustomEvent<ChatReuseDetail>): void {
+		if (this.pending) return
+		const detail = event.detail ?? { text: '', references: [] }
+		const hasEditTarget = Object.prototype.hasOwnProperty.call(detail, 'editMessageId')
+		if (hasEditTarget) {
+			const editMessageId = typeof detail.editMessageId === 'string' ? detail.editMessageId.trim() : ''
+			if (!editMessageId || !this.canEditMessage(editMessageId)) return
+			this.editMessageId = editMessageId
+		} else {
+			this.clearEditMessage()
+		}
+		const references = mergeReferences(detail.references ?? [])
+			.slice(0, normalizeReferenceLimit(this.context?.referenceLimit ?? defaultAgentReferenceLimit))
+		this.references = references
+		this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(detail.text ?? '')
+	}
+
+	private canEditMessage(editMessageId: string): boolean {
+		const conversationID = this.agent.activeConversationId?.trim()
+		if (!conversationID) return false
+		return (this.agent.transcript ?? []).some((item) =>
+			item.kind === 'user'
+			&& typeof item.id === 'string'
+			&& item.id.trim() === editMessageId
+			&& (!item.conversationId?.trim() || item.conversationId.trim() === conversationID),
+		)
+	}
+
+	private clearEditMessage(): void {
+		if (this.editMessageId) this.editMessageId = ''
+	}
+
+	private cancelEdit = (): void => {
+		this.clearEditMessage()
+	}
+}
+
+type ChatReuseDetail = {
+	text: string
+	references?: ChatTranscriptItemSignal['references']
+	editMessageId?: string
 }
 
 function conversationTitle(agent: ChatSignal): string {

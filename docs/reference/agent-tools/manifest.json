@@ -283,7 +283,7 @@
     },
     {
       "name": "catalog_get",
-      "description": "Resolve one exact authorized project resource ID and return its compact metadata.",
+      "description": "Resolve one exact authorized project resource ID and return compact metadata. For a semantic_model ref, details.metadata.definition contains the bounded active definition (datasets, dimensions, and metrics); use it to explain metric formulas before exporting dashboards or searching documentation.",
       "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
@@ -434,7 +434,7 @@
     },
     {
       "name": "catalog_list",
-      "description": "Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.",
+      "description": "Browse one authorized project-resource hierarchy level when a parent ref is known. Returned refs are exact stable IDs; a page with hasMore false is complete.",
       "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",
@@ -598,7 +598,7 @@
     },
     {
       "name": "catalog_search",
-      "description": "Search authorized project resources by stable ID, name, description, or domain metadata.",
+      "description": "Search authorized project resources by stable ID, name, description, or domain metadata. Use an exact ref from a unique result; do not repeat broad searches when hasMore is false.",
       "authzMode": "privilege",
       "privilege": "RESOURCE_READ",
       "effect": "read",

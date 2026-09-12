@@ -41,3 +41,30 @@ func TestProductAdministrationStatusIsRedacted(t *testing.T) {
 		t.Fatalf("system limits = %#v", status.System.Limits)
 	}
 }
+
+func TestProductAdministrationStatusAgentConfigurationRequiresKeyAndModel(t *testing.T) {
+	tests := []struct {
+		name            string
+		apiKey          string
+		model           string
+		configured      bool
+		modelConfigured bool
+	}{
+		{name: "missing"},
+		{name: "key only", apiKey: "agent-key"},
+		{name: "model only", model: "agent-model", modelConfigured: true},
+		{name: "full", apiKey: "agent-key", model: "agent-model", configured: true, modelConfigured: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status := productAdministrationStatus(config.Config{AgentAPIKey: tt.apiKey, AgentModel: tt.model}, "", "", "", buildinfo.Identity{})
+			if status.System.Agent.Configured != tt.configured {
+				t.Fatalf("configured = %t, want %t", status.System.Agent.Configured, tt.configured)
+			}
+			if status.System.Agent.ModelConfigured != tt.modelConfigured {
+				t.Fatalf("modelConfigured = %t, want %t", status.System.Agent.ModelConfigured, tt.modelConfigured)
+			}
+		})
+	}
+}

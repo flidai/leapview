@@ -657,3 +657,36 @@ func TestInitialTranscriptSeedsModelRequestsAndIsCloned(t *testing.T) {
 		t.Fatalf("tool call was mutated in request: %#v", got[3].ToolCalls)
 	}
 }
+
+func TestAbortRetainsStreamedTextForContinuation(t *testing.T) {
+	started := make(chan struct{})
+	model := ModelFunc(func(ctx context.Context, req ModelRequest, stream ModelStream) (ModelResponse, error) {
+		if err := stream.Delta(ctx, "Partial answer"); err != nil {
+			return ModelResponse{}, err
+		}
+		close(started)
+		<-ctx.Done()
+		return ModelResponse{}, ctx.Err()
+	})
+	a := mustAgent(t, Definition{Name: "test", SystemPrompt: "x", Model: model})
+	done := make(chan error, 1)
+	go func() { _, err := a.Prompt(t.Context(), PromptRequest{Input: "Explain"}); done <- err }()
+	<-started
+	a.Abort()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v", err)
+	}
+	history := a.Transcript()
+	if len(history) != 2 || history[1].Role != RoleAssistant || history[1].Content != "Partial answer" {
+		t.Fatalf("history = %#v", history)
+	}
+	resumed := mustAgent(t, Definition{Name: "test", SystemPrompt: "x", InitialTranscript: history, Model: ModelFunc(func(ctx context.Context, req ModelRequest, stream ModelStream) (ModelResponse, error) {
+		if len(req.Messages) != 4 || req.Messages[2].Content != "Partial answer" {
+			t.Errorf("continuation lost partial answer: %#v", req.Messages)
+		}
+		return ModelResponse{Content: "Continued", FinishReason: FinishReasonStop}, nil
+	})})
+	if _, err := resumed.Prompt(t.Context(), PromptRequest{Input: "Continue"}); err != nil {
+		t.Fatal(err)
+	}
+}

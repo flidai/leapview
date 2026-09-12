@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,11 +35,16 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if !m.config.Enabled() {
 		return agentcore.ModelResponse{}, agentapp.ErrDisabled
 	}
+	streaming := req.Purpose == agentcore.ModelRequestPurposeTurn && stream != nil
 	body := openAIChatRequest{
 		Model:     m.config.Model,
 		Messages:  openAIMessages(req.Messages),
 		Tools:     openAITools(req.Tools),
 		MaxTokens: req.Limits.ReserveOutputTokens,
+		Stream:    streaming,
+	}
+	if streaming {
+		body.StreamOptions = &openAIStreamOptions{IncludeUsage: true}
 	}
 	if disableThinkingForRequest(m.config) {
 		body.Thinking = &openAIThinking{Type: "disabled"}
@@ -53,7 +60,11 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if err != nil {
 		return agentcore.ModelResponse{}, err
 	}
-	httpReq.Header.Set("Accept", "application/json")
+	if streaming {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	} else {
+		httpReq.Header.Set("Accept", "application/json")
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+m.config.APIKey)
 
@@ -62,12 +73,42 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 		return agentcore.ModelResponse{}, err
 	}
 	defer resp.Body.Close()
-	bytes, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		bytes, _ := io.ReadAll(resp.Body)
 		if isContextLimitResponse(resp.StatusCode, string(bytes)) {
 			return agentcore.ModelResponse{}, agentcore.ErrContextLength
 		}
-		return agentcore.ModelResponse{}, fmt.Errorf("chat completion failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bytes)))
+		return agentcore.ModelResponse{}, fmt.Errorf("chat completion failed: status=%d", resp.StatusCode)
+	}
+	if streaming {
+		if !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+			bytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return agentcore.ModelResponse{}, err
+			}
+			var decoded openAIChatResponse
+			if err := json.Unmarshal(bytes, &decoded); err != nil {
+				return agentcore.ModelResponse{}, err
+			}
+			if len(decoded.Choices) == 0 {
+				return agentcore.ModelResponse{}, errors.New("chat completion returned no choices")
+			}
+			out := modelResponseFromChatResponse(decoded, m.config.Model)
+			if out.FinishReason == agentcore.FinishReasonUnknown && len(out.ToolCalls) > 0 {
+				out.FinishReason = agentcore.FinishReasonToolCalls
+			}
+			if out.Content != "" {
+				if err := stream.Delta(ctx, out.Content); err != nil {
+					return agentcore.ModelResponse{}, err
+				}
+			}
+			return out, nil
+		}
+		return m.completeStream(ctx, resp.Body, stream)
+	}
+	bytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return agentcore.ModelResponse{}, err
 	}
 	var decoded openAIChatResponse
 	if err := json.Unmarshal(bytes, &decoded); err != nil {
@@ -76,6 +117,166 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if len(decoded.Choices) == 0 {
 		return agentcore.ModelResponse{}, errors.New("chat completion returned no choices")
 	}
+	out := modelResponseFromChatResponse(decoded, m.config.Model)
+	if out.FinishReason == agentcore.FinishReasonUnknown && len(out.ToolCalls) > 0 {
+		out.FinishReason = agentcore.FinishReasonToolCalls
+	}
+	if req.Purpose == agentcore.ModelRequestPurposeTurn && out.Content != "" && stream != nil {
+		_ = stream.Delta(ctx, out.Content)
+	}
+	return out, nil
+}
+
+func (m *OpenAIModel) completeStream(ctx context.Context, body io.Reader, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
+	reader := bufio.NewReader(body)
+	content := strings.Builder{}
+	toolCalls := make(map[int]*openAIStreamToolCall)
+	selectedChoice := -1
+	seenChoice := false
+	seenDone := false
+	var id string
+	var finishReason string
+	var usage openAIUsage
+
+	for {
+		data, err := readSSEData(reader)
+		if errors.Is(err, io.EOF) {
+			if !seenDone {
+				return agentcore.ModelResponse{}, fmt.Errorf("chat completion stream ended unexpectedly: %w", io.ErrUnexpectedEOF)
+			}
+			break
+		}
+		if err != nil {
+			return agentcore.ModelResponse{}, err
+		}
+		if data == "" {
+			continue
+		}
+		if data == "[DONE]" {
+			seenDone = true
+			break
+		}
+
+		var chunk openAIChatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return agentcore.ModelResponse{}, err
+		}
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			return agentcore.ModelResponse{}, errors.New("chat completion stream returned provider error")
+		}
+		if chunk.ID != "" {
+			id = chunk.ID
+		}
+		if chunk.Usage != nil {
+			usage = *chunk.Usage
+		}
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != nil && strings.EqualFold(*choice.FinishReason, "error") {
+				return agentcore.ModelResponse{}, errors.New("chat completion stream returned provider error")
+			}
+			if !seenChoice {
+				selectedChoice = choice.Index
+				seenChoice = true
+			}
+			if choice.Index != selectedChoice {
+				continue
+			}
+			if choice.Delta.Content != "" {
+				content.WriteString(choice.Delta.Content)
+				if err := stream.Delta(ctx, choice.Delta.Content); err != nil {
+					return agentcore.ModelResponse{}, err
+				}
+			}
+			for _, delta := range choice.Delta.ToolCalls {
+				call := toolCalls[delta.Index]
+				if call == nil {
+					call = &openAIStreamToolCall{}
+					toolCalls[delta.Index] = call
+				}
+				if delta.ID != "" {
+					call.ID = delta.ID
+				}
+				if delta.Type != "" {
+					call.Type = delta.Type
+				}
+				if delta.Function.Name != "" {
+					call.Name = delta.Function.Name
+				}
+				call.Arguments.WriteString(delta.Function.Arguments)
+			}
+			if choice.FinishReason != nil && *choice.FinishReason != "" {
+				finishReason = *choice.FinishReason
+			}
+		}
+	}
+
+	if !seenChoice {
+		return agentcore.ModelResponse{}, errors.New("chat completion returned no choices")
+	}
+	out := agentcore.ModelResponse{
+		Content:      content.String(),
+		FinishReason: agentcore.NormalizeFinishReason(agentcore.FinishReason(finishReason)),
+		Usage: agentcore.Usage{
+			InputTokens:  usage.PromptTokens,
+			OutputTokens: usage.CompletionTokens,
+			TotalTokens:  usage.TotalTokens,
+		},
+		ProviderMetadata: map[string]any{
+			"id":    id,
+			"model": m.config.Model,
+		},
+	}
+	indices := make([]int, 0, len(toolCalls))
+	for index := range toolCalls {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	for _, index := range indices {
+		call := toolCalls[index]
+		if call.Type != "" && call.Type != "function" {
+			continue
+		}
+		out.ToolCalls = append(out.ToolCalls, agentcore.ToolCall{
+			ID:        call.ID,
+			Name:      call.Name,
+			Arguments: json.RawMessage(call.Arguments.String()),
+		})
+	}
+	if out.FinishReason == agentcore.FinishReasonUnknown && len(out.ToolCalls) > 0 {
+		out.FinishReason = agentcore.FinishReasonToolCalls
+	}
+	return out, nil
+}
+
+func readSSEData(reader *bufio.Reader) (string, error) {
+	var data []string
+	for {
+		line, err := reader.ReadString('\n')
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			if len(data) > 0 {
+				return strings.Join(data, "\n"), nil
+			}
+		} else if strings.HasPrefix(line, "data:") {
+			value := strings.TrimPrefix(line, "data:")
+			if strings.HasPrefix(value, " ") {
+				value = value[1:]
+			}
+			data = append(data, value)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				if len(data) > 0 {
+					return strings.Join(data, "\n"), nil
+				}
+				return "", io.EOF
+			}
+			return "", err
+		}
+	}
+}
+
+func modelResponseFromChatResponse(decoded openAIChatResponse, model string) agentcore.ModelResponse {
 	choice := decoded.Choices[0]
 	out := agentcore.ModelResponse{
 		Content:      choice.Message.Content,
@@ -87,7 +288,7 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 		},
 		ProviderMetadata: map[string]any{
 			"id":    decoded.ID,
-			"model": m.config.Model,
+			"model": model,
 		},
 	}
 	for _, call := range choice.Message.ToolCalls {
@@ -100,13 +301,7 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 			Arguments: json.RawMessage(call.Function.Arguments),
 		})
 	}
-	if out.FinishReason == agentcore.FinishReasonUnknown && len(out.ToolCalls) > 0 {
-		out.FinishReason = agentcore.FinishReasonToolCalls
-	}
-	if req.Purpose == agentcore.ModelRequestPurposeTurn && out.Content != "" && stream != nil {
-		_ = stream.Delta(ctx, out.Content)
-	}
-	return out, nil
+	return out
 }
 
 func openAIMessages(messages []agentcore.Message) []openAIMessage {
@@ -137,7 +332,7 @@ func openAITools(tools []agentcore.ToolSpec) []openAITool {
 	for _, tool := range tools {
 		params := json.RawMessage(`{"type":"object"}`)
 		if len(tool.InputSchema) > 0 {
-			params = append(json.RawMessage(nil), tool.InputSchema...)
+			params = compactJSONSchema(tool.InputSchema)
 		}
 		out = append(out, openAITool{
 			Type: "function",
@@ -166,16 +361,22 @@ func disableThinkingForRequest(config agentapp.Config) bool {
 }
 
 type openAIChatRequest struct {
-	Model      string          `json:"model"`
-	Messages   []openAIMessage `json:"messages"`
-	Tools      []openAITool    `json:"tools,omitempty"`
-	ToolChoice string          `json:"tool_choice,omitempty"`
-	MaxTokens  int             `json:"max_tokens,omitempty"`
-	Thinking   *openAIThinking `json:"thinking,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openAIMessage      `json:"messages"`
+	Tools         []openAITool         `json:"tools,omitempty"`
+	ToolChoice    string               `json:"tool_choice,omitempty"`
+	MaxTokens     int                  `json:"max_tokens,omitempty"`
+	Thinking      *openAIThinking      `json:"thinking,omitempty"`
+	Stream        bool                 `json:"stream,omitempty"`
+	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
 }
 
 type openAIThinking struct {
 	Type string `json:"type"`
+}
+
+type openAIStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openAIMessage struct {
@@ -211,6 +412,38 @@ type openAIChatResponse struct {
 	ID      string         `json:"id"`
 	Choices []openAIChoice `json:"choices"`
 	Usage   openAIUsage    `json:"usage"`
+}
+
+type openAIChatStreamChunk struct {
+	ID      string               `json:"id"`
+	Choices []openAIStreamChoice `json:"choices"`
+	Usage   *openAIUsage         `json:"usage"`
+	Error   json.RawMessage      `json:"error"`
+}
+
+type openAIStreamChoice struct {
+	Index        int                `json:"index"`
+	Delta        openAIMessageDelta `json:"delta"`
+	FinishReason *string            `json:"finish_reason"`
+}
+
+type openAIMessageDelta struct {
+	Content   string                `json:"content"`
+	ToolCalls []openAIToolCallDelta `json:"tool_calls"`
+}
+
+type openAIToolCallDelta struct {
+	Index    int                `json:"index"`
+	ID       string             `json:"id"`
+	Type     string             `json:"type"`
+	Function openAIFunctionCall `json:"function"`
+}
+
+type openAIStreamToolCall struct {
+	ID        string
+	Type      string
+	Name      string
+	Arguments strings.Builder
 }
 
 type openAIChoice struct {

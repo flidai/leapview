@@ -25,7 +25,20 @@ SELECT id, principal_id, title, status, metadata_json::text, transcript_json::te
        transcript_revision, created_at, updated_at, archived_at
 FROM agent.conversations
 WHERE principal_id = sqlc.arg(principal_id) AND status = 'active'
-ORDER BY updated_at DESC, created_at DESC, id;
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') = ''
+ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
+         updated_at DESC, created_at DESC, id;
+
+-- name: ListArchivedAgentConversations :many
+SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
+       transcript_revision, created_at, updated_at, archived_at
+FROM agent.conversations
+WHERE principal_id = sqlc.arg(principal_id) AND status = 'archived'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') = ''
+ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 ELSE 1 END,
+         updated_at DESC, created_at DESC, id;
 
 -- name: GetAgentConversation :one
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
@@ -37,16 +50,67 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id);
 UPDATE agent.conversations
 SET status = 'archived', archived_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;
+
+-- name: RestoreAgentConversation :one
+UPDATE agent.conversations
+SET status = 'active', archived_at = NULL, updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'archived'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
+          transcript_revision, created_at, updated_at, archived_at;
+
+-- name: UpdateAgentConversationMetadata :one
+UPDATE agent.conversations
+SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
+          transcript_revision, created_at, updated_at, archived_at;
+
+-- name: UpdatePendingConversationMetadata :execrows
+UPDATE agent.conversations
+SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+WHERE id = sqlc.arg(conversation_id) AND principal_id = sqlc.arg(principal_id)
+  AND status IN ('active', 'archived')
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = '';
+
+-- name: ListPendingConversationActions :many
+SELECT principal_id, id,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') AS text) AS pending_action,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingRequestId}', '') AS text) AS pending_request_id,
+       CAST(COALESCE(metadata_json #>> '{_leapview_chat,pendingUntil}', '') AS text) AS pending_until
+FROM agent.conversations
+WHERE COALESCE(metadata_json #>> '{_leapview_chat,pendingAction}', '') IN ('archive', 'delete')
+ORDER BY metadata_json #>> '{_leapview_chat,pendingUntil}' ASC, id
+LIMIT 1000;
+
+-- name: DeleteAgentConversation :one
+SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
+       transcript_revision, created_at, updated_at, archived_at
+FROM agent.delete_agent_conversation(sqlc.arg(id), sqlc.arg(principal_id));
+
+-- name: AgentConversationHasActiveRun :one
+SELECT EXISTS (
+  SELECT 1 FROM agent.runs
+  WHERE conversation_id = sqlc.arg(conversation_id)
+    AND status IN ('preparing', 'running')
+);
 
 -- name: UpdateAgentConversationTranscript :one
 UPDATE agent.conversations
 SET transcript_json = sqlc.arg(transcript_json)::jsonb,
     transcript_revision = transcript_revision + 1,
     updated_at = clock_timestamp()
-WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id) AND status = 'active'
+WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
   AND transcript_revision = sqlc.arg(expected_transcript_revision)
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;
 
@@ -55,7 +119,9 @@ RETURNING id, principal_id, title, status, metadata_json::text, transcript_json:
 UPDATE agent.conversations
 SET title = sqlc.arg(title), updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
-  AND status = 'active' AND title = 'New conversation'
+  AND status = 'active'
+  AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
+  AND title = 'New conversation'
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;
 
@@ -67,7 +133,7 @@ SELECT sqlc.arg(id), c.id, NULLIF(sqlc.arg(run_id), ''),
        sqlc.arg(tool_call_id), sqlc.arg(tool_name), sqlc.arg(is_error)
 FROM agent.conversations c
 WHERE c.id = sqlc.arg(conversation_id) AND c.principal_id = sqlc.arg(principal_id)
-  AND c.status = 'active'
+  AND COALESCE(c.metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, conversation_id, run_id, sequence, role, content_text,
           content_json::text, tool_call_id, tool_name, is_error, created_at;
 

@@ -151,8 +151,22 @@ export const chatThreadStyles = css`
 
     .agent-turn {
       display: grid;
+      width: 100%;
+      min-width: 0;
       max-width: min(var(--lv-chat-message-width), 100%);
     }
+
+    .edited-label { display: block; margin-top: 4px; text-align: right; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .message-actions { display: flex; align-items: center; gap: 4px; min-height: 28px; margin-top: 6px; color: var(--lv-fg-muted); }
+    .user .message-actions { justify-content: flex-end; opacity: 0; }
+    .user:hover .message-actions, .user:focus-within .message-actions { opacity: 1; }
+    .message-actions button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--lv-radius-default); background: transparent; color: inherit; cursor: pointer; }
+    .message-actions button:hover { background: var(--lv-bg-panel-muted); color: var(--lv-fg-default); }
+    .message-actions button:focus-visible { outline: 2px solid var(--lv-fg-accent); outline-offset: 2px; }
+    .message-actions button:disabled { opacity: .4; cursor: default; }
+    .copy-confirmation { font: var(--lv-type-caption); }
+    .copy-error { color: var(--lv-fg-danger); font: var(--lv-type-caption); padding: 8px; }
+    @media (hover: none) { .user .message-actions { opacity: 1; } .message-actions button { width: 36px; height: 36px; } }
 
     .agent-stack {
       display: grid;
@@ -236,168 +250,6 @@ export const chatThreadStyles = css`
       background: var(--lv-bg-danger-muted);
     }
 
-    .tool-call {
-      display: grid;
-      width: fit-content;
-      max-width: 100%;
-      margin-block: var(--lv-chat-agent-tool-gap);
-      gap: var(--lv-space-sm);
-    }
-
-    .tool-call.has-artifact {
-      width: min(100%, 48rem);
-    }
-
-    .tool-trigger {
-      display: inline-flex;
-      width: fit-content;
-      max-width: 100%;
-      align-items: center;
-      gap: var(--lv-chat-activity-gap);
-      border: 0;
-      border-radius: var(--lv-radius-tight);
-      background: transparent;
-      padding: var(--lv-space-2xs) 0;
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-medium);
-      line-height: var(--base-text-lineHeight-snug);
-      text-align: left;
-      transition: color var(--lv-transition-fast);
-    }
-
-    .tool-icon {
-      display: inline-flex;
-      width: var(--lv-chat-activity-icon-size);
-      height: var(--lv-chat-activity-icon-size);
-      flex: 0 0 var(--lv-chat-activity-icon-size);
-      color: currentColor;
-    }
-
-    .tool-icon svg {
-      display: block;
-      width: 100%;
-      height: 100%;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .tool-call.running .tool-trigger {
-      color: var(--lv-fg-warning);
-    }
-
-    .tool-call.running .tool-icon {
-      animation: pulse 1.1s ease-in-out infinite;
-    }
-
-    .tool-call.error .tool-trigger {
-      color: var(--lv-fg-danger);
-    }
-
-    .tool-trigger:hover,
-    .tool-trigger:focus-visible {
-      color: var(--lv-fg-default);
-    }
-
-    .tool-call.error .tool-trigger:hover,
-    .tool-call.error .tool-trigger:focus-visible {
-      color: var(--lv-fg-danger);
-    }
-
-    .tool-trigger:focus-visible {
-      outline: var(--lv-border-width-focus) solid var(--lv-line-emphasis);
-      outline-offset: var(--lv-space-xs);
-    }
-
-    .activity-text {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .tool-chevron {
-      display: inline-flex;
-      width: var(--lv-chat-activity-icon-size);
-      height: var(--lv-chat-activity-icon-size);
-      flex: 0 0 var(--lv-chat-activity-icon-size);
-      opacity: 0;
-      transform: translateX(calc(-1 * var(--lv-space-xs)));
-      transition:
-        opacity var(--lv-transition-fast),
-        transform var(--lv-transition-fast);
-    }
-
-    .tool-chevron svg {
-      display: block;
-      width: 100%;
-      height: 100%;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 1.8;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    .tool-trigger:hover .tool-chevron,
-    .tool-trigger:focus-visible .tool-chevron,
-    .tool-trigger[aria-expanded='true'] .tool-chevron {
-      opacity: 1;
-      transform: translateX(0);
-    }
-
-    .tool-trigger[aria-expanded='true'] .tool-chevron {
-      transform: rotate(90deg);
-    }
-
-    .tool-details {
-      display: grid;
-      max-width: min(42rem, 100%);
-      gap: var(--lv-space-md);
-      border-left: var(--lv-border-width-focus) solid var(--lv-line-muted);
-      padding-left: var(--lv-space-lg);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-secondary);
-      animation: tool-details-open var(--lv-transition-normal);
-      transform-origin: top left;
-    }
-
-    .tool-detail-block {
-      display: grid;
-      gap: var(--lv-space-xs);
-    }
-
-    .tool-detail-label {
-      color: var(--lv-fg-muted);
-      font-weight: var(--base-text-weight-medium);
-    }
-
-    .tool-detail-block pre {
-      max-height: var(--lv-chat-tool-max-height);
-      max-width: 100%;
-      overflow: auto;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
-      margin: 0;
-      padding: var(--lv-chat-pre-padding-block) var(--lv-chat-pre-padding-inline);
-      color: var(--lv-fg-default);
-      font: var(--lv-type-code-block);
-      white-space: pre-wrap;
-    }
-
-    .tool-detail-block lv-code-block {
-      max-width: 100%;
-    }
-
-    .tool-error {
-      color: var(--lv-fg-danger);
-    }
-
     lv-visual-artifact {
       display: block;
       width: 100%;
@@ -411,27 +263,6 @@ export const chatThreadStyles = css`
 
     lv-visual-artifact:is([type='table'], [type='matrix'], [type='pivot']) {
       height: 22rem;
-    }
-
-    @keyframes tool-details-open {
-      from {
-        opacity: 0;
-        transform: translateY(calc(-1 * var(--lv-chat-tool-disclosure-offset)));
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    @keyframes pulse {
-      0%,
-      100% {
-        opacity: 0.45;
-      }
-      50% {
-        opacity: 1;
-      }
     }
 
     @keyframes working-pulse {

@@ -1262,6 +1262,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				AgentCommands: dashboardmodule.AgentCommandBindings{
 					CreateConversation: agentUICommands.CreateConversation,
 					CreateRun:          agentUICommands.CreateRun,
+					CancelRun:          agentUICommands.CancelRun,
 				},
 				Presentation: dashboardmodule.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 				Assets:       platform.assets,

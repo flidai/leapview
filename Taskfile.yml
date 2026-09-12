@@ -322,6 +322,7 @@ tasks:
       - bun test scripts/frontend_ci_contract.test.ts
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
+      - bun test scripts/agent_e2e_config.test.ts
       - bun test scripts/ensure_playwright.test.ts
       - bun run test:primer-primitives
       - bun run test:primer-alignment
@@ -1763,7 +1764,7 @@ tasks:
       - task: security:source
 
   agent:e2e:
-    desc: Run opt-in DeepSeek-backed headless agent E2E
+    desc: Run opt-in OpenAI-compatible headless agent E2E
     deps:
       - postgres:dev:up
     cmds:
