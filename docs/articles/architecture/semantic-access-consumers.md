@@ -68,7 +68,7 @@ consumer composition requires canonical security audit persistence; a cached
 result cannot replace current authorization or its required audit evidence.
 Other unqualified reuse paths remain denied or bypassed.
 
-Neutral activation verification still needs its own trusted-context design;
-it must not fabricate a principal or skip planner admission. Exhaustive
-consumer qualification and production cutover remain FAI-648/FAI-649 work.
-This boundary does not complete VAL-11, which remains Partial.
+Neutral activation verification must not fabricate a principal or skip planner
+admission. FAI-648 records the supported consumer combinations and FAI-649
+activates that exact profile; combinations without named evidence remain fail
+closed. This boundary does not complete VAL-11, which remains Partial.
