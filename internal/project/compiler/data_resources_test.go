@@ -229,27 +229,30 @@ spec:
 func TestTypedSemanticModelLoweringPreservesRuntimeCompatibility(t *testing.T) {
 	spec, aiContext, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
-aiContext: {instructions: Use governed sales language.}
+metadata: { id: semantic-model:sales, name: sales }
+aiContext: { instructions: Use governed sales language. }
 spec:
   datasets:
-    orders: {model: orders_model, defaultTimeDimension: ordered_at, displayName: Orders}
+    orders:
+      model: orders_model
+      defaultTimeDimension: ordered_at
+      displayName: Orders
+      metrics:
+        order_count: { type: simple, agg: count, field: order_id }
+        revenue: { type: simple, where: [ captured ], agg: sum }
+      dimensions:
+        ordered_at:
+          datatype: DateTime
+          time: { nativeGrain: second, grains: [ second, day ], timezone: UTC }
   relationships:
     customer:
-      from: {dataset: orders, entity: customer}
-      to: {dataset: orders, fields: [customer_id]}
-  dimensions:
-    ordered_at:
-      datatype: DateTime
-      time: {nativeGrain: second, grains: [second, day], timezone: UTC}
-      bindings: {orders: {field: orders.ordered_at}}
+      from: { dataset: orders, entity: customer }
+      to: { dataset: orders, fields: [ customer_id ] }
   filters:
-    captured: {field: orders.status, operator: equals, value: captured}
+    captured: { field: orders.status, operator: equals, value: captured }
   metrics:
-    order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}}
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured]}
-    doubled: {type: derived, expression: revenue * 2, hidden: true}
-    share: {type: ratio, numerator: revenue, denominator: doubled}
+    doubled: { type: derived, expression: revenue * 2, hidden: true }
+    share: { type: ratio, numerator: revenue, denominator: doubled }
 `))
 	if err != nil {
 		t.Fatalf("decode SemanticModel: %v", err)
@@ -302,13 +305,12 @@ spec:
 func TestTypedSemanticModelLoweringRetainsAccessPolicy(t *testing.T) {
 	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
   accessGrants:
-    canViewSales: {userAttribute: department, allowedValues: [sales]}
+    canViewSales: { userAttribute: department, allowedValues: [ sales ] }
   datasets:
-    orders: {model: orders_model, requiredAccessGrants: [canViewSales]}
-  metrics: {}
+    orders: { model: orders_model, requiredAccessGrants: [ canViewSales ] }
 `))
 	if err != nil {
 		t.Fatalf("structural access policy decode: %v", err)

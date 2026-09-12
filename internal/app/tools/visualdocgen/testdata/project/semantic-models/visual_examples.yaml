@@ -9,236 +9,179 @@ spec:
     orders:
       model: orders
       defaultTimeDimension: purchase_date
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          format: integer
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          empty: zero
+          label: Revenue
+          unit: USD
+          format: currency
+          agg: sum
+        revenue_min:
+          type: simple
+          empty: 'null'
+          label: Revenue minimum
+          unit: USD
+          format: currency
+          agg: min
+          field: revenue
+        revenue_max:
+          type: simple
+          empty: 'null'
+          label: Revenue maximum
+          unit: USD
+          format: currency
+          agg: max
+          field: revenue
+        missing_revenue:
+          type: simple
+          where:
+            - missing_revenue_filter
+          empty: 'null'
+          label: Missing revenue comparison
+          unit: USD
+          format: currency
+          agg: sum
+          field: revenue
+        review_score:
+          type: simple
+          empty: 'null'
+          label: Review score
+          format: decimal
+          agg: avg
+        delivery_days:
+          type: simple
+          empty: 'null'
+          label: Delivery days
+          format: decimal
+          agg: avg
+        delivery_days_min:
+          type: simple
+          empty: 'null'
+          label: Delivery minimum
+          format: decimal
+          agg: min
+          field: delivery_days
+        delivery_days_max:
+          type: simple
+          empty: 'null'
+          label: Delivery maximum
+          format: decimal
+          agg: max
+          field: delivery_days
+      dimensions:
+        order_id:
+          datatype: String
+        purchase_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        purchase_month:
+          datatype: String
+        status:
+          datatype: String
+        category:
+          datatype: String
+        state:
+          datatype: String
+        delivery_bucket:
+          datatype: String
+        latitude:
+          datatype: Float
+        longitude:
+          datatype: Float
     conversion_stages:
       model: conversion_stages
+      metrics:
+        conversions:
+          type: simple
+          empty: zero
+          label: Conversions
+          format: integer
+          agg: sum
+      dimensions:
+        stage:
+          datatype: String
     revenue_bridge:
       model: revenue_bridge
+      metrics:
+        revenue_impact:
+          type: simple
+          empty: zero
+          label: Revenue impact
+          unit: USD
+          format: currency
+          agg: sum
+          field: amount
+      dimensions:
+        component:
+          datatype: String
     market_ohlc:
       model: market_ohlc
+      metrics:
+        market_open:
+          type: simple
+          empty: 'null'
+          label: Open
+          format: decimal
+          agg: sum
+          field: open
+        market_close:
+          type: simple
+          empty: 'null'
+          label: Close
+          format: decimal
+          agg: sum
+          field: close
+        market_low:
+          type: simple
+          empty: 'null'
+          label: Low
+          format: decimal
+          agg: sum
+          field: low
+        market_high:
+          type: simple
+          empty: 'null'
+          label: High
+          format: decimal
+          agg: sum
+          field: high
+      dimensions:
+        month:
+          datatype: String
     service_teams:
       model: service_teams
+      metrics:
+        active_work_items:
+          type: simple
+          empty: zero
+          label: Active work items
+          format: integer
+          agg: sum
+      dimensions:
+        division:
+          datatype: String
+        team:
+          datatype: String
   filters:
     missing_revenue_filter:
       field: orders.status
       operator: equals
       value: comparison_fixture_without_rows
-  dimensions:
-    order_id:
-      datatype: String
-      bindings:
-        orders: {field: orders.order_id}
-    purchase_date:
-      datatype: Date
-      bindings:
-        orders:
-          field: orders.purchase_date
-      time:
-        nativeGrain: day
-        grains:
-        - day
-        - week
-        - month
-        calendar: iso8601
-    purchase_month:
-      datatype: String
-      bindings:
-        orders: {field: orders.purchase_month}
-    status:
-      datatype: String
-      bindings:
-        orders: {field: orders.status}
-    category:
-      datatype: String
-      bindings:
-        orders: {field: orders.category}
-    state:
-      datatype: String
-      bindings:
-        orders: {field: orders.state}
-    delivery_bucket:
-      datatype: String
-      bindings:
-        orders: {field: orders.delivery_bucket}
-    latitude:
-      datatype: Float
-      bindings:
-        orders: {field: orders.latitude}
-    longitude:
-      datatype: Float
-      bindings:
-        orders: {field: orders.longitude}
-    stage:
-      datatype: String
-      bindings:
-        conversion_stages: {field: conversion_stages.stage}
-    month:
-      datatype: String
-      bindings:
-        market_ohlc: {field: market_ohlc.month}
-    component:
-      datatype: String
-      bindings:
-        revenue_bridge: {field: revenue_bridge.component}
-    division:
-      datatype: String
-      bindings:
-        service_teams: {field: service_teams.division}
-    team:
-      datatype: String
-      bindings:
-        service_teams: {field: service_teams.team}
   metrics:
-    active_work_items:
-      type: aggregate
-      dataset: service_teams
-      aggregation: sum
-      input:
-        field: service_teams.active_work_items
-      empty: zero
-      label: Active work items
-      format: integer
-    conversions:
-      type: aggregate
-      dataset: conversion_stages
-      aggregation: sum
-      input:
-        field: conversion_stages.conversions
-      empty: zero
-      label: Conversions
-      format: integer
-    revenue_impact:
-      type: aggregate
-      dataset: revenue_bridge
-      aggregation: sum
-      input:
-        field: revenue_bridge.amount
-      empty: zero
-      label: Revenue impact
-      unit: USD
-      format: currency
-    market_open:
-      type: aggregate
-      dataset: market_ohlc
-      aggregation: sum
-      input:
-        field: market_ohlc.open
-      empty: 'null'
-      label: Open
-      format: decimal
-    market_close:
-      type: aggregate
-      dataset: market_ohlc
-      aggregation: sum
-      input:
-        field: market_ohlc.close
-      empty: 'null'
-      label: Close
-      format: decimal
-    market_low:
-      type: aggregate
-      dataset: market_ohlc
-      aggregation: sum
-      input:
-        field: market_ohlc.low
-      empty: 'null'
-      label: Low
-      format: decimal
-    market_high:
-      type: aggregate
-      dataset: market_ohlc
-      aggregation: sum
-      input:
-        field: market_ohlc.high
-      empty: 'null'
-      label: High
-      format: decimal
-    order_count:
-      type: aggregate
-      dataset: orders
-      aggregation: count_distinct
-      input:
-        field: orders.order_id
-      empty: zero
-      label: Orders
-      format: integer
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-      empty: zero
-      label: Revenue
-      unit: USD
-      format: currency
-    revenue_min:
-      type: aggregate
-      dataset: orders
-      aggregation: min
-      input:
-        field: orders.revenue
-      empty: 'null'
-      label: Revenue minimum
-      unit: USD
-      format: currency
-    revenue_max:
-      type: aggregate
-      dataset: orders
-      aggregation: max
-      input:
-        field: orders.revenue
-      empty: 'null'
-      label: Revenue maximum
-      unit: USD
-      format: currency
-    missing_revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-      where:
-      - missing_revenue_filter
-      empty: 'null'
-      label: Missing revenue comparison
-      unit: USD
-      format: currency
-    review_score:
-      type: aggregate
-      dataset: orders
-      aggregation: avg
-      input:
-        field: orders.review_score
-      empty: 'null'
-      label: Review score
-      format: decimal
-    delivery_days:
-      type: aggregate
-      dataset: orders
-      aggregation: avg
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery days
-      format: decimal
-    delivery_days_min:
-      type: aggregate
-      dataset: orders
-      aggregation: min
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery minimum
-      format: decimal
-    delivery_days_max:
-      type: aggregate
-      dataset: orders
-      aggregation: max
-      input:
-        field: orders.delivery_days
-      empty: 'null'
-      label: Delivery maximum
-      format: decimal
     aov:
       type: ratio
       numerator: revenue

@@ -13,180 +13,264 @@ func TestSemanticModelSchemaAcceptanceMatrix(t *testing.T) {
 	// minProperties.
 	cases := map[string]string{
 		"minimal": `
-  datasets: {orders: {model: sales_orders}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+`,
 		"complete recursive shape": `
   datasets:
-    orders: {model: sales_orders, defaultTimeDimension: purchase_date, displayName: Orders, aiContext: {synonyms: [purchases]}}
-    customers: {model: sales_customers}
+    orders:
+      model: sales_orders
+      defaultTimeDimension: purchase_date
+      displayName: Orders
+      aiContext: { synonyms: [ purchases ] }
+      metrics:
+        revenue: { type: simple, where: [ captured ], empty: 'null', agg: sum }
+    customers: { model: sales_customers }
   relationships:
     orders_customers:
-      from: {dataset: orders, entity: customer}
-      to: {dataset: customers, fields: [customer_id]}
+      from: { dataset: orders, entity: customer }
+      to: { dataset: customers, fields: [ customer_id ] }
       description: Customer ownership
   dimensions:
     purchase_date:
       datatype: Date
-      time: {nativeGrain: day, grains: [day, week], calendar: iso8601, timezone: UTC}
-      bindings: {orders: {field: orders.purchased_at, path: []}}
+      time: { nativeGrain: day, grains: [ day, week ], calendar: iso8601, timezone: UTC }
+      bindings: { orders: { field: orders.purchased_at, path: [] } }
   filters:
     captured:
       all:
-        - {field: orders.status, operator: in, value: [captured, 2, true]}
-        - {not: {field: orders.deleted_at, operator: is_null}}
+        - { field: orders.status, operator: in, value: [ captured, 2, true ] }
+        - { not: { field: orders.deleted_at, operator: is_null } }
   metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured], empty: 'null'}
-    doubled: {type: derived, expression: revenue * 2, hidden: true}
-    share: {type: ratio, numerator: revenue, denominator: doubled, unit: percent}`,
+    doubled: { type: derived, expression: revenue * 2, hidden: true }
+    share: { type: ratio, numerator: revenue, denominator: doubled, unit: percent }
+`,
 		"float literal": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {threshold: {field: orders.revenue, operator: greater_than, value: 2.5}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { threshold: { field: orders.revenue, operator: greater_than, value: 2.5 } }
+`,
 		"missing datasets": `
   metrics: {}`,
 		"empty datasets": `
   datasets: {}
-  metrics: {}`,
+`,
 		"empty metrics is allowed": `
-  datasets: {orders: {model: sales_orders}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+`,
 		"missing metrics": `
   datasets: {orders: {model: sales_orders}}`,
 		"explicit null optional": `
-  datasets: {orders: {model: sales_orders, description: null}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders, description: null } }
+`,
 		"invalid dataset key": `
-  datasets: {sales-orders: {model: sales_orders}}
-  metrics: {}`,
+  datasets: { sales-orders: { model: sales_orders } }
+`,
 		"external model id": `
-  datasets: {orders: {model: model:sales_orders}}
-  metrics: {}`,
+  datasets: { orders: { model: model:sales_orders } }
+`,
 		"resource name dotted segment": `
-  datasets: {orders: {model: a.1}}
-  metrics: {}`,
+  datasets: { orders: { model: a.1 } }
+`,
 		"endpoint has both forms": `
-  datasets: {orders: {model: sales_orders}}
-  relationships: {loop: {from: {dataset: orders, entity: order, fields: [id]}, to: {dataset: orders, entity: order}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  relationships:
+    {
+      loop:
+        {
+          from: { dataset: orders, entity: order, fields: [ id ] },
+          to: { dataset: orders, entity: order }
+        }
+    }
+`,
 		"endpoint fields empty": `
-  datasets: {orders: {model: sales_orders}}
-  relationships: {loop: {from: {dataset: orders, fields: []}, to: {dataset: orders, entity: order}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  relationships:
+    {
+      loop:
+        {
+          from: { dataset: orders, fields: [] },
+          to: { dataset: orders, entity: order }
+        }
+    }
+`,
 		"not in values empty": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: not_in, value: []}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: not_in, value: [] } }
+`,
 		"time grains empty": `
-  datasets: {orders: {model: sales_orders}}
-  dimensions: {day: {datatype: Date, time: {nativeGrain: day, grains: []}, bindings: {}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  dimensions:
+    {
+      day: { datatype: Date, time: { nativeGrain: day, grains: [] }, bindings: {} }
+    }
+`,
 		"invalid time grain": `
-  datasets: {orders: {model: sales_orders}}
-  dimensions: {day: {datatype: Date, time: {nativeGrain: fortnight, grains: [day]}, bindings: {}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  dimensions:
+    {
+      day:
+        {
+          datatype: Date,
+          time: { nativeGrain: fortnight, grains: [ day ] },
+          bindings: {}
+        }
+    }
+`,
 		"invalid datatype": `
-  datasets: {orders: {model: sales_orders}}
-  dimensions: {state: {datatype: Text, bindings: {}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  dimensions: { state: { datatype: Text, bindings: {} } }
+`,
 		"equals missing value": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: equals}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: equals } }
+`,
 		"equals null": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: equals, value: null}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: equals, value: null } }
+`,
 		"equals array literal": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: equals, value: [open]}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: equals, value: [ open ] } }
+`,
 		"equals object literal": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: equals, value: {state: open}}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: equals, value: { state: open } } }
+`,
 		"in scalar": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: in, value: open}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: in, value: open } }
+`,
 		"in empty": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: in, value: []}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: in, value: [] } }
+`,
 		"null operator has value": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: is_null, value: open}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: is_null, value: open } }
+`,
 		"empty boolean node": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {all: []}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { all: [] } }
+`,
 		"empty any node": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {any: []}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { any: [] } }
+`,
 		"mixed boolean and leaf": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {all: [{field: orders.state, operator: is_null}], field: orders.state, operator: is_null}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters:
+    {
+      bad:
+        {
+          all: [ { field: orders.state, operator: is_null } ],
+          field: orders.state,
+          operator: is_null
+        }
+    }
+`,
 		"invalid filter operator": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.state, operator: contains, value: open}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.state, operator: contains, value: open } }
+`,
 		"invalid field reference": `
-  datasets: {orders: {model: sales_orders}}
-  filters: {bad: {field: orders.order-id, operator: is_null}}
-  metrics: {}`,
-		"aggregate foreign field": `
-  datasets: {orders: {model: sales_orders}}
-  metrics: {bad: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.total}, expression: total}}`,
+  datasets: { orders: { model: sales_orders } }
+  filters: { bad: { field: orders.order-id, operator: is_null } }
+`,
+		"simple rejects derived expression": `
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { bad: { type: simple, expression: total, agg: sum, field: total } }
+        }
+    }
+`,
 		"invalid aggregation": `
-  datasets: {orders: {model: sales_orders}}
-  metrics: {bad: {type: aggregate, dataset: orders, aggregation: median, input: {field: orders.total}}}`,
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { bad: { type: simple, agg: median, field: total } }
+        }
+    }
+`,
 		"invalid empty enum": `
-  datasets: {orders: {model: sales_orders}}
-  metrics: {bad: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.total}, empty: missing}}`,
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { bad: { type: simple, empty: missing, agg: sum, field: total } }
+        }
+    }
+`,
 		"empty where": `
+  datasets:
+    {
+      orders:
+        {
+          model: sales_orders,
+          metrics: { bad: { type: simple, where: [], agg: sum, field: total } }
+        }
+    }
+`,
+		"old top-level aggregate": `
   datasets: {orders: {model: sales_orders}}
-  metrics: {bad: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.total}, where: []}}`,
+  metrics: {bad: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.total}}}`,
+		"simple at top level": `
+  datasets: {orders: {model: sales_orders}}
+  metrics: {bad: {type: simple, agg: sum, field: total}}`,
+		"derived inside dataset": `
+  datasets: {orders: {model: sales_orders, metrics: {bad: {type: derived, expression: total * 2}}}}`,
+		"qualified local field": `
+  datasets: {orders: {model: sales_orders, metrics: {bad: {type: simple, agg: sum, field: orders.total}}}}`,
+		"old local aggregate spelling": `
+  datasets: {orders: {model: sales_orders, metrics: {bad: {type: aggregate, aggregation: sum, field: total}}}}`,
 		"unknown nested field": `
-  datasets: {orders: {model: sales_orders, surprise: true}}
-  metrics: {}`,
+  datasets: { orders: { model: sales_orders, surprise: true } }
+`,
 	}
 	wantValid := map[string]bool{
-		"minimal":                      true,
-		"complete recursive shape":     true,
-		"float literal":                true,
-		"empty metrics is allowed":     true,
-		"missing datasets":             false,
-		"empty datasets":               false,
-		"missing metrics":              false,
-		"explicit null optional":       false,
-		"invalid dataset key":          false,
-		"external model id":            false,
-		"resource name dotted segment": true,
-		"endpoint has both forms":      false,
-		"endpoint fields empty":        false,
-		"not in values empty":          false,
-		"time grains empty":            false,
-		"invalid time grain":           false,
-		"invalid datatype":             false,
-		"equals missing value":         false,
-		"equals null":                  false,
-		"equals array literal":         false,
-		"equals object literal":        false,
-		"in scalar":                    false,
-		"in empty":                     false,
-		"null operator has value":      false,
-		"empty boolean node":           false,
-		"empty any node":               false,
-		"mixed boolean and leaf":       false,
-		"invalid filter operator":      false,
-		"invalid field reference":      false,
-		"aggregate foreign field":      false,
-		"invalid aggregation":          false,
-		"invalid empty enum":           false,
-		"empty where":                  false,
-		"unknown nested field":         false,
+		"minimal":                           true,
+		"complete recursive shape":          true,
+		"float literal":                     true,
+		"empty metrics is allowed":          true,
+		"missing datasets":                  false,
+		"empty datasets":                    false,
+		"missing metrics":                   true,
+		"explicit null optional":            false,
+		"invalid dataset key":               false,
+		"external model id":                 false,
+		"resource name dotted segment":      true,
+		"endpoint has both forms":           false,
+		"endpoint fields empty":             false,
+		"not in values empty":               false,
+		"time grains empty":                 false,
+		"invalid time grain":                false,
+		"invalid datatype":                  false,
+		"equals missing value":              false,
+		"equals null":                       false,
+		"equals array literal":              false,
+		"equals object literal":             false,
+		"in scalar":                         false,
+		"in empty":                          false,
+		"null operator has value":           false,
+		"empty boolean node":                false,
+		"empty any node":                    false,
+		"mixed boolean and leaf":            false,
+		"invalid filter operator":           false,
+		"invalid field reference":           false,
+		"simple rejects derived expression": false,
+		"old top-level aggregate":           false,
+		"simple at top level":               false,
+		"derived inside dataset":            false,
+		"qualified local field":             false,
+		"old local aggregate spelling":      false,
+		"invalid aggregation":               false,
+		"invalid empty enum":                false,
+		"empty where":                       false,
+		"unknown nested field":              false,
 	}
 	if len(wantValid) != len(cases) {
 		t.Fatalf("acceptance matrix has %d expected outcomes for %d fixtures", len(wantValid), len(cases))

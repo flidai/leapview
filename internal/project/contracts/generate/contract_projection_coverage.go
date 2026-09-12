@@ -106,6 +106,20 @@ type projectionAlias struct {
 
 var projectionAliases = map[string][]projectionAlias{
 	"SemanticModel": {
+		{Authored: "spec.datasets.*.dimensions.*.field", Projected: []string{"contract.dimensions.*.bindings.*.field"}},
+		{Authored: "spec.datasets.*.dimensions.*.datatype", Projected: []string{"contract.dimensions.*.datatype"}},
+		{Authored: "spec.datasets.*.dimensions.*.requiredAccessGrants.*", Projected: []string{"contract.dimensions.*.requiredAccessGrants.*"}},
+		{Authored: "spec.datasets.*.dimensions.*.time.*", Projected: []string{"contract.dimensions.*.time.*"}},
+		{Authored: "spec.datasets.*.dimensions.*.time.grains.*", Projected: []string{"contract.dimensions.*.time.grains.*"}},
+		{Authored: "spec.datasets.*.metrics.*.type", Projected: []string{"contract.metrics.*.type", "contract.metrics.*.dataset"}},
+		{Authored: "spec.datasets.*.metrics.*.agg", Projected: []string{"contract.metrics.*.aggregation"}},
+		{Authored: "spec.datasets.*.metrics.*.field", Projected: []string{"contract.metrics.*.input.field"}},
+		{Authored: "spec.datasets.*.metrics.*.where.*", Projected: []string{"contract.metrics.*.where.*"}},
+		{Authored: "spec.datasets.*.metrics.*.empty", Projected: []string{"contract.metrics.*.empty"}},
+		{Authored: "spec.datasets.*.metrics.*.timeDimension", Projected: []string{"contract.metrics.*.timeDimension"}},
+		{Authored: "spec.datasets.*.metrics.*.unit", Projected: []string{"contract.metrics.*.unit"}},
+		{Authored: "spec.datasets.*.metrics.*.format", Projected: []string{"contract.metrics.*.format"}},
+		{Authored: "spec.datasets.*.metrics.*.requiredAccessGrants.*", Projected: []string{"contract.metrics.*.requiredAccessGrants.*"}},
 		{Authored: "spec.accessGrants.*.allowedValues.*", Projected: []string{
 			"contract.accessGrants.*.allowedValues.*.type",
 			"contract.accessGrants.*.allowedValues.*.value",

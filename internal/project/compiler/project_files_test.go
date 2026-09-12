@@ -27,8 +27,18 @@ spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic:sales, name: sales}
-spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}
+metadata: { id: semantic:sales, name: sales }
+spec:
+  {
+    datasets:
+      {
+        orders:
+          {
+            model: orders_model,
+            metrics: { order_count: { type: simple, empty: zero, agg: count, field: id } }
+          }
+      }
+  }
 `,
 		"pipelines/sales-refresh.yaml": `apiVersion: leapview.dev/v1
 kind: Pipeline

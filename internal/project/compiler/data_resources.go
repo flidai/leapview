@@ -228,25 +228,56 @@ func lowerSemanticAccessPolicy(spec projectcontracts.SemanticModelSpec) (semanti
 			}
 		}
 	}
-	for _, name := range sortedMapKeys(spec.Metrics) {
-		var authored *[]string
-		switch variant := spec.Metrics[name].Value.(type) {
-		case *projectcontracts.SemanticMetricAggregateVariant:
-			authored = variant.RequiredAccessGrants
-		case *projectcontracts.SemanticMetricDerivedVariant:
-			authored = variant.RequiredAccessGrants
-		case *projectcontracts.SemanticMetricRatioVariant:
-			authored = variant.RequiredAccessGrants
-		}
-		required, err := lowerRequiredAccessGrants("metric", name, authored, grantNames)
-		if err != nil {
-			return semanticmodel.SemanticAccessPolicy{}, err
-		}
-		if required != nil {
-			if policy.Metrics == nil {
-				policy.Metrics = map[string][]string{}
+	for _, datasetName := range sortedMapKeys(spec.Datasets) {
+		dataset := spec.Datasets[datasetName]
+		if dataset.Dimensions != nil {
+			for _, name := range sortedMapKeys(*dataset.Dimensions) {
+				required, err := lowerRequiredAccessGrants("dimension", name, (*dataset.Dimensions)[name].RequiredAccessGrants, grantNames)
+				if err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("datasets.%s.dimensions.%s: %w", datasetName, name, err)
+				}
+				if required != nil {
+					if policy.Dimensions == nil {
+						policy.Dimensions = map[string][]string{}
+					}
+					policy.Dimensions[name] = required
+				}
 			}
-			policy.Metrics[name] = required
+		}
+		if dataset.Metrics != nil {
+			for _, name := range sortedMapKeys(*dataset.Metrics) {
+				required, err := lowerRequiredAccessGrants("metric", name, (*dataset.Metrics)[name].RequiredAccessGrants, grantNames)
+				if err != nil {
+					return semanticmodel.SemanticAccessPolicy{}, fmt.Errorf("datasets.%s.metrics.%s: %w", datasetName, name, err)
+				}
+				if required != nil {
+					if policy.Metrics == nil {
+						policy.Metrics = map[string][]string{}
+					}
+					policy.Metrics[name] = required
+				}
+			}
+		}
+	}
+	if spec.Metrics != nil {
+		for _, name := range sortedMapKeys(*spec.Metrics) {
+			var authored *[]string
+			switch variant := (*spec.Metrics)[name].Value.(type) {
+			case *projectcontracts.SemanticMetricDerivedVariant:
+				authored = variant.RequiredAccessGrants
+			case *projectcontracts.SemanticMetricRatioVariant:
+				authored = variant.RequiredAccessGrants
+			}
+			required, err := lowerRequiredAccessGrants("metric", name, authored, grantNames)
+			if err != nil {
+				return semanticmodel.SemanticAccessPolicy{}, err
+			}
+			if required != nil {
+				if policy.Metrics == nil {
+					policy.Metrics = map[string][]string{}
+				}
+				policy.Metrics[name] = required
+			}
 		}
 	}
 	return policy, nil
@@ -323,31 +354,6 @@ func lowerSemanticRelationshipEndpoint(value projectcontracts.SemanticRelationsh
 	}
 }
 
-func lowerSemanticDimensions(values *map[string]projectcontracts.SemanticDimension) map[string]semanticmodel.SemanticDimensionSpec {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string]semanticmodel.SemanticDimensionSpec, len(*values))
-	for name, value := range *values {
-		bindings := make(map[string]semanticmodel.DimensionBinding, len(value.Bindings))
-		for dataset, binding := range value.Bindings {
-			bindings[dataset] = semanticmodel.DimensionBinding{Field: binding.Field, Path: optionalStrings(binding.Path)}
-		}
-		dimension := semanticmodel.SemanticDimensionSpec{
-			Label: optionalString(value.Label), Description: optionalString(value.Description), AIContext: lowerAIContext(value.AiContext),
-			Datatype: semanticmodel.LogicalDataType(value.Datatype), Bindings: bindings,
-		}
-		if value.Time != nil {
-			dimension.Time = &semanticmodel.TimeSemanticsSpec{
-				NativeGrain: value.Time.NativeGrain, Grains: append([]string(nil), value.Time.Grains...),
-				Calendar: optionalString(value.Time.Calendar), Timezone: optionalString(value.Time.Timezone),
-			}
-		}
-		result[name] = dimension
-	}
-	return result
-}
-
 func lowerSemanticFilters(values *map[string]projectcontracts.SemanticFilter) (map[string]semanticmodel.SemanticFilterSpec, error) {
 	if values == nil {
 		return nil, nil
@@ -414,43 +420,6 @@ func lowerSemanticFilterList(values []projectcontracts.SemanticFilter) ([]semant
 		result = append(result, filter)
 	}
 	return result, nil
-}
-
-func lowerSemanticMetrics(values map[string]projectcontracts.SemanticMetric) (map[string]semanticmodel.SemanticMetricSpec, error) {
-	result := make(map[string]semanticmodel.SemanticMetricSpec, len(values))
-	for name, value := range values {
-		metric := semanticmodel.SemanticMetricSpec{}
-		switch variant := value.Value.(type) {
-		case *projectcontracts.SemanticMetricAggregateVariant:
-			metric.Type, metric.Dataset, metric.Aggregation = variant.Type, variant.Dataset, variant.Aggregation
-			metric.Input = &semanticmodel.MetricInput{Field: variant.Input.Field}
-			metric.Where, metric.Empty, metric.TimeDimension = optionalStrings(variant.Where), optionalString(variant.Empty), optionalString(variant.TimeDimension)
-			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
-		case *projectcontracts.SemanticMetricDerivedVariant:
-			metric.Type, metric.Expression = variant.Type, variant.Expression
-			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
-		case *projectcontracts.SemanticMetricRatioVariant:
-			metric.Type, metric.Numerator, metric.Denominator = variant.Type, variant.Numerator, variant.Denominator
-			lowerSemanticMetricCommon(&metric, variant.Label, variant.Description, variant.AiContext, variant.Unit, variant.Format, variant.Hidden)
-		case nil:
-			return nil, fmt.Errorf("metric %q variant is required", name)
-		default:
-			return nil, fmt.Errorf("metric %q has unsupported variant %T", name, value.Value)
-		}
-		result[name] = metric
-	}
-	return result, nil
-}
-
-func lowerSemanticMetricCommon(metric *semanticmodel.SemanticMetricSpec, label, description *string, aiContext *projectcontracts.AIContext, unit, format *string, hidden *bool) {
-	metric.Label = optionalString(label)
-	metric.Description = optionalString(description)
-	metric.AIContext = lowerAIContext(aiContext)
-	metric.Unit = optionalString(unit)
-	metric.Format = optionalString(format)
-	if hidden != nil {
-		metric.Hidden = *hidden
-	}
 }
 
 // decodeModelResourceWithDefinition lowers the executable model contract while

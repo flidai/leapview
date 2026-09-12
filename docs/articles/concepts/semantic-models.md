@@ -12,6 +12,8 @@ Use stable dataset and field IDs. Labels and descriptions can evolve, but renami
 
 Dimensions describe how results can be grouped or filtered: dates, categories, identifiers, geography, booleans, and other descriptive attributes. A semantic dimension may bind compatible fields at declared grains so users can ask a business question without choosing a physical join path themselves.
 
+Put a dimension over one dataset's own field under that dataset. Its `field` defaults to the dimension name, and its logical `datatype` comes from the physical Model unless you state an assertion. Put shared dimensions and dimensions reached through a relationship at `spec.dimensions`, with an explicit binding for each dataset origin.
+
 Good dimensions have:
 
 - a clear type and label;
@@ -22,23 +24,25 @@ Good dimensions have:
 
 Not every physical field needs a named semantic dimension. Dashboard table queries can select semantic dataset fields directly where supported, while governed reusable groupings should be modeled explicitly.
 
-## Aggregate metrics
+## Simple metrics
 
 Metrics define aggregations over a dataset:
 
 ```yaml
-metrics:
-  revenue:
-    type: aggregate
-    label: Revenue
-    dataset: orders
-    aggregation: sum
-    input: {field: orders.revenue}
-    empty: zero
-    format: currency
+datasets:
+  orders:
+    model: sales_orders
+    metrics:
+      revenue:
+        type: simple
+        agg: sum
+        field: revenue
+        label: Revenue
+        empty: zero
+        format: currency
 ```
 
-The dataset identifies the population being aggregated. The aggregation and input determine how values are computed. `empty` makes empty-result behavior deliberate instead of leaving each consumer to interpret a missing value. Formatting metadata communicates presentation intent without changing the numeric result.
+The containing dataset identifies the population being aggregated. `agg` and `field` determine how values are computed. `field` may be omitted when it matches the metric name. `empty` makes empty-result behavior deliberate instead of leaving each consumer to interpret a missing value. Formatting metadata communicates presentation intent without changing the numeric result.
 
 Filtered metrics should use declared semantic filters rather than embedding dashboard-specific conditions. If two teams mean different things by “revenue,” give the definitions distinct names and descriptions instead of silently changing a shared formula.
 
@@ -86,7 +90,7 @@ Before publishing a model, verify that:
 - every dataset resolves to a project Model;
 - relationship fields have compatible types;
 - every relationship's `to` endpoint is a declared primary or unique key, and those keys are unique in the data;
-- metrics identify the correct dataset and aggregation;
+- simple metrics sit under the correct dataset and declare the intended `agg`;
 - empty-result and formatting behavior are intentional;
 - labels and descriptions are understandable outside the authoring team;
 - representative grouped and filtered queries return expected values.

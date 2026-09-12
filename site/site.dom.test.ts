@@ -125,7 +125,7 @@ test('site explains the product, its workflow, and where it fits in the data sta
       'server',
     ])
     expect(await page.getByText('apiVersion: leapview.dev/v1', { exact: false }).count()).toBe(1)
-    expect(await page.getByText('aggregation: sum', { exact: false }).count()).toBe(1)
+    expect(await page.getByText('agg: sum', { exact: false }).count()).toBe(1)
     expect(
       await page
         .getByRole('heading', {

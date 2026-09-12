@@ -10,6 +10,53 @@ spec:
     rating_genres:
       model: rating_genres
       defaultTimeDimension: rating_date
+      metrics:
+        genre_rating_count:
+          type: simple
+          empty: zero
+          label: Genre ratings
+          description: Count of rating-genre rows.
+          format: integer
+          agg: count
+          field: rating_genre_id
+        average_rating:
+          type: simple
+          empty: 'null'
+          label: Average rating
+          description: Average MovieLens rating for the rating-genre rows.
+          format: decimal
+          agg: avg
+          field: rating
+        active_users:
+          type: simple
+          empty: zero
+          label: Active users
+          description: Distinct users represented by the rating-genre rows.
+          format: integer
+          agg: count_distinct
+          field: user_id
+        rated_movies:
+          type: simple
+          empty: zero
+          label: Rated movies
+          description: Distinct movies represented by the rating-genre rows.
+          format: integer
+          agg: count_distinct
+          field: movie_id
+      dimensions:
+        rating_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        genre:
+          datatype: String
+        release_decade:
+          datatype: String
     ratings:
       model: ratings
     movies:
@@ -33,67 +80,3 @@ spec:
         dataset: users
         entity: user
       description: Links each rating-genre row to the anonymized user who made the rating.
-  dimensions:
-    rating_date:
-      datatype: Date
-      bindings:
-        rating_genres:
-          field: rating_genres.rating_date
-      time:
-        nativeGrain: day
-        grains:
-        - day
-        - week
-        - month
-        calendar: iso8601
-    genre:
-      datatype: String
-      bindings:
-        rating_genres:
-          field: rating_genres.genre
-    release_decade:
-      datatype: String
-      bindings:
-        rating_genres:
-          field: rating_genres.release_decade
-  metrics:
-    genre_rating_count:
-      type: aggregate
-      dataset: rating_genres
-      aggregation: count
-      input:
-        field: rating_genres.rating_genre_id
-      empty: zero
-      label: Genre ratings
-      description: Count of rating-genre rows.
-      format: integer
-    average_rating:
-      type: aggregate
-      dataset: rating_genres
-      aggregation: avg
-      input:
-        field: rating_genres.rating
-      empty: 'null'
-      label: Average rating
-      description: Average MovieLens rating for the rating-genre rows.
-      format: decimal
-    active_users:
-      type: aggregate
-      dataset: rating_genres
-      aggregation: count_distinct
-      input:
-        field: rating_genres.user_id
-      empty: zero
-      label: Active users
-      description: Distinct users represented by the rating-genre rows.
-      format: integer
-    rated_movies:
-      type: aggregate
-      dataset: rating_genres
-      aggregation: count_distinct
-      input:
-        field: rating_genres.movie_id
-      empty: zero
-      label: Rated movies
-      description: Distinct movies represented by the rating-genre rows.
-      format: integer

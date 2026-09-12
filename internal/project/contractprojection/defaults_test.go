@@ -94,7 +94,8 @@ func TestSemanticFilterUsesFullBindingNotDimensionName(t *testing.T) {
 		t.Fatalf("valid conformed binding rejected: %v", err)
 	}
 	conflicting := dimension
-	conflicting.Datatype = "Integer"
+	integer := "Integer"
+	conflicting.Datatype = &integer
 	(*input.Spec.Dimensions)["region"] = conflicting
 	if _, err := ProjectSemanticModel(input, contract, ctx); err == nil {
 		t.Fatal("conflicting field types accepted")
@@ -112,13 +113,15 @@ func TestAggregateEmptyDefaultsMatchExplicitValues(t *testing.T) {
 	for _, pair := range [][2]string{{"count", "zero"}, {"count_distinct", "zero"}, {"sum", "null"}, {"avg", "null"}} {
 		t.Run(pair[0], func(t *testing.T) {
 			input := semanticIdentityInput(t, `["east"]`)
-			metric := input.Spec.Metrics["orders"].Value.(*contracts.SemanticMetricAggregateVariant)
-			metric.Aggregation = pair[0]
+			metric := (*input.Spec.Datasets["orders"].Metrics)["orders"]
+			metric.Agg = pair[0]
+			(*input.Spec.Datasets["orders"].Metrics)["orders"] = metric
 			implicit, err := ProjectSemanticModel(input, contract, ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			metric.Empty = &pair[1]
+			(*input.Spec.Datasets["orders"].Metrics)["orders"] = metric
 			explicit, err := ProjectSemanticModel(input, contract, ctx)
 			if err != nil {
 				t.Fatal(err)

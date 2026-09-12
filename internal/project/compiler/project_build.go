@@ -306,11 +306,15 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.Se
 		return err
 	}
 	dimensionsSpec := lowerSemanticDimensions(spec.Dimensions)
+	dimensionsSpec, err = lowerLocalSemanticDimensions(spec.Datasets, dimensionsSpec)
+	if err != nil {
+		return err
+	}
 	filters, err := lowerSemanticFilters(spec.Filters)
 	if err != nil {
 		return err
 	}
-	metricsSpec, err := lowerSemanticMetrics(spec.Metrics)
+	metricsSpec, err := lowerSemanticMetrics(spec.Metrics, spec.Datasets)
 	if err != nil {
 		return err
 	}

@@ -9,52 +9,36 @@ spec:
     orders:
       model: orders
       defaultTimeDimension: purchase_date
-  dimensions:
-    purchase_date:
-      datatype: Date
-      bindings:
-        orders:
-          field: orders.purchase_date
-      time:
-        nativeGrain: day
-        grains:
-        - day
-        - week
-        - month
-        calendar: iso8601
-    state:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.state
-    category:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.category
-    status:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.status
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          empty: zero
+          label: Revenue
+          format: currency
+          agg: sum
+      dimensions:
+        purchase_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        state:
+          datatype: String
+        category:
+          datatype: String
+        status:
+          datatype: String
   metrics:
-    order_count:
-      type: aggregate
-      dataset: orders
-      aggregation: count_distinct
-      input:
-        field: orders.order_id
-      empty: zero
-      label: Orders
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-      empty: zero
-      label: Revenue
-      format: currency
     aov:
       type: ratio
       numerator: revenue

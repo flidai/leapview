@@ -109,32 +109,22 @@ spec:
       accessFilters:
         - field: region
           userAttribute: allowedRegions
-  dimensions:
-    region:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.region
-    customerEmail:
-      datatype: String
-      bindings:
-        orders:
-          field: orders.customer_email
-      requiredAccessGrants:
-        - canViewPII
+      metrics:
+        revenue:
+          type: simple
+          agg: sum
+        cost:
+          type: simple
+          agg: sum
+      dimensions:
+        region:
+          datatype: String
+        customerEmail:
+          datatype: String
+          requiredAccessGrants:
+            - canViewPII
+          field: customer_email
   metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.revenue
-    cost:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input:
-        field: orders.cost
     grossMargin:
       type: derived
       expression: revenue - cost

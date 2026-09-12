@@ -25,13 +25,22 @@ spec:
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: orders}}
+  datasets:
+    {
+      orders:
+        {
+          model: orders,
+          metrics:
+            {
+              revenue: { type: simple, agg: sum },
+              order_count: { type: simple, agg: count, field: order_id }
+            }
+        }
+    }
   metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
-    order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}}
-    revenue_per_order: {type: ratio, numerator: revenue, denominator: order_count}
+    revenue_per_order: { type: ratio, numerator: revenue, denominator: order_count }
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -99,10 +108,9 @@ spec:
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 spec:
-  datasets: {orders: {model: orders}}
-  metrics: {}
+  datasets: { orders: { model: orders } }
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard

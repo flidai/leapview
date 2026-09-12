@@ -24,7 +24,7 @@ customer site.
 | [ADR-0003](0003-retain-narrow-infisical-resolver.md) | Retain the narrow Infisical resolver | Accepted | 2026-07-31 | Complete | — |
 | [ADR-0004](0004-defer-incremental-project-reconciliation.md) | Defer incremental project reconciliation | Accepted | 2026-08-05 | Deferred pending corrected measurement | [ADR-0005](0005-use-project-wide-resource-graph.md), scope and identity only |
 | [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), public Project and control-plane authoring boundaries |
-| [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md) | Adopt an OSSIE-aligned typed semantic contract | Accepted | 2026-08-17 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), structural authority; [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md), semantic access contract |
+| [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md) | Adopt an OSSIE-aligned typed semantic contract | Accepted | 2026-08-17 | Complete | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md), structural authority; [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md), semantic access contract; [ADR-0022](0022-adopt-dataset-local-semantic-authoring.md), native authoring placement, vocabulary, defaults, and pre-release freeze |
 | [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md), human-facing command orchestration and local runtime startup only |
 | [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md), private file-backed catalog mechanics only |
 | [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md), control-store selection only |
@@ -40,6 +40,7 @@ customer site.
 | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md) | Integrate dbt at the warehouse contract boundary | Accepted | 2026-09-03 | Pending | — |
 | [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | In progress (clean-slate target architecture) | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md), local analytics development topology and filesystem storage profile only |
 | [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md) | Adopt a local-first analytics development workflow | Accepted | 2026-09-09 | Pending | — |
+| [ADR-0022](0022-adopt-dataset-local-semantic-authoring.md) | Adopt dataset-local semantic authoring | Accepted | 2026-09-11 | Complete | — |
 
 ## Companion specifications
 
