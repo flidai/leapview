@@ -1277,6 +1277,23 @@ tasks:
         go run ./cmd/leapviewctl qualify site-image
         --image {{.IMAGE | quote}}
 
+  qualify:ubdr:managed-data-s3-dr:
+    desc: Capture the managed-data S3 disaster-recovery seed evidence without restoring it
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+      - mkdir -p "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+      - chmod 0700 "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
+      - >-
+        go test -race -tags='duckdb_arrow fai520qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI520ManagedDataS3DRSeedQualification$'
+        -count=1 -timeout=15m -v
+
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
     cmds:
