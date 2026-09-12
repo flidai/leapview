@@ -149,6 +149,15 @@ func diagnostic(file, field, code, message string, node *yaml.Node) error {
 	return err
 }
 
+// untrustedField identifies an authored key without retaining the key itself.
+// Unknown keys may accidentally contain credentials or terminal control text.
+func untrustedField(parent string) string {
+	if parent == "" {
+		return "<invalid>"
+	}
+	return parent + ".<invalid>"
+}
+
 // Load selects and validates one local profile document. It performs no
 // network access, credential lookup, binding mutation, or environment scan.
 func Load(options LoadOptions) (Selected, error) {
@@ -322,14 +331,36 @@ func readProfileFile(path string, options LoadOptions, explicit bool) ([]byte, s
 	if info.Size() > MaxDocumentBytes {
 		return nil, "", &documentSizeError{}
 	}
-	content, err := io.ReadAll(io.LimitReader(file, MaxDocumentBytes+1))
+	content, err := readProfileContent(file, path, info)
 	if err != nil {
 		return nil, "", err
 	}
-	if len(content) > MaxDocumentBytes {
-		return nil, "", &documentSizeError{}
-	}
 	return content, canonical, nil
+}
+
+type profileContentReader interface {
+	io.Reader
+	Stat() (os.FileInfo, error)
+}
+
+func readProfileContent(file profileContentReader, path string, before os.FileInfo) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(file, MaxDocumentBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(before, after) || before.Size() != after.Size() ||
+		before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) ||
+		int64(len(content)) != after.Size() {
+		return nil, diagnostic(path, "", "profile.file_changed", "profile file changed while its contents were being captured", nil)
+	}
+	if len(content) > MaxDocumentBytes {
+		return nil, &documentSizeError{}
+	}
+	return content, nil
 }
 
 type documentSizeError struct{}
@@ -420,7 +451,7 @@ func checkNode(file string, node *yaml.Node, depth int, count *int) error {
 				return diagnostic(file, "", "profile.key", "mapping keys must be strings", key)
 			}
 			if _, exists := seen[key.Value]; exists {
-				return diagnostic(file, key.Value, "profile.duplicate_key", "duplicate YAML key", key)
+				return diagnostic(file, untrustedField(""), "profile.duplicate_key", "duplicate YAML key", key)
 			}
 			seen[key.Value] = struct{}{}
 		}
@@ -452,7 +483,7 @@ func resolveDocument(file, profileName string, root *yaml.Node, catalog map[stri
 		nameNode, profile := profiles.Content[profileIndex], profiles.Content[profileIndex+1]
 		name := nameNode.Value
 		if !profileNamePattern.MatchString(name) {
-			return Selected{}, diagnostic(file, "profiles."+name, "profile.name", "profile name is invalid", nameNode)
+			return Selected{}, diagnostic(file, untrustedField("profiles"), "profile.name", "profile name is invalid", nameNode)
 		}
 		profileFields, mapErr := mapping(file, "profiles."+name, profile, "connections")
 		if mapErr != nil {
@@ -467,7 +498,7 @@ func resolveDocument(file, profileName string, root *yaml.Node, catalog map[stri
 			connectionName, entry := connections.Content[index].Value, connections.Content[index+1]
 			logical, exists := catalog[connectionName]
 			if !exists {
-				return Selected{}, diagnostic(file, "profiles."+name+".connections."+connectionName, "profile.connection_unknown", "connection name does not match the compiled graph", connections.Content[index])
+				return Selected{}, diagnostic(file, untrustedField("profiles."+name+".connections"), "profile.connection_unknown", "connection name does not match the compiled graph", connections.Content[index])
 			}
 			resolved, resolveErr := resolveConnection(file, name, connectionName, entry, logical)
 			if resolveErr != nil {
@@ -548,7 +579,7 @@ func decodeEndpoint(file, field string, node *yaml.Node, spec connectors.Connect
 		for index := 0; index < len(options.Content); index += 2 {
 			key, value := options.Content[index], options.Content[index+1]
 			if _, ok := allowed[key.Value]; !ok {
-				return endpoint, diagnostic(file, field+".options."+key.Value, "profile.option_unknown", "endpoint option is unsupported for the connector", key)
+				return endpoint, diagnostic(file, untrustedField(field+".options"), "profile.option_unknown", "endpoint option is unsupported for the connector", key)
 			}
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
 				return endpoint, diagnostic(file, field+".options."+key.Value, "profile.endpoint_type", "endpoint option must be a string", value)
@@ -601,11 +632,7 @@ func mapping(file, field string, node *yaml.Node, allowed ...string) (map[string
 	for index := 0; index < len(node.Content); index += 2 {
 		key, value := node.Content[index], node.Content[index+1]
 		if _, ok := known[key.Value]; !ok {
-			path := key.Value
-			if field != "" {
-				path = field + "." + key.Value
-			}
-			return nil, diagnostic(file, path, "profile.field_unknown", "unknown profile field", key)
+			return nil, diagnostic(file, untrustedField(field), "profile.field_unknown", "unknown profile field", key)
 		}
 		result[key.Value] = value
 	}

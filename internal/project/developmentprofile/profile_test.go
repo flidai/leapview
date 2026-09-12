@@ -385,10 +385,54 @@ func TestLoadRejectsOversizedAndInvalidUTF8Documents(t *testing.T) {
 }
 
 func TestDiagnosticsNeverIncludeRejectedSecretValues(t *testing.T) {
-	root := t.TempDir()
-	file := writeProfile(t, root, postgresProfile("warehouse", "host: analytics.internal", "password: unmistakable-secret-value"))
-	_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
-	assertDiagnostic(t, err, "profile.field_unknown", "unmistakable-secret-value")
+	tests := []struct {
+		name, document, code string
+	}{
+		{
+			name:     "rejected value",
+			document: postgresProfile("warehouse", "host: analytics.internal", "password: unmistakable-secret-value"),
+			code:     "profile.field_unknown",
+		},
+		{
+			name: "unknown root key",
+			document: validEmptyProfile +
+				`"postgres://user:unmistakable-secret-value@host": {}` + "\n",
+			code: "profile.field_unknown",
+		},
+		{
+			name: "invalid profile key",
+			document: "version: 1\nprofiles:\n" +
+				`  "postgres://user:unmistakable-secret-value@host":` + "\n    connections: {}\n",
+			code: "profile.name",
+		},
+		{
+			name:     "unknown connection key",
+			document: postgresProfile(`"postgres://user:unmistakable-secret-value@host"`, "host: analytics.internal", "env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE"),
+			code:     "profile.connection_unknown",
+		},
+		{
+			name: "unknown option key",
+			document: postgresProfile("warehouse",
+				"options:\n            \"postgres://user:unmistakable-secret-value@host\": value",
+				"env: LEAPVIEW_DEV_CONNECTION_WAREHOUSE"),
+			code: "profile.option_unknown",
+		},
+		{
+			name: "duplicate key",
+			document: validEmptyProfile +
+				`"postgres://user:unmistakable-secret-value@host": {}` + "\n" +
+				`"postgres://user:unmistakable-secret-value@host": {}` + "\n",
+			code: "profile.duplicate_key",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			file := writeProfile(t, root, test.document)
+			_, err := loadProfile(LoadOptions{CheckoutRoot: root, ProfileFile: file, Connections: postgresCatalog()})
+			assertDiagnostic(t, err, test.code, "unmistakable-secret-value")
+		})
+	}
 }
 
 func assertDiagnostic(t *testing.T, err error, code, forbidden string) {
@@ -400,8 +444,8 @@ func assertDiagnostic(t *testing.T, err error, code, forbidden string) {
 	if !errors.As(err, &diagnostic) || diagnostic.Code != code {
 		t.Fatalf("Load() error = %T %v, want DiagnosticError code %s", err, err, code)
 	}
-	if forbidden != "" && strings.Contains(err.Error(), forbidden) {
-		t.Fatalf("diagnostic leaked rejected value: %v", err)
+	if forbidden != "" && (strings.Contains(err.Error(), forbidden) || strings.Contains(diagnostic.Field, forbidden)) {
+		t.Fatalf("diagnostic leaked rejected value: %#v", diagnostic)
 	}
 }
 
