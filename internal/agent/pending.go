@@ -12,7 +12,7 @@ import (
 const (
 	PendingConversationArchive = "archive"
 	PendingConversationDelete  = "delete"
-	PendingConversationWindow  = 10 * time.Second
+	PendingConversationWindow  = 5 * time.Second
 )
 
 var (

@@ -172,7 +172,7 @@ const statusConverter = {
 class LeapViewSidebar extends LitElement {
   @property({ attribute: 'config', converter: configConverter }) config: SidebarConfig = defaultConfig
   @property({ attribute: 'status', converter: statusConverter }) status: SidebarStatus = {}
-  @property({ attribute: false }) pendingRemovalId = ''
+  @property({ attribute: false }) pendingRemovalIds: string[] = []
   @state() private collapsed = storedCollapsed()
   @state() private peeking = false
   @state() private mobileOpen = false
@@ -1657,7 +1657,7 @@ class LeapViewSidebar extends LitElement {
   }
 
   private renderHistory() {
-    return renderSidebarChatHistory(this.config.history, this.pendingRemovalId, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
+    return renderSidebarChatHistory(this.config.history, this.pendingRemovalIds, (event, href) => this.followInternalLink(event, href), (action, item) => this.chatAction(action, item))
   }
 
   private chatAction(action: string, item: SidebarHistoryItem) {

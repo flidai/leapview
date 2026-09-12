@@ -363,7 +363,7 @@ type ConversationManagementRepository interface {
 	BulkDeleteConversations(ctx context.Context, principalID string, conversationIDs []string) ([]Conversation, error)
 }
 
-// PendingConversationRepository persists the server-owned ten-second undo
+// PendingConversationRepository persists the server-owned five-second undo
 // lifecycle. Implementations must scope begin, cancel, and finalize by both
 // principal and conversation, and must make the request ID an equality check
 // rather than an authorization credential.
