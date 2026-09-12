@@ -25,7 +25,7 @@ const emptyChrome: ChromeSignal = {
 
 class LeapViewAppShell extends DatastarLit(LitElement) {
   @state() private productSearchOpen = false
-  @state() private pendingRemovalId = ''
+  @state() private pendingRemovalIds: string[] = []
 
   static styles = css`
     :host {
@@ -129,11 +129,11 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
   render() {
     return html`
-      ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar} .pendingRemovalId=${this.pendingRemovalId}></lv-sidebar>`}
+      ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar} .pendingRemovalIds=${this.pendingRemovalIds}></lv-sidebar>`}
       <main>
         <slot name="page"></slot>
       </main>
-      <lv-chat-manager @lv-chat-removal-pending=${(event: CustomEvent<{ conversationId: string }>) => { this.pendingRemovalId = event.detail.conversationId }}></lv-chat-manager>
+      <lv-chat-manager @lv-chat-removal-pending=${(event: CustomEvent<{ conversationIds: string[] }>) => { this.pendingRemovalIds = event.detail.conversationIds }}></lv-chat-manager>
       <lv-product-search
         .open=${this.productSearchOpen}
         @product-search-close=${this.closeProductSearch}
