@@ -256,10 +256,12 @@ role-check failure fails closed.
 
 This is the administration gate for the control-plane state. It does not make
 an administrator an unconditional semantic-consumer bypass; semantic
-authorization is a separate, still-pending planner integration.
+authorization uses the separate FAI-641 planner and FAI-642 consumer boundaries
+for the qualified supported profile. Unsupported paths remain fail closed.
 
-The following grant/filter rules are the decided target boundary. They are not
-evidence that FAI-637 has already migrated each consumer.
+The following grant/filter rules are the decided target boundary. The
+qualification ledger, rather than FAI-637 alone, identifies which consumer
+combinations have executable evidence.
 
 Access grants control both discovery and execution. A denied dataset or member
 is absent from the authorization-filtered catalog and is rejected if addressed
@@ -356,9 +358,10 @@ remain fail closed rather than being activated implicitly.
 The source names SAML, OIDC, embed, and service token are accepted as closed
 mapping/verifier vocabulary only. FAI-637 does not claim an OIDC, SAML, embed,
 or service-consumer adapter. The current effective-value resolver's claim
-input is the opaque `trustedclaims.Envelope` boundary; wiring a real provider
-through the verifier and into a principal authorization context remains
-pending.
+input is the opaque `trustedclaims.Envelope` boundary. FAI-642 supplies
+request-bound direct/group principal context for qualified consumers; wiring a
+real external provider through the verifier remains outside the supported
+profile.
 
 FAI-619 qualifies the generated structural SemanticModel contract and
 compatibility lowering boundary. FAI-639 supplies compiler/evaluator behavior,
@@ -454,8 +457,9 @@ FAI-642 separately owns wiring the same admission to catalogs and every
 semantic consumer. The [planner boundary](../docs/articles/architecture/semantic-access-planner.md)
 records the scan-occurrence and trusted-input contract. FAI-639's
 compiler/evaluator tests are not evidence that those barriers, catalog rules,
-consumer adapters, generation references, cache invalidation, or end-to-end
-query enforcement exist.
+consumer adapters, generation references, cache invalidation, or query
+enforcement exist by themselves; the supported slices are evidenced by
+FAI-641, FAI-642, FAI-645, FAI-648, and FAI-649.
 
 ### Immediate invalidation identity
 
@@ -486,7 +490,8 @@ affected definition and subject. A digest mismatch is an immediate,
 conservative invalidation signal, never permission to continue with stale
 state. Fresh lookup/store/delivery guards consume this identity now;
 unsupported suggestion, rollup, bundle, and opaque-byte reuse remains closed,
-and exhaustive LIF qualification remains FAI-648 work.
+and the qualification ledger records the remaining exhaustive LIF cases as
+Partial rather than treating them as supported.
 
 Policy diffs report compatibility and security impact separately. The profile
 matrix makes tightening changes such as adding a required grant or access
@@ -539,31 +544,29 @@ its own governed consumption contract rather than reuse of internal resources.
   multi-dataset predicate maps, bounded reader/admission checks, deterministic
   identities, grant evaluation, and typed PlanIR predicate handoff. FAI-641
   and FAI-642 provide the qualified planner and consumer integration.
-- Future query authorization tests must prove fail-closed scalar and list
-  matching, all-grants and all-filters composition, discovery filtering,
-  direct-reference rejection, parameterized planning, and identical
-  enforcement for every semantic consumer; FAI-639's evaluator tests do not
-  satisfy those planner or consumer requirements.
+- The FAI-648 qualification ledger names executable evidence for the supported
+  authorization, discovery, planner, cache, and consumer paths. Remaining
+  Partial rows are unsupported or not exhaustively qualified and do not become
+  implicitly available.
 - Extracted normative YAML examples parse and validate against the generated
   SemanticModel schema; cross-path golden fixtures prove identical typed
   canonicalization and the 1,024-value bound.
-- Planner golden tests prove one effective security barrier per protected
-  dataset occurrence before inner and outer joins, aggregates, totals,
-  suggestions, self-joins, rollups, and coalesced multi-dataset plans, and prove
-  unsafe rewrites fail closed.
-- Compatibility fixtures cover every normative policy-change matrix row and
-  prove tightening, widening, and indeterminate results trigger the required
-  version and approval behavior.
-- Registry/control tests reject identity/type mutation, prove explicit
-  disablement and tombstone lifecycle behavior, and prove platform-admin
-  request attenuation. Generation-reference retention, dependent-consumer
-  invalidation, and administrator/break-glass behavior in semantic consumers
-  remain pending.
-- Cache tests must prove principals with different effective policies cannot
-  share authorization-sensitive results and that registry/control identity
-  changes invalidate affected entries; those consumer tests remain pending.
-- Audit tests prove grant evaluation and row-filter application are attributable
-  to the principal, semantic generation, attribute version, and policy identity
-  without leaking unrestricted attribute values.
-- Architecture tests prevent dashboards, APIs, agents, exports, and lower-level
-  analytical runtimes from bypassing the governed semantic authorization path.
+- Planner tests qualify the plan shapes named by the supported profile and
+  prove unsafe rewrites fail closed. Other join, rollup, substitution, and
+  opaque reuse combinations remain unsupported rather than inferred from those
+  tests.
+- Compatibility fixtures qualify the named deterministic classification,
+  version, widening-approval, and indeterminate-result slices. The matrix keeps
+  unproven combinations Partial.
+- Registry/control tests qualify the definition, assignment, lifecycle, replay,
+  concurrency, digest, and transactional-audit slices named by the supported
+  profile. External provider adapters and exhaustive lifecycle combinations
+  remain outside that boundary.
+- FAI-645 tests prove identity-partitioned result reuse and stale-state rejection
+  for the qualified cache path. Unqualified reuse paths remain closed.
+- Audit tests qualify durable redacted decision events, principal/actor/policy
+  binding, and audit-failure denial; LIF-06 retains the explicitly documented
+  evidence gap for the complete field set.
+- Architecture tests guard the request-bound consumers named by the supported
+  profile. Scheduled, export, embed, and other unqualified consumer paths are
+  not claimed by this evidence.
