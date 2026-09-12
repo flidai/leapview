@@ -147,13 +147,14 @@ jobs:
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
-    if: needs.build-production-image.result == 'success'
+    # authorize-candidate is intentionally skipped for main pushes. An explicit
+    # status function prevents that transitive skip from suppressing a successful
+    # build, while still honoring workflow cancellation.
+    if: ${{ !cancelled() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
-    # The release gate now includes the policy-driven performance and repeated
-    # native-refresh phase. Its bounded phase budgets total 115 minutes before
-    # toolchain setup and evidence cleanup, so retain enough outer headroom for
-    # the controller to finish and publish diagnostics on a slow runner.
-    timeout-minutes: 150
+    # Measure the reviewed reference and candidate sequentially on this runner.
+    # Each complete image qualification admits 115 minutes of bounded phases.
+    timeout-minutes: 270
     permissions:
       contents: read
       packages: read
@@ -199,7 +200,7 @@ jobs:
           set -euo pipefail
           immutable_image="${IMAGE_REFERENCE}"
           [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
-          task image:qualify:production IMAGE="${immutable_image}"
+          task image:qualify:performance IMAGE="${immutable_image}"
           identity="$(docker run --rm "${immutable_image}" version --json)"
           jq -e \
             --arg version "${IMAGE_VERSION}" \
@@ -208,3 +209,26 @@ jobs:
             '.version == $version and .revision == $revision and .buildTime == $build_time and .dirty == false and .development == true' \
             <<<"${identity}" >/dev/null
           printf 'Production image: `%s`\n' "${immutable_image}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Retain reference and candidate performance evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-pair-${{ needs.build-production-image.outputs.revision }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            .tmp/qualification/performance-pair/run-*/pair-identity.json
+            .tmp/qualification/performance-pair/run-*/reference/performance-report.json
+            .tmp/qualification/performance-pair/run-*/reference/runtime-identity.json
+            .tmp/qualification/performance-pair/run-*/reference/image-qualification-report.json
+            .tmp/qualification/performance-pair/run-*/reference/authoring-report.json
+            .tmp/qualification/performance-pair/run-*/reference/compose.log
+            .tmp/qualification/performance-pair/run-*/reference/postgres.log
+            .tmp/qualification/performance-pair/run-*/candidate/performance-report.json
+            .tmp/qualification/performance-pair/run-*/candidate/runtime-identity.json
+            .tmp/qualification/performance-pair/run-*/candidate/image-qualification-report.json
+            .tmp/qualification/performance-pair/run-*/candidate/authoring-report.json
+            .tmp/qualification/performance-pair/run-*/candidate/compose.log
+            .tmp/qualification/performance-pair/run-*/candidate/postgres.log

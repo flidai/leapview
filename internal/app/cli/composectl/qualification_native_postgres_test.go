@@ -21,6 +21,15 @@ type nativePostgresRuntimeFixture struct {
 	initialExecErr error
 }
 
+func TestQualificationNativePostgresPreservesApplicationHomeOwner(t *testing.T) {
+	create := strings.Index(qualificationNativePostgresEntrypointScript, "mkdir -p /var/lib/leapview/home")
+	owner := strings.Index(qualificationNativePostgresEntrypointScript, `chown "$(stat -c '%u:%g' /var/lib/leapview)" /var/lib/leapview/home`)
+	certificate := strings.Index(qualificationNativePostgresEntrypointScript, "cp /run/secrets/leapview-postgres-ca.pem /var/lib/leapview/home/postgres-root.crt")
+	require.Greater(t, owner, create)
+	require.Greater(t, certificate, owner)
+	require.NotContains(t, qualificationNativePostgresEntrypointScript, "chmod 0777")
+}
+
 func (runtime *nativePostgresRuntimeFixture) Start(_ context.Context, request qualificationContainerRequest) (qualificationContainer, error) {
 	if runtime.startErr != nil {
 		return nil, runtime.startErr

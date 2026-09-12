@@ -640,6 +640,11 @@ sections:
             type: explanation
             summary: Preserve behavior and capability ownership while extracting concentrated implementation complexity.
             source: articles/contributing/maintainability.md
+          - slug: contributing/performance-governance
+            title: Performance regression governance
+            type: explanation
+            summary: Qualify runtime and bundle regressions with compatible evidence and reviewed baselines.
+            source: articles/contributing/performance-governance.md
           - slug: contributing/visual
             title: Add a visual type
             type: how-to

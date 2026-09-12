@@ -264,7 +264,7 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	if second.FenceGeneration <= first.FenceGeneration {
 		t.Fatal("fence did not advance")
 	}
-	if err := r.CompleteAttempt(t.Context(), "run_1", "worker-a", first.FenceGeneration, nil); !errors.Is(err, ErrStaleFence) {
+	if err := r.CompleteAttempt(t.Context(), "run_1", "worker-a", first.FenceGeneration, json.RawMessage(`{"stale":true}`)); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale completion = %v", err)
 	}
 }

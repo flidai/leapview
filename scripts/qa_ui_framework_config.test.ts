@@ -1,12 +1,24 @@
 import { expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { blockingAxeViolations, formatAxeViolations, type AxeViolation } from './axe_accessibility'
+import { isDashboardUpdateURL } from './dashboard_visualization_readiness'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 test('UI framework QA gives the managed dev task its full readiness budget', async () => {
   const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
 
   expect(source).toContain("LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts)")
+})
+
+test('managed UI QA isolates CLI credentials and candidate checkpoints for startup and publication', async () => {
+  const source = await readFile('scripts/qa_ui_framework.ts', 'utf8')
+  expect(source).toContain('const managedCLIEnv = { LEAPVIEW_CLI_CONFIG: `${qaHome}/cli.json` }')
+  const startup = source.slice(source.indexOf("devTask = spawn(['task', 'dev']"), source.indexOf('void devTask.exited'))
+  expect(startup).toContain('...managedCLIEnv,')
+  const publication = source.slice(source.indexOf('async function deployManagedProject'), source.indexOf('async function waitForManagedServer'))
+  expect(publication).toContain('await run(command, { ...managedCLIEnv, ...qaPostgresEnv })')
+  expect(publication).not.toContain('await run(command)')
+  expect(source).toContain('env: { ...Bun.env, ...extraEnv }')
 })
 
 test('UI framework QA owns an isolated disposable PostgreSQL topology', async () => {
@@ -166,8 +178,22 @@ test('browser QA uses canonical project resource IDs', async () => {
 
   expect(source).toContain('/dashboards/dashboard:visual-showcase')
   expect(source).toContain("visualID === 'revenue'")
+  expect(source).toContain('const stream = observeDashboardUpdateStream(page, dashboardID, pageID)')
+  expect(source).toContain("await stream.waitForReady('ECharts first navigation')")
   expect(source).not.toContain("'/dashboards/visual-showcase")
   expect(source).not.toContain("visualID === 'revenue_by_month'")
+})
+
+test('ECharts first-navigation QA accepts only its canonical dashboard update stream', () => {
+  const dashboard = 'dashboard:visual-showcase', page = 'overview'
+  const canonical = 'http://127.0.0.1:8196/updates?route=dashboard&dashboard=dashboard%3Avisual-showcase&page=overview&datastar=%7B%7D'
+
+  expect(isDashboardUpdateURL(canonical, dashboard, page)).toBe(true)
+  expect(isDashboardUpdateURL(canonical.replace('route=dashboard', 'route=catalog'), dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL(canonical.replace('page=overview', 'page=tables'), dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL(`${canonical}&dashboard=${encodeURIComponent(dashboard)}`, dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL('/updates?route=dashboard', dashboard, page)).toBe(false)
+  expect(isDashboardUpdateURL('not a URL', dashboard, page)).toBe(false)
 })
 
 test('visual regression QA covers stable representative states, themes, and viewports', async () => {

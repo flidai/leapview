@@ -212,6 +212,16 @@ jobs:
       - name: Verify generated artifacts
         run: task generated:check
 
+      - name: Upload frontend bundle evidence
+        if: ${{ always() && matrix.shard == 'core' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-bundle-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .tmp/frontend-bundle-evidence.json
+          include-hidden-files: true
+          retention-days: 90
+          if-no-files-found: error
+
   postgres-isolation-validation:
     name: PostgreSQL topology isolation (PR)
     needs: [prepare]
@@ -373,6 +383,10 @@ jobs:
     needs: [prepare, apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation, docs-validation, quality-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
     steps:
       - name: Require successful planning
         env:
@@ -380,6 +394,40 @@ jobs:
         run: test "$PREPARE_RESULT" = success
       - name: Check out the gate contract
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Verify independent review of changed performance governance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Use the base branch's guard once installed. A candidate cannot
+          # authorize its baseline by changing the checker in the same PR.
+          guard=scripts/performance_baseline_review.mjs
+          base_revision="$BASE_REVISION"
+          if [[ -z "$base_revision" ]]; then
+            # workflow_dispatch has no pull_request payload. Resolve exactly
+            # one open PR for this head before trusting its main base.
+            base_revision="$(gh api --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls?per_page=100" |
+              jq -r --arg sha "$GITHUB_SHA" '
+                [.[][] | select(.state == "open" and .base.ref == "main" and .head.sha == $sha) | .base.sha] |
+                if length == 1 then .[0] else error("manual CI requires exactly one open PR to main at this commit") end
+              ')"
+          fi
+          if [[ ! "$base_revision" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "performance review base revision is not a full commit SHA" >&2
+            exit 1
+          fi
+          if git cat-file -e "$base_revision:$guard" 2>/dev/null; then
+            git show "$base_revision:$guard" > "$RUNNER_TEMP/performance-baseline-review.mjs"
+            guard="$RUNNER_TEMP/performance-baseline-review.mjs"
+          else
+            echo "performance review guard is absent from the trusted base; bootstrap must be established on main before this PR can pass" >&2
+            exit 1
+          fi
+          node "$guard"
       - name: Set up gate Go toolchain
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:

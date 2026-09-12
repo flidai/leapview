@@ -300,6 +300,7 @@ tasks:
       - task: api:generate
       - task: ui-signals:generate
       - task: visualization-ir:generate
+      - task: lucide-icons:generate
       - task: build
 
   ci:test:docs-site:
@@ -319,7 +320,14 @@ tasks:
     desc: Run global browser contracts, typechecks, and core application tests
     cmds:
       - node --test scripts/ci_watchdog.test.mjs
+      - node --test scripts/performance_baseline_review.test.mjs scripts/qualify_performance_pair.test.mjs
+      - node --test deploy/compose/qualification/performance-resources.test.mjs
       - bun test scripts/frontend_ci_contract.test.ts
+      - bun test scripts/frontend_bundle_budget.test.ts
+      - bun test scripts/generate_lucide_icon_catalog.test.ts
+      # ci:prepare already produced this evidence; checking it here avoids a
+      # duplicate production rebuild in every frontend validation shard.
+      - task: quality:frontend-bundle:check
       - bun test scripts/node_deps_contract.test.ts
       - bun test scripts/contract_projection_fixture.test.ts
       - bun test scripts/ensure_playwright.test.ts
@@ -420,6 +428,38 @@ tasks:
     desc: Tighten quality-budget baselines after maintainability improvements
     cmds:
       - go run ./internal/app/tools/qualitybudget --write
+
+  quality:frontend-bundle:check:
+    desc: Enforce absolute and ratcheting production frontend bundle budgets
+    cmds:
+      - bun scripts/frontend_bundle_budget.ts
+
+  quality:frontend-bundle:update:
+    desc: Tighten frontend bundle budgets only when current evidence does not increase them
+    cmds:
+      - bun scripts/frontend_bundle_budget.ts --update
+
+  quality:frontend-bundle:propose:
+    desc: Write an evidence-backed reviewed-increase proposal without changing the policy
+    requires:
+      vars: [PROPOSAL, REASON]
+    cmds:
+      - bun scripts/frontend_bundle_budget.ts --propose-increase {{.PROPOSAL | quote}} --reason {{.REASON | quote}}
+
+  quality:frontend-bundle:apply:
+    desc: Apply a manually reviewed frontend bundle budget increase proposal
+    requires:
+      vars: [PROPOSAL]
+    cmds:
+      - bun scripts/frontend_bundle_budget.ts --apply-proposal {{.PROPOSAL | quote}}
+
+  image:qualify:performance:
+    desc: Qualify paired performance evidence for a candidate image
+    requires:
+      vars: [IMAGE]
+    cmds:
+      - task: api:generate
+      - node scripts/qualify_performance_pair.mjs {{.IMAGE | quote}}
 
   quality:critical:coverage:
     desc: Enforce coverage floors for critical packages
@@ -635,6 +675,7 @@ tasks:
       - bun.lock
     generates:
       - web/generated/lucide-icon-catalog.ts
+      - web/generated/lucide-icon-nodes.ts
       - internal/dashboard/appearance/icons_gen.go
     cmds:
       - bun scripts/generate_lucide_icon_catalog.ts
@@ -1252,19 +1293,13 @@ tasks:
       - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-recording-rules.test.yaml
 
   image:qualify:production:
-    desc: Qualify an immutable LeapView production image
+    desc: Qualify an immutable production image against the reviewed performance reference
     requires:
       vars: [IMAGE]
     cmds:
-      - task: api:generate
-      - mkdir -p {{.ROOT_DIR}}/.tmp/qualification/tmp
-      - >-
-        env TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp
-        LEAPVIEWCTL_ROOT={{.ROOT_DIR}}/deploy/compose
-        go run ./cmd/leapviewctl qualify image
-        --image {{.IMAGE | quote}}
-        --require-immutable
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/production-image
+      - task: image:qualify:performance
+        vars:
+          IMAGE: '{{.IMAGE}}'
 
   image:qualify:site:
     desc: Qualify an immutable LeapView public-site image

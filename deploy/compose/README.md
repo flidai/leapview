@@ -65,8 +65,12 @@ five-minute sample, governed access and denial auditing, restart persistence,
 and recovery-readiness checks:
 
 ```sh
-./leapviewctl qualify installed-candidate
+QUALIFICATION_PERFORMANCE_MODE=bootstrap QUALIFICATION_PERFORMANCE_BASELINE= \
+  ./leapviewctl qualify installed-candidate
 ```
+
+This explicitly runs the absolute performance checks. Relative qualification
+requires a compatible reviewed baseline and `compare` mode; see the plan above.
 
 The release archive carries the canonical PostgreSQL role/bootstrap script at
 `qualification/postgres-init.sh`; release packaging verifies it byte-for-byte

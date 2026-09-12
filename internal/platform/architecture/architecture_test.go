@@ -3035,6 +3035,33 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
 	postgresIsolationCI := workflowJobBlock(t, text, "postgres-isolation-validation")
+	ciGateCI := workflowJobBlock(t, text, "ci-gate")
+	for _, want := range []string{
+		"permissions:",
+		"pull-requests: read",
+		"fetch-depth: 0",
+		"Verify independent review of changed performance governance",
+		"BASE_REVISION: ${{ github.event.pull_request.base.sha }}",
+		"base_revision=\"$BASE_REVISION\"",
+		"gh api --paginate --slurp",
+		"commits/${GITHUB_SHA}/pulls?per_page=100",
+		".base.ref == \"main\"",
+		".head.sha == $sha",
+		"if length == 1 then .[0] else error(\"manual CI requires exactly one open PR to main at this commit\") end",
+		"if [[ ! \"$base_revision\" =~ ^[0-9a-fA-F]{40}$ ]]",
+		"git show \"$base_revision:$guard\"",
+		"node \"$guard\"",
+		"Require every planned validation result",
+	} {
+		if !strings.Contains(ciGateCI, want) {
+			t.Fatalf("CI gate is missing performance enforcement fragment %q", want)
+		}
+	}
+	guardIndex := strings.Index(ciGateCI, "Verify independent review of changed performance governance")
+	plannedGateIndex := strings.Index(ciGateCI, "Require every planned validation result")
+	if guardIndex < 0 || plannedGateIndex < 0 || guardIndex > plannedGateIndex {
+		t.Fatalf("CI gate must run the performance governance guard before planned validation results")
+	}
 	for _, want := range []string{
 		"name: Frontend tests (PR, ${{ matrix.shard }})",
 		"fail-fast: false",
@@ -3171,7 +3198,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Qualify production image",
 		"needs: build-production-image",
 		"uses: ./.github/actions/setup-ci",
-		"task image:qualify:production IMAGE=\"${immutable_image}\"",
+		"task image:qualify:performance IMAGE=\"${immutable_image}\"",
 	} {
 		if !strings.Contains(artifactText, want) {
 			t.Fatalf("main artifact workflow missing %q", want)
@@ -3282,15 +3309,26 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"scripts/postgres-conformance-tests.sh list",
 		"grep -Fvx -f",
 		"--shard-count 4",
+		"image:qualify:performance:",
+		"node scripts/qualify_performance_pair.mjs",
 		"image:qualify:production:",
-		"TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp",
-		"go run ./cmd/leapviewctl qualify image",
-		"--require-immutable",
 		"image:qualify:site:",
 		"go run ./cmd/leapviewctl qualify site-image",
 	} {
 		if !strings.Contains(taskText, want) {
 			t.Fatalf("Taskfile missing vulnerability gate fragment %q", want)
+		}
+	}
+	performancePair, err := os.ReadFile(filepath.Join(root, "scripts", "qualify_performance_pair.mjs"))
+	if err != nil {
+		t.Fatalf("read performance pair orchestrator: %v", err)
+	}
+	for _, want := range []string{
+		"'qualify', 'image', '--image', reference.image, '--require-immutable'",
+		"'qualify', 'image', '--image', candidate, '--require-immutable'",
+	} {
+		if !strings.Contains(string(performancePair), want) {
+			t.Fatalf("paired qualification must preserve immutable image admission: missing %q", want)
 		}
 	}
 	var packageManifest struct {

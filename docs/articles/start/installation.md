@@ -109,8 +109,16 @@ cp leapview.env.example leapview.env
 ./leapviewctl first-login
 ```
 
-Before adoption, run `./leapviewctl qualify installed-candidate` from the
-extracted archive.
+Before adoption, run the explicit absolute-budget journey from the extracted
+archive:
+
+```sh
+QUALIFICATION_PERFORMANCE_MODE=bootstrap QUALIFICATION_PERFORMANCE_BASELINE= \
+  ./leapviewctl qualify installed-candidate
+```
+
+Bootstrap success does not provide relative performance qualification. The
+bundled plan describes comparison against a compatible reviewed baseline.
 `QUALIFICATION.md` maps every automated assertion to the corresponding human
 check, including anonymous distribution, the five-minute sample, audited
 authorization denial, restart persistence, and recovery-readiness checks using

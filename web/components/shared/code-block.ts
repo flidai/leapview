@@ -196,11 +196,8 @@ class CodeBlock extends LitElement {
   private async prepareCode(code: string, language: SupportedLanguage): Promise<string> {
     if (!this.format || language !== 'sql') return code
     try {
-      const { format: formatSQL } = await import('sql-formatter')
-      return formatSQL(code, {
-        language: 'duckdb',
-        keywordCase: 'upper',
-      }).trim()
+      const { formatDuckDBSQL } = await import('./sql-format-duckdb')
+      return formatDuckDBSQL(code)
     } catch {
       return code
     }

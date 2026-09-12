@@ -2,6 +2,9 @@ import { mkdir, readFile, rm } from 'node:fs/promises'
 
 const portFile = '.tmp/dev-server.port'
 const qaHome = '.tmp/qa-ui-framework/home'
+// Checkpoints are stored beside cli.json, independently of LEAPVIEW_HOME.
+// Keep both startup and publication away from the user's shared CLI state.
+const managedCLIEnv = { LEAPVIEW_CLI_CONFIG: `${qaHome}/cli.json` }
 const qaPostgresEnv = {
   LEAPVIEW_POSTGRES_PROJECT_SUFFIX: '-qa-ui-framework',
   LEAPVIEW_POSTGRES_TEST_MODE: '1',
@@ -64,6 +67,7 @@ async function resolveBaseURL(): Promise<string> {
   startedServer = true
   await prepareManagedHome()
   devTask = spawn(['task', 'dev'], {
+    ...managedCLIEnv,
     ...qaPostgresEnv,
     LEAPVIEW_DEV_LOG_LINES: '0',
     LEAPVIEW_DEV_READY_ATTEMPTS: String(managedServerReadyAttempts),
@@ -103,7 +107,7 @@ async function deployManagedProject(): Promise<void> {
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      await run(command, qaPostgresEnv)
+      await run(command, { ...managedCLIEnv, ...qaPostgresEnv })
       return
     } catch (error) {
       lastError = error

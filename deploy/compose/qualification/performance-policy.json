@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
   "workload": "olist-evaluation",
+  "fixture": "evaluation/data/orders.csv",
+  "sampleProtocol": "qualification-performance-v1",
   "assumptions": {
     "runtime": "Docker Engine with Compose v2 on a dedicated Linux runner",
     "minimumLogicalCPUs": 2,
