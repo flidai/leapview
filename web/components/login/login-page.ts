@@ -1,5 +1,6 @@
 import { LitElement, css, html } from 'lit'
-import { Monitor, Moon, Sun } from 'lucide'
+import { Eye, EyeOff, Monitor, Moon, Sun } from 'lucide'
+import { ifDefined } from 'lit/directives/if-defined.js'
 import type { DashboardStatus, LoginPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { leapViewBrandName } from '../shared/brand-mark'
@@ -33,6 +34,7 @@ const themeLabels: Record<ThemePreference, string> = {
 }
 
 class LeapViewLoginPage extends DatastarLit(LitElement) {
+  private readonly revealedPasswords = new Set<string>()
   private themeMode: ThemePreference = currentThemeMode()
   private readonly handleThemeApplied = (event: Event) => {
     const detail = (event as CustomEvent<{ mode?: string }>).detail
@@ -41,19 +43,19 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
   }
 
   static styles = css`
-    :host {
+    :host { display: block; min-width: 0; }
+
+    .layout {
       position: relative;
       display: grid;
       width: 100%;
-      height: 100svh;
       min-height: 100svh;
       place-items: center;
-      place-content: center;
-      overflow: hidden;
+      overflow: clip;
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
-      padding: var(--base-size-24);
+      padding: var(--base-size-64) var(--base-size-24);
       box-sizing: border-box;
     }
 
@@ -76,8 +78,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
 
     .theme {
       position: absolute;
-      top: var(--base-size-16);
-      right: var(--base-size-16);
+      top: var(--base-size-24);
+      right: var(--base-size-24);
       z-index: var(--zIndex-modal, 30);
       display: inline-grid;
       width: var(--control-medium-size);
@@ -95,7 +97,8 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     .theme:focus-visible {
       background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
-      outline: 0;
+      outline: var(--focus-outline);
+      outline-offset: var(--base-size-4);
     }
 
     .theme [hidden] {
@@ -106,15 +109,16 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       position: relative;
       z-index: var(--zIndex-modal, 30);
       display: grid;
-      width: min(100%, var(--lv-login-panel-width));
-      justify-items: center;
+      width: min(100%, calc(var(--lv-login-panel-width) + var(--base-size-32)));
+      align-self: center;
+      justify-items: stretch;
       gap: var(--base-size-20);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
-      padding: var(--base-size-24);
-      text-align: center;
-      box-shadow: var(--shadow-resting-medium, var(--shadow-resting-small));
+      box-shadow: var(--shadow-resting-medium);
+      padding: var(--base-size-32);
+      text-align: left;
       box-sizing: border-box;
     }
 
@@ -125,13 +129,17 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     }
 
     .brand-lockup {
+      position: absolute;
+      top: var(--base-size-24);
+      left: var(--base-size-24);
+      z-index: var(--zIndex-modal, 30);
       display: flex;
       align-items: center;
       gap: var(--base-size-12);
     }
 
     .brand-lockup lv-brand-mark {
-      --lv-brand-mark-size: var(--base-size-32);
+      --lv-brand-mark-size: calc(var(--base-size-32) + var(--base-size-4));
     }
 
     .provider {
@@ -214,6 +222,27 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       outline-offset: var(--focus-outline-offset, var(--base-size-2));
     }
 
+    .password-field { display: grid; gap: var(--base-size-6); }
+    .password-control { position: relative; }
+    .password-control input { padding-right: var(--base-size-48); }
+    .password-toggle {
+      position: absolute;
+      inset-block: 0;
+      right: var(--base-size-2);
+      display: grid;
+      place-items: center;
+      width: var(--control-large-size);
+      padding: 0;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: transparent;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+    }
+    .password-toggle svg { width: var(--base-size-20); height: var(--base-size-20); }
+    .password-toggle:hover { color: var(--lv-fg-default); }
+    .password-toggle:focus-visible { outline: var(--focus-outline); outline-offset: var(--base-size-2); }
+
     .submit {
       display: inline-grid;
       min-height: var(--control-xlarge-size);
@@ -247,15 +276,19 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
-    @media (max-width: 520px) {
-      :host {
-        padding: var(--base-size-16);
-      }
-
-      .theme {
-        top: var(--base-size-12);
-        right: var(--base-size-12);
-      }
+    .brand-name { font: var(--lv-type-page-title); font-size: calc(var(--text-title-size-medium) * 1.1); }
+    .panel-heading { text-align: center; }
+    .panel-heading p { margin: var(--base-size-8) 0 0; color: var(--lv-fg-muted); font: var(--lv-type-body); }
+    .access-help { margin: 0; padding-top: var(--base-size-16); border-top: var(--lv-border-muted); color: var(--lv-fg-muted); font: var(--lv-type-caption); text-align: center; }
+    .submit:hover { background: var(--lv-button-accent-bg-hover); }
+    .submit:focus-visible { outline: var(--focus-outline); outline-offset: var(--base-size-4); }
+    .divider { display: flex; align-items: center; gap: var(--base-size-12); border: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .divider::before, .divider::after { content: ''; flex: 1; border-top: var(--lv-border-muted); }
+    @media (max-height: 700px), (max-width: 520px) {
+      .layout { padding: var(--base-size-64) var(--base-size-16); }
+      .brand-lockup { top: var(--base-size-16); left: var(--base-size-16); }
+      .theme { top: var(--base-size-16); right: var(--base-size-16); }
+      .panel { padding: var(--base-size-24); gap: var(--base-size-16); }
     }
   `
 
@@ -290,11 +323,16 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
     const ssoAuth = page?.ssoAuth ?? true
     const mustChangePassword = page?.mustChangePassword ?? false
     return html`
+      <div class="layout">
       <lv-topology-background
         data-login-background
         data-module-src=${page?.backgroundModuleSrc ?? this.backgroundModuleSrc}
       ></lv-topology-background>
       <div class="scrim" aria-hidden="true"></div>
+        <header class="brand-lockup">
+          <lv-brand-mark aria-hidden="true"></lv-brand-mark>
+          <span class="brand-name">${page?.title ?? leapViewBrandName}</span>
+        </header>
       <button
         class="theme"
         type="button"
@@ -308,24 +346,19 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
         <span data-theme-icon="light" ?hidden=${!isLightTheme(this.themeMode)}>${lucideIcon(Sun)}</span>
         <span data-theme-icon="dark" ?hidden=${!isDarkTheme(this.themeMode)}>${lucideIcon(Moon)}</span>
       </button>
-      <section class="panel" aria-label="${leapViewBrandName} login">
-        <div class="brand-lockup">
-          <lv-brand-mark aria-hidden="true"></lv-brand-mark>
-          <h1>${page?.title ?? leapViewBrandName}</h1>
+      <section class="panel" aria-labelledby="login-heading">
+
+
+        <div class="panel-heading">
+          <h1 id="login-heading">${mustChangePassword ? 'Set a new password' : 'Welcome back'}</h1>
+          <p>${mustChangePassword ? 'Choose a new password to continue to your workspace.' : 'Sign in to your workspace.'}</p>
         </div>
         ${this.status.error ? html`<div class="error" role="alert" aria-live="assertive">${this.status.error}</div>` : ''}
         ${mustChangePassword ? html`
           <form method="post" action="/auth/local/password">
             <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
-            <label>
-              Temporary password
-              <input name="currentPassword" type="password" autocomplete="current-password" maxlength="1024" required>
-            </label>
-            <label>
-              New password
-              <input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024" aria-describedby="new-password-requirements" required>
-              <span id="new-password-requirements" class="field-hint">Use at least 12 characters.</span>
-            </label>
+            ${this.passwordField('currentPassword', 'Temporary password')}
+            ${this.passwordField('newPassword', 'New password')}
             <button class="submit" type="submit">Change password</button>
           </form>
         ` : localAuth ? html`
@@ -333,23 +366,47 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
             <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
             <label>
               Email
-              <input name="email" type="email" autocomplete="username" required>
+              <input name="email" type="email" autocomplete="username" placeholder="you@company.com" required>
             </label>
-            <label>
-              Password
-              <input name="password" type="password" autocomplete="current-password" required>
-            </label>
+            ${this.passwordField('password', 'Password')}
             <button class="submit" type="submit">Sign in</button>
           </form>
         ` : ''}
-        ${!mustChangePassword && localAuth && ssoAuth ? html`<div class="divider" aria-hidden="true"></div>` : ''}
+        ${!mustChangePassword && localAuth && ssoAuth ? html`<div class="divider" aria-hidden="true">or</div>` : ''}
         ${!mustChangePassword && ssoAuth ? html`
           <a class="provider" href="/auth/azureadv2">
             <span class="provider-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
             <span>${page?.providerLabel ?? 'Sign in with Azure Active Directory'}</span>
           </a>
         ` : ''}
-      </section>
+        <p class="access-help">Need access? Contact your workspace administrator.</p>
+        </section>
+      </div>
+    `
+  }
+
+  private passwordField(name: 'password' | 'currentPassword' | 'newPassword', label: string) {
+    const visible = this.revealedPasswords.has(name)
+    const id = `login-${name}`
+    const action = `${visible ? 'Hide' : 'Show'} ${label.toLowerCase()}`
+    return html`
+      <div class="password-field">
+        <label for=${id}>${label}</label>
+        <div class="password-control">
+          <input id=${id} name=${name} type=${visible ? 'text' : 'password'}
+            autocomplete=${name === 'newPassword' ? 'new-password' : 'current-password'}
+            minlength=${ifDefined(name === 'newPassword' ? 12 : undefined)}
+            maxlength=${ifDefined(name === 'password' ? undefined : 1024)}
+            aria-describedby=${ifDefined(name === 'newPassword' ? 'new-password-requirements' : undefined)} required>
+          <button class="password-toggle" type="button" aria-label=${action} title=${action} aria-controls=${id}
+            @click=${() => {
+              if (visible) this.revealedPasswords.delete(name)
+              else this.revealedPasswords.add(name)
+              this.requestUpdate()
+            }}>${lucideIcon(visible ? EyeOff : Eye)}</button>
+        </div>
+        ${name === 'newPassword' ? html`<span id="new-password-requirements" class="field-hint">Use at least 12 characters.</span>` : ''}
+      </div>
     `
   }
 
