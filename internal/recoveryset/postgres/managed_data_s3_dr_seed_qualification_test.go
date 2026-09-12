@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -40,13 +41,14 @@ import (
 )
 
 const (
-	managedS3DRArtifactDirEnv = "LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR"
-	managedS3DRScenarioID     = "fai-520-managed-data-s3-dr-seed-v1"
-	managedS3DRImage          = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
-	managedS3DRRegion         = "us-east-1"
-	managedS3DRPrefix         = "recovered-data"
-	managedS3DRSentinelPrefix = "unrelated-sentinel"
-	managedS3DRProfileID      = "managed-data-s3-dr-seed"
+	managedS3DRArtifactDirEnv      = "LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR"
+	managedS3DRScenarioID          = "fai-520-managed-data-s3-dr-seed-v1"
+	managedS3DRImage               = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	managedS3DRRegion              = "us-east-1"
+	managedS3DRPrefix              = "recovered-data"
+	managedS3DRSentinelPrefix      = "unrelated-sentinel"
+	managedS3DRProfileID           = "managed-data-s3-dr-seed"
+	managedS3DRExpectedFingerprint = "sha256:eb804c34dc1709b6c120f5e290b662e267552cfe294da83fe5c2a278c8dbf808"
 )
 
 type managedS3DRSeed struct {
@@ -216,10 +218,15 @@ func TestFAI520ManagedDataS3DRSeedQualification(t *testing.T) {
 		t.Fatalf("sentinel inventory changed during capture:\nbefore=%#v\nafter=%#v", beforeSentinels, afterSentinels)
 	}
 
-	recoveryPoint, inventory := managedS3DRArtifacts(t, seed, result)
-	assertManagedS3DRArtifactDeterminism(t, recoveryPoint, inventory)
-	writeManagedS3DRArtifacts(t, recoveryPoint, inventory)
 	qualifyManagedS3DRFailures(t, projection, managed, store, privateKey, seed, expected, assignment, startedAt, completedAt, fixture.db)
+
+	recoveryPoint, inventory := managedS3DRArtifacts(t, seed, result)
+	if err := validateManagedS3DRArtifacts(recoveryPoint, inventory, seed, result); err != nil {
+		t.Fatalf("validate qualification artifacts: %v", err)
+	}
+	assertManagedS3DRArtifactDeterminism(t, recoveryPoint, inventory)
+	qualifyManagedS3DRArtifactFailures(t, recoveryPoint, inventory, seed, result)
+	publishManagedS3DRArtifacts(t, recoveryPoint, inventory, seed, result)
 }
 
 func applyManagedS3DRRecoverySchema(t *testing.T, fixture *providerObservationFixture) {
@@ -587,6 +594,14 @@ func managedS3DRArtifacts(t *testing.T, seed managedS3DRSeed, result capture.Res
 
 func managedS3DRScenarioFingerprint(t *testing.T, seed managedS3DRSeed) string {
 	t.Helper()
+	fingerprint, err := calculateManagedS3DRScenarioFingerprint(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fingerprint
+}
+
+func calculateManagedS3DRScenarioFingerprint(seed managedS3DRSeed) (string, error) {
 	type logicalObject struct {
 		Path, UploadKind, ObjectKey, SHA256 string
 		Size                                int64
@@ -599,11 +614,24 @@ func managedS3DRScenarioFingerprint(t *testing.T, seed managedS3DRSeed) string {
 		Key, SHA256 string
 		Size        int64
 	}
+	type logicalProviderProfile struct {
+		ProfileID, Implementation, AccountIdentity, Region, Namespace string
+	}
 	logical := struct {
-		ScenarioID, RecoveredPrefix, SentinelPrefix string
-		Revisions                                   []logicalRevision
-		Sentinels                                   []logicalSentinel
-	}{ScenarioID: managedS3DRScenarioID, RecoveredPrefix: managedS3DRPrefix, SentinelPrefix: managedS3DRSentinelPrefix}
+		ScenarioID, ProjectID, ConnectionID, CollectionID string
+		Provider                                          logicalProviderProfile
+		RecoveredPrefix, SentinelPrefix                   string
+		Revisions                                         []logicalRevision
+		Sentinels                                         []logicalSentinel
+	}{
+		ScenarioID: managedS3DRScenarioID, ProjectID: seed.ProjectID.String(), ConnectionID: seed.ConnectionID.String(),
+		CollectionID: seed.CollectionID.String(),
+		Provider: logicalProviderProfile{
+			ProfileID: seed.Profile.ProfileID, Implementation: seed.Profile.Implementation,
+			AccountIdentity: seed.Profile.AccountIdentity, Region: seed.Profile.Region, Namespace: seed.Profile.Namespace,
+		},
+		RecoveredPrefix: managedS3DRPrefix, SentinelPrefix: managedS3DRSentinelPrefix,
+	}
 	for _, revision := range seed.Revisions {
 		entry := logicalRevision{RevisionID: revision.ID.String(), ManifestDigest: revision.ManifestDigest}
 		for _, object := range revision.Objects {
@@ -628,10 +656,138 @@ func managedS3DRScenarioFingerprint(t *testing.T, seed managedS3DRSeed) string {
 	})
 	raw, err := json.Marshal(logical)
 	if err != nil {
-		t.Fatal(err)
+		return "", err
 	}
 	sum := sha256.Sum256(raw)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func validateManagedS3DRArtifacts(point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact, seed managedS3DRSeed, result capture.Result) error {
+	if point.SchemaVersion != 1 || inventory.SchemaVersion != 1 {
+		return errors.New("artifact schema version must be 1")
+	}
+	if point.ScenarioID != managedS3DRScenarioID || inventory.ScenarioID != managedS3DRScenarioID {
+		return errors.New("artifact scenario identity mismatch")
+	}
+	if !managedS3DRDigest(point.ScenarioFingerprint) || point.ScenarioFingerprint != inventory.ScenarioFingerprint {
+		return errors.New("artifact scenario fingerprints are missing or inconsistent")
+	}
+	expectedFingerprint, err := calculateManagedS3DRScenarioFingerprint(seed)
+	if err != nil {
+		return fmt.Errorf("calculate scenario fingerprint: %w", err)
+	}
+	if point.ScenarioFingerprint != expectedFingerprint || point.ScenarioFingerprint != managedS3DRExpectedFingerprint {
+		return fmt.Errorf("scenario fingerprint = %q, want frozen vector %q", point.ScenarioFingerprint, managedS3DRExpectedFingerprint)
+	}
+	parsedSetID, err := uuid.Parse(point.RecoverySetID)
+	if err != nil || parsedSetID.String() != point.RecoverySetID || point.RecoverySetID != result.Set.ID {
+		return errors.New("artifact RecoverySet identity mismatch")
+	}
+	anchorDigest, err := result.Evidence.Anchor.Digest()
+	if err != nil || !managedS3DRDigest(point.SourceAnchorDigest) || point.SourceAnchorDigest != anchorDigest || point.SourceAnchorDigest != result.Set.SourceFrontierAnchorDigest {
+		return errors.New("artifact source-anchor commitment mismatch")
+	}
+	manifestDigest, err := result.Evidence.Manifest.Digest()
+	if err != nil || !managedS3DRDigest(point.ManifestDigest) || point.ManifestDigest != manifestDigest || point.ManifestDigest != result.Set.ManagedObservationManifestDigest {
+		return errors.New("artifact Manifest v2 commitment mismatch")
+	}
+	commitment, err := result.Set.Commitment()
+	if err != nil || !managedS3DRDigest(point.FrontierCommitment) || point.FrontierCommitment != commitment || point.FrontierCommitment != result.Set.FrontierDigest {
+		return errors.New("artifact recovery-frontier commitment mismatch")
+	}
+	started, startErr := time.Parse("2006-01-02T15:04:05.000000Z", point.CaptureStartedAt)
+	completed, completeErr := time.Parse("2006-01-02T15:04:05.000000Z", point.CaptureCompletedAt)
+	if startErr != nil || completeErr != nil || completed.Before(started) || point.CaptureStartedAt != result.Evidence.Manifest.Capture.StartedAt || point.CaptureCompletedAt != result.Evidence.Manifest.Capture.CompletedAt {
+		return errors.New("artifact capture timestamps are invalid or inconsistent")
+	}
+	if inventory.ProviderProfileID != seed.Profile.ProfileID || inventory.Bucket != seed.Profile.Bucket || inventory.RecoveredPrefix != managedS3DRPrefix || inventory.SentinelPrefix != managedS3DRSentinelPrefix || inventory.RecoveredPrefix == inventory.SentinelPrefix {
+		return errors.New("artifact provider scope mismatch")
+	}
+
+	expectedRevisions := make(map[string]managedS3DRRevision, len(seed.Revisions))
+	for _, revision := range seed.Revisions {
+		expectedRevisions[revision.ID.String()] = revision
+	}
+	if len(inventory.Revisions) != len(expectedRevisions) || len(point.RevisionIdentities) != len(expectedRevisions) {
+		return errors.New("artifact revision inventory is incomplete")
+	}
+	manifestRevisions := make(map[string]successor.Revision, len(result.Evidence.Manifest.Revisions))
+	for _, revision := range result.Evidence.Manifest.Revisions {
+		manifestRevisions[revision.RevisionID] = revision
+	}
+	memberships := int64(0)
+	physicalObjects := make(map[string]struct{})
+	for i, revision := range inventory.Revisions {
+		if i > 0 && inventory.Revisions[i-1].RevisionID >= revision.RevisionID {
+			return errors.New("artifact revision inventory is not strictly sorted")
+		}
+		if point.RevisionIdentities[i] != revision.RevisionID {
+			return errors.New("artifact revision identities differ across reports")
+		}
+		expected, ok := expectedRevisions[revision.RevisionID]
+		manifestRevision, manifestOK := manifestRevisions[revision.RevisionID]
+		if !ok || !manifestOK || revision.ManifestDigest == "" || revision.ManifestDigest != expected.ManifestDigest || revision.ManifestDigest != manifestRevision.RevisionManifestDigest || len(revision.Objects) != len(expected.Objects) || len(revision.Objects) != len(manifestRevision.Files) {
+			return fmt.Errorf("artifact revision %q does not match captured membership", revision.RevisionID)
+		}
+		expectedObjects := make(map[string]managedS3DRObject, len(expected.Objects))
+		manifestFiles := make(map[string]successor.File, len(manifestRevision.Files))
+		for _, object := range expected.Objects {
+			expectedObjects[object.Path] = object
+		}
+		for _, file := range manifestRevision.Files {
+			manifestFiles[file.Path] = file
+		}
+		for j, object := range revision.Objects {
+			if j > 0 && revision.Objects[j-1].Path >= object.Path {
+				return fmt.Errorf("artifact revision %q objects are not strictly sorted", revision.RevisionID)
+			}
+			expectedObject, objectOK := expectedObjects[object.Path]
+			manifestFile, fileOK := manifestFiles[object.Path]
+			if !objectOK || !fileOK || (object.UploadKind != "put" && object.UploadKind != "multipart") || object.ObjectKey == "" || !strings.HasPrefix(object.ObjectKey, managedS3DRPrefix+"/") || storage.ValidateProviderVersionID(object.VersionID) != nil || storage.ValidateBlob(storage.Blob{SHA256: object.SHA256, Size: object.Size}) != nil {
+				return fmt.Errorf("artifact revision %q object %q is invalid", revision.RevisionID, object.Path)
+			}
+			if object.Path != expectedObject.Path || object.UploadKind != expectedObject.UploadKind || object.ObjectKey != expectedObject.Observed.ObjectKey || object.VersionID != expectedObject.Observed.VersionID || object.SHA256 != expectedObject.Observed.SHA256 || object.Size != expectedObject.Observed.Size || object.ObjectKey != manifestFile.Provider.Key || object.VersionID != manifestFile.Provider.VersionID || object.SHA256 != manifestFile.SHA256 || object.Size != manifestFile.Size {
+				return fmt.Errorf("artifact revision %q object %q differs from captured evidence", revision.RevisionID, object.Path)
+			}
+			memberships++
+			physicalObjects[object.ObjectKey+"\x00"+object.VersionID] = struct{}{}
+		}
+	}
+	if memberships != point.MembershipCount || int64(len(physicalObjects)) != point.ObjectCount {
+		return errors.New("artifact object counts do not match inventory")
+	}
+	wantMemberships, wantObjects, err := result.Evidence.Manifest.ObservationCounts()
+	if err != nil || memberships != wantMemberships || int64(len(physicalObjects)) != wantObjects {
+		return errors.New("artifact object counts do not match Manifest v2")
+	}
+
+	expectedSentinels := append([]managedS3DRSentinel(nil), seed.Sentinels...)
+	sort.Slice(expectedSentinels, func(i, j int) bool {
+		if expectedSentinels[i].Key != expectedSentinels[j].Key {
+			return expectedSentinels[i].Key < expectedSentinels[j].Key
+		}
+		return expectedSentinels[i].VersionID < expectedSentinels[j].VersionID
+	})
+	if len(inventory.Sentinels) != len(expectedSentinels) {
+		return errors.New("artifact sentinel inventory is incomplete")
+	}
+	for i, sentinel := range inventory.Sentinels {
+		if i > 0 && (inventory.Sentinels[i-1].Key > sentinel.Key || inventory.Sentinels[i-1].Key == sentinel.Key && inventory.Sentinels[i-1].VersionID >= sentinel.VersionID) {
+			return errors.New("artifact sentinel inventory is not strictly sorted")
+		}
+		if sentinel.Key == "" || !strings.HasPrefix(sentinel.Key, managedS3DRSentinelPrefix+"/") || storage.ValidateProviderVersionID(sentinel.VersionID) != nil || storage.ValidateBlob(storage.Blob{SHA256: sentinel.SHA256, Size: sentinel.Size}) != nil || sentinel != expectedSentinels[i] {
+			return fmt.Errorf("artifact sentinel %d is invalid or differs from baseline", i)
+		}
+	}
+	return nil
+}
+
+func managedS3DRDigest(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {
+		return false
+	}
+	raw, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil && len(raw) == sha256.Size
 }
 
 func assertManagedS3DRArtifactDeterminism(t *testing.T, point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact) {
@@ -671,12 +827,18 @@ func reverseStrings(values []string) []string {
 
 func managedS3DRCanonicalArtifact(t *testing.T, value managedS3DRRecoveryPointArtifact) []byte {
 	t.Helper()
+	value.RevisionIdentities = append([]string(nil), value.RevisionIdentities...)
 	sort.Strings(value.RevisionIdentities)
 	return managedS3DRMarshalArtifact(t, value)
 }
 
 func managedS3DRCanonicalInventory(t *testing.T, value managedS3DRInventoryArtifact) []byte {
 	t.Helper()
+	value.Revisions = append([]managedS3DRInventoryRevision(nil), value.Revisions...)
+	for i := range value.Revisions {
+		value.Revisions[i].Objects = append([]managedS3DRInventoryObject(nil), value.Revisions[i].Objects...)
+	}
+	value.Sentinels = append([]managedS3DRSentinel(nil), value.Sentinels...)
 	sort.Slice(value.Revisions, func(i, j int) bool { return value.Revisions[i].RevisionID < value.Revisions[j].RevisionID })
 	for i := range value.Revisions {
 		sort.Slice(value.Revisions[i].Objects, func(a, b int) bool { return value.Revisions[i].Objects[a].Path < value.Revisions[i].Objects[b].Path })
@@ -699,18 +861,30 @@ func managedS3DRMarshalArtifact(t *testing.T, value any) []byte {
 	return append(raw, '\n')
 }
 
-func writeManagedS3DRArtifacts(t *testing.T, point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact) {
+func publishManagedS3DRArtifacts(t *testing.T, point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact, seed managedS3DRSeed, result capture.Result) {
 	t.Helper()
-	dir := strings.TrimSpace(os.Getenv(managedS3DRArtifactDirEnv))
-	if dir == "" {
-		dir = t.TempDir()
+	finalDir := strings.TrimSpace(os.Getenv(managedS3DRArtifactDirEnv))
+	if finalDir == "" {
+		finalDir = filepath.Join(t.TempDir(), "managed-data-s3")
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	parentDir := filepath.Dir(finalDir)
+	if err := os.MkdirAll(parentDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
+	stagingDir, err := os.MkdirTemp(parentDir, "."+filepath.Base(finalDir)+".staging-")
+	if err != nil {
 		t.Fatal(err)
 	}
+	published := false
+	defer func() {
+		if !published {
+			_ = os.RemoveAll(stagingDir)
+		}
+	}()
+	if err := os.Chmod(stagingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	artifacts := []struct {
 		name string
 		raw  []byte
@@ -719,13 +893,22 @@ func writeManagedS3DRArtifacts(t *testing.T, point managedS3DRRecoveryPointArtif
 		{name: "baseline-object-inventory.json", raw: managedS3DRCanonicalInventory(t, inventory)},
 	}
 	for _, artifact := range artifacts {
-		path := filepath.Join(dir, artifact.name)
+		path := filepath.Join(stagingDir, artifact.name)
 		writeManagedS3DRArtifact(t, path, artifact.raw)
+	}
+
+	storedPoint := readManagedS3DRRecoveryPointArtifact(t, filepath.Join(stagingDir, "recovery-point.json"))
+	storedInventory := readManagedS3DRInventoryArtifact(t, filepath.Join(stagingDir, "baseline-object-inventory.json"))
+	if err := validateManagedS3DRArtifacts(storedPoint, storedInventory, seed, result); err != nil {
+		t.Fatalf("validate staged qualification artifacts: %v", err)
+	}
+	for _, artifact := range artifacts {
+		path := filepath.Join(stagingDir, artifact.name)
 		stored, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(stored, artifact.raw) || !json.Valid(stored) {
+		if !bytes.Equal(stored, artifact.raw) {
 			t.Fatalf("qualification artifact %s did not survive atomic readback", artifact.name)
 		}
 		info, err := os.Stat(path)
@@ -735,6 +918,161 @@ func writeManagedS3DRArtifacts(t *testing.T, point managedS3DRRecoveryPointArtif
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("qualification artifact %s mode = %o, want 600", artifact.name, info.Mode().Perm())
 		}
+	}
+	info, err := os.Stat(stagingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("staged qualification evidence directory mode = %o, want 700", info.Mode().Perm())
+	}
+	if _, err := os.Lstat(finalDir); err == nil {
+		t.Fatalf("refusing to replace existing qualification evidence directory %s", finalDir)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.Rename(stagingDir, finalDir); err != nil {
+		t.Fatalf("publish qualification evidence directory: %v", err)
+	}
+	published = true
+}
+
+func qualifyManagedS3DRArtifactFailures(t *testing.T, point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact, seed managedS3DRSeed, result capture.Result) {
+	t.Helper()
+	cases := []struct {
+		name   string
+		mutate func(*managedS3DRRecoveryPointArtifact, *managedS3DRInventoryArtifact)
+	}{
+		{name: "missing recovery schema", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.SchemaVersion = 0
+		}},
+		{name: "missing scenario identity", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) { point.ScenarioID = "" }},
+		{name: "missing RecoverySet identity", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.RecoverySetID = ""
+		}},
+		{name: "invalid source anchor", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.SourceAnchorDigest = "sha256:invalid"
+		}},
+		{name: "invalid manifest digest", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.ManifestDigest = ""
+		}},
+		{name: "invalid frontier commitment", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.FrontierCommitment = strings.Repeat("0", 64)
+		}},
+		{name: "invalid capture timestamps", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.CaptureCompletedAt = point.CaptureStartedAt[:len(point.CaptureStartedAt)-1]
+		}},
+		{name: "inconsistent object count", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) { point.ObjectCount++ }},
+		{name: "missing revision identity", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.RevisionIdentities = point.RevisionIdentities[:1]
+		}},
+		{name: "mismatched fingerprint", mutate: func(point *managedS3DRRecoveryPointArtifact, _ *managedS3DRInventoryArtifact) {
+			point.ScenarioFingerprint = "sha256:" + strings.Repeat("0", 64)
+		}},
+		{name: "missing inventory schema", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.SchemaVersion = 0
+		}},
+		{name: "mismatched inventory scenario", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.ScenarioID = "other-scenario"
+		}},
+		{name: "overlapping prefixes", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.SentinelPrefix = inventory.RecoveredPrefix
+		}},
+		{name: "missing revision membership", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions = inventory.Revisions[:1]
+		}},
+		{name: "invalid revision identity", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions[0].RevisionID = ""
+		}},
+		{name: "invalid object key", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions[0].Objects[0].ObjectKey = ""
+		}},
+		{name: "invalid object version", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions[0].Objects[0].VersionID = "latest"
+		}},
+		{name: "invalid object digest", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions[0].Objects[0].SHA256 = "invalid"
+		}},
+		{name: "invalid object size", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Revisions[0].Objects[0].Size = -1
+		}},
+		{name: "missing sentinel", mutate: func(_ *managedS3DRRecoveryPointArtifact, inventory *managedS3DRInventoryArtifact) {
+			inventory.Sentinels = inventory.Sentinels[:1]
+		}},
+	}
+	allPassed := true
+	for _, tc := range cases {
+		if !t.Run("artifact rejects "+tc.name, func(t *testing.T) {
+			mutatedPoint, mutatedInventory := cloneManagedS3DRArtifacts(t, point, inventory)
+			tc.mutate(&mutatedPoint, &mutatedInventory)
+			if err := validateManagedS3DRArtifacts(mutatedPoint, mutatedInventory, seed, result); err == nil {
+				t.Fatalf("artifact validation accepted %s", tc.name)
+			}
+		}) {
+			allPassed = false
+		}
+	}
+	if !t.Run("artifact rejects logical identity substitution", func(t *testing.T) {
+		mutatedSeed := seed
+		mutatedSeed.ProjectID = "project_substituted"
+		if err := validateManagedS3DRArtifacts(point, inventory, mutatedSeed, result); err == nil {
+			t.Fatal("artifact validation accepted a substituted logical project identity")
+		}
+	}) {
+		allPassed = false
+	}
+	if !allPassed {
+		t.FailNow()
+	}
+}
+
+func cloneManagedS3DRArtifacts(t *testing.T, point managedS3DRRecoveryPointArtifact, inventory managedS3DRInventoryArtifact) (managedS3DRRecoveryPointArtifact, managedS3DRInventoryArtifact) {
+	t.Helper()
+	raw, err := json.Marshal(struct {
+		Point     managedS3DRRecoveryPointArtifact
+		Inventory managedS3DRInventoryArtifact
+	}{Point: point, Inventory: inventory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone struct {
+		Point     managedS3DRRecoveryPointArtifact
+		Inventory managedS3DRInventoryArtifact
+	}
+	if err := json.Unmarshal(raw, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone.Point, clone.Inventory
+}
+
+func readManagedS3DRRecoveryPointArtifact(t *testing.T, path string) managedS3DRRecoveryPointArtifact {
+	t.Helper()
+	var artifact managedS3DRRecoveryPointArtifact
+	readManagedS3DRArtifact(t, path, &artifact)
+	return artifact
+}
+
+func readManagedS3DRInventoryArtifact(t *testing.T, path string) managedS3DRInventoryArtifact {
+	t.Helper()
+	var artifact managedS3DRInventoryArtifact
+	readManagedS3DRArtifact(t, path, &artifact)
+	return artifact
+}
+
+func readManagedS3DRArtifact(t *testing.T, path string, target any) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		t.Fatalf("decode qualification artifact %s: %v", filepath.Base(path), err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("qualification artifact %s contains trailing JSON", filepath.Base(path))
 	}
 }
 
@@ -811,8 +1149,9 @@ func qualifyManagedS3DRFailures(t *testing.T, projection manageddata.CapturedPro
 			return observation, err
 		})},
 	}
+	allPassed := true
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+		if !t.Run(tc.name, func(t *testing.T) {
 			base := manifestCaptureBase(t)
 			base.ID = tc.setID
 			base.FrontierDigest = ""
@@ -842,7 +1181,12 @@ func qualifyManagedS3DRFailures(t *testing.T, projection manageddata.CapturedPro
 			if count != 0 {
 				t.Fatalf("failed capture left %d usable RecoverySet v3 records", count)
 			}
-		})
+		}) {
+			allPassed = false
+		}
+	}
+	if !allPassed {
+		t.FailNow()
 	}
 }
 

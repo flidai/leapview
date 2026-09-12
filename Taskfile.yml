@@ -1286,8 +1286,6 @@ tasks:
       LEAPVIEW_TEST_UBDR_MANAGED_DATA_S3_DR_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
     cmds:
       - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
-      - mkdir -p "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
-      - chmod 0700 "{{.ROOT_DIR}}/.tmp/qualification/ubdr/managed-data-s3"
       - >-
         go test -race -tags='duckdb_arrow fai520qualification'
         ./internal/recoveryset/postgres

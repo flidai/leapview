@@ -2017,9 +2017,13 @@ Run the isolated seed capture with Docker available:
 task qualify:ubdr:managed-data-s3-dr
 ```
 
-The command replaces only
-`.tmp/qualification/ubdr/managed-data-s3/` and writes two private,
-operator-facing reports:
+The command removes only the previous
+`.tmp/qualification/ubdr/managed-data-s3/` output. The harness stages private
+evidence in a sibling directory, completes every positive and negative gate,
+and validates both report contracts against the captured Manifest v2 and
+RecoverySet v3. Only then does it atomically publish the final directory with
+mode `0700` and its two operator-facing reports with mode `0600`. A failed gate
+therefore cannot leave valid-looking final artifacts:
 
 - `recovery-point.json` records the scenario and RecoverySet identities,
   source-anchor and frontier commitments, Manifest v2 digest, capture interval,
@@ -2029,11 +2033,16 @@ operator-facing reports:
   independent sentinel version inventory.
 
 Both reports use stable field and collection ordering and are never accepted
-as recovery-admission input. Repeated runs are semantically deterministic:
-logical identities, fixture bytes, membership, counts, and the scenario
-fingerprint remain stable. Disposable bucket names, provider VersionIDs,
-PostgreSQL restore points and capture timestamps remain authoritative per-run
-values and therefore are not required to be byte-identical.
+as recovery-admission input. Strict semantic validation checks schema and
+scenario identities, commitments, timestamps, revision membership, exact
+versions, hashes, sizes, counts, sentinel isolation, and cross-report
+consistency before publication. Repeated runs are semantically deterministic:
+the fingerprint binds the project, connection, collection, stable provider
+profile identity, prefixes, revision membership, fixture content hashes and
+sizes, and sentinel membership to a checked-in compatibility vector.
+Disposable bucket names, endpoints, provider VersionIDs, PostgreSQL restore
+points and capture timestamps remain authoritative per-run values and are not
+part of that logical fingerprint or required to be byte-identical.
 
 The qualification rejects missing observations, unavailable exact versions,
 missing revision membership, sentinel namespace substitution, and digest
