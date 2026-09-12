@@ -1,0 +1,9 @@
+proof_consumer:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: target/commerce.duckdb
+      schema: commerce
+      threads: 2
+      external_root: ../published/commerce

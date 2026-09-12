@@ -1,0 +1,12 @@
+apiVersion: leapview.dev/v1
+kind: Connection
+metadata:
+  id: connection:directory
+  name: directory
+  displayName: Independently published customer directory
+spec:
+  type: managed
+  defaults:
+    parquet:
+      hivePartitioning: false
+      unionByName: false

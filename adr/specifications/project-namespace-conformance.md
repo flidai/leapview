@@ -364,6 +364,26 @@ boundary. It does not introduce cross-Project authorization, a foreign catalog,
 ResourceUID behavior, deployment binding, or the dbt adoption fixture owned by
 FAI-678.
 
+### dbt and multi-Source adoption evidence (FAI-678)
+
+The maintained multi-source fixture proves that producer topology does not
+create another LeapView identity boundary. dbt resolves an upstream package and
+materializes a consumer-owned Parquet mart; an independent CRM producer writes
+a second Parquet publication. LeapView compiles only ordinary Connections,
+Sources, thin Models, one SemanticModel, and one Dashboard into its rootless
+portable graph.
+
+| Requirements | Maintained evidence |
+| --- | --- |
+| DBT-01, DBT-03, DBT-06 | `task dbt:warehouse:proof` and `TestDBTMultiSourceProjectClosure` build both physical publications, compile the two-Connection/two-Source graph, and execute a leased cross-producer semantic query under one issuer-minted ProjectUID. |
+| DBT-02, DBT-04 | The same test rejects producer, repository, dbt project, invocation, manifest, path, and target authority from portable bytes while rebinding the unchanged portable digest to independent dev/prod targets. |
+| DBT-05, SEM-04, XPR-01 | The upstream package is resolved before Parquet handoff. Package-qualified, Project-qualified, and missing live Model references fail during rootless compilation; no manifest or dbt runtime resolver is used. |
+| RID-02, RID-03, SEM-02 | `TestPostgresResourceUIDMultiSourceProjectClosure` commits the sealed graph inventory through the activation-owned registry, preserves ResourceUIDs across a compatible generation, and rejects foreign Project and instance lookup. |
+
+This evidence covers local dbt package resolution, not live dbt Mesh, cloud IAM,
+or an atomic snapshot across independent upstream producers. It does not mark
+ADR-0018 as a whole implemented; FAI-679 retains final conformance ownership.
+
 Implementation must update the project-delivery and data-contract versioning
 conformance specifications where their current language conflicts with this
 accepted profile. The final combined implementation change must pass:

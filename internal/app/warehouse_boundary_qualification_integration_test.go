@@ -21,6 +21,7 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -34,6 +35,12 @@ type warehouseBoundarySpec struct {
 	root        string
 	multiSource bool
 	freshness   bool
+	// compiled and graph are optional so the legacy qualification fixtures can
+	// keep using their compact hand-built model while the end-to-end proof can
+	// pass the exact rootless compiler outputs into the candidate runtime.
+	compiled *semanticmodel.Model
+	graph    *projectgraph.ProjectGraph
+	targetID string
 }
 
 type warehouseBoundaryRuntime struct {
@@ -96,9 +103,25 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 		return nil, err
 	}
 	model := warehouseBoundaryModel(spec)
+	var resultPartition resultidentity.Partition
+	if spec.targetID != "" {
+		resultPartition, err = resultidentity.NewPartition(resultidentity.PartitionInput{
+			Kind:        resultidentity.PartitionProduction,
+			TargetID:    spec.targetID,
+			ProjectID:   input.State.ProjectID,
+			Environment: string(input.State.Environment),
+		})
+		if err != nil {
+			lease.Release()
+			controller.Close()
+			_ = database.Close()
+			return nil, err
+		}
+	}
 	projectRuntime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
 		Models: map[string]*semanticmodel.Model{"warehouse": model}, Database: database,
 		ExtensionAdmission: f.admission, ProjectID: input.State.ProjectID, Environment: string(input.State.Environment),
+		ServingStateID: string(input.State.ID), ResultPartition: resultPartition,
 	})
 	lease.Release()
 	if err != nil {
@@ -114,6 +137,9 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 		return nil, err
 	}
 	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if spec.graph != nil {
+		graph = *spec.graph
+	}
 	if err != nil {
 		_ = projectRuntime.Close()
 		controller.Close()
@@ -342,6 +368,9 @@ func assertWarehouseBoundaryGeneration(t *testing.T, registry *runtimehost.Regis
 }
 
 func warehouseBoundaryModel(spec warehouseBoundarySpec) *semanticmodel.Model {
+	if spec.compiled != nil {
+		return spec.compiled
+	}
 	ordersFields := map[string]semanticmodel.SourceField{
 		"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString},
 		"revenue": {Datatype: semanticmodel.DataTypeFloat}, "updated_at": {Datatype: semanticmodel.DataTypeDateTime},

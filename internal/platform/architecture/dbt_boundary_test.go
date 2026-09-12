@@ -461,6 +461,13 @@ func TestDBTWarehouseBoundaryWorkflowIsRequiredByCIGate(t *testing.T) {
 	if !ok {
 		t.Fatal("CI workflow is missing dbt-warehouse-boundary-validation job")
 	}
+	proof := false
+	for _, step := range dbtJob.Steps {
+		proof = proof || strings.Contains(step.Run, "task dbt:warehouse:proof")
+	}
+	if !proof {
+		t.Fatal("CI dbt validation job does not run the multi-source Project proof")
+	}
 	qualifyFound := false
 	for _, step := range dbtJob.Steps {
 		if strings.Contains(step.Run, "task dbt:warehouse:qualify") {
@@ -606,5 +613,72 @@ func TestDBTExampleUsesExternalNonIncrementalMarts(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(text), "incremental") {
 		t.Error("dbt reference marts must remain non-incremental")
+	}
+}
+
+func TestDBTMultiSourceProofFixturePreservesProducerBoundary(t *testing.T) {
+	root := repoRoot(t)
+	fixture := filepath.Join(root, "examples/dbt-warehouse-boundary/multi-source")
+	for _, relative := range []string{
+		"README.md",
+		"customer-directory.sql",
+		"dbt/dbt_project.yml",
+		"dbt/models/fct_orders.sql",
+		"dbt/models/properties.yml",
+		"dbt/packages.yml",
+		"dbt/profiles.yml",
+		"upstream-orders/dbt_project.yml",
+		"upstream-orders/models/order_lines.sql",
+		"upstream-orders/seeds/raw_orders.csv",
+		"consumer-overlay/connections/directory.yaml",
+		"consumer-overlay/sources/dim_customers.yaml",
+	} {
+		if _, err := os.Stat(filepath.Join(fixture, relative)); err != nil {
+			t.Fatalf("multi-source proof fixture is missing %s: %v", relative, err)
+		}
+	}
+
+	read := func(relative string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(fixture, relative))
+		if err != nil {
+			t.Fatalf("read multi-source fixture file %s: %v", relative, err)
+		}
+		return string(body)
+	}
+	consumer := read("dbt/dbt_project.yml")
+	packages := read("dbt/packages.yml")
+	consumerModel := read("dbt/models/fct_orders.sql")
+	upstream := read("upstream-orders/models/order_lines.sql")
+	crm := read("customer-directory.sql")
+	connection := read("consumer-overlay/connections/directory.yaml")
+	source := read("consumer-overlay/sources/dim_customers.yaml")
+
+	for _, required := range []string{"name: proof_consumer", "+materialized: external", "+format: parquet"} {
+		if !strings.Contains(consumer, required) {
+			t.Errorf("consumer dbt project is missing %q", required)
+		}
+	}
+	if !strings.Contains(packages, "local: ../upstream-orders") {
+		t.Error("consumer dbt project must resolve its local upstream package")
+	}
+	if !strings.Contains(consumerModel, "ref('upstream_orders', 'order_lines')") {
+		t.Error("consumer dbt model must publish a consumer-owned mart from the upstream package")
+	}
+	if !strings.Contains(upstream, "ref('upstream_orders', 'raw_orders')") {
+		t.Error("upstream package model must resolve its own seed")
+	}
+	if strings.Contains(crm, "ref(") || strings.Contains(crm, "{{") {
+		t.Error("independent CRM producer must not read the dbt project")
+	}
+	for _, required := range []string{"id: connection:directory", "type: managed"} {
+		if !strings.Contains(connection, required) {
+			t.Errorf("CRM overlay connection is missing %q", required)
+		}
+	}
+	for _, required := range []string{"id: source:warehouse.dim_customers", "connection: directory", "path: dim_customers.parquet"} {
+		if !strings.Contains(source, required) {
+			t.Errorf("CRM overlay Source is missing %q", required)
+		}
 	}
 }

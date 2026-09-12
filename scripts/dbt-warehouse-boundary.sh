@@ -27,8 +27,8 @@ prepare_dbt() {
   requirements_digest="$(sha256sum "$REQUIREMENTS" | awk '{print $1}')"
   marker="$VENV/.leapview-requirements.sha256"
   if [[ ! -x "$VENV/bin/dbt" || ! -f "$marker" || "$(<"$marker")" != "$requirements_digest" ]]; then
-    python3 -m venv --clear "$VENV"
-    "$VENV/bin/python" -m pip install --disable-pip-version-check --requirement "$REQUIREMENTS"
+    python3 -m venv --clear "$VENV" || return 1
+    "$VENV/bin/python" -m pip install --disable-pip-version-check --requirement "$REQUIREMENTS" >&2 || return 1
     printf '%s\n' "$requirements_digest" > "$marker"
   fi
   printf '%s\n' "$VENV/bin/dbt"
@@ -69,5 +69,10 @@ build() {
 case "${1:-}" in
   build) build ;;
   verify) verify_outputs ;;
-  *) echo "Usage: $0 build|verify" >&2; exit 2 ;;
+  proof)
+    dbt="$(prepare_dbt)"
+    cd "$ROOT"
+    DBT_BIN="$dbt" go test -tags duckdb_arrow ./internal/app -run '^TestDBTMultiSourceProjectClosure$' -count=1 -v
+    ;;
+  *) echo "Usage: $0 build|verify|proof" >&2; exit 2 ;;
 esac
