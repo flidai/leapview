@@ -542,6 +542,16 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 			_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 			return
 		}
+		// Full chat pages receive run state from their conversation-scoped
+		// broker stream. Do not also return an agent patch on this independent
+		// command response: the worker may finish on the broker stream before
+		// this response arrives, allowing an older running snapshot to replace
+		// the completed transcript. The worker emits the accepted transcript
+		// before provider execution, so the scoped stream remains both immediate
+		// and strictly ordered.
+		if h.options.Broker != nil && clientID != "" {
+			return
+		}
 		// StartDurablePrompt persists the accepted user turn and run before the
 		// queue callback returns. Reload both after enqueue so ChatSignalWith
 		// observes the accepted run rather than the previous terminal run. The

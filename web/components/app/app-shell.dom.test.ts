@@ -1487,6 +1487,37 @@ test('active chat history item navigates to its conversation', async () => {
   }
 })
 
+test('pinned pending chat keeps its icon, title, and spinner on one row', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const geometry = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
+      await sidebar.updateComplete
+      const link = (sidebar.shadowRoot as ShadowRoot).querySelector('a[href="/chats/c3"]') as HTMLElement
+      const children = Array.from(link.children) as HTMLElement[]
+      return {
+        columns: getComputedStyle(link).gridTemplateColumns.split(' ').length,
+        linkHeight: Math.round(link.getBoundingClientRect().height),
+        childCenters: children.map((child) => {
+          const rect = child.getBoundingClientRect()
+          return Math.round(rect.top + rect.height / 2)
+        }),
+        titleWidth: Math.round((link.querySelector('.history-title') as HTMLElement).getBoundingClientRect().width),
+      }
+    })
+
+    expect(geometry.columns).toBe(3)
+    expect(Math.max(...geometry.childCenters) - Math.min(...geometry.childCenters)).toBeLessThanOrEqual(2)
+    expect(geometry.linkHeight).toBeLessThanOrEqual(44)
+    expect(geometry.titleWidth).toBeGreaterThan(80)
+  } finally {
+    await page.close()
+  }
+})
+
 test('app shell reads chrome from Datastar signals without a payload attribute', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -1658,6 +1689,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         items: [
           { id: 'c1', title: 'Revenue check', href: '/chats/c1', active: true, pending: true },
           { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
+          { id: 'c3', title: 'Pinned title loading', href: '/chats/c3', pending: true, pinned: true },
         ],
       } : undefined,
       groups: admin ? [

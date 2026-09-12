@@ -328,6 +328,47 @@ test('new chat submits Enter and navigates from the command signal before the an
   }
 })
 
+test('active chat shows a submitted turn immediately and replaces it with durable state', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
+    const optimistic = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const composer = element.shadowRoot.querySelector('lv-chat-composer') as HTMLElement
+      composer.dispatchEvent(new CustomEvent('lv-chat-submit', {
+        bubbles: true,
+        composed: true,
+        detail: { input: 'What changed this month?', references: [] },
+      }))
+      await element.updateComplete
+      const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
+      await thread.updateComplete
+      return {
+        pending: element.pending,
+        transcript: thread.transcript,
+      }
+    })
+    expect(optimistic.pending).toBe(true)
+    expect(optimistic.transcript.at(-1)).toMatchObject({ kind: 'user', text: 'What changed this month?' })
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { transcript: [
+        { id: 'ready', kind: 'assistant', markdown: 'Ready.', conversationId: 'c1' },
+        { id: 'accepted-user', kind: 'user', text: 'What changed this month?', conversationId: 'c1' },
+      ], status: { enabled: true, running: true } } })
+    })
+    await page.waitForFunction(() => {
+      const element = document.querySelector('lv-chat-page') as any
+      const thread = element?.shadowRoot?.querySelector('lv-chat-thread') as any
+      return thread?.transcript?.at(-1)?.id === 'accepted-user' && !thread.transcript.some((item: any) => item.id?.startsWith('optimistic-'))
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat list page renders searchable conversation history', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

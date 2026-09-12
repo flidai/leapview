@@ -31,6 +31,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
+	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
+	private optimisticConversationID = ''
+	private optimisticEditMessageID = ''
+	private optimisticBaselineMessageIDs = new Set<string>()
 	private trackedConversationID: string | null = null
 	private trackedAcceptedRunID: string | null = null
 
@@ -344,8 +348,22 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       composer: 'required',
     })
 		this.syncEditState()
+		this.syncOptimisticTurn()
     this.navigateFromDraft()
   }
+
+	private syncOptimisticTurn(): void {
+		if (!this.optimisticTurn) return
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const accepted = (this.agent.transcript ?? []).some((item) =>
+			item.kind === 'user'
+			&& Boolean(item.id?.trim())
+			&& !this.optimisticBaselineMessageIDs.has(item.id.trim()),
+		)
+		if (conversationID !== this.optimisticConversationID || accepted || Boolean(this.agent.status?.error)) {
+			this.clearOptimisticTurn()
+		}
+	}
 
 	private syncEditState(): void {
 		const conversationID = this.agent.activeConversationId?.trim() ?? ''
@@ -384,7 +402,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
   get pending(): boolean {
-    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running)
+    return this.signal<boolean>('agentTurnPending', false) || Boolean(this.agent.status?.running) || Boolean(this.optimisticTurn)
   }
 
 	get referenceSearch(): AgentReferenceSearchSignal {
@@ -412,7 +430,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const isNew = view === 'new'
     const title = conversationTitle(agent)
     return html`
-      <div class="route">
+      <div class="route" @lv-chat-submit=${this.showOptimisticTurn}>
         <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
           ${isList || isNew ? null : this.renderConversationTitlebar(title)}
           <div class="body">
@@ -474,7 +492,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return html`
       <div class="thread-stack">
         <lv-chat-thread
-          .transcript=${agent.transcript ?? []}
+          .transcript=${this.displayTranscript(agent.transcript ?? [])}
           .visuals=${this.visuals ?? {}}
           .status=${status}
           conversation-id=${agent.activeConversationId ?? ''}
@@ -513,6 +531,40 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   private selectPromptStarter(prompt: string): void {
     this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(prompt)
   }
+
+	private showOptimisticTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string }>): void => {
+		const conversationID = this.agent.activeConversationId?.trim() ?? ''
+		const input = event.detail?.input?.trim() ?? ''
+		if (!conversationID || !input) return
+		const transcript = this.agent.transcript ?? []
+		this.optimisticConversationID = conversationID
+		this.optimisticEditMessageID = event.detail?.editMessageId?.trim() ?? ''
+		this.optimisticBaselineMessageIDs = new Set(transcript.map(item => item.id?.trim()).filter((id): id is string => Boolean(id)))
+		this.optimisticTurn = {
+			id: `optimistic-${crypto.randomUUID()}`,
+			kind: 'user',
+			text: input,
+			conversationId: conversationID,
+			references: [...(event.detail?.references ?? [])],
+			...(this.optimisticEditMessageID ? { edited: true } : {}),
+		}
+	}
+
+	private displayTranscript(transcript: ChatTranscriptItemSignal[]): ChatTranscriptItemSignal[] {
+		if (!this.optimisticTurn || this.optimisticConversationID !== (this.agent.activeConversationId?.trim() ?? '')) return transcript
+		if (this.optimisticEditMessageID) {
+			const target = transcript.findIndex(item => item.kind === 'user' && item.id?.trim() === this.optimisticEditMessageID)
+			if (target >= 0) return [...transcript.slice(0, target), this.optimisticTurn]
+		}
+		return [...transcript, this.optimisticTurn]
+	}
+
+	private clearOptimisticTurn(): void {
+		this.optimisticTurn = null
+		this.optimisticConversationID = ''
+		this.optimisticEditMessageID = ''
+		this.optimisticBaselineMessageIDs = new Set()
+	}
 
 	private referencesChanged(event: CustomEvent<ChatReferencesChangeDetail>) {
 		this.references = [...(event.detail.references ?? [])]

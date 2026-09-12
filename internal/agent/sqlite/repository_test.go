@@ -642,7 +642,10 @@ func TestPendingConversationActionSurvivesReadModelAndIsPrincipalScoped(t *testi
 	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); err != nil {
 		t.Fatalf("cancel pending archive: %v", err)
 	}
-	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); !errors.Is(err, agent.ErrPendingConversationCanceled) {
+	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, pending.RequestID); err != nil {
+		t.Fatalf("retry canceled pending archive: %v", err)
+	}
+	if err := repo.CancelPendingConversationAction(ctx, owner.ID, conversation.ID, "different-request"); !errors.Is(err, agent.ErrPendingConversationCanceled) {
 		t.Fatalf("stale undo error = %v, want canceled", err)
 	}
 	if active, err := repo.ListConversations(ctx, owner.ID); err != nil || len(active) != 1 || active[0].ID != conversation.ID {

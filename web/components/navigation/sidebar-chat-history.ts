@@ -50,6 +50,10 @@ export const sidebarChatHistoryStyles = css`
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .nav-item.history-item.pinned {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
   .history-row { position: relative; display: flex; align-items: center; min-width: 0; border-radius: var(--lv-radius-default); }
   .history-row .history-item { flex: 1; min-width: 0; }
   .chat-pin { display: inline-flex; flex-shrink: 0; color: var(--lv-fg-muted); }
@@ -115,7 +119,7 @@ function renderSidebarChatHistoryItem(
   const title = item.title || 'Conversation'
   return html`
     <div class="history-row">
-      <a class="nav-item history-item" href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => followInternalLink(event, item.href)}>
+      <a class=${`nav-item history-item${item.pinned ? ' pinned' : ''}`} href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => followInternalLink(event, item.href)}>
         ${item.pinned ? html`<span class="chat-pin" title="Pinned chat" aria-label="Pinned chat">${lucideIcon(Pin, { size: 13 })}</span>` : null}
         <span class="history-title">${title}</span>
         ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}

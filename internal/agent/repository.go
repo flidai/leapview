@@ -94,11 +94,12 @@ type PendingConversationAction struct {
 const ConversationMetadataKey = "_leapview_chat"
 
 type ConversationMetadata struct {
-	Pinned         bool
-	DeletedAt      string
-	PendingAction  string
-	PendingRequest string
-	PendingUntil   string
+	Pinned          bool
+	DeletedAt       string
+	PendingAction   string
+	PendingRequest  string
+	PendingUntil    string
+	CanceledRequest string
 }
 
 // ParseConversationMetadata reads the repository-owned chat metadata. Older
@@ -130,6 +131,9 @@ func ParseConversationMetadata(raw string) (ConversationMetadata, error) {
 	}
 	if pendingUntil, ok := reserved["pendingUntil"].(string); ok {
 		state.PendingUntil = strings.TrimSpace(pendingUntil)
+	}
+	if canceledRequest, ok := reserved["canceledRequestId"].(string); ok {
+		state.CanceledRequest = strings.TrimSpace(canceledRequest)
 	}
 	return state, nil
 }
@@ -163,6 +167,11 @@ func UpdateConversationMetadata(raw string, state ConversationMetadata) (string,
 		reserved["pendingAction"] = strings.TrimSpace(state.PendingAction)
 		reserved["pendingRequestId"] = strings.TrimSpace(state.PendingRequest)
 		reserved["pendingUntil"] = strings.TrimSpace(state.PendingUntil)
+	}
+	if strings.TrimSpace(state.CanceledRequest) == "" {
+		delete(reserved, "canceledRequestId")
+	} else {
+		reserved["canceledRequestId"] = strings.TrimSpace(state.CanceledRequest)
 	}
 	if !state.Pinned && strings.TrimSpace(state.DeletedAt) == "" && strings.TrimSpace(state.PendingAction) == "" && len(reserved) == 1 {
 		delete(document, ConversationMetadataKey)

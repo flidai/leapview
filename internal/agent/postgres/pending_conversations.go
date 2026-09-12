@@ -48,6 +48,7 @@ func (r *Repository) BeginPendingConversationAction(ctx context.Context, pending
 		}
 		state.PendingAction, state.PendingRequest = pending.Action, pending.RequestID
 		state.PendingUntil = pending.Deadline.UTC().Format(time.RFC3339Nano)
+		state.CanceledRequest = ""
 		metadata, err := agent.UpdateConversationMetadata(current.MetadataJSON, state)
 		if err != nil {
 			return err
@@ -98,6 +99,12 @@ func (r *Repository) CancelPendingConversationAction(ctx context.Context, princi
 		if err != nil {
 			return err
 		}
+		if state.PendingAction == "" && state.CanceledRequest == requestID {
+			if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+				return r.recordAudit(ctx, tx, &intent, conversationID, conversationID, nil)
+			}
+			return nil
+		}
 		if state.PendingAction == "" {
 			return agent.ErrPendingConversationCanceled
 		}
@@ -109,6 +116,7 @@ func (r *Repository) CancelPendingConversationAction(ctx context.Context, princi
 			return agent.ErrPendingConversationExpired
 		}
 		state.PendingAction, state.PendingRequest, state.PendingUntil = "", "", ""
+		state.CanceledRequest = requestID
 		metadata, err := agent.UpdateConversationMetadata(current.MetadataJSON, state)
 		if err != nil {
 			return err

@@ -404,6 +404,54 @@ func TestActiveChatTurnDoesNotOverwriteSettledWorkerTranscript(t *testing.T) {
 	}
 }
 
+func TestActiveChatTurnUsesOnlyScopedStreamWhenBrokerConfigured(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-queued-ordered.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-ordered@example.com", DisplayName: "Queued Ordered"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), nil, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+		return nil
+	}))
+	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		return agentcore.ModelResponse{Content: "unused", FinishReason: agentcore.FinishReasonStop}, nil
+	})))
+	service.SetPromptWorkflow(func(input agent.PromptInput, runID string, _ agent.PromptDispatch) jobs.WorkflowIntent {
+		return jobs.WorkflowIntent{Job: jobs.EnqueueInput{ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}}
+	})
+	scope := agent.Scope{PrincipalID: owner.ID}
+	conversation, err := service.CreateConversation(t.Context(), scope, "Ordered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalCalls := 0
+	handler := NewHandler(Options{
+		Service: service,
+		Broker:  pagestream.NewBroker(),
+		EnqueueChatRun: func(context.Context, agent.Scope, *agent.StartedPrompt, string) error {
+			return nil
+		},
+		ChatSignalWith: func(context.Context, agent.Scope, string, []agent.ChatTranscriptItem, agent.ChatArtifactSignals, string, bool) ui.ChatViewState {
+			signalCalls++
+			return ui.ChatViewState{}
+		},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+	request.Header.Set(uicommand.HeaderOperationID, createAgentRunOperation.APIGenOperationID())
+	response := httptest.NewRecorder()
+	handler.runChatTurn(response, request, service, scope, "ordered-client", conversation.ID, "hello", nil, false)
+	if response.Code != http.StatusOK || response.Body.Len() != 0 {
+		t.Fatalf("queued command status=%d body=%s, want empty success response", response.Code, response.Body.String())
+	}
+	if signalCalls != 0 {
+		t.Fatalf("queued command built %d response signals, want scoped worker stream only", signalCalls)
+	}
+}
+
 func TestChatConversationUpdatesIgnoreGlobalWorkerPatches(t *testing.T) {
 	fixture := newActiveChatFixture(t)
 	conversation, err := fixture.service.CreateConversation(t.Context(), agent.Scope{PrincipalID: fixture.owner}, "Scoped")
