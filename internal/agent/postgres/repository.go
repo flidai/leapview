@@ -533,7 +533,7 @@ func (r *Repository) ListArchivedConversationsPage(ctx context.Context, principa
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
 }
 
 func (r *Repository) conversationMutation(ctx context.Context, principal, id, eventType string, mutate func(Tx, *agentdb.Queries) (agent.Conversation, error)) (agent.Conversation, error) {
@@ -1457,35 +1457,35 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 func mapConversation(row any) agent.Conversation {
 	switch v := row.(type) {
 	case agentdb.CreateAgentConversationRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.GetAgentConversationRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.ListAgentConversationsRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.ListArchivedAgentConversationsRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.ArchiveAgentConversationRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.DeleteAgentConversationRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.RestoreAgentConversationRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationMetadataRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTitleRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTranscriptRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateDefaultAgentConversationTitleRow:
-		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	default:
 		return agent.Conversation{}
 	}
 }
 
-func mapConversationFields(id, principalID, title, status, metadata, transcript string, createdAt, updatedAt, archivedAt pgtype.Timestamptz) agent.Conversation {
+func mapConversationFields(id, principalID, title, status, metadata, transcript string, transcriptRevision int64, createdAt, updatedAt, archivedAt pgtype.Timestamptz) agent.Conversation {
 	management, _ := agent.ParseConversationMetadata(metadata)
-	out := agent.Conversation{ID: id, PrincipalID: principalID, Title: title, Status: status, Pinned: management.Pinned, DeletedAt: management.DeletedAt, MetadataJSON: metadata, TranscriptJSON: transcript, CreatedAt: timestampString(createdAt), UpdatedAt: timestampString(updatedAt), ArchivedAt: timestampString(archivedAt)}
+	out := agent.Conversation{ID: id, PrincipalID: principalID, Title: title, Status: status, Pinned: management.Pinned, DeletedAt: management.DeletedAt, MetadataJSON: metadata, TranscriptJSON: transcript, TranscriptRevision: transcriptRevision, CreatedAt: timestampString(createdAt), UpdatedAt: timestampString(updatedAt), ArchivedAt: timestampString(archivedAt)}
 	if out.DeletedAt != "" {
 		out.Status = agent.ConversationStatusDeleted
 	}

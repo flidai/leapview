@@ -271,7 +271,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				runContext, cancel := context.WithCancel(context.Background())
 				s.attachRun(input.ConversationID, runID, cancel)
 				release = false
-				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, service: s, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, transcriptRevision: transcriptRevision, service: s, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 			}
 		}
 		return nil, err
@@ -358,19 +358,20 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	s.attachRun(input.ConversationID, run.ID, cancel)
 	release = false
 	return &StartedPrompt{
-		Scope:          input.Scope,
-		ConversationID: input.ConversationID,
-		RunID:          run.ID,
-		Input:          input.Input,
-		EditMessageID:  input.EditMessageID,
-		CorrelationID:  input.CorrelationID,
-		RequestID:      input.RequestID,
-		service:        s,
-		systemPrompt:   systemPrompt,
-		initial:        initial,
-		runContext:     runContext,
-		cancel:         cancel,
-		durablyQueued:  durablyQueued,
+		Scope:              input.Scope,
+		ConversationID:     input.ConversationID,
+		RunID:              run.ID,
+		Input:              input.Input,
+		EditMessageID:      input.EditMessageID,
+		CorrelationID:      input.CorrelationID,
+		RequestID:          input.RequestID,
+		transcriptRevision: transcriptRevision,
+		service:            s,
+		systemPrompt:       systemPrompt,
+		initial:            initial,
+		runContext:         runContext,
+		cancel:             cancel,
+		durablyQueued:      durablyQueued,
 	}, nil
 }
 
@@ -436,7 +437,7 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	runContext, cancel := context.WithCancel(ctx)
 	s.attachRun(conversationID, runID, cancel)
 	release = false
-	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, service: s, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 }
 
 func (s *Service) acquireForResume(conversationID, runID string) error {

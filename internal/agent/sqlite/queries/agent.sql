@@ -77,6 +77,7 @@ SET transcript_json = sqlc.arg(transcript_json),
     updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id)
   AND principal_id = sqlc.arg(principal_id)
+  AND transcript_revision = sqlc.arg(expected_transcript_revision)
   AND json_extract(metadata_json, '$._leapview_chat.deletedAt') IS NULL
 RETURNING *;
 

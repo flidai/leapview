@@ -31,7 +31,7 @@ ORDER BY CASE WHEN metadata_json #>> '{_leapview_chat,pinned}' = 'true' THEN 0 E
 
 -- name: ListArchivedAgentConversations :many
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
-       created_at, updated_at, archived_at
+       transcript_revision, created_at, updated_at, archived_at
 FROM agent.conversations
 WHERE principal_id = sqlc.arg(principal_id) AND status = 'archived'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
@@ -60,7 +60,7 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
   AND status = 'archived'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
-          created_at, updated_at, archived_at;
+          transcript_revision, created_at, updated_at, archived_at;
 
 -- name: UpdateAgentConversationMetadata :one
 UPDATE agent.conversations
@@ -69,11 +69,11 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
   AND status = 'active'
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
-          created_at, updated_at, archived_at;
+          transcript_revision, created_at, updated_at, archived_at;
 
 -- name: DeleteAgentConversation :one
 SELECT id, principal_id, title, status, metadata_json::text, transcript_json::text,
-       created_at, updated_at, archived_at
+       transcript_revision, created_at, updated_at, archived_at
 FROM agent.delete_agent_conversation(sqlc.arg(id), sqlc.arg(principal_id));
 
 -- name: AgentConversationHasActiveRun :one
@@ -85,8 +85,12 @@ SELECT EXISTS (
 
 -- name: UpdateAgentConversationTranscript :one
 UPDATE agent.conversations
-SET transcript_json = sqlc.arg(transcript_json)::jsonb, updated_at = clock_timestamp()
+SET transcript_json = sqlc.arg(transcript_json)::jsonb,
+    transcript_revision = transcript_revision + 1,
+    updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+  AND status = 'active'
+  AND transcript_revision = sqlc.arg(expected_transcript_revision)
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = ''
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           transcript_revision, created_at, updated_at, archived_at;

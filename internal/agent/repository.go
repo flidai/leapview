@@ -31,7 +31,6 @@ const (
 	// compatibility; repositories map it to this public status.
 	ConversationStatusDeleted = "deleted"
 
-
 	RunStatusRunning   = "running"
 	RunStatusPreparing = "preparing"
 	RunStatusCompleted = "completed"
@@ -64,11 +63,15 @@ type Conversation struct {
 	Status         string
 	MetadataJSON   string
 	TranscriptJSON string
-	CreatedAt      string
-	UpdatedAt      string
-	ArchivedAt     string
-	DeletedAt      string
-	Pinned         bool
+	// TranscriptRevision increments on every successful transcript CAS write.
+	// It is persisted separately from the transport ETag so prompt workers can
+	// fence transcript state without relying on presentation fields.
+	TranscriptRevision int64
+	CreatedAt          string
+	UpdatedAt          string
+	ArchivedAt         string
+	DeletedAt          string
+	Pinned             bool
 }
 
 // ConversationMetadataKey is reserved inside metadata_json for durable chat

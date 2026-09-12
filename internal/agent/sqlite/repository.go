@@ -450,7 +450,7 @@ func (r *Repository) ListArchivedConversationsPage(ctx context.Context, principa
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
+	return agent.PageByID(out, page, func(row agent.Conversation) string { return row.ID }), nil
 }
 
 func (r *Repository) RestoreConversation(ctx context.Context, principalID, conversationID string) (agent.Conversation, error) {
@@ -1269,22 +1269,35 @@ func (r *Repository) agentRunExists(ctx context.Context, principalID, runID stri
 func mapConversation(row platformdb.AgentConversation) agent.Conversation {
 	management, _ := agent.ParseConversationMetadata(row.MetadataJson)
 	out := agent.Conversation{
-		ID:             row.ID,
-		PrincipalID:    row.PrincipalID,
-		Title:          row.Title,
-		Status:         row.Status,
-		Pinned:         management.Pinned,
-		DeletedAt:      management.DeletedAt,
-		MetadataJSON:   row.MetadataJson,
-		TranscriptJSON: row.TranscriptJson,
-		CreatedAt:      row.CreatedAt,
-		UpdatedAt:      row.UpdatedAt,
+		ID:                 row.ID,
+		PrincipalID:        row.PrincipalID,
+		Title:              row.Title,
+		Status:             row.Status,
+		Pinned:             management.Pinned,
+		DeletedAt:          management.DeletedAt,
+		MetadataJSON:       row.MetadataJson,
+		TranscriptJSON:     row.TranscriptJson,
+		TranscriptRevision: row.TranscriptRevision,
+		CreatedAt:          row.CreatedAt,
+		UpdatedAt:          row.UpdatedAt,
 	}
 	if row.ArchivedAt.Valid {
 		out.ArchivedAt = row.ArchivedAt.String
 	}
 	if out.DeletedAt != "" {
 		out.Status = agent.ConversationStatusDeleted
+	}
+	return out
+}
+
+func mapConversationTitle(row platformdb.UpdateAgentConversationTitleRow) agent.Conversation {
+	out := agent.Conversation{
+		ID: row.ID, PrincipalID: row.PrincipalID, Title: row.Title, Status: row.Status,
+		MetadataJSON: row.MetadataJson, TranscriptJSON: row.TranscriptJson,
+		TranscriptRevision: row.TranscriptRevision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+	if row.ArchivedAt.Valid {
+		out.ArchivedAt = row.ArchivedAt.String
 	}
 	return out
 }
