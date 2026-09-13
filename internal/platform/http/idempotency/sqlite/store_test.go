@@ -8,7 +8,19 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 )
+
+func TestLoadMissingRecordReturnsCapabilityNotFound(t *testing.T) {
+	db, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "idempotency.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := NewStore(db.SQLDB()).Load(t.Context(), "missing-scope"); !errors.Is(err, idempotency.ErrNotFound) {
+		t.Fatalf("missing load error=%v, want capability not found", err)
+	}
+}
 
 func TestAdversarialExpiredLeaseIsQuarantinedInsteadOfReexecuted(t *testing.T) {
 	ctx := context.Background()

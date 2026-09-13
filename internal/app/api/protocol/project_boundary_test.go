@@ -1,11 +1,14 @@
 package protocol
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
@@ -147,5 +150,77 @@ func TestIdempotencyFailsClosedWhenAuthoritativeScopeIsUnavailable(t *testing.T)
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "IDEMPOTENCY_SCOPE_UNAVAILABLE") || called {
 		t.Fatalf("unavailable authoritative scope response=%d called=%t body=%s", w.Code, called, w.Body.String())
+	}
+}
+
+func TestIdempotencyReplaysCompatibleLegacyScopeAfterV2Rollout(t *testing.T) {
+	store := idempotency.NewMemoryStore()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:server/releases", strings.NewReader(`{"name":"release"}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "legacy-key")
+	body := []byte(`{"name":"release"}`)
+	digest := apiRequestDigest(request, body)
+	credential := sha256.Sum256([]byte("credential"))
+	legacyScope := "principal:" + hex.EncodeToString(credential[:]) + ":" + request.Method + ":" + request.URL.EscapedPath() + ":legacy-key"
+	record, execute, err := store.Claim(t.Context(), legacyScope, digest, "legacy-owner", time.Minute, IdempotencyLifetime)
+	if err != nil || !execute {
+		t.Fatalf("seed legacy record: execute=%t record=%#v err=%v", execute, record, err)
+	}
+	if err := store.Complete(t.Context(), legacyScope, digest, "legacy-owner", record.LeaseGeneration, http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"id":"release:legacy"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := Build(t.Context(), Config{
+		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+		PrincipalID: func(*http.Request) (string, bool) { return "principal", true },
+		AuthoritativeScope: func(*http.Request) (AuthoritativeScope, error) {
+			return AuthoritativeScope{TargetID: "target:prod", ProjectID: "project:server", Environment: "prod", GenerationID: "generation:active"}, nil
+		},
+		ReplayAuthorize: func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	w := httptest.NewRecorder()
+	p.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(w, request)
+	if w.Code != http.StatusCreated || w.Header().Get("Idempotency-Replayed") != "true" || called || w.Body.String() != `{"id":"release:legacy"}` {
+		t.Fatalf("legacy retry status=%d replay=%q called=%t body=%s", w.Code, w.Header().Get("Idempotency-Replayed"), called, w.Body.String())
+	}
+}
+
+func TestIdempotencyRejectsAmbiguousLegacyProjectScope(t *testing.T) {
+	store := idempotency.NewMemoryStore()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:route/releases", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "legacy-key")
+	digest := apiRequestDigest(request, []byte(`{}`))
+	credential := sha256.Sum256([]byte("credential"))
+	legacyScope := "principal:" + hex.EncodeToString(credential[:]) + ":" + request.Method + ":" + request.URL.EscapedPath() + ":legacy-key"
+	record, execute, err := store.Claim(t.Context(), legacyScope, digest, "legacy-owner", time.Minute, IdempotencyLifetime)
+	if err != nil || !execute {
+		t.Fatalf("seed legacy record: execute=%t record=%#v err=%v", execute, record, err)
+	}
+	if err := store.Complete(t.Context(), legacyScope, digest, "legacy-owner", record.LeaseGeneration, http.StatusCreated, nil, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Build(t.Context(), Config{
+		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+		PrincipalID: func(*http.Request) (string, bool) { return "principal", true },
+		AuthoritativeScope: func(*http.Request) (AuthoritativeScope, error) {
+			return AuthoritativeScope{TargetID: "target:prod", ProjectID: "project:other", Environment: "prod", GenerationID: "generation:active"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	w := httptest.NewRecorder()
+	p.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })).ServeHTTP(w, request)
+	if w.Code != http.StatusServiceUnavailable || called || !strings.Contains(w.Body.String(), "IDEMPOTENCY_SCOPE_UNAVAILABLE") {
+		t.Fatalf("ambiguous legacy retry status=%d called=%t body=%s", w.Code, called, w.Body.String())
 	}
 }
