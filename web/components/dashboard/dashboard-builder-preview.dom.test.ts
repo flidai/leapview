@@ -342,6 +342,48 @@ test('pending page preview shows loading without false invalid-preview errors', 
   } finally { await page.close() }
 })
 
+test('background dashboard updates preserve an in-flight filter continuation', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const key = 'fb_status'
+      const unfiltered = { kind: 'unfiltered' }
+      const binding = { key, id: 'status', filter: 'status', scope: 'report', default: unfiltered, selectionMode: 'multiple', readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [] }
+      const definition = { id: 'status', label: 'Status', field: 'orders.status', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in'] }], options: { kind: 'distinct', limit: 1, values: [] } }
+      element.optionRequests = []
+      element.addEventListener('lv-builder-filter-options-request', (event: CustomEvent) => {
+        const request = event.detail
+        element.optionRequests.push(request)
+        if (element.optionRequests.length > 4) return
+        if (request.cursor) setTimeout(() => mergePatch({ status: { lastUpdated: '2026-09-13T12:00:00Z' } }), 20)
+        setTimeout(() => mergePatch({ builderFilterOptionPages: { [key]: {
+          bindingKey: key, servingStateID: 'generation-7', streamGeneration: 0, filterRevision: 1,
+          requestGeneration: request.requestGeneration, complete: Boolean(request.cursor),
+          ...(!request.cursor ? { nextCursor: 'cursor-2' } : {}),
+          items: [{ value: { kind: 'string', value: request.cursor ? 'second' : 'first' }, label: request.cursor ? 'Second' : 'First', null: false, available: true, selected: false }],
+        } } }), request.cursor ? 150 : 30)
+      })
+      mergePatch({
+        builder: { filters: [{ id: 'status', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [] }] },
+        builderFilterContract: { applicationMode: 'immediate', definitions: { status: definition }, bindings: { [key]: binding } },
+        builderFilterState: { revision: 1, appliedControls: { [key]: { expression: unfiltered, resolvedExpression: unfiltered } }, draftControls: {}, dirtyBindings: [], defaultsRevision: '1' },
+      })
+      await element.updateComplete
+    })
+    await page.getByRole('button', { name: 'Status: All', exact: true }).click()
+    const options = page.getByRole('dialog', { name: 'Status filter options', exact: true })
+    await options.getByRole('button', { name: 'Load more values', exact: true }).click()
+    await options.getByRole('checkbox', { name: 'Second', exact: true }).waitFor({ timeout: 1500 })
+    expect(await options.getByRole('checkbox', { name: 'First', exact: true }).isVisible()).toBe(true)
+    const requests = await page.locator('lv-dashboard-builder').evaluate((element: any) => element.optionRequests)
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toMatchObject({ cursor: 'cursor-2', requestGeneration: 2 })
+  } finally { await page.close() }
+})
+
 test('filter settings stay with their selected card and fit a narrow pane', async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1050 } })
   try {

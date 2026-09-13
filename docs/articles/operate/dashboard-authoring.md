@@ -206,6 +206,18 @@ Agent inputs deliberately omit actor and provenance fields. The server binds `or
 
 The create/fork operation never deploys, publishes a serving generation, mutates the semantic model, creates a data snapshot, or makes a temporary schema. Git is an optional review and evidence integration after export; LeapView has no native Git integration and no repository authority. The server remains authoritative for lifecycle, authorization, revisions, and deployment targets.
 
+## Update existing copies of Visual Showcase
+
+The shared `dashboards/dashboards/visual-showcase.yaml` defines **Purchase period** as a `dateRange` control on `purchase_timestamp`. The browser displays Start and End dates as **DD/MM/YYYY**, and the timestamp range includes the full selected end date. The filter retains its `purchase_time` ID, existing targets, and unfiltered default. Its canvas component also retains its existing ID so references remain stable. Relative-period controls remain available for other filters and dashboards.
+
+No database schema or automatic saved-dashboard migration is required. The rollout depends on how the dashboard is stored:
+
+- **Shared project dashboard:** deploy the updated project source through the normal candidate/publication workflow. Viewers and new drafts forked from that generation receive the date-range definition. Updating the application binary alone does not deploy project YAML.
+- **Existing saved drafts or separately published copies:** their documents are retained revisions, so the shared-source update does not rewrite them. To adopt this change, edit that copy's `purchase_time` filter to use label `Purchase period` and control `dateRange`, update its description, and clear any old relative-period default. Keep its field, ID, targets, and other customizations. Validate and preview the resulting revision, then publish it explicitly if the copy should be shared. Starting a new draft from the updated shared dashboard is another option.
+- **Existing viewer sessions:** filter state belongs to a serving generation. A new generation uses its own session state; an old rolling-period selection is not converted into an absolute date range. Choose the desired Start and End dates after opening the updated dashboard.
+
+This is an explicit content update for existing saved copies, not a bulk rewrite: an automatic conversion could replace a deliberately chosen rolling-period filter or overwrite user edits.
+
 ## Use Git when it helps review
 
 Git is highly recommended, but opt-in. LeapView has no native Git integration, pull-request workflow, or merge automation. A mature integration exports canonical YAML, lets the user's Git provider handle branches and review, and invokes LeapView's CLI or API from a dedicated project-scoped deploy service account after merge.

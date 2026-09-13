@@ -140,9 +140,15 @@ export class DashboardFilterLeaf extends LitElement {
           this.requestedOptionCursor = ''
         }
       } else if (changed.get('options') !== undefined) {
-        this.optionLoading = false
-        this.optionDirty = true
-        if (this.hasRequestedOptions && (this.visibleOptionsControl() || this.dropdownFocused())) this.requestOptions()
+        // A parent render can hide the prior page while a newer request is
+        // pending. Keep that continuation unless its filter context changed.
+        const continuing = this.optionLoading && this.requestedOptionCursor
+          && this.requestedOptionContext === `${this.optionQueryKey(this.dropdownSearch)}\u0000${this.requestedOptionCursor}`
+        if (!continuing) {
+          this.optionLoading = false
+          this.optionDirty = true
+          if (this.hasRequestedOptions && (this.visibleOptionsControl() || this.dropdownFocused())) this.requestOptions()
+        }
       }
     }
     if (changed.has('optionContext') && changed.get('optionContext') !== undefined) {
