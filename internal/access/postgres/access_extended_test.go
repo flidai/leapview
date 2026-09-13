@@ -247,6 +247,17 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if replayAudits != 1 {
 		t.Fatalf("idempotent replay audit count=%d, want 1", replayAudits)
 	}
+	var authoringAudits, projectScopedAuthoringAudits int
+	if err := db.admin.QueryRow(t.Context(), `
+		SELECT count(*), count(*) FILTER (WHERE project_id='project_extended')
+		FROM audit.audit_event
+		WHERE action LIKE 'authoring.%'
+	`).Scan(&authoringAudits, &projectScopedAuthoringAudits); err != nil {
+		t.Fatal(err)
+	}
+	if authoringAudits == 0 || projectScopedAuthoringAudits != authoringAudits {
+		t.Fatalf("Project-scoped authoring audits = %d/%d, want all", projectScopedAuthoringAudits, authoringAudits)
+	}
 	if _, err := db.admin.Exec(t.Context(), `UPDATE access.device_authorization SET consumed_at=NULL WHERE id='da_extended'`); err == nil {
 		t.Fatal("device consumption rewind accepted")
 	}

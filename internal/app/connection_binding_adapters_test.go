@@ -28,7 +28,7 @@ func TestConnectionRotationAuditAdapterPersistsOnlyRedactedBoundedMetadata(t *te
 		Reason: "POOL_HEALTH_CHECK_FAILED", Timestamp: time.Now(),
 	})
 	require.NoError(t, err)
-	if input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
+	if input.ProjectID != "project:sales" || input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
 		input.Action != "credential.test.requested" ||
 		input.ResourceKind != "connection" ||
 		input.Capability != access.CapabilityResourceUse || input.Status != "degraded" {
@@ -83,7 +83,7 @@ func TestConnectionAdministrationAuditAdapterPersistsOnlyBindingIdentity(t *test
 		Timestamp: time.Now(),
 	})
 	require.NoError(t, err)
-	if input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
+	if input.ProjectID != "project:sales" || input.ResourceID != "connection_sales" || input.PrincipalID != "operator-1" ||
 		input.Action != "connection.binding.updated" ||
 		input.ResourceKind != "connection" ||
 		input.Capability != access.CapabilityResourceManage || input.Status != "succeeded" {

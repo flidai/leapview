@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -10,6 +11,29 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 )
+
+func TestProjectScopedAgentAuditsPreserveProjectIdentity(t *testing.T) {
+	var recorded []access.AuditEventInput
+	module := &Module{recordAudit: func(_ context.Context, input access.AuditEventInput) error {
+		recorded = append(recorded, input)
+		return nil
+	}}
+	scope := agent.Scope{ProjectID: "project:sales", PrincipalID: "principal-1"}
+	if err := module.recordCommandAudit(t.Context(), agenthttp.CommandAuditInput{
+		OperationID: "updateAgentConfig", Scope: scope, TargetType: "agent_config", TargetID: "system_prompt",
+	}); err != nil {
+		t.Fatalf("record command audit: %v", err)
+	}
+	module.recordToolAudit(t.Context(), scope, access.CapabilityResourceUse, "agent_tool", "search", "success", nil)
+	if len(recorded) != 2 {
+		t.Fatalf("recorded audits = %d, want 2", len(recorded))
+	}
+	for _, event := range recorded {
+		if event.ProjectID != scope.ProjectID {
+			t.Fatalf("audit Project = %q, want %q: %#v", event.ProjectID, scope.ProjectID, event)
+		}
+	}
+}
 
 func TestBuildAuditIntentDerivesGeneratedActionAndCapability(t *testing.T) {
 	wantActions := map[string]string{
