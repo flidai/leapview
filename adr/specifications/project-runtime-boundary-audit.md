@@ -1,8 +1,9 @@
 # FAI-671 isolated runtime boundary evidence
 
-This is a partial implementation slice of [ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md),
-not final Project namespace conformance. FAI-671 completion remains blocked by
-FAI-670. No downstream work is unblocked by this patch.
+This records the bounded FAI-671 implementation slice of
+[ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md), not
+final Project namespace conformance. FAI-670 and FAI-671 are now merged; the
+non-exhaustive inventories below remain explicit evidence limitations.
 
 ## Extraction inventory
 
@@ -37,7 +38,8 @@ schema, migration, compiler identity, or canonical contract digest change.
 ## Remaining boundaries
 
 FAI-670 owns ResourceUID allocation, tombstone/restore audit and lifecycle
-qualification. This slice does not assess or change those guarantees.
+qualification. Those guarantees are merged and independently evidenced; this
+slice does not assess or change them.
 Release/deployment/rollback, storage/retention/cleanup, and the exhaustive
 catalog/lineage/audit/metadata/error-surface audit remain outside this extraction.
 Authorization and generation evidence at cache consumers still require the

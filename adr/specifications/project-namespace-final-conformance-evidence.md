@@ -1,6 +1,6 @@
 # ADR-0018 final conformance evidence reconciliation
 
-Status: reconciled against merged behavior; final closure pending
+Status: reconciled against merged behavior; protected validation pending
 
 Evidence snapshot: 2026-09-13
 
@@ -20,8 +20,7 @@ Original disposition map:
 This inventory prepares FAI-679's final evidence review without claiming that
 ADR-0018 is implemented. It records exactly one accountable implementation
 owner for each of the 54 normative requirements, merged change and validation
-evidence, and the genuine evidence or documentation gaps that still prevent
-closure.
+evidence, and the genuine evidence gaps that still prevent closure.
 
 `Baseline` means the requirement was already conforming when FAI-665 recorded
 the delta and remains owned by the cited subsystem; it is an explicit owner,
@@ -33,6 +32,8 @@ The evidence states are:
 - **Main**: the cited implementation is merged on the repository baseline.
 - **Partial**: merged implementation covers a defined slice, but the full
   requirement still lacks maintained evidence.
+- **Candidate**: the requirement is satisfied by this documentation-only
+  candidate but has not yet passed protected validation and merged.
 - **Gap**: required documentation alignment or maintained evidence is absent.
 
 ## Dependency snapshot
@@ -42,9 +43,9 @@ The evidence states are:
 | FAI-670 | [PR #542](https://github.com/flidai/leapview/pull/542), head `a4f7efa53`, merged as `c9e6482a8`; required CI and Security gates passed | Merged. RID lifecycle evidence is authoritative on main; acceptance evidence and Linear status were reconciled to Done on 2026-09-13. |
 | FAI-671 | [PR #546](https://github.com/flidai/leapview/pull/546), head `01fc491eb`, merged as `4435ea6c1`; required CI and Security gates passed | Merged. The maintained runtime-boundary audit deliberately identifies its non-exhaustive BND/API evidence. |
 | FAI-675 | [PR #549](https://github.com/flidai/leapview/pull/549), head `fbe7ffb37`, merged as `372039da7`; required CI and Security gates passed | Merged. Closed-graph and unsupported-foreign-reference evidence is available on main. |
-| FAI-677 | Local documentation work was recorded in Linear, but no dedicated merged PR or main commit was found | ISO-03 remains open because current maintained documentation still describes an authored Project manifest. |
+| FAI-677 | Its Project-free mental model is incorporated by this FAI-679 documentation-only candidate | ISO-03's maintained-documentation mismatch is resolved in the candidate; protected validation and merge remain. |
 | FAI-678 | [PR #581](https://github.com/flidai/leapview/pull/581), head `e1c56b830`, merged as `f4ad4a032`; exact merge-queue CI and Security passed | Merged. dbt and independent multi-Source adoption evidence is available on main. |
-| FAI-679 | This reconciliation inventory | Final documentation alignment, remaining evidence closure, exact-candidate protected validation, and ADR status update remain open. |
+| FAI-679 | This reconciliation inventory and the aligned top-level architecture specification | The five non-exhaustive requirement inventories and exact-candidate protected validation remain open. |
 
 ## Requirement evidence map
 
@@ -64,7 +65,7 @@ The evidence states are:
 | BND-03 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Portable deterministic bundle and checkout-independent digest tests | — (Main) |
 | BND-04 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Exact persisted-plan, stale-target, rehashed-plan, and lock-order admission tests | — (Main) |
 | BND-05 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Rootless graph, missing endpoint, global ID uniqueness, cycle, and deterministic-byte tests | — (Main) |
-| BND-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Locator, claim, cache, and idempotency boundary tests cover only part of the required inventory | Complete the documented storage/retention/cleanup, audit/lineage/error, release, and cache-consumer inventory (Partial) |
+| BND-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; delivery and lifecycle support in [#512](https://github.com/flidai/leapview/pull/512) and [#542](https://github.com/flidai/leapview/pull/542) | [Serving-state](../../internal/servingstate/sqlite/repository_test.go), [query](../../internal/analytics/duckdb/project_identity_test.go), [cache](../../internal/analytics/cache/project_boundary_test.go), and delivery/ResourceUID qualification cover the principal collision boundaries | Complete one maintained inventory across plan, candidate, generation, serving, query, cache, lineage, audit, managed-data, and physical-root evidence, especially retention and cleanup (Partial) |
 | BND-07 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Same bundle planned independently for multiple environment targets without copied target state | — (Main) |
 | RID-01 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Duplicate authored ID across kinds rejected before graph construction | — (Main) |
 | RID-02 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | PostgreSQL first-activation allocation and sealed-inventory admission qualification | — (Main) |
@@ -73,12 +74,12 @@ The evidence states are:
 | RID-05 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | Stable replay/reuse and kind-conflict rollback qualification | — (Main) |
 | RID-06 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | `TestPostgresResourceUIDAdmissionAndActivationQualification` covers immutable tombstone, authorized exact-generation restore, same-scope historical rollback, atomic audit, and rollback safety | — (Main) |
 | RID-07 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | Registry-key validation excludes paths, names, environments, dbt identifiers, and artifact hashes | — (Main) |
-| API-01 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Existing Project-qualified deployment/authorization/audit/lineage evidence plus generated-locator tests | Complete the end-to-end public identity propagation inventory (Partial) |
-| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Shared query selector, browser, agent-context, and generated locator rejection tests | Complete search/release and remaining request-body selector inventory (Partial) |
+| API-01 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Project-qualified [deployment audit/lineage](../../internal/deployment/module/native_coordinator_pg_test.go), [authorization](../../internal/app/canonical_authorization_test.go), [catalog filtering](../../internal/release/module/catalog_api_test.go), [generation provenance](../../internal/release/generation_test.go), and generated-locator tests | Complete one end-to-end inventory proving public Project identity propagation across every named surface (Partial) |
+| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Shared [query/browser selector](../../internal/app/project_boundary_test.go), [agent context](../../internal/agent/context_test.go), and [generated agent locator](../../internal/agent/tools/registry_test.go) rejection tests | Search and release request bodies, plus the remaining browser/query body inventory, do not have exhaustive selector-rejection evidence (Partial) |
 | API-03 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399`; #546 supplies supporting generated-locator coverage | Foreign scope and missing claim rejected before source I/O, repository mutation, or workload admission | — (Main) |
 | API-04 | Baseline | Explicit serving identity in authorization snapshots and runtime installation | Capability, malformed identity, and authorization-install fail-closed tests | — (Main) |
-| API-05 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` is supporting but explicitly non-exhaustive | Generated locator tests do not cover the complete list/search/discovery/autocomplete/audit/lineage/error inventory | Complete the systematic filtered-surface inventory (Partial) |
-| API-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Project/target/environment/candidate cache partitions and replay reauthorization tests | Prove authorization and generation identity at every cache consumer (Partial) |
+| API-05 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` is supporting but explicitly non-exhaustive | Maintained tests cover [catalog list authorization/filtering](../../internal/release/module/catalog_api_test.go), [search authentication and kind filtering](../../internal/release/module/search_test.go), [foreign candidate concealment](../../internal/deployment/module/native_candidate_preview_test.go), and [scope-safe approval errors](../../internal/deployment/module/native_approval_errors_test.go) | Discovery, autocomplete, audit, lineage, and the remaining list/search/error surfaces lack one systematic authorization-filtered inventory (Partial) |
+| API-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1` | Project/target/environment/candidate partitions in [cache boundary tests](../../internal/analytics/cache/project_boundary_test.go) and [runtime identity tests](../../internal/analytics/module/project_runtime_test.go), authorization projection in [query-cache tests](../../internal/analytics/materialize/query_cache_test.go), and replay reauthorization in [idempotency tests](../../internal/app/api/protocol/project_boundary_test.go) | Prove the complete authorization, environment, and generation identity set at every cache and idempotency consumer (Partial) |
 | API-07 | Baseline | Runtime-host and serving-state admission on main; #546 adds durable claim validation | Mixed Project/environment and foreign active-state rejection tests | — (Main) |
 | ENV-01 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Same Project UID and source bundle planned independently for dev/staging/production targets | — (Main) |
 | ENV-02 | Baseline | Immutable serving-generation repository on main | Project/environment binding and immutable idempotent publication tests | — (Main) |
@@ -92,7 +93,7 @@ The evidence states are:
 | SEM-05 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Closed topology and foreign-reference tests are independent of future hosting topology | — (Main) |
 | ISO-01 | Baseline | Project-qualified authorization plus instance-bound runtime/claim evidence on main | Authorization snapshot and bound runtime tests | — (Main) |
 | ISO-02 | Baseline | Singleton Project/environment runtime topology on main | Second-Project and environment-mismatch admission rejection tests | — (Main) |
-| ISO-03 | FAI-677 | No dedicated implementation PR | ADR language is explicit; adjacent public documentation and product claims have not been fully audited | Implement and validate FAI-677 (Gap) |
+| ISO-03 | FAI-677 | This FAI-679 documentation-only candidate aligns [`spec.md`](../../spec.md) with the merged Project-free source, singleton claim, and instance-local ResourceUID model | The top-level architecture now explicitly rejects Project selectors, Project pickers, native cross-Project imports, and same-process multi-Project isolation; documentation and conformance checks remain to run | Protected validation and merge required (Candidate) |
 | XPR-01 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7`; [#581](https://github.com/flidai/leapview/pull/581) supplies upstream-package coverage | Deterministic foreign-qualified reference rejection without foreign catalog disclosure | — (Main) |
 | XPR-02 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Unsupported `projectOutput` Source variant fails closed without selector disclosure | — (Main) |
 | XPR-03 | Baseline | Ordinary Connection-backed Sources and reusable closed source bundles on main | Source-to-Model-to-SemanticModel closed graph compilation tests | — (Main) |
@@ -114,7 +115,9 @@ The evidence states are:
 - Requirements with merged maintained evidence: **48**.
 - Requirements with merged partial evidence: **5** (`BND-06`, `API-01`,
   `API-02`, `API-05`, and `API-06`).
-- Requirements with a documentation evidence gap: **1** (`ISO-03`).
+- Requirements resolved by this documentation-only candidate: **1**
+  (`ISO-03`).
+- Requirements with an unaddressed gap: **0**.
 - Supporting evidence that crosses issue boundaries is labeled as supporting
   rather than being assigned a second owner.
 
@@ -122,14 +125,10 @@ The evidence states are:
 
 ADR-0018 must remain `pending` until all of the following are true:
 
-1. FAI-677 lands the ISO-03 public-documentation and product-claim alignment.
-   Current `spec.md` still describes an authored Project manifest and therefore
-   contradicts the Project-free source model.
-2. FAI-679 either maps maintained evidence for `BND-06`, `API-01`, `API-02`,
-   `API-05`, and `API-06`, or adds evidence-only coverage without changing
-   implementation behavior. The merged FAI-671 audit explicitly says its
-   surface and cache-consumer inventories are not exhaustive.
-3. The exact documentation/evidence candidate passes generation, documentation,
+1. Maintained evidence for `BND-06`, `API-01`, `API-02`, `API-05`, and
+   `API-06` remains non-exhaustive. The rows above identify the proven slices
+   and the exact inventory still required; no row is upgraded by inference.
+2. The exact documentation/evidence candidate passes generation, documentation,
    conformance, CI, and Security validation before ADR-0018's Implementation
    field changes.
 
