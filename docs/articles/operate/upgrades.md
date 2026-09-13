@@ -84,10 +84,35 @@ The evaluator emits exactly one decision:
   path safely.
 
 This FAI-518 preflight is the eligibility boundary for the later FAI-519
-transition execution work. It is pure and read-only: it does not inspect live
-PostgreSQL, run Goose or River migrations, contact a provider, acquire a
-fence, select an image, or mutate persistent state. FAI-519 must revalidate the
-same immutable evidence at its execution boundary.
+transition execution work. The read-only Go entrypoint accepts exact owner
+references rather than a caller-assembled evaluator input. It resolves the
+predecessor and candidate from the immutable OCI-admission authority, the
+target identity and compatibility projections from their migration owners,
+the matching release policy from its policy owner, and an exact recovery-set
+identity from PostgreSQL. The PostgreSQL recovery-frontier adapter accepts only
+a published set whose exact passed validation attempt, result digest, evidence
+envelope, frontier digest, and target binding all agree. Missing, ambiguous,
+mutable, stale, or mismatched owner results fail before evaluation. The
+qualification supplies isolated owner adapters; production composition still
+requires deployed OCI-admission, release-policy, target, and migration
+projection authorities and must not replace them with caller values.
+
+The resolver then calls the existing pure evaluator and returns its canonical
+evidence bytes and domain-separated digest; it does not define another evidence
+format. Owner adapters must not substitute project release rows, serving
+artifact digests, mutable image tags, or the latest recovery set for the
+required OCI admission, release policy, and exact frontier authorities. Run the
+bounded PostgreSQL-backed resolver qualification with:
+
+```sh
+task qualify:ubdr:release-transition-preflight
+```
+
+The entrypoint remains read-only: it does not run Goose or River migrations,
+contact a recovery provider, acquire an execution fence, switch an image, or
+mutate release or recovery state. FAI-519 must revalidate the same immutable
+evidence at its execution boundary. Preflight evidence does not execute a
+release transition.
 
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
