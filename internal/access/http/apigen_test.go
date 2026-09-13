@@ -47,3 +47,24 @@ func TestAPIGenDispatcherPreservesCurrentPrincipalIfMatchHeader(t *testing.T) {
 		t.Fatalf("If-Match = %q, want %q", got, want)
 	}
 }
+
+func TestAPIGenDispatcherPreservesAuditProjectPath(t *testing.T) {
+	repository := &auditReadRepository{}
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:foreign/audit-events", nil)
+	response := httptest.NewRecorder()
+
+	NewAPIGenDispatcher(projectAuditHandler(repository)).ListAuditEvents(
+		response,
+		request,
+		"",
+		"project:foreign",
+		accessgen.GenListAuditEventsParams{},
+	)
+
+	if response.Code != stdhttp.StatusNotFound {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repository.called {
+		t.Fatal("generated foreign Project path reached the audit repository")
+	}
+}

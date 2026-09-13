@@ -354,7 +354,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 	repo := queryAuditRepositoryForTest(t, server)
 	for _, event := range []queryaudit.EventInput{
-		{ProjectID: projectgraph.ResourceID("project:sales"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
+		{ProjectID: projectgraph.ResourceID("project:test"), PrincipalID: owner.ID, Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", ModelID: "sales", Target: "orders", Status: "success", SQL: "select orders"},
 		{ProjectID: projectgraph.ResourceID("project:operations"), PrincipalID: owner.ID, Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "error", SQL: "select reviews"},
 	} {
 		if err := repo.RecordQueryEvent(ctx, event); err != nil {
@@ -368,7 +368,7 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 	}
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["project:sales"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
+	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["project:test"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -385,13 +385,13 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 		if !ok {
 			t.Fatalf("patch missing adminQueryHistory: %#v", patch)
 		}
-		if len(history.Table.Rows) != 1 || history.Table.Rows[0]["runtime"] != "project:sales" || history.Table.Rows[0]["target"] != "orders" {
+		if len(history.Table.Rows) != 1 || history.Table.Rows[0]["runtime"] != "project:test" || history.Table.Rows[0]["target"] != "orders" {
 			t.Fatalf("filtered reset rows = %#v", history.Table.Rows)
 		}
 		projects := uisignals.ValueOrZero(history.Filters.Projects)
 		surfaces := uisignals.ValueOrZero(history.Filters.Surfaces)
 		statuses := uisignals.ValueOrZero(history.Filters.Statuses)
-		if len(projects) != 1 || projects[0] != "project:sales" || len(surfaces) != 1 || surfaces[0] != "api" || len(statuses) != 1 || statuses[0] != "success" || uisignals.ValueOrZero(history.Filters.Search) != "orders" {
+		if len(projects) != 1 || projects[0] != "project:test" || len(surfaces) != 1 || surfaces[0] != "api" || len(statuses) != 1 || statuses[0] != "success" || uisignals.ValueOrZero(history.Filters.Search) != "orders" {
 			t.Fatalf("filters were not preserved: %#v", history.Filters)
 		}
 		filterMenus := uisignals.ValueOrZero(history.FilterMenus)
@@ -430,7 +430,7 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 	}
 	defer unsubscribe()
 
-	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"oper"}}}`)
+	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"test"}}}`)
 	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -449,8 +449,13 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 		}
 		projectMenu := queryHistoryMenuForTest(uisignals.ValueOrZero(history.FilterMenus), "project")
 		projectOptions := uisignals.ValueOrZero(projectMenu.Options)
-		if uisignals.ValueOrZero(projectMenu.Search) != "oper" || len(projectOptions) != 1 || projectOptions[0].Value != "project:operations" {
+		if uisignals.ValueOrZero(projectMenu.Search) != "test" || len(projectOptions) != 1 || projectOptions[0].Value != "project:test" {
 			t.Fatalf("project menu = %#v", projectMenu)
+		}
+		for _, option := range projectOptions {
+			if option.Value == "project:operations" {
+				t.Fatalf("foreign Project disclosed in query-history options: %#v", projectOptions)
+			}
 		}
 		if len(history.Table.Rows) != 0 {
 			t.Fatalf("filter search should not patch table rows: %#v", history.Table.Rows)
@@ -581,6 +586,51 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for query detail patch")
+	}
+}
+
+func TestAdminQueryHistoryCommandHidesForeignProjectDetail(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
+	token := testAPIToken(t, ctx, store, owner.ID, "test")
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
+	repo := queryAuditRepositoryForTest(t, server)
+	if err := repo.RecordQueryEvent(ctx, queryaudit.EventInput{
+		EventID: "foreign-event", ProjectID: "project:foreign", PrincipalID: owner.ID,
+		Surface: "api", Operation: "api_query", QueryKind: "semantic_rows", Status: "success",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"select_detail","eventId":"foreign-event","limit":50}}`)
+	req := httptest.NewRequest(http.MethodPost, "/admin/queries/command", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "test-client"})
+	rec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case patch := <-updates:
+		detail, ok := patch["adminQueryDetail"].(uisignals.AdminQueryDetailSignal)
+		if !ok || uisignals.ValueOrZero(detail.Error) == "" {
+			t.Fatalf("foreign detail patch = %#v", patch)
+		}
+		if uisignals.ValueOrZero(detail.ProjectID) != "" {
+			t.Fatalf("foreign Project detail disclosed: %#v", detail)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for foreign query detail rejection")
 	}
 }
 

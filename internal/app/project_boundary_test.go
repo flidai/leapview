@@ -1,6 +1,8 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,9 +14,84 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/observability"
 	"github.com/go-chi/chi/v5"
 )
+
+func TestProjectAuditProducerPersistsThroughScopedEndpoint(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	admin := testPlatformPrincipal(t, ctx, store, "audit-boundary@example.com", "Audit Boundary")
+	token := testAPIToken(t, ctx, store, admin.ID, "audit-boundary")
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})}))
+	if err := candidateSourceAuditRecorder(server.routes.accessModule)(ctx, deploymentmodule.CandidateSourceAuditEvent{
+		PrincipalID: admin.ID, ProjectID: testProjectID, Action: "candidate.source.resolved",
+		Capability: access.CapabilityResourcePublish, Status: "success", MetadataJSON: `{}`,
+	}); err != nil {
+		t.Fatalf("record Project audit: %v", err)
+	}
+	preferences, ok := testAccessRepository(store).(access.AuditedPrincipalPreferences)
+	if !ok {
+		t.Fatal("test access repository does not support audited preferences")
+	}
+	if err := preferences.SetPrincipalThemeAudited(ctx, admin.ID, access.ThemeDark); err != nil {
+		t.Fatalf("record platform audit: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+testProjectID.String()+"/audit-events?action=candidate.source.resolved", nil)
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	server.Routes().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("Project audit status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Items []struct {
+			ProjectID string `json:"projectId"`
+			Action    string `json:"action"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].ProjectID != testProjectID.String() || payload.Items[0].Action != "candidate.source.resolved" {
+		t.Fatalf("Project audit response = %#v", payload.Items)
+	}
+
+	foreign := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project:foreign/audit-events?action=candidate.source.resolved", nil)
+	foreign.Header.Set("Authorization", "Bearer "+token)
+	foreignResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(foreignResponse, foreign)
+	if foreignResponse.Code != http.StatusNotFound || strings.Contains(foreignResponse.Body.String(), "candidate.source.resolved") {
+		t.Fatalf("foreign Project audit status=%d body=%s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+
+	platform := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=candidate.source.resolved", nil)
+	platform.Header.Set("Authorization", "Bearer "+token)
+	platformResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(platformResponse, platform)
+	if platformResponse.Code != http.StatusOK || !strings.Contains(platformResponse.Body.String(), `"projectId":"`+testProjectID.String()+`"`) {
+		t.Fatalf("platform audit status=%d body=%s", platformResponse.Code, platformResponse.Body.String())
+	}
+
+	platformOnly := httptest.NewRequest(http.MethodGet, "/api/v1/audit-events?action=principal.theme.updated", nil)
+	platformOnly.Header.Set("Authorization", "Bearer "+token)
+	platformOnlyResponse := httptest.NewRecorder()
+	server.Routes().ServeHTTP(platformOnlyResponse, platformOnly)
+	var platformOnlyPayload struct {
+		Items []struct {
+			ProjectID *string `json:"projectId"`
+			Action    string  `json:"action"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(platformOnlyResponse.Body.Bytes(), &platformOnlyPayload); err != nil {
+		t.Fatal(err)
+	}
+	if platformOnlyResponse.Code != http.StatusOK || len(platformOnlyPayload.Items) != 1 || platformOnlyPayload.Items[0].Action != "principal.theme.updated" || platformOnlyPayload.Items[0].ProjectID != nil {
+		t.Fatalf("unscoped platform audit status=%d body=%s", platformOnlyResponse.Code, platformOnlyResponse.Body.String())
+	}
+}
 
 // This exercises the shared ingress used before browser/API authorization,
 // cursor lookup, idempotency, and domain dispatch. It cannot select a Project.

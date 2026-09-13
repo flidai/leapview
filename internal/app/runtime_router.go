@@ -1572,6 +1572,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return platform.auth.APICredential(r)
 			},
 			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
+			CurrentProjectID:             runtime.resolveProjectID,
 			Publications:                 routes.dashboardModule,
 			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
