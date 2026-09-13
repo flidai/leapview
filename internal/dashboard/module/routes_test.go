@@ -31,6 +31,7 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 		"POST /dashboards/{dashboard}/draft/command":        false,
 		"POST /dashboards/{dashboard}/draft/filter":         false,
 		"POST /dashboards/{dashboard}/draft/filter-options": false,
+		"POST /dashboards/{dashboard}/draft/visual-window":  false,
 		"POST /dashboards/{dashboard}/commands/select":      false,
 	}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {

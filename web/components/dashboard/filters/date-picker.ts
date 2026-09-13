@@ -150,6 +150,8 @@ export class DashboardDatePicker extends LitElement {
       font: var(--lv-type-body-compact);
     }
     .calendar-day:hover { background: var(--lv-bg-control-hover); }
+    .calendar-day:disabled { color: var(--lv-fg-muted); cursor: default; opacity: .45; }
+    .calendar-day:disabled:hover { background: transparent; }
     .calendar-day[data-outside-month='true'] { color: var(--lv-fg-muted); }
     .calendar-day[data-selected='true'] {
       background: var(--lv-button-accent-bg-rest);
@@ -228,6 +230,7 @@ export class DashboardDatePicker extends LitElement {
                 data-outside-month=${String(day.month !== this.viewMonth)}
                 data-selected=${String(selected)}
                 data-today=${String(today)}
+                ?disabled=${!day.valid}
                 tabindex=${this.calendarTabIndex(day, index)}
                 aria-label=${`Select ${formatDisplayDate(day.value)}`}
                 aria-selected=${String(selected)}
@@ -310,7 +313,7 @@ export class DashboardDatePicker extends LitElement {
 
   private changeYear = (event: Event): void => {
     const input = event.currentTarget as HTMLInputElement
-    const year = Number.parseInt(input.value, 10)
+    const year = Number(input.value)
     if (!Number.isInteger(year) || year < 1 || year > 9999) {
       input.value = String(this.viewYear)
       return
@@ -319,6 +322,7 @@ export class DashboardDatePicker extends LitElement {
   }
 
   private selectDate = (value: string): void => {
+    if (!parseCanonicalDate(value)) return
     this.value = value
     this.dispatchInput(value)
     this.renderRoot.querySelector<HTMLElement>('.date-popover')?.hidePopover()
@@ -343,15 +347,15 @@ export class DashboardDatePicker extends LitElement {
   }
 
   private calendarDays(): CalendarDay[] {
-    const first = new Date(Date.UTC(this.viewYear, this.viewMonth, 1))
+    const first = createUTCDate(this.viewYear, this.viewMonth, 1)
     const firstDayOffset = this.weekStart.toLowerCase() === 'sunday'
       ? first.getUTCDay()
       : (first.getUTCDay() + 6) % 7
-    const start = new Date(Date.UTC(this.viewYear, this.viewMonth, 1 - firstDayOffset))
+    const start = createUTCDate(this.viewYear, this.viewMonth, 1 - firstDayOffset)
     return Array.from({ length: 42 }, (_, index) => {
       const date = new Date(start.getTime() + index * 86_400_000)
       const value = formatCanonicalDate(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-      return { value, day: date.getUTCDate(), month: date.getUTCMonth() }
+      return { value, day: date.getUTCDate(), month: date.getUTCMonth(), valid: Boolean(parseCanonicalDate(value)) }
     })
   }
 
@@ -360,12 +364,14 @@ export class DashboardDatePicker extends LitElement {
   }
 
   private calendarTabIndex(day: CalendarDay, index: number): number {
-    const selectedIndex = this.calendarDays().findIndex(candidate => candidate.value === this.value)
-    return (selectedIndex >= 0 ? index === selectedIndex : index === 0) ? 0 : -1
+    const days = this.calendarDays()
+    const selectedIndex = days.findIndex(candidate => candidate.value === this.value && candidate.valid)
+    const focusIndex = selectedIndex >= 0 ? selectedIndex : days.findIndex(candidate => candidate.valid)
+    return index === focusIndex ? 0 : -1
   }
 }
 
-type CalendarDay = { value: string; day: number; month: number }
+type CalendarDay = { value: string; day: number; month: number; valid: boolean }
 type ParsedDate = { year: number; month: number; day: number }
 
 export function parseCanonicalDate(value: string): ParsedDate | undefined {
@@ -374,10 +380,17 @@ export function parseCanonicalDate(value: string): ParsedDate | undefined {
   const year = Number(match[1])
   const month = Number(match[2]) - 1
   const day = Number(match[3])
-  const date = new Date(Date.UTC(year, month, day))
+  if (year < 1 || year > 9999) return undefined
+  const date = createUTCDate(year, month, day)
   return date.getUTCFullYear() === year && date.getUTCMonth() === month && date.getUTCDate() === day
     ? { year, month, day }
     : undefined
+}
+
+function createUTCDate(year: number, month: number, day: number): Date {
+  const date = new Date(0)
+  date.setUTCFullYear(year, month, day)
+  return date
 }
 
 export function formatCanonicalDate(year: number, month: number, day: number): string {
@@ -386,7 +399,7 @@ export function formatCanonicalDate(year: number, month: number, day: number): s
 
 export function formatDisplayDate(value: string): string {
   const date = parseCanonicalDate(value)
-  return date ? `${String(date.day).padStart(2, '0')}-${String(date.month + 1).padStart(2, '0')}-${String(date.year).padStart(4, '0')}` : ''
+  return date ? `${String(date.day).padStart(2, '0')}/${String(date.month + 1).padStart(2, '0')}/${String(date.year).padStart(4, '0')}` : ''
 }
 
 function todayValue(): string {

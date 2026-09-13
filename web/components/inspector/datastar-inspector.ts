@@ -90,7 +90,7 @@ export class DatastarInspector extends LitElement {
     .toggle {
       position: fixed;
       right: 16px;
-      bottom: 16px;
+      bottom: var(--ds-toggle-bottom, 16px);
       z-index: var(--zIndex-popover);
       display: grid;
       width: 38px;

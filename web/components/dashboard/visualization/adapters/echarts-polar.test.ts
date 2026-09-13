@@ -145,7 +145,14 @@ test('ECharts emits only mark-supported proportional fields and preserves explic
   ;(emptyDonut.dataState as InlineVisualizationDataState).datasets[0].rows = []
   const emptyDonutOption = echartsOption(emptyDonut, defaultRendererContext) as any
   expect(emptyDonutOption.dataset.source).toEqual([['label', 'value']])
-  expect(emptyDonutOption.graphic[0].style.text).toBe('{centerValue|0}\n{centerLabel|Total}')
+  expect(emptyDonutOption.series).toEqual([])
+  expect(emptyDonutOption.graphic).toBeUndefined()
+
+  const zeroDonut = structuredClone(emptyDonut)
+  ;(zeroDonut.dataState as InlineVisualizationDataState).datasets[0].rows = [['A', 0]]
+  const zeroDonutOption = echartsOption(zeroDonut, defaultRendererContext) as any
+  expect(zeroDonutOption.series).toHaveLength(1)
+  expect(zeroDonutOption.graphic[0].style.text).toBe('{centerValue|0}\n{centerLabel|Total}')
 
   const funnel = proportionalFixture('funnel') as any
   funnel.spec.presentation.rose = true

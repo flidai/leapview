@@ -95,6 +95,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// enters the published dashboard command/session routes.
 	r.Post("/dashboards/{dashboard}/draft/filter", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderFilterCommand))
 	r.Post("/dashboards/{dashboard}/draft/filter-options", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderFilterOptions))
+	r.Post("/dashboards/{dashboard}/draft/visual-window", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderVisualWindow))
 	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
 	r.Post("/dashboards/{dashboard}/commands/visual-window", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.VisualWindow))
 	r.Post("/dashboards/{dashboard}/commands/select", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Select))

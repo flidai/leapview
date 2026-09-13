@@ -24,6 +24,9 @@ type spatialTileRevision struct {
 	PrincipalID string
 	StreamID    string
 	Filters     dashboard.Filters
+	// Keep the immutable definition view that minted this capability. Draft
+	// dashboards are deliberately absent from the published project catalog.
+	Reports *ReportService
 	// RawMinimumZoom is computed once from the complete governed coordinate
 	// grain. It makes precision revision-wide instead of tile-local.
 	RawMinimumZoom         int
@@ -142,7 +145,7 @@ func (m *Service) QueryVisualizationTile(ctx context.Context, dashboardID, visua
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	result, err := m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
+	result, err := m.snapshots.querySpatialTile(ctx, entry.Reports, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
 	result.Fallback = zoom >= entry.AuthoredRawMinimumZoom && zoom < entry.RawMinimumZoom
 	return result, err
 }
@@ -155,7 +158,7 @@ func (m *Service) QueryPublicVisualizationTile(ctx context.Context, publicID, da
 	if err != nil {
 		return SpatialTileResult{}, err
 	}
-	result, err := m.snapshots.querySpatialTile(ctx, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
+	result, err := m.snapshots.querySpatialTile(ctx, entry.Reports, dashboardID, entry.PageID, entry.Filters, visualID, revision, entry.RawMinimumZoom, zoom, x, y)
 	result.Fallback = zoom >= entry.AuthoredRawMinimumZoom && zoom < entry.RawMinimumZoom
 	return result, err
 }
