@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/agent"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/observability"
@@ -116,6 +117,60 @@ func TestProjectBoundaryRejectsRequestSelectorsBeforeDispatch(t *testing.T) {
 			mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path+"?q=sales", nil))
 			if response.Code != http.StatusNoContent || calls != 1 {
 				t.Fatal("ordinary bound request was rejected")
+			}
+		})
+	}
+}
+
+func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
+	store := testStore(t)
+	principal := testPlatformPrincipal(t, t.Context(), store, "selector-boundary@example.com", "Selector Boundary")
+	token := testAPIToken(t, t.Context(), store, principal.ID, "selector-boundary")
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Auth:  testAuth(store, accessmodule.AuthConfig{APITokenOnly: true}),
+		Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "model"}),
+	}))
+
+	for _, tc := range []struct {
+		name        string
+		path        string
+		validBody   string
+		forgedBody  string
+		validStatus int
+	}{
+		{
+			name: "query", path: "/api/v1/semantic-models/test/query", validStatus: http.StatusOK,
+			validBody:  `{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
+			forgedBody: `{"projectId":"project:foreign","dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
+		},
+		{
+			name: "agent", path: "/api/v1/agent/conversations", validStatus: http.StatusCreated,
+			validBody:  `{"title":"Bound"}`,
+			forgedBody: `{"projectId":"project:foreign","title":"Foreign"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requestFor := func(body, key string) *http.Request {
+				request := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(body))
+				request.Header.Set("Authorization", "Bearer "+token)
+				request.Header.Set("Content-Type", "application/json")
+				request.Header.Set("Accept", "application/json")
+				request.Header.Set("Idempotency-Key", key)
+				return request
+			}
+			control := httptest.NewRecorder()
+			server.Routes().ServeHTTP(control, requestFor(tc.validBody, "018f4f2e-0000-7000-8000-000000000931"))
+			if control.Code != tc.validStatus {
+				t.Fatalf("control status=%d body=%s, want %d", control.Code, control.Body.String(), tc.validStatus)
+			}
+
+			response := httptest.NewRecorder()
+			server.Routes().ServeHTTP(response, requestFor(tc.forgedBody, "018f4f2e-0000-7000-8000-000000000932"))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s, want unknown Project selector rejection", response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "project:foreign") {
+				t.Fatalf("selector value leaked into response: %s", response.Body.String())
 			}
 		})
 	}

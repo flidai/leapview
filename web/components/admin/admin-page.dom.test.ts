@@ -75,7 +75,7 @@ test('publications admin renders lifecycle controls and emits typed commands', a
     expect(state.cards).toBe(1)
     expect(state.text).toContain('website-showcase')
     expect(state.text).toContain('Lifecycle history')
-    expect(state.detail).toEqual({ projectId: 'visuals', publication: 'website-showcase', action: 'suspend' })
+    expect(state.detail).toEqual({ publication: 'website-showcase', action: 'suspend' })
   } finally {
     await page.close()
   }
