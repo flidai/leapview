@@ -221,6 +221,18 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 			}
 		}
 	}
+	for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, 'release.release_transition_policy', $2)`, role, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_maintenance"
+			if allowed != want {
+				t.Errorf("release policy privilege %s/%s = %t, want %t", role, privilege, allowed, want)
+			}
+		}
+	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
 	if err := db.QueryRow(ctx,
