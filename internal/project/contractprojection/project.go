@@ -74,6 +74,9 @@ func ProjectSource(value projectcontracts.Source, contract Contract) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
+	if err := validateSourceFieldDeprecations(metadata.Contract.Version, schema.Fields); err != nil {
+		return Source{}, fmt.Errorf("project Source deprecation: %w", err)
+	}
 	freshness, err := projectSourceFreshness(input.Spec.Freshness)
 	if err != nil {
 		return Source{}, err
@@ -235,6 +238,9 @@ func ProjectModel(value projectcontracts.Model, contract Contract, contexts ...R
 			return Model{}, fmt.Errorf("project Model field %q: %w", name, err)
 		}
 		fields[name] = field
+	}
+	if err := validateModelFieldDeprecations(metadata.Contract.Version, fields); err != nil {
+		return Model{}, fmt.Errorf("project Model deprecation: %w", err)
 	}
 	checks := make([]ModelCheck, len(input.Spec.Checks))
 	for index, value := range input.Spec.Checks {

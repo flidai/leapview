@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "leapview.dev/odcs-mapping/v1",
+      "publisher": "Bitol",
+      "standard": "Open Data Contract Standard",
+      "standardVersion": "3.1.0",
+      "upstreamRevision": "b9d3ffc5aabe9e058afe4469cabe5a218fe9946d",
+      "schemaPath": "internal/project/contractodcs/schema/odcs-json-schema-v3.1.0.json",
+      "directions": ["export"],
+      "levels": ["document"],
+      "extension": "leapview.dev/odcs-extension/v1",
+      "status": "implemented",
+      "adapterPath": "internal/project/contractodcs",
+      "specificationPath": "adr/specifications/odcs-export-conformance.md",
+      "implementation": "FAI-623; PR #550; dcfca350e3fab443e635832ffa29ebc5aa25d605",
+      "validation": [
+        "go test ./internal/project/contractodcs -count=1",
+        "task odcs:oracle",
+        "go test ./internal/platform/architecture -run ODCS -count=1"
+      ],
+      "boundary": "Source and Model export only; no import, round-trip, execution, or runtime transport claim."
+    },
+    {
+      "id": "leapview.dev/openlineage-projection/v1",
+      "publisher": "OpenLineage",
+      "standard": "OpenLineage object model and standard facets",
+      "standardVersion": "2.0.2",
+      "upstreamRevision": "cfd47d6f3e1b13167136b2508768c94a2351af23",
+      "schemaPath": "internal/refresh/openlineage/schema/OpenLineage.json",
+      "directions": ["export-only projection"],
+      "levels": ["document"],
+      "extension": "https://leapview.dev/openlineage/facets/1-0-0/",
+      "status": "implemented",
+      "adapterPath": "internal/refresh/openlineage",
+      "specificationPath": "adr/specifications/openlineage-conformance.md",
+      "implementation": "FAI-629; PR #551; e1851bc4d720d2a3d3eff3885247012369a69918",
+      "validation": [
+        "go test ./internal/refresh/openlineage -count=1",
+        "go test ./internal/platform/architecture -run OpenLineage -count=1"
+      ],
+      "boundary": "Document projection only; no collector, transport, import, round-trip, or end-to-end emission claim."
+    },
+    {
+      "id": "deferred/odcs-3.1-import",
+      "publisher": "Bitol",
+      "standard": "Open Data Contract Standard",
+      "standardVersion": "3.1.0",
+      "upstreamRevision": "b9d3ffc5aabe9e058afe4469cabe5a218fe9946d",
+      "schemaPath": "internal/project/contractodcs/schema/odcs-json-schema-v3.1.0.json",
+      "directions": ["import", "round-trip"],
+      "levels": [],
+      "extension": "none",
+      "status": "deferred",
+      "adapterPath": "",
+      "specificationPath": "adr/specifications/odcs-export-conformance.md",
+      "implementation": "FAI-626 canceled; capability-gated",
+      "validation": [],
+      "boundary": "No import or round-trip conformance claim exists without a demonstrated import capability requirement."
+    },
+    {
+      "id": "deferred/bitol-odps-1.0.0-export",
+      "publisher": "Bitol",
+      "standard": "Open Data Product Standard",
+      "standardVersion": "1.0.0",
+      "upstreamRevision": "not pinned",
+      "schemaPath": "",
+      "directions": ["export"],
+      "levels": [],
+      "extension": "none",
+      "status": "deferred",
+      "adapterPath": "",
+      "specificationPath": "adr/0016-adopt-standards-aligned-data-contracts-and-interchange.md",
+      "implementation": "FAI-627 canceled; capability-gated",
+      "validation": [],
+      "boundary": "No ODPS adapter or conformance claim exists without a demonstrated data-product exchange requirement."
+    },
+    {
+      "id": "deferred/w3c-dcat-3-export",
+      "publisher": "W3C",
+      "standard": "Data Catalog Vocabulary",
+      "standardVersion": "3 (Recommendation 2024-08-22)",
+      "upstreamRevision": "not pinned",
+      "schemaPath": "",
+      "directions": ["export"],
+      "levels": [],
+      "extension": "none",
+      "status": "deferred",
+      "adapterPath": "",
+      "specificationPath": "adr/0016-adopt-standards-aligned-data-contracts-and-interchange.md",
+      "implementation": "FAI-628 canceled; capability-gated",
+      "validation": [],
+      "boundary": "No DCAT adapter or conformance claim exists without a demonstrated federated-catalog requirement."
+    }
+  ]
+}
