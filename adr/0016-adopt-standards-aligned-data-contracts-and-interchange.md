@@ -802,10 +802,12 @@ receive production credentials by default.
   versions, unknown compatibility policies, malformed authoritative links,
   structurally invalid deprecation guidance, and generic extension bags.
   `TestSourceDeprecationContext`,
-  `TestModelDeprecationUsesContextualValidation`, and publication replay tests
-  additionally reject missing or self replacements, two- and multi-field
-  replacement cycles, and `deprecation.since` later than the containing
-  contract version.
+  `TestModelDeprecationUsesContextualValidation` additionally reject missing or
+  self replacements, two- and multi-field replacement cycles, and
+  `deprecation.since` later than the containing contract version when creating
+  new projections. Historical `leapview.contract/v1` publication replay retains
+  its original structural semantics and exact digest so this stricter authoring
+  validation cannot invalidate immutable evidence.
 - Compatibility fixtures classify additive, behavioral, breaking, and
   indeterminate changes across Source, Model, and published SemanticModel
   contracts. Candidate evidence binds the exact active baseline, direct

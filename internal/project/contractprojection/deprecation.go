@@ -8,6 +8,10 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// Contextual deprecation rules apply while creating a new sealed projection.
+// Publication decoders deliberately retain the original leapview.contract/v1
+// structural semantics so immutable bytes accepted by an older binary remain
+// digestible and replayable under that same profile.
 func validateSourceFieldDeprecations(contractVersion string, fields *map[string]Field) error {
 	if fields == nil {
 		return nil
