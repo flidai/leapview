@@ -170,6 +170,9 @@ func validateSourceView(value SourceView) error {
 				return fmt.Errorf("decode Source publication field %q: %w", name, err)
 			}
 		}
+		if err := validateSourceFieldDeprecations(value.Metadata.Contract.Version, value.Contract.Schema.Fields); err != nil {
+			return fmt.Errorf("decode Source publication deprecation: %w", err)
+		}
 	}
 	if freshness := value.Contract.Freshness; freshness != nil {
 		if freshness.Basis != "field" && freshness.Basis != "revision" {
@@ -229,6 +232,9 @@ func validateModelView(value ModelView) error {
 		if err := validateModelProjectionField(field); err != nil {
 			return fmt.Errorf("decode Model publication field %q: %w", name, err)
 		}
+	}
+	if err := validateModelFieldDeprecations(value.Metadata.Contract.Version, value.Contract.Fields); err != nil {
+		return fmt.Errorf("decode Model publication deprecation: %w", err)
 	}
 	if value.Contract.Checks != nil {
 		seenIDs := make(map[string]struct{}, len(*value.Contract.Checks))

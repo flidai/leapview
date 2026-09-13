@@ -779,9 +779,11 @@ receive production credentials by default.
 - Schema and compiler tests reject duplicate check IDs, invalid semantic
   versions, unknown compatibility policies, malformed authoritative links,
   structurally invalid deprecation guidance, and generic extension bags.
-  Replacement existence, replacement cycles, and ordering of
-  `deprecation.since` against the containing contract version remain an
-  unqualified contextual-validation boundary.
+  `TestSourceDeprecationContext`,
+  `TestModelDeprecationUsesContextualValidation`, and publication replay tests
+  additionally reject missing or self replacements, two- and multi-field
+  replacement cycles, and `deprecation.since` later than the containing
+  contract version.
 - Compatibility fixtures classify additive, behavioral, breaking, and
   indeterminate changes across Source, Model, and published SemanticModel
   contracts. Candidate evidence binds the exact active baseline, affected graph,

@@ -24,7 +24,7 @@ ADR-0016 completion.
 | Requirement | Implementation owner | Evidence | Status | Remaining boundary |
 |---|---|---|---|---|
 | Authored analytics/control-plane boundary | FAI-616, PR [#572](https://github.com/flidai/leapview/pull/572) | Removed-kind discovery/schema tests; dashboard-publication deployment guard; architecture ownership guard | Implemented | Project namespace and ResourceUID lifecycle remain ADR-0018-owned. |
-| Generated structural authority and governance metadata | FAI-619, PRs [#472](https://github.com/flidai/leapview/pull/472) and [#516](https://github.com/flidai/leapview/pull/516) | TypeSpec-generated Go/JSON Schema; metadata, stable-check-ID, and structural-authority tests | Partial | Current validation proves the closed deprecation shape and canonical identity, but no graph-context test proves replacement existence/self-cycle rejection or orders `deprecation.since` against the containing contract version. |
+| Generated structural authority and governance metadata | FAI-619/632, PRs [#472](https://github.com/flidai/leapview/pull/472) and [#516](https://github.com/flidai/leapview/pull/516) | TypeSpec-generated Go/JSON Schema; metadata, stable-check-ID, structural-authority, `TestSourceDeprecationContext`, `TestModelDeprecationUsesContextualValidation`, and publication replay tests | Implemented | Source and Model projections reject missing/self replacements, replacement cycles, and `deprecation.since` later than the containing contract version. |
 | Canonical Source/Model/SemanticModel projections | FAI-620/662, PR [#534](https://github.com/flidai/leapview/pull/534) | Reconciled CAN/SRC/MOD/SEM/SER rows in the versioning ledger; sealed projection, exclusion manifest, analyzed SQL, typed normalization, RFC 8785 and independent fixture tests | Implemented | Only the named `leapview.contract/v1` resource projections are claimed. |
 | Compatibility, security impact, and immutable publication | FAI-622/662, PR [#548](https://github.com/flidai/leapview/pull/548) | Unified classifier tests; immutable PostgreSQL publication evidence; replay/conflict/concurrency tests; exact baseline/candidate and direct affected-resource seed | Partial | The publication package deliberately supplies a direct graph-owned affected-resource seed. No transitive consumer-graph conformance claim is made. |
 | Protected semantic activation evidence | FAI-649, PR [#575](https://github.com/flidai/leapview/pull/575) | Exact publication/policy evidence in plan identity; approval binding; transaction-bound registry/control and deployed-policy revalidation | Implemented for the qualified ADR-0017 profile | Unsupported consumers and plan shapes remain fail closed under ADR-0017. |
@@ -62,6 +62,7 @@ Results are recorded only after execution against the branch based on current
 | Command | Result |
 |---|---|
 | `task adr0016-conformance:check` | Pass |
+| Contextual Source/Model deprecation regression tests | Pass |
 | Contract projection/version/publication focused suites | Pass |
 | `go test ./internal/project/contractodcs -count=1` | Pass |
 | `task odcs:oracle` | Pass with the pinned independent `datacontract` 1.1.3 tool prepared on `PATH`; the first local invocation correctly reported the absent CI-only tool |
@@ -82,8 +83,8 @@ generated snapshot gate without changing test requirements.
 
 ## Qualification decision
 
-FAI-632 may close evidence for the implemented external profiles, but ADR-0016
-must remain partial until the active contextual-deprecation and affected-graph
-claims are either qualified by executable evidence or explicitly narrowed by a
-reviewed decision. The focused historical migration-upgrade fixture is an
-evidence gap, not permission to alter a migration in this qualification layer.
+FAI-632 closes contextual field-deprecation qualification and evidence for the
+implemented external profiles, but ADR-0016 remains partial while the active
+affected-graph claim is limited to a direct graph-owned seed. The focused
+historical migration-upgrade fixture is an evidence gap, not permission to
+alter a migration in this qualification layer.
