@@ -17,6 +17,7 @@ func candidateSourceAuditRecorder(
 			return fmt.Errorf("candidate source access audit module is unavailable")
 		}
 		return recordAccessAudit(ctx, accessModule, access.AuditEventInput{
+			ProjectID:   event.ProjectID.String(),
 			PrincipalID: event.PrincipalID,
 			Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
 			Capability: event.Capability, Status: event.Status,

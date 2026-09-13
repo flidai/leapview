@@ -113,6 +113,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			CurrentProjectID:             config.CurrentProjectID,
 			AuthoringAuth:                config.AuthoringAuth,
 			Avatar:                       avatarService, LocalPasswordEnabled: localPasswordEnabled,
 		},
@@ -146,6 +147,7 @@ func (m *Module) SetCurrentProjectID(fn func(context.Context) (projectgraph.Reso
 		return
 	}
 	m.currentProjectID = fn
+	m.handler.CurrentProjectID = fn
 }
 
 // CurrentProjectID returns the active immutable project identity. A missing

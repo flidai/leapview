@@ -39,7 +39,7 @@ func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record acces
 		return err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{Action: "authoring.device.started", ResourceKind: "device_authorization", ResourceID: record.ID, Status: "success"}); err != nil {
+	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: record.Scope.ProjectID.String(), Action: "authoring.device.started", ResourceKind: "device_authorization", ResourceID: record.ID, Status: "success"}); err != nil {
 		return fmt.Errorf("%w: record device authorization audit: %v", access.ErrAuditTransaction, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -82,22 +82,20 @@ func (r *Repository) decideDeviceAuthorization(ctx context.Context, id, principa
 	if err != nil {
 		return err
 	}
-	var tag pgconnCommandTag
+	var projectID string
 	if approve {
-		result, qerr := accessdb.New(tx).ApproveDeviceAuthorization(ctx, accessdb.ApproveDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
-		tag, err = result, qerr
+		projectID, err = accessdb.New(tx).ApproveDeviceAuthorization(ctx, accessdb.ApproveDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
 	} else {
-		result, qerr := accessdb.New(tx).DenyDeviceAuthorization(ctx, accessdb.DenyDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
-		tag, err = result, qerr
+		projectID, err = accessdb.New(tx).DenyDeviceAuthorization(ctx, accessdb.DenyDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.ErrDeviceAuthorizationExpired
 	}
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
-		return access.ErrDeviceAuthorizationExpired
-	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: principalID, Action: "authoring.device.decided", ResourceKind: "device_authorization", ResourceID: id, Status: "success"}); err != nil {
+	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: projectID, PrincipalID: principalID, Action: "authoring.device.decided", ResourceKind: "device_authorization", ResourceID: id, Status: "success"}); err != nil {
 		return fmt.Errorf("%w: record device decision audit: %v", access.ErrAuditTransaction, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -190,7 +188,7 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 		return access.AuthoringCredential{}, err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: principal.ID, Action: "authoring.session.created", ResourceKind: "authoring_session", ResourceID: issue.SessionID, Status: "success"}); err != nil {
+	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: record.Scope.ProjectID.String(), PrincipalID: principal.ID, Action: "authoring.session.created", ResourceKind: "authoring_session", ResourceID: issue.SessionID, Status: "success"}); err != nil {
 		return access.AuthoringCredential{}, fmt.Errorf("%w: record authoring session audit: %v", access.ErrAuditTransaction, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -237,7 +235,7 @@ func (r *Repository) CreateWorkloadCredential(ctx context.Context, issue access.
 		return access.AuthoringCredential{}, err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{PrincipalID: principal.ID, Action: "authoring.workload.created", ResourceKind: "authoring_session", ResourceID: issue.Session.ID, Status: "success"}); err != nil {
+	if err = auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{ProjectID: issue.Session.Scope.ProjectID.String(), PrincipalID: principal.ID, Action: "authoring.workload.created", ResourceKind: "authoring_session", ResourceID: issue.Session.ID, Status: "success"}); err != nil {
 		return access.AuthoringCredential{}, fmt.Errorf("%w: record workload audit: %v", access.ErrAuditTransaction, err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -370,6 +368,7 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		}
 		auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
 		if err := auditRepo.RecordAuditEvent(ctx, access.AuditEventInput{
+			ProjectID:   project.String(),
 			PrincipalID: principalID, Action: "authoring.refresh.replay", ResourceKind: "authoring_session",
 			ResourceID: sessionID, Status: "security_event", MetadataJSON: string(metadata),
 		}); err != nil {

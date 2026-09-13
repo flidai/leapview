@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type Principal struct {
@@ -28,6 +30,7 @@ type AgentDetailsProvider func(context.Context) (api.AdminAgentResponse, error)
 type CSRFTokenProvider func(*http.Request) string
 type CurrentPrincipalProvider func(*http.Request) (Principal, bool)
 type PublicationProvider func(*http.Request) ([]ui.AdminPublication, bool, error)
+type ProjectIDProvider func(context.Context) (projectgraph.ResourceID, error)
 
 type AccessReader interface {
 	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
@@ -48,6 +51,7 @@ type ReadModel struct {
 	CSRFToken                    CSRFTokenProvider
 	CurrentPrincipal             CurrentPrincipalProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID             ProjectIDProvider
 	Publications                 PublicationProvider
 	AgentConfigCommand           uicommand.Binding
 	PublicationCommands          map[string]uicommand.Binding
@@ -301,23 +305,41 @@ type adminRoleBindingView struct {
 }
 
 func (m ReadModel) QueryHistoryData(r *http.Request, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ui.AdminQueryHistoryData {
+	projectID, err := m.projectID(r.Context())
+	if err != nil {
+		return ui.AdminQueryHistoryData{Filters: filters, Limit: normalizeQueryHistoryLimit(limit), Error: err.Error()}
+	}
 	repo, err := m.queryAuditReader()
 	if err != nil || repo == nil {
 		return ui.AdminQueryHistoryData{Filters: filters, Limit: normalizeQueryHistoryLimit(limit), Error: queryHistoryErrorText(err)}
 	}
-	filters = normalizeQueryHistoryFilters(filters)
-	events, nextCursor, hasMore, err := queryHistoryPage(r, repo, filters, pageToken, limit)
+	filters, err = bindQueryHistoryFilters(filters, projectID)
+	if err != nil {
+		return ui.AdminQueryHistoryData{Filters: filters, Limit: normalizeQueryHistoryLimit(limit), Error: err.Error()}
+	}
+	events, nextCursor, hasMore, err := queryHistoryPage(r, repo, projectID, filters, pageToken, limit)
 	if err != nil {
 		return ui.AdminQueryHistoryData{Filters: filters, Limit: normalizeQueryHistoryLimit(limit), Error: err.Error()}
 	}
 	return ui.AdminQueryHistoryData{
 		Events:      events,
-		FilterMenus: m.queryHistoryFilterMenus(r, repo, filters, "", ""),
+		FilterMenus: m.queryHistoryFilterMenus(r, repo, projectID, filters, "", ""),
 		Filters:     filters,
 		NextCursor:  nextCursor,
 		HasMore:     hasMore,
 		Limit:       normalizeQueryHistoryLimit(limit),
 	}
+}
+
+func (m ReadModel) projectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if m.CurrentProjectID == nil {
+		return "", errors.New("active Project identity is unavailable")
+	}
+	projectID, err := m.CurrentProjectID(ctx)
+	if err != nil || projectID.Validate() != nil {
+		return "", errors.New("active Project identity is unavailable")
+	}
+	return projectID, nil
 }
 
 func (m ReadModel) PrincipalLabels(r *http.Request, values []string) map[string]string {

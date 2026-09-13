@@ -344,6 +344,20 @@ func (r *Repository) RevokeAuthoringSession(ctx context.Context, principalID, se
 	}
 	defer func() { _ = tx.Rollback() }()
 	txRepo := &Repository{root: r.root, db: tx, q: r.q.WithTx(tx)}
+	sessions, err := txRepo.ListAuthoringSessions(ctx, principalID)
+	if err != nil {
+		return err
+	}
+	var session access.AuthoringSession
+	for _, candidate := range sessions {
+		if candidate.ID == sessionID {
+			session = candidate
+			break
+		}
+	}
+	if session.ID == "" {
+		return access.ErrInvalidAuthoringCredential
+	}
 	affected, err := txRepo.q.RevokeAuthoringSession(ctx, platformdb.RevokeAuthoringSessionParams{
 		ID: sessionID, PrincipalID: principalID, RevokedAt: nullableTime(now),
 	})
@@ -353,7 +367,7 @@ func (r *Repository) RevokeAuthoringSession(ctx context.Context, principalID, se
 	if affected == 0 {
 		return access.ErrInvalidAuthoringCredential
 	}
-	if err := txRepo.RecordAuditEvent(ctx, authoringSessionAudit("authoring.session.revoked", access.AuthoringSession{ID: sessionID, PrincipalID: principalID}, "success")); err != nil {
+	if err := txRepo.RecordAuditEvent(ctx, authoringSessionAudit("authoring.session.revoked", session, "success")); err != nil {
 		return fmt.Errorf("%w: %v", access.ErrAuditTransaction, err)
 	}
 	return tx.Commit()
@@ -397,6 +411,7 @@ func authoringDeviceAudit(action string, record access.DeviceAuthorization, prin
 	}
 	metadata, _ := json.Marshal(metadataValues)
 	return access.AuditEventInput{
+		ProjectID:   record.Scope.ProjectID.String(),
 		PrincipalID: principalID, Action: action, ResourceKind: "device_authorization",
 		ResourceID: record.ID, Status: status, MetadataJSON: string(metadata),
 	}
@@ -409,6 +424,7 @@ func authoringSessionAudit(action string, session access.AuthoringSession, statu
 	}
 	metadata, _ := json.Marshal(metadataValues)
 	return access.AuditEventInput{
+		ProjectID:   session.Scope.ProjectID.String(),
 		PrincipalID: session.PrincipalID, Action: action, ResourceKind: "authoring_session",
 		ResourceID: session.ID, Status: status, MetadataJSON: string(metadata),
 	}

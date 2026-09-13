@@ -684,7 +684,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			return
 		}
 		if !allowed {
-			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -692,7 +692,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 		if err != nil {
 			slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, access.ErrForbidden) {
-				a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
@@ -700,7 +700,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			return
 		}
 		if !containsCapability(effective, capability) {
-			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -708,7 +708,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 	}))
 }
 
-func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID, principalID string, resource access.ResourceRef, capability access.Capability) {
+func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID string, resource access.ResourceRef, capability access.Capability) {
 	if a == nil || a.module == nil || a.module.repository == nil || r == nil {
 		return
 	}
@@ -718,6 +718,7 @@ func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, op
 		return
 	}
 	input := authAuditInput(r, "authorization.denied", principalID, string(resource.Kind()), resource.ID().String(), capability, "denied", map[string]any{"operationId": operationID})
+	input.ProjectID = projectID.String()
 	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil {
 		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit failed", "operation", operationID, "error", err)
 	}

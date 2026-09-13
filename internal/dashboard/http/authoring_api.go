@@ -1145,6 +1145,7 @@ func executeAuthoringMutationForSurface(r *nethttp.Request, invocation apigencom
 		// callback in production module wiring.
 		if legacyRecorder != nil {
 			_ = legacyRecorder(ctx, access.AuditEventInput{
+				ProjectID:   project,
 				PrincipalID: actor, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: strings.TrimSpace(dashboardID), Capability: capability,
 				Status: "succeeded", RequestID: requestID, CorrelationID: correlationID, MetadataJSON: intent.MetadataJSON,
 			})
