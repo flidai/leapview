@@ -6,8 +6,8 @@ LeapView conversations are global and owned by the authenticated principal. Proj
 
 Built-in chat, MCP discovery, and `leapview agent tools` expose one governed catalog. Its discovery, query, and documentation subset remains read-only; the dashboard-authoring subset adds the twelve bounded authoring tools documented in [Dashboard authoring and promotion](/docs/guides/operate/dashboard-authoring).
 
-- `catalog_search` searches every authorized project resource when a resource's location is unknown.
-- `catalog_list` browses one deterministic hierarchy level. Omit `parent` to list authorized projects, then pass a returned `{kind,id}` ref to continue.
+- `catalog_search` searches authorized resources in the server-bound Project when a resource's location is unknown.
+- `catalog_list` browses the server-bound Project graph. Omit `parent` to list authorized resources across the active graph, then pass a returned `{kind,id}` ref to browse its dependencies.
 - `catalog_get` returns the compact definition for one exact ref. Shared visuals and filters may require one of the returned dashboard/page locations.
 - `query_semantic_model` executes governed semantic queries.
 - `query_dashboard_visual` queries one existing dashboard visual.

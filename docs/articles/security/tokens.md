@@ -35,7 +35,7 @@ LEAPVIEW_WORKLOAD_CLIENT_SECRET=<secret>
 LEAPVIEW_WORKLOAD_PROJECT=analytics
 ```
 
-The exchanged credential is bound to the target instance, project, action allowlist, and short lifetime. It cannot be refreshed and is not persisted. The service principal's roles and grants remain authoritative, so the exchange scope can narrow access but cannot elevate it.
+`LEAPVIEW_WORKLOAD_PROJECT` must identify the Project already bound to the target; it asserts that identity and cannot select or switch the server to another Project. The exchanged credential is bound to the target instance, Project, action allowlist, and short lifetime. It cannot be refreshed and is not persisted. The service principal's roles and grants remain authoritative, so the exchange scope can narrow access but cannot elevate it.
 
 `LEAPVIEW_API_TOKEN` and `--token` remain a discouraged compatibility path. Avoid command-line secrets where process listings or shell history may expose them.
 
@@ -64,7 +64,7 @@ Do not extend overlap indefinitely. Record owner, purpose, creation, last rotati
 
 ## Respond to exposure
 
-Revoke the credential immediately, then inspect audit and query events for the principal, affected projects and resources, operations, and time window. Rotate downstream secrets that the workload could access, correct excessive grants, and issue a replacement only after the cause is contained.
+Revoke the credential immediately, then inspect audit and query events for the principal, the affected target's server-bound Project and resources, operations, and time window. Rotate downstream secrets that the workload could access, correct excessive grants, and issue a replacement only after the cause is contained.
 
 Deleting or disabling a service principal is appropriate when the workload is retired. Remove role bindings and ownership references as part of the same change.
 
