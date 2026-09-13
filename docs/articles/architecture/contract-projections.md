@@ -89,6 +89,14 @@ canonical bytes, digest, validation checks, compatibility/security result, and
 the directly published affected-resource identity, and any required widening
 approval. The direct identity is the immutable seed for later Project-owned
 dependency-graph expansion; it does not claim to contain the consumer graph.
+For the qualified dashboard-consumer profile, `ProjectGraph` edges point from a
+consumer to its dependency and `AffectedDashboards` intersects each dashboard's
+transitive dependency closure with that direct seed. It returns stable IDs in
+sorted, deduplicated order, excludes unrelated dashboards, and cannot operate
+on cyclic or duplicate-edge graphs because graph construction rejects them.
+This qualification does not claim a generic closure of every non-dashboard
+resource kind and does not copy graph-derived consumers into publication
+evidence.
 PostgreSQL appends and replays that evidence through caller-owned transactions.
 Reusing a version with different bytes, using a stale or mismatched baseline,
 omitting required widening approval, or reading tampered evidence fails closed.

@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/project/contractprojection"
 	"github.com/flidai/leapview/internal/project/contractpublication"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -204,6 +206,87 @@ func TestContractPublicationIsImmutableAndExactlyReplayable(t *testing.T) {
 	}
 	if _, err := db.Exec(ctx, `TRUNCATE project.contract_publication`); err == nil {
 		t.Fatal("publication TRUNCATE unexpectedly succeeded")
+	}
+}
+
+func TestContractPublicationReplaysHistoricalDeprecationContext(t *testing.T) {
+	db := identityTestDB(t)
+	ctx := t.Context()
+
+	var source projectcontracts.Source
+	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:historical-orders","name":"historical_orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}}}}}`
+	if err := json.Unmarshal([]byte(raw), &source); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := contractprojection.ProjectSource(source, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := contractprojection.CanonicalBytes(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical = bytes.Replace(canonical, []byte(`"replacement":"current"`), []byte(`"replacement":"missing"`), 1)
+	if !bytes.Contains(canonical, []byte(`"replacement":"missing"`)) {
+		t.Fatal("historical fixture did not replace the valid target")
+	}
+	digest, err := contractprojection.DigestSourcePublication(canonical)
+	if err != nil {
+		t.Fatalf("digest historical publication: %v", err)
+	}
+	historical := contractpublication.ContractPublication{
+		InstanceID:        "instance:historical-replay",
+		AuthoredID:        "source:historical-orders",
+		ResourceKind:      projectgraph.KindSource,
+		Version:           "1.0.0",
+		VersionBaseline:   "1.0.0",
+		ProjectionProfile: contractprojection.Profile,
+		CanonicalBytes:    canonical,
+		Digest:            digest,
+		Validation: contractpublication.ValidationEvidence{
+			Version: contractpublication.ValidationEvidenceVersion,
+			Checks: []contractpublication.ValidationCheck{{
+				Name: "projection", Outcome: contractpublication.ValidationPassed, Reference: "historical-v1-publication",
+			}},
+		},
+	}
+	policyContext := contractpublication.PolicyContext{BaselineKind: contractpublication.BaselineGenesis}
+	policy, err := contractpublication.DerivePolicyEvidence(policyContext, historical)
+	if err != nil {
+		t.Fatalf("derive historical policy evidence: %v", err)
+	}
+	historical, err = contractpublication.AttachPolicyEvidence(policyContext, historical, policy, nil)
+	if err != nil {
+		t.Fatalf("attach historical policy evidence: %v", err)
+	}
+	validation, err := json.Marshal(historical.Validation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO project.contract_publication(
+			instance_id, authored_id, resource_kind, version, version_baseline,
+			projection_profile, canonical_bytes, canonical_digest, validation_evidence_json
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		historical.InstanceID, historical.AuthoredID.String(), string(historical.ResourceKind), historical.Version,
+		historical.VersionBaseline, historical.ProjectionProfile, historical.CanonicalBytes, historical.Digest, validation); err != nil {
+		t.Fatalf("insert historical publication: %v", err)
+	}
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	replayed, err := New(tx).ReplayContractPublicationTx(ctx, tx, historical.InstanceID, historical.AuthoredID, historical.ResourceKind, historical.Version)
+	if err != nil {
+		t.Fatalf("replay historical publication: %v", err)
+	}
+	if !bytes.Equal(replayed.CanonicalBytes, historical.CanonicalBytes) || replayed.Digest != historical.Digest {
+		t.Fatal("historical replay changed immutable canonical evidence")
+	}
+	if err := contractpublication.ValidateQualifiedPublication(policyContext, replayed, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("activation admission rejected historical publication: %v", err)
 	}
 }
 
