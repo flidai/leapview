@@ -21,7 +21,6 @@ Use a dedicated service principal or a user token issued for this integration. G
 ```sh
 export LEAPVIEW_TARGET=https://dash.example.com
 export LEAPVIEW_API_TOKEN=<secret>
-export LEAPVIEW_PROJECT_UID=<server-bound-project-uid>
 ```
 
 Do not include bearer tokens in URLs. Avoid shell tracing while secrets are present.
@@ -78,7 +77,7 @@ Use the downloadable OpenAPI document as the source of request and response shap
 
 ## Verify an end-to-end read
 
-Select one dashboard from discovery, describe its generated operation, and request a bounded read for a known page or visual. Verify that any returned Project identity matches `$LEAPVIEW_PROJECT_UID`, compare the dashboard ID with discovery, verify the status and content type before decoding, and retain a correlation identifier for support. Revoke the temporary credential when the quickstart is complete.
+Select one dashboard from discovery, describe its generated operation, and request a bounded read for a known page or visual. Verify that any returned Project identity matches the operator-supplied Project UID, compare the dashboard ID with discovery, verify the status and content type before decoding, and retain a correlation identifier for support. Revoke the temporary credential when the quickstart is complete.
 
 ## Troubleshooting
 
