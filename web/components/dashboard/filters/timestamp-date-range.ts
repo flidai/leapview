@@ -12,9 +12,8 @@ export type TimestampDateBound = {
 type CalendarDate = { year: number; month: number; day: number }
 
 /**
- * Converts a calendar date into a UTC timestamp at local midnight in the
- * supplied IANA timezone. An upper date bound is the following local
- * midnight and is exclusive.
+ * Converts a calendar date into its first valid instant in the supplied IANA
+ * timezone. An upper date bound is the following day's start and is exclusive.
  */
 export function timestampDateBound(
   date: string,
@@ -81,14 +80,28 @@ function createUTCDate(year: number, month: number, day: number): Date {
 
 function localMidnight(calendarMidnight: Date, timezone: string): Date {
   const calendarTime = calendarMidnight.getTime()
-  let instantTime = calendarTime
-  // The offset at UTC midnight can differ from the offset at local midnight
-  // when a transition is nearby. Re-evaluate until the offset stabilizes.
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const offset = timezoneOffsetMilliseconds(new Date(instantTime), timezone)
-    const next = calendarTime - offset
-    if (next === instantTime) return new Date(next)
-    instantTime = next
+  const day = 24 * 60 * MILLISECONDS_PER_MINUTE
+  // Inspect both sides of a transition. If midnight repeats, the earliest
+  // matching instant includes both occurrences in the calendar day.
+  const candidates = [...new Set([-day, 0, day].map(delta =>
+    calendarTime - timezoneOffsetMilliseconds(new Date(calendarTime + delta), timezone),
+  ))].sort((left, right) => left - right)
+  const localTime = (instant: number) => instant + timezoneOffsetMilliseconds(new Date(instant), timezone)
+  const exact = candidates.find(instant => localTime(instant) === calendarTime)
+  if (exact !== undefined) return new Date(exact)
+
+  // Midnight lies in a clock-forward gap. Locate the transition itself,
+  // which is the first valid instant of the day, rather than oscillating
+  // between the offsets or rejecting the selected calendar date.
+  let before = candidates[0]!
+  let after = candidates[candidates.length - 1]!
+  if (localTime(before) < calendarTime && localTime(after) > calendarTime) {
+    while (after - before > 1) {
+      const middle = before + Math.floor((after - before) / 2)
+      if (localTime(middle) < calendarTime) before = middle
+      else after = middle
+    }
+    return new Date(after)
   }
   throw new RangeError('The selected date boundary is not supported in this timezone.')
 }

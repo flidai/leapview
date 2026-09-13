@@ -736,7 +736,7 @@ export class DashboardFilterLeaf extends LitElement {
 
   private requestOptions = () => {
     if (this.options && !this.optionDirty) return
-    this.loadOptions()
+    this.loadOptions(this.dropdownSearch)
   }
 
   private loadMoreOptions = () => {

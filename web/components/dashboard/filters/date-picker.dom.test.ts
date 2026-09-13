@@ -241,6 +241,61 @@ test('open multi-select refreshes invalidated choices so another value can be se
   } finally { await page.close() }
 })
 
+test('selecting a searched option preserves the query and its continuation cursor', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = { id: 'state', label: 'State', valueKind: 'string', options: { kind: 'distinct', limit: 2 } }
+      leaf.binding = { key: 'state', readerEditable: true, selectionMode: 'multiple' }
+      leaf.presentation = { style: 'dropdown', search: true }
+      leaf.optionContext = 'revision-1'
+      leaf.requests = []
+      leaf.addEventListener('lv-filter-options-needed', (event: CustomEvent) => {
+        const request = event.detail
+        leaf.requests.push(request)
+        const generation = leaf.requests.length
+        setTimeout(() => {
+          leaf.options = {
+            bindingKey: 'state', servingStateID: 'serving', requestGeneration: generation,
+            complete: Boolean(request.cursor),
+            nextCursor: request.cursor ? undefined : request.search ? 'searched-cursor' : 'unsearched-cursor',
+            items: (request.cursor ? ['SP3'] : request.search ? ['SP', 'SP2'] : ['AC', 'AL']).map(value => ({
+              value: { kind: 'string', value }, label: value, available: true,
+            })),
+          }
+        }, 20)
+      })
+      leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => {
+        leaf.expression = event.detail.expression
+        leaf.options = undefined
+        leaf.optionContext = 'revision-2'
+      })
+      document.body.append(leaf)
+      await leaf.updateComplete
+    })
+    await page.getByRole('button', { name: 'State: All', exact: true }).click()
+    await page.getByRole('searchbox', { name: 'Search State', exact: true }).fill('SP')
+    await page.getByRole('checkbox', { name: 'SP', exact: true }).check()
+    await page.waitForFunction(() => {
+      const leaf = document.querySelector('lv-filter-leaf') as any
+      return leaf.requests.length === 3 && !leaf.optionLoading
+    })
+    const refresh = await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.requests.at(-1))
+    expect(refresh).toMatchObject({ search: 'SP' })
+    expect(await page.getByRole('checkbox', { name: 'SP2', exact: true }).isVisible()).toBe(true)
+    await page.getByRole('button', { name: 'Load more values', exact: true }).click()
+    await page.getByRole('checkbox', { name: 'SP3', exact: true }).waitFor()
+    expect(await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.requests.at(-1))).toMatchObject({
+      search: 'SP', cursor: 'searched-cursor',
+    })
+    expect(await page.getByRole('checkbox', { name: 'SP', exact: true }).isChecked()).toBe(true)
+    expect(await page.getByRole('checkbox', { name: 'SP2', exact: true }).isVisible()).toBe(true)
+  } finally { await page.close() }
+})
+
 test('date picker bounds navigation, validates years, and clears or escapes cleanly', async () => {
   const page = await browser.newPage()
   try {

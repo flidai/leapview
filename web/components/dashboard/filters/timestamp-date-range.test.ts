@@ -28,6 +28,20 @@ test('uses the 25-hour New York fall-back day', () => {
   expect(Date.parse(upper.value.value) - Date.parse(lower.value.value)).toBe(25 * 60 * 60 * 1_000)
 })
 
+test('starts a day at the first valid instant when daylight saving skips midnight', () => {
+  const lower = timestampDateBound('2018-11-04', 'America/Sao_Paulo', false)
+  const upper = timestampDateBound('2018-11-04', 'America/Sao_Paulo', true)
+  expect(lower.value.value).toBe('2018-11-04T03:00:00Z')
+  expect(upper.value.value).toBe('2018-11-05T02:00:00Z')
+  expect(timestampDateBound('2018-11-03', 'America/Sao_Paulo', true).value).toEqual(lower.value)
+  expect(timestampCalendarDate(lower.value.value, 'America/Sao_Paulo')).toBe('2018-11-04')
+})
+
+test('includes both occurrences of midnight when daylight saving repeats it', () => {
+  expect(timestampDateBound('2020-11-01', 'America/Havana', false).value.value).toBe('2020-11-01T04:00:00Z')
+  expect(timestampDateBound('2020-11-01', 'America/Havana', true).value.value).toBe('2020-11-02T05:00:00Z')
+})
+
 test('displays timestamps in the definition timezone', () => {
   expect(timestampCalendarDate('2025-03-10T03:59:59Z', 'America/New_York')).toBe('2025-03-09')
   expect(timestampCalendarDate('2025-03-10T04:00:00Z', 'America/New_York')).toBe('2025-03-10')
