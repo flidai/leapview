@@ -1196,6 +1196,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       ?? state?.appliedControls[binding.key]?.expression
       ?? binding.default
     return html`<lv-slicer
+      .autoHeight=${this.reportLayout === 'mobile'}
       .definition=${definition}
       .binding=${binding}
       .expression=${expression}

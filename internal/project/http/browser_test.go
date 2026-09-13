@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1415,5 +1416,31 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	}
 	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
 		t.Fatalf("forbidden Explorer recovery body = %q", body)
+	}
+}
+
+func TestDataExplorerPreviewCenteredWindowAndEndOfData(t *testing.T) {
+	for _, start := range []int64{0, 300, 350, 600} {
+		t.Run(fmt.Sprintf("start_%d", start), func(t *testing.T) {
+			rows := make([]dataquery.Row, 100)
+			for i := range rows {
+				rows[i] = dataquery.Row{"order_id": i}
+			}
+			executor := &browserDataQueryStub{result: dataquery.Result{Rows: rows, TotalRows: 700, TotalRowsKnown: true}}
+			columns := []projectsignals.DataPreviewColumnSignal{{Key: "order_id"}}
+			object := projectsignals.DataExplorerObjectSignal{Key: "orders", ResourceID: "model:orders", Layer: "model", SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"), Columns: &columns}
+			preview := dataExplorerPreview(t.Context(), executor, "project:test", object, projectsignals.DataExplorerCommand{Start: start, Count: 100, Limit: 100, Block: projectsignals.Pointer("all"), RequestSeq: 7, ResetVersion: 2})
+			first := max(int64(0), start/100*100-100)
+			for i, id := range []string{"a", "b", "c"} {
+				block := preview.Blocks[id]
+				want := first + int64(i)*100
+				if block.Start != want || block.RequestSeq != 7 || block.ResetVersion != 2 {
+					t.Fatalf("block %s: start=%d sequence=%d reset=%d; want start %d, sequence 7, reset 2", id, block.Start, block.RequestSeq, block.ResetVersion, want)
+				}
+				if want >= 700 && len(block.Rows) != 0 {
+					t.Fatalf("past-end block contains rows: %+v", block)
+				}
+			}
+		})
 	}
 }

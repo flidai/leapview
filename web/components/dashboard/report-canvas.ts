@@ -227,7 +227,8 @@ class ReportCanvas extends LitElement {
 
     :host([data-layout='mobile']) ::slotted([data-slicer-style='numeric_range']),
     :host([data-layout='mobile']) ::slotted([data-slicer-style='date_range']) {
-      min-height: 172px;
+      min-height: 0;
+      align-self: start;
     }
 
     :host([data-layout='mobile']) ::slotted([data-slicer-style='relative_period']) {

@@ -523,3 +523,69 @@ function testDocument() {
     </html>
   `
 }
+
+test('long numeric headings keep their beginning visible and null cells differ from zero', async () => {
+  const page = await browser.newPage({ viewport: { width: 600, height: 400 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+    await page.evaluate(async () => {
+      const table = document.createElement('lv-windowed-table') as any
+      table.table = {
+        columns: [{ key: 'base_supplier_payments', label: 'Base supplier payments', align: 'right', width: 128 }],
+        totalRows: 2, availableRows: 2,
+        sort: { key: 'base_supplier_payments', direction: 'asc' },
+        blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: { key: 'base_supplier_payments', direction: 'asc' }, rows: [{base_supplier_payments: null}, {base_supplier_payments: 0}] } },
+      }
+      document.body.append(table)
+      await table.updateComplete
+    })
+    const geometry = await page.locator('.header-cell button').evaluate(button => {
+      const label = button.querySelector('span')!
+      const sort = button.querySelector('.sort')!
+      return { labelLeft: label.getBoundingClientRect().left, buttonLeft: button.getBoundingClientRect().left, labelRight: label.getBoundingClientRect().right, sortLeft: sort.getBoundingClientRect().left, ellipsis: getComputedStyle(label).textOverflow, title: button.getAttribute('title') }
+    })
+    expect(geometry.labelLeft).toBeGreaterThanOrEqual(geometry.buttonLeft)
+    expect(geometry.labelRight).toBeLessThanOrEqual(geometry.sortLeft)
+    expect(geometry.ellipsis).toBe('ellipsis')
+    expect(geometry.title).toBe('Base supplier payments')
+    expect(await page.locator('.cell').first().getAttribute('title')).toBe('No value')
+    expect((await page.locator('.cell').nth(1).textContent())?.trim()).toBe('0')
+  } finally { await page.close() }
+})
+
+test('temporal cells separate date and time without altering date order, precision or timezone', async () => {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 500 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+    await page.evaluate(async () => {
+      const table = document.createElement('lv-windowed-table') as any
+      table.table = {
+        columns: [
+          { key: 'date', label: 'Finance date', type: 'date' },
+          { key: 'timestamp', label: 'Timestamp', type: 'timestamp' },
+          { key: 'text', label: 'Text', type: 'string' },
+        ],
+        totalRows: 2, availableRows: 2,
+        blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [
+          { date: '2025-09-01T00:00:00Z', timestamp: '2025-09-01T23:59:59.123456789+05:30', text: '2025-09-01T00:00:00Z' },
+          { date: '2025-09-02', timestamp: '2025-09-02T00:00:00Z', text: 'unchanged' },
+        ] } },
+      }
+      document.body.append(table)
+      await table.updateComplete
+    })
+    expect((await page.locator('.cell').nth(0).textContent())?.trim()).toBe('2025-09-01 00:00:00Z')
+    expect((await page.locator('.cell').nth(1).textContent())?.trim()).toBe('2025-09-01 23:59:59.123456789+05:30')
+    expect((await page.locator('.cell').nth(2).textContent())?.trim()).toBe('2025-09-01T00:00:00Z')
+    expect((await page.locator('.cell').nth(3).textContent())?.trim()).toBe('2025-09-02')
+    expect(await page.locator('.cell').nth(1).getAttribute('title')).toBe('2025-09-01 23:59:59.123456789+05:30')
+    expect((await page.locator('.cell').nth(4).textContent())?.trim()).toBe('2025-09-02 00:00:00Z')
+    for (const index of [0, 1]) {
+      const fits = await page.locator('.cell').nth(index).locator('code').evaluate(cell => cell.scrollWidth <= cell.clientWidth)
+      expect(fits).toBe(true)
+    }
+    expect(await page.evaluate(() => (document.querySelector('lv-windowed-table') as any).table.blocks.a.rows[0].date)).toBe('2025-09-01T00:00:00Z')
+  } finally { await page.close() }
+})
