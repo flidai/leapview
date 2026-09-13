@@ -160,7 +160,7 @@ func productAreas() []Area {
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "sources", "models", "semantic-models", "dashboard-catalog", "connections", "pipelines", "develop":
+	case "sources", "models", "semantic-models", "dashboard-catalog", "connections", "pipelines", "runs", "develop":
 		return "develop"
 	case "data-explorer", "explore":
 		return "insights"
@@ -195,6 +195,7 @@ func developNavigation() []Item {
 		{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"},
 		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
 		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
+		{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"},
 	}
 }
 

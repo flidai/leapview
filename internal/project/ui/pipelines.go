@@ -16,12 +16,12 @@ import (
 	g "maragu.dev/gomponents"
 )
 
-// PipelineMonitorCapacity describes the node-wide refresh workload pool. The
-// page is global because refresh pipelines contend for this shared capacity.
+// PipelineMonitorCapacity counts the active pipeline runs represented by the
+// monitor read model. It is not a node-wide admission limit.
 type PipelineMonitorCapacity struct {
-	Running        int
-	Queued         int
-	MaximumRunning int
+	Running  int
+	Queued   int
+	Prepared int
 }
 
 type PipelineMonitorPipeline struct {
@@ -38,25 +38,46 @@ type PipelineMonitorState struct {
 	Pipelines     []PipelineMonitorPipeline
 	RunCommand    uicommand.Binding
 	CancelCommand uicommand.Binding
+	RunMonitor    *PipelineRunMonitor
+}
+
+type PipelineRunMonitor struct {
+	Query, Range, Status, Trigger    string
+	Page, PageSize                   int
+	Total, Failed, Completed, Active int64
+	Runs                             []PipelineMonitorRun
+}
+
+type PipelineMonitorRun struct {
+	PipelineID string
+	Run        AssetRefreshRun
 }
 
 func PipelinesPage(nav catalog.Catalog, state PipelineMonitorState, activeTab, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
 	page := pipelineMonitorPageSignal(state, activeTab)
+	active := page.ActiveTab
 	attrs := []g.Node{g.Attr("slot", "page")}
 	if state.RunCommand.OperationID() != "" && state.CancelCommand.OperationID() != "" {
+		commandURL := "/pipelines/command"
+		if page.ActiveTab == "runs" && page.RunMonitor != nil {
+			values := url.Values{"view": {"runs"}, "q": {page.RunMonitor.Query}, "range": {page.RunMonitor.Range},
+				"status": {page.RunMonitor.Status}, "trigger": {page.RunMonitor.Trigger}, "page": {fmt.Sprint(page.RunMonitor.Page)}}
+			commandURL += "?" + values.Encode()
+		}
 		command := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
 			"run": state.RunCommand, "cancel": state.CancelCommand,
-		}, "/pipelines/command", "pipelineCommand")
+		}, commandURL, "pipelineCommand")
 		attrs = append(attrs, g.Attr("data-on:lv-pipeline-command", command))
 	}
-	return projectRouteDocument("Pipelines", catalogWithoutProjectContext(nav), "pipelines", roleLabel, page, uisignals.RouteKindPipelines,
+	return projectRouteDocument(page.Title, catalogWithoutProjectContext(nav), active, roleLabel, page, uisignals.RouteKindPipelines,
 		g.El("lv-pipelines-page", attrs...),
 		projectDocumentExtras{CSRFToken: state.CSRFToken}, chromeOptions,
 	)
 }
 
 func PipelinesBootstrapSignals(nav catalog.Catalog, state PipelineMonitorState, activeTab, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	signals := projectRouteBootstrapSignals(catalogWithoutProjectContext(nav), "pipelines", roleLabel, pipelineMonitorPageSignal(state, activeTab), uisignals.RouteKindPipelines, nil, chromeOptions)
+	page := pipelineMonitorPageSignal(state, activeTab)
+	signals := projectRouteBootstrapSignals(catalogWithoutProjectContext(nav), page.ActiveTab, roleLabel, page, uisignals.RouteKindPipelines, nil, chromeOptions)
 	signals["pipelineCommand"] = uisignals.PipelineCommandSignal{}
 	signals["pipelineCommandStatus"] = uisignals.PipelineCommandStatusSignal{}
 	return signals
@@ -79,14 +100,10 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 	})
 
 	items := make([]uisignals.PipelineListItemSignal, 0, len(pipelines))
-	failed := 0
 	for _, pipeline := range pipelines {
 		status := strings.ToLower(strings.TrimSpace(pipeline.Refresh.Latest.Status))
 		if status == "" {
 			status = "not refreshed"
-		}
-		if status == "failed" {
-			failed++
 		}
 		assetHref := strings.TrimSpace(pipeline.Asset.Href)
 		if assetHref == "" {
@@ -105,7 +122,7 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			SemanticModel: emptyDash(metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel")),
 			Schedule:      pipelineScheduleLabel(pipeline.Asset.Payload),
 			PipelineID:    pipeline.Asset.ID,
-			Running:       status == "queued" || status == "running",
+			Running:       status == "queued" || status == "running" || status == "prepared",
 			Status:        status,
 			Duration:      uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
 			LastSuccessful: uisignals.Optional(
@@ -119,24 +136,49 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 	}
 
 	capacity := state.Capacity
-	if capacity.MaximumRunning < 0 {
-		capacity.MaximumRunning = 0
-	}
-	return uisignals.PipelinePageSignal{
+	page := uisignals.PipelinePageSignal{
 		Kind:        uisignals.RouteKindPipelines,
 		Title:       "Pipelines",
-		Description: "Monitor refresh pipelines and their shared node-wide execution capacity.",
+		Description: "Browse refresh pipelines and their schedules.",
 		Environment: state.Environment,
 		ActiveTab:   activeTab,
 		Pipelines:   items,
 		RunsTable:   pipelineRunsTable(pipelines),
-		Metrics: []uisignals.PipelineMetricSignal{
-			{Label: "Running", Value: fmt.Sprint(capacity.Running), Detail: uisignals.Pointer("Refresh jobs executing now"), Tone: uisignals.Pointer("accent")},
-			{Label: "Queued", Value: fmt.Sprint(capacity.Queued), Detail: uisignals.Pointer("Waiting for shared capacity"), Tone: uisignals.Pointer("attention")},
-			{Label: "Failed", Value: fmt.Sprint(failed), Detail: uisignals.Pointer("Latest pipeline state"), Tone: uisignals.Pointer(metricFailureTone(failed))},
-			{Label: "Refresh capacity", Value: fmt.Sprintf("%d / %d", capacity.Running, capacity.MaximumRunning), Detail: uisignals.Pointer("Running / node maximum"), Tone: uisignals.Pointer("muted")},
-		},
 	}
+	if activeTab == "runs" {
+		page.Title = "Runs"
+		page.Description = "Monitor pipeline execution across the environment."
+		if monitor := state.RunMonitor; monitor != nil {
+			byID := make(map[string]PipelineMonitorPipeline, len(pipelines))
+			for _, pipeline := range pipelines {
+				byID[pipeline.Asset.ID] = pipeline
+			}
+			monitorRows := make([]PipelineMonitorPipeline, 0, len(monitor.Runs))
+			for _, item := range monitor.Runs {
+				pipeline, found := byID[item.PipelineID]
+				if !found {
+					continue
+				}
+				pipeline.Refresh.Runs = []AssetRefreshRun{item.Run}
+				monitorRows = append(monitorRows, pipeline)
+			}
+			page.RunsTable = pipelineRunsTable(monitorRows)
+			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Status: monitor.Status, Trigger: monitor.Trigger,
+				Page: int32(monitor.Page), PageSize: int32(monitor.PageSize), Total: monitor.Total}
+			page.Metrics = []uisignals.PipelineMetricSignal{
+				{Label: "Active now", Value: fmt.Sprint(monitor.Active), Detail: uisignals.Pointer("All time · current state"), Tone: uisignals.Pointer("accent")},
+				{Label: "Failed in range", Value: fmt.Sprint(monitor.Failed), Detail: uisignals.Pointer("Selected time range"), Tone: uisignals.Pointer(metricFailureTone(int(monitor.Failed)))},
+				{Label: "Completed in range", Value: fmt.Sprint(monitor.Completed), Detail: uisignals.Pointer("Succeeded runs"), Tone: uisignals.Pointer("success")},
+			}
+		} else {
+			page.Metrics = []uisignals.PipelineMetricSignal{
+				{Label: "Running", Value: fmt.Sprint(capacity.Running), Detail: uisignals.Pointer("Refresh jobs executing now"), Tone: uisignals.Pointer("accent")},
+				{Label: "Queued", Value: fmt.Sprint(capacity.Queued), Detail: uisignals.Pointer("Waiting for shared capacity"), Tone: uisignals.Pointer("attention")},
+				{Label: "Prepared", Value: fmt.Sprint(capacity.Prepared), Detail: uisignals.Pointer("Preparing a result for publication"), Tone: uisignals.Pointer("attention")},
+			}
+		}
+	}
+	return page
 }
 
 func pipelineScheduleLabel(payload map[string]any) string {
@@ -173,7 +215,7 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 				continue
 			}
 			seen[key] = struct{}{}
-			started, _ := parseRefreshTime(run.StartedAt)
+			started, _ := parseRefreshTime(run.CreatedAt)
 			status := strings.ToLower(strings.TrimSpace(run.Status))
 			actions := []map[string]any{{"label": "View run details", "action": "detail", "icon": "details"}}
 			if status == "queued" && pipeline.CanCancel {

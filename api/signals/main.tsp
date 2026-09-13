@@ -752,7 +752,18 @@ model PipelinePageSignal {
   `metrics`: PipelineMetricSignal[];
   `pipelines`: PipelineListItemSignal[];
   `runsTable`: RecordTableSignal;
+  `runMonitor`?: PipelineRunMonitorSignal;
   `title`: string;
+}
+
+model PipelineRunMonitorSignal {
+  `query`: string;
+  `range`: string;
+  `status`: string;
+  `trigger`: string;
+  `page`: int32;
+  `pageSize`: int32;
+  `total`: int64;
 }
 
 model ChatArtifactSignal {

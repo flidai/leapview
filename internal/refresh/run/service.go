@@ -474,6 +474,16 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	result, err := s.CanonicalExecutor(ctx, job)
 	if err != nil {
 		if errors.Is(err, ErrRunStale) {
+			// Supersession is reserved for scheduled overlap replacement. A
+			// manually invoked run with a stale base is a failed invocation;
+			// attempting to supersede it violates the durable run guard and
+			// strands the run in prepared after the platform job fails.
+			if job.TriggerType != TriggerSchedule {
+				if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+					return errors.Join(err, fmt.Errorf("fail stale refresh tree: %w", failErr))
+				}
+				return err
+			}
 			if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
 				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
 					return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
@@ -483,7 +493,9 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 			}
 			return err
 		}
-		_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
+		if failErr := markRunFailedForWorker(ctx, s.Runs, job, err.Error()); failErr != nil {
+			return errors.Join(err, fmt.Errorf("fail refresh tree: %w", failErr))
+		}
 		return err
 	}
 	publication := s.Publication

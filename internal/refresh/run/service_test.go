@@ -171,7 +171,7 @@ func TestServiceExecuteClaimedJobReturnsCanonicalReconciliationFailure(t *testin
 	}
 }
 
-func TestServiceExecuteClaimedJobSupersedesStaleCanonicalTree(t *testing.T) {
+func TestServiceExecuteClaimedJobFailsStaleManualTree(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
 		Runs: repo,
@@ -183,6 +183,25 @@ func TestServiceExecuteClaimedJobSupersedesStaleCanonicalTree(t *testing.T) {
 		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
 		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
 		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	}
+	if err := service.ExecuteClaimedJob(t.Context(), job); !errors.Is(err, ErrRunStale) {
+		t.Fatalf("ExecuteClaimedJob() error = %v, want stale", err)
+	}
+	if repo.runStatuses["run_root"] != RunStatusFailed || repo.runStatuses["run_child"] != RunStatusFailed {
+		t.Fatalf("stale statuses = %#v, want failed tree", repo.runStatuses)
+	}
+}
+
+func TestServiceExecuteClaimedJobSupersedesStaleScheduledTree(t *testing.T) {
+	repo := newFakeRepo()
+	service := Service{Runs: repo, CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+		return CanonicalRefreshResult{}, ErrRunStale
+	}}
+	job := JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerSchedule, TriggerID: "schedule", MatchingScheduleIDs: []string{"daily"},
 		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
 	}
 	if err := service.ExecuteClaimedJob(t.Context(), job); !errors.Is(err, ErrRunStale) {
@@ -205,7 +224,7 @@ func TestServiceExecuteClaimedJobPropagatesSupersedeFailure(t *testing.T) {
 	job := JobRecord{
 		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
 		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
-		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerSchedule, TriggerID: "schedule", MatchingScheduleIDs: []string{"daily"},
 		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
 	}
 	err := service.ExecuteClaimedJob(t.Context(), job)

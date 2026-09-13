@@ -43,3 +43,47 @@ func TestPipelineMonitorSignalHidesMutationActionsWithoutUseCapability(t *testin
 		t.Fatalf("read-only run actions = %#v, want details only", actions)
 	}
 }
+
+func TestPipelineMonitorShowsPreparedAsActiveWithoutInventingCapacity(t *testing.T) {
+	state := PipelineMonitorState{
+		Capacity: PipelineMonitorCapacity{Running: 1, Queued: 2, Prepared: 1},
+		Pipelines: []PipelineMonitorPipeline{{
+			Asset:   projectview.DevelopAssetView{ID: "pipeline:sales", Key: "sales"},
+			Refresh: AssetRefreshState{Latest: AssetRefreshRun{Status: "prepared"}},
+		}},
+	}
+	page := pipelineMonitorPageSignal(state, "runs")
+	if !page.Pipelines[0].Running {
+		t.Fatal("prepared pipeline is not marked active")
+	}
+	if len(page.Metrics) != 3 || page.Metrics[2].Label != "Prepared" || page.Metrics[2].Value != "1" {
+		t.Fatalf("metrics = %#v, want a prepared count instead of unknown node capacity", page.Metrics)
+	}
+}
+
+func TestPipelineListSeparatesDefinitionsFromRunMonitor(t *testing.T) {
+	state := PipelineMonitorState{Environment: "dev", Capacity: PipelineMonitorCapacity{Running: 1}}
+	list := pipelineMonitorPageSignal(state, "pipelines")
+	if list.Title != "Pipelines" || len(list.Metrics) != 0 {
+		t.Fatalf("pipeline list = %#v, want catalog heading without monitor metrics", list)
+	}
+	runs := pipelineMonitorPageSignal(state, "runs")
+	if runs.Title != "Runs" || len(runs.Metrics) == 0 {
+		t.Fatalf("runs = %#v, want dedicated monitor heading and metrics", runs)
+	}
+}
+
+func TestPipelineRunMonitorUsesServerPageAndScopedCounts(t *testing.T) {
+	state := PipelineMonitorState{Environment: "dev", Pipelines: []PipelineMonitorPipeline{{
+		Asset: projectview.DevelopAssetView{ID: "pipeline:sales", Title: "Sales refresh"}, CanRun: true,
+		Refresh: AssetRefreshState{Runs: []AssetRefreshRun{{ID: "stale", Status: "queued"}}},
+	}}, RunMonitor: &PipelineRunMonitor{Range: "24h", Page: 2, PageSize: 25, Total: 27, Failed: 2, Completed: 4, Active: 1,
+		Runs: []PipelineMonitorRun{{PipelineID: "pipeline:sales", Run: AssetRefreshRun{ID: "run-current", Status: "failed", CreatedAt: "2026-09-13T12:00:00Z"}}}}}
+	page := pipelineMonitorPageSignal(state, "runs")
+	if page.RunMonitor == nil || page.RunMonitor.Page != 2 || page.RunMonitor.Total != 27 || len(page.RunsTable.Rows) != 1 || page.RunsTable.Rows[0]["run_id"] != "run-current" {
+		t.Fatalf("page = %#v", page)
+	}
+	if len(page.Metrics) != 3 || page.Metrics[0].Label != "Active now" || page.Metrics[0].Value != "1" || page.Metrics[1].Value != "2" || page.Metrics[2].Value != "4" {
+		t.Fatalf("metrics = %#v", page.Metrics)
+	}
+}

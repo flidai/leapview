@@ -46,7 +46,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /runs", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -57,6 +57,20 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 				t.Fatalf("legacy route %q was mounted", legacy)
 			}
 		}
+	}
+}
+
+func TestPipelineRunMonitorFilterNormalizesAndBoundsRequest(t *testing.T) {
+	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
+	request := httptest.NewRequest(stdhttp.MethodGet, "/runs?q=sales&range=7d&status=failed&trigger=schedule&page=3", nil)
+	filter, selectedRange, page := pipelineRunMonitorFilter(request, now)
+	if selectedRange != "7d" || page != 3 || filter.Since != now.Add(-7*24*time.Hour) || filter.Offset != 50 || filter.Limit != 25 || filter.Search != "sales" || filter.Status != "failed" || filter.Trigger != "schedule" {
+		t.Fatalf("filter = %#v, range = %q, page = %d", filter, selectedRange, page)
+	}
+	request = httptest.NewRequest(stdhttp.MethodGet, "/runs?range=invalid&status=unknown&trigger=dependency&page=-4", nil)
+	filter, selectedRange, page = pipelineRunMonitorFilter(request, now)
+	if selectedRange != "24h" || page != 1 || filter.Status != "" || filter.Trigger != "" || filter.Since != now.Add(-24*time.Hour) {
+		t.Fatalf("normalized filter = %#v, range = %q, page = %d", filter, selectedRange, page)
 	}
 }
 

@@ -3,11 +3,15 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectnavigation "github.com/flidai/leapview/internal/project/navigation"
 	projectui "github.com/flidai/leapview/internal/project/ui"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
 
 var errAssetNotFound = errors.New("project asset not found")
@@ -28,6 +32,7 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 		RunCommand:    h.PipelineRunCommand,
 		CancelCommand: h.PipelineCancelCommand,
 	}
+	seenRuns := make(map[string]struct{})
 	for _, asset := range pipelines {
 		refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
 		if refreshErr != nil {
@@ -39,8 +44,91 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			CanRun:    canUse && !refresh.Unavailable && state.RunCommand.OperationID() != "",
 			CanCancel: canUse && !refresh.Unavailable && state.CancelCommand.OperationID() != "",
 		})
+		for _, run := range refresh.Runs {
+			if run.ID == "" {
+				continue
+			}
+			if _, seen := seenRuns[run.ID]; seen {
+				continue
+			}
+			seenRuns[run.ID] = struct{}{}
+			switch run.Status {
+			case "running":
+				state.Capacity.Running++
+			case "queued":
+				state.Capacity.Queued++
+			case "prepared":
+				state.Capacity.Prepared++
+			}
+		}
+	}
+	if r.URL.Path == "/runs" || r.URL.Query().Get("view") == "runs" {
+		if h.RunMonitor == nil {
+			return projectui.PipelineMonitorState{}, errors.New("run monitor is unavailable")
+		}
+		filter, rangeLabel, page := pipelineRunMonitorFilter(r, time.Now().UTC())
+		filter.AllowedPipelineIDs = make([]string, 0, len(pipelines))
+		for _, pipeline := range pipelines {
+			filter.AllowedPipelineIDs = append(filter.AllowedPipelineIDs, pipeline.ID)
+			if filter.Search != "" && (strings.Contains(strings.ToLower(pipeline.Title), strings.ToLower(filter.Search)) || strings.Contains(strings.ToLower(pipeline.Key), strings.ToLower(filter.Search))) {
+				filter.PipelineIDs = append(filter.PipelineIDs, pipeline.ID)
+			}
+		}
+		result, err := h.RunMonitor.MonitorRuns(r.Context(), projectID, h.Environment, filter)
+		if err != nil {
+			return projectui.PipelineMonitorState{}, err
+		}
+		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Status: filter.Status, Trigger: filter.Trigger,
+			Page: page, PageSize: filter.Limit, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
+		for _, run := range result.Runs {
+			monitor.Runs = append(monitor.Runs, projectui.PipelineMonitorRun{PipelineID: run.PipelineID.String(), Run: projectui.AssetRefreshRun{
+				ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
+				PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
+				ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision, Status: run.Status, CreatedAt: run.CreatedAt,
+				UpdatedAt: run.UpdatedAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
+			}})
+		}
+		state.RunMonitor = monitor
 	}
 	return state, nil
+}
+
+func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int) {
+	query := r.URL.Query()
+	rangeLabel := query.Get("range")
+	since := now.Add(-24 * time.Hour)
+	switch rangeLabel {
+	case "7d":
+		since = now.Add(-7 * 24 * time.Hour)
+	case "30d":
+		since = now.Add(-30 * 24 * time.Hour)
+	case "all":
+		since = time.Unix(0, 0).UTC()
+	default:
+		rangeLabel = "24h"
+	}
+	status := strings.ToLower(strings.TrimSpace(query.Get("status")))
+	switch status {
+	case "queued", "running", "prepared", "succeeded", "failed", "cancelled", "superseded", "skipped":
+	default:
+		status = ""
+	}
+	trigger := strings.ToLower(strings.TrimSpace(query.Get("trigger")))
+	if trigger != "manual" && trigger != "schedule" {
+		trigger = ""
+	}
+	page, _ := strconv.Atoi(query.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	if page > 1000 {
+		page = 1000
+	}
+	search := strings.TrimSpace(query.Get("q"))
+	if runes := []rune(search); len(runes) > 120 {
+		search = string(runes[:120])
+	}
+	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: (page - 1) * 25}, rangeLabel, page
 }
 
 type assetPageProjection struct {

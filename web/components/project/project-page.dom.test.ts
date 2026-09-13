@@ -952,6 +952,42 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
   }
 })
 
+test('pipeline catalog and run monitor are separate list surfaces without local tabs', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipelines`)
+    await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
+    const catalog = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return { title: root.querySelector('h1')?.textContent?.trim(), metrics: root.querySelectorAll('.metrics').length, tabs: root.querySelectorAll('.tabs').length, lists: root.querySelectorAll('lv-entity-list').length }
+    })
+    expect(catalog).toEqual({ title: 'Pipelines', metrics: 0, tabs: 0, lists: 1 })
+
+    await page.goto(`${baseURL}/?root=runs`)
+    const monitor = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const form = root.querySelector('.run-toolbar') as HTMLFormElement
+      return { title: root.querySelector('h1')?.textContent?.trim(), metrics: root.querySelectorAll('.metric').length, tabs: root.querySelectorAll('.tabs').length,
+        filters: root.querySelectorAll('.run-toolbar input, .run-toolbar select').length, action: form?.getAttribute('action'),
+        range: (form?.querySelector('[name="range"]') as HTMLSelectElement)?.value, pageLink: root.querySelector('.run-pagination a')?.getAttribute('href') }
+    })
+    expect(monitor).toEqual({ title: 'Runs', metrics: 3, tabs: 0, filters: 4, action: '/runs', range: '7d', pageLink: '/runs?q=sales&range=7d&status=failed&trigger=manual&page=1' })
+    const detail = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      element.selectedRunID = 'run-failed'
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return { firstSection: root.querySelector('.run-detail-section h2')?.textContent?.trim(),
+        actions: [...root.querySelectorAll('.run-detail-actions a, .run-detail-actions button')].map((item) => item.textContent?.trim()),
+        error: root.querySelector('.run-detail-error')?.textContent?.trim() }
+    })
+    expect(detail).toEqual({ firstSection: 'Error', actions: ['View pipeline', 'Run again'], error: 'Source unavailable' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('connection terminal command failure keeps the drawer state and offers reload guidance', async () => {
   const page = await browser.newPage()
   try {
@@ -1005,8 +1041,9 @@ function testDocument(rootName: string): string {
     kind: 'connections', title: 'Connections', description: 'Data connections.', connections: [{ id: 'conn', title: 'Warehouse', description: 'Primary warehouse.', detailHref: '/connections/conn', kind: 'DuckDB', scope: 'Project', sourceCount: 2, credentialStatus: 'Configured', lifecycle: lifecycle() }],
   } : rootName === 'connection-admin' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }], connectionLifecycle: lifecycle('missing'), details: { overview: [{ label: 'Kind', value: 'DuckDB' }], sections: [] },
-  } : rootName === 'pipelines' ? {
-    kind: 'pipelines', title: 'Pipelines', description: 'Pipeline monitor.', environment: 'dev', activeTab: 'pipelines', metrics: [], pipelines: [{ assetId: 'pipeline:sales', canRun: true, href: '/pipelines/pipeline:sales/details', id: 'pipeline:sales', pipelineId: 'pipeline:sales', running: false, schedule: 'manual', semanticModel: 'sales', status: 'succeeded', title: 'Sales refresh' }], runsTable: { columns: [], rows: [], empty: 'No runs.' },
+  } : rootName === 'pipelines' || rootName === 'runs' ? {
+    kind: 'pipelines', title: rootName === 'runs' ? 'Runs' : 'Pipelines', description: 'Pipeline monitor.', environment: 'dev', activeTab: rootName === 'runs' ? 'runs' : 'pipelines', metrics: rootName === 'runs' ? [{ label: 'Active now', value: '0' }, { label: 'Failed in range', value: '2' }, { label: 'Completed in range', value: '4' }] : [], pipelines: [{ assetId: 'pipeline:sales', canRun: true, href: '/pipelines/pipeline:sales/details', id: 'pipeline:sales', pipelineId: 'pipeline:sales', running: false, schedule: 'manual', semanticModel: 'sales', status: 'succeeded', title: 'Sales refresh' }], runsTable: { columns: [], rows: rootName === 'runs' ? [{ run_id: 'run-failed', run: 'run-failed', pipeline_id: 'pipeline:sales', pipeline: 'Sales refresh', pipeline_href: '/pipelines/pipeline:sales/details', status_value: 'failed', status: { label: 'failed', tone: 'danger' }, trigger: 'Manual', trigger_value: 'manual', error: 'Source unavailable', environment: 'dev', semantic_model: 'semantic-model:sales', created_at: '2026-09-13T12:00:00Z', actions: [{ label: 'View run details', action: 'detail', icon: 'details' }] }] : [], empty: 'No runs.' },
+    ...(rootName === 'runs' ? { runMonitor: { query: 'sales', range: '7d', status: 'failed', trigger: 'manual', page: 2, pageSize: 25, total: 27 } } : {}),
   } : rootName === 'connection-detail' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Type', value: 'Connection' }, { label: 'Key', value: 'connection:conn', code: true }, { label: 'Description', value: 'Primary warehouse.' }, { label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], assetOverview: { upstreamAssets: [], downstreamAssets: [{ label: 'Orders', href: '/sources/source:orders/details', type: 'Source' }], pipelines: [] }, sections: [] },
   } : rootName === 'model-definition' ? {
@@ -1038,7 +1075,7 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-failed' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' || rootName === 'runs' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-failed' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
   if (rootName === 'pipeline-detail' || rootName === 'pipeline-failed') {
     const pipeline = page as any
     pipeline.details.assetOverview = {

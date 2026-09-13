@@ -1345,14 +1345,25 @@ type PipelinePageEnvelope struct {
 }
 
 type PipelinePageSignal struct {
-	ActiveTab   string                   `json:"activeTab" yaml:"activeTab"`
-	Description string                   `json:"description" yaml:"description"`
-	Environment string                   `json:"environment" yaml:"environment"`
-	Kind        RouteKind                `json:"kind" yaml:"kind"`
-	Metrics     []PipelineMetricSignal   `json:"metrics" yaml:"metrics"`
-	Pipelines   []PipelineListItemSignal `json:"pipelines" yaml:"pipelines"`
-	RunsTable   RecordTableSignal        `json:"runsTable" yaml:"runsTable"`
-	Title       string                   `json:"title" yaml:"title"`
+	ActiveTab   string                    `json:"activeTab" yaml:"activeTab"`
+	Description string                    `json:"description" yaml:"description"`
+	Environment string                    `json:"environment" yaml:"environment"`
+	Kind        RouteKind                 `json:"kind" yaml:"kind"`
+	Metrics     []PipelineMetricSignal    `json:"metrics" yaml:"metrics"`
+	Pipelines   []PipelineListItemSignal  `json:"pipelines" yaml:"pipelines"`
+	RunsTable   RecordTableSignal         `json:"runsTable" yaml:"runsTable"`
+	RunMonitor  *PipelineRunMonitorSignal `json:"runMonitor,omitempty" yaml:"runMonitor,omitempty"`
+	Title       string                    `json:"title" yaml:"title"`
+}
+
+type PipelineRunMonitorSignal struct {
+	Query    string `json:"query" yaml:"query"`
+	Range    string `json:"range" yaml:"range"`
+	Status   string `json:"status" yaml:"status"`
+	Trigger  string `json:"trigger" yaml:"trigger"`
+	Page     int32  `json:"page" yaml:"page"`
+	PageSize int32  `json:"pageSize" yaml:"pageSize"`
+	Total    int64  `json:"total" yaml:"total"`
 }
 
 type PopularityLevel string

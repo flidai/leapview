@@ -56,6 +56,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 // nativeProjectSourceComposition keeps the native source reader's authority
@@ -932,6 +933,17 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
+	// PostgreSQL NOTIFY wakes one listener per app instance. Browser streams
+	// subscribe to the existing in-process broker, then reread authorized state.
+	if routes.projectBrowser != nil {
+		routes.projectBrowser.PipelineChanges = runtimeServices.broker
+		routes.projectBrowser.PipelineChangesStreamID = refreshmodule.RunChangeStreamID
+	}
+	refreshChanges := refreshmodule.NewPostgresRunChangeListener(bootstrap.RuntimePool(), func(change refreshmodule.RunChange) {
+		if change.Resync || (change.ProjectID == projectID.String() && change.Environment == string(environment)) {
+			runtimeServices.broker.Publish(refreshmodule.RunChangeStreamID, pagestream.SignalPatch{"refreshChanged": true})
+		}
+	})
 	platform.telemetry.Register(platformpostgres.NewPoolMetricsCollector(bootstrap.NamedPools()...))
 	handler := Routes(routes, runtimeServices, platform, policy)
 
@@ -945,7 +957,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	bootstrapLifecycle.onStartFailure = func() error {
 		return errors.Join(closeRuntimeHost(), closeResources())
 	}
-	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, runtimeLifecycle}
+	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
 	return newApplication(handler, components), nil
 }
 

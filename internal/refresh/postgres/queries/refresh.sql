@@ -117,6 +117,44 @@ SELECT run_id,COALESCE(operation_id,''),project_id,environment,generation_id,COA
 -- name: ListRunsPage :many
 SELECT r.run_id FROM refresh.run r WHERE r.project_id=sqlc.arg(project_id) AND r.environment=sqlc.arg(environment) AND (sqlc.arg(generation_id)::text='' OR r.generation_id=sqlc.arg(generation_id)::text) AND (sqlc.arg(after)::text='' OR (r.created_at,r.run_id) < (SELECT i.created_at,i.run_id FROM refresh.run i WHERE i.run_id=sqlc.arg(after)::text AND i.project_id=sqlc.arg(project_id) AND i.environment=sqlc.arg(environment) AND (sqlc.arg(generation_id)::text='' OR i.generation_id=sqlc.arg(generation_id)::text))) ORDER BY created_at DESC,run_id DESC LIMIT sqlc.arg(page_limit);
 
+-- name: MonitorRunsCounts :one
+SELECT count(*) FILTER (WHERE (sqlc.arg(status)::text='' OR r.status=sqlc.arg(status)::text)) AS total,
+       count(*) FILTER (WHERE r.status='failed' AND (sqlc.arg(status)::text='' OR r.status=sqlc.arg(status)::text)) AS failed,
+       count(*) FILTER (WHERE r.status='succeeded' AND (sqlc.arg(status)::text='' OR r.status=sqlc.arg(status)::text)) AS completed
+FROM refresh.run r
+WHERE r.project_id=sqlc.arg(project_id) AND r.environment=sqlc.arg(environment)
+  AND r.target_type='refresh_pipeline' AND r.parent_run_id IS NULL
+  AND r.pipeline_id=ANY(sqlc.arg(allowed_pipeline_ids)::text[])
+  AND (sqlc.arg(search)::text='' OR strpos(lower(r.run_id),lower(sqlc.arg(search)::text))>0
+       OR strpos(lower(r.pipeline_id),lower(sqlc.arg(search)::text))>0
+       OR r.pipeline_id=ANY(sqlc.arg(matched_pipeline_ids)::text[]))
+  AND (sqlc.arg(trigger)::text='' OR r.trigger_type=sqlc.arg(trigger)::text)
+  AND r.created_at>=sqlc.arg(since_at)::timestamptz AND r.created_at<sqlc.arg(until_at)::timestamptz;
+
+-- name: MonitorActiveRunsCount :one
+SELECT count(*) FROM refresh.run r
+WHERE r.project_id=sqlc.arg(project_id) AND r.environment=sqlc.arg(environment)
+  AND r.target_type='refresh_pipeline' AND r.parent_run_id IS NULL
+  AND r.pipeline_id=ANY(sqlc.arg(allowed_pipeline_ids)::text[])
+  AND (sqlc.arg(search)::text='' OR strpos(lower(r.run_id),lower(sqlc.arg(search)::text))>0
+       OR strpos(lower(r.pipeline_id),lower(sqlc.arg(search)::text))>0
+       OR r.pipeline_id=ANY(sqlc.arg(matched_pipeline_ids)::text[]))
+  AND (sqlc.arg(trigger)::text='' OR r.trigger_type=sqlc.arg(trigger)::text)
+  AND r.status IN ('queued','running','prepared');
+
+-- name: MonitorRunIDs :many
+SELECT r.run_id FROM refresh.run r
+WHERE r.project_id=sqlc.arg(project_id) AND r.environment=sqlc.arg(environment)
+  AND r.target_type='refresh_pipeline' AND r.parent_run_id IS NULL
+  AND r.pipeline_id=ANY(sqlc.arg(allowed_pipeline_ids)::text[])
+  AND (sqlc.arg(search)::text='' OR strpos(lower(r.run_id),lower(sqlc.arg(search)::text))>0
+       OR strpos(lower(r.pipeline_id),lower(sqlc.arg(search)::text))>0
+       OR r.pipeline_id=ANY(sqlc.arg(matched_pipeline_ids)::text[]))
+  AND (sqlc.arg(trigger)::text='' OR r.trigger_type=sqlc.arg(trigger)::text)
+  AND r.created_at>=sqlc.arg(since_at)::timestamptz AND r.created_at<sqlc.arg(until_at)::timestamptz
+  AND (sqlc.arg(status)::text='' OR r.status=sqlc.arg(status)::text)
+ORDER BY r.created_at DESC,r.run_id DESC LIMIT sqlc.arg(page_limit)::int OFFSET sqlc.arg(page_offset)::int;
+
 -- name: ListRunsFilteredPage :many
 SELECT r.run_id FROM refresh.run r WHERE r.project_id=sqlc.arg(project_id) AND r.environment=sqlc.arg(environment) AND (sqlc.arg(generation_id)::text='' OR r.generation_id=sqlc.arg(generation_id)::text) AND (sqlc.arg(target_type)::text='' OR target_type=sqlc.arg(target_type)::text) AND (sqlc.arg(target_id)::text='' OR target_id=sqlc.arg(target_id)::text) AND (sqlc.arg(semantic_model_id)::text='' OR semantic_model_id=sqlc.arg(semantic_model_id)::text) AND (sqlc.arg(successful)::boolean=false OR status='succeeded') AND (sqlc.arg(after)::text='' OR (r.created_at,r.run_id) < (SELECT i.created_at,i.run_id FROM refresh.run i WHERE i.run_id=sqlc.arg(after)::text AND i.project_id=sqlc.arg(project_id) AND i.environment=sqlc.arg(environment) AND (sqlc.arg(generation_id)::text='' OR i.generation_id=sqlc.arg(generation_id)::text) AND (sqlc.arg(target_type)::text='' OR target_type=sqlc.arg(target_type)::text) AND (sqlc.arg(target_id)::text='' OR target_id=sqlc.arg(target_id)::text) AND (sqlc.arg(semantic_model_id)::text='' OR semantic_model_id=sqlc.arg(semantic_model_id)::text) AND (sqlc.arg(successful)::boolean=false OR status='succeeded'))) ORDER BY created_at DESC,run_id DESC LIMIT sqlc.arg(page_limit);
 

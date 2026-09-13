@@ -2,6 +2,7 @@ package ui
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -238,7 +239,12 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 		pairs := []string{"surface", "asset", "environment", uisignals.ValueOrZero(typed.Environment), "asset", typed.AssetID, "section", typed.ActiveSection}
 		return updatesURL(routeKind, pairs...)
 	case uisignals.PipelinePageSignal:
-		return updatesURL(routeKind, "surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment)
+		pairs := []string{"surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment}
+		if monitor := typed.RunMonitor; monitor != nil {
+			pairs = append(pairs, "q", monitor.Query, "range", monitor.Range, "status", monitor.Status,
+				"trigger", monitor.Trigger, "page", strconv.Itoa(int(monitor.Page)))
+		}
+		return updatesURL(routeKind, pairs...)
 	default:
 		return updatesURL(routeKind, "surface", "project")
 	}

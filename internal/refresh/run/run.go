@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"unicode"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -181,6 +182,21 @@ type RunRepository interface {
 	MarkRunRunning(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunSucceeded(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (RunRecord, error)
 	MarkRunFailed(ctx context.Context, identity projectgraph.ServingIdentity, runID, message string) (RunRecord, error)
+}
+
+// MonitorFilter scopes the cross-pipeline run monitor. Time bounds apply to
+// creation time, so queued runs remain visible before execution starts.
+type MonitorFilter struct {
+	Since, Until            time.Time
+	Search, Status, Trigger string
+	PipelineIDs             []string
+	AllowedPipelineIDs      []string
+	Limit, Offset           int
+}
+
+type MonitorPage struct {
+	Runs                             []RunRecord
+	Total, Failed, Completed, Active int64
 }
 
 // RunTreeInput describes one refresh pipeline root and all dependency
