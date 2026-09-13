@@ -1,6 +1,6 @@
 # Integrate with LeapView
 
-LeapView exposes CLI, HTTP API, built-in agent, and remote MCP surfaces backed by the same active projects, authorization, data policies, and semantic contracts. Choose the highest-level stable operation that fits the integration.
+LeapView exposes CLI, HTTP API, built-in agent, and remote MCP surfaces backed by the same active, server-bound Project, authorization, data policies, and semantic contracts. Clients do not enumerate or select arbitrary Projects. Choose the highest-level stable operation that fits the integration.
 
 ## Choose an integration surface
 

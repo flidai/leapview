@@ -170,7 +170,7 @@ If every query fails, suspect runtime/storage or active deployment. If one seman
 - Verify each selected revision is staged for the same project and connection.
 - Check candidate project and access-resource references.
 
-A failed candidate should leave active projects and revisions unchanged. Confirm that invariant before retrying.
+A failed candidate should leave the active server-bound Project and revisions unchanged. Confirm that invariant before retrying.
 
 ## Refreshes queue or fail
 

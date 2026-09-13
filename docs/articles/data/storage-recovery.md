@@ -7,7 +7,7 @@ source objects remain in their configured object stores.
 
 ## Storage ownership
 
-The `leapview_control` PostgreSQL database owns users, grants, projects,
+The `leapview_control` PostgreSQL database owns users, grants, the server-bound Project claim,
 environments, deployments, jobs, event and audit records, lineage projections,
 leases, and active serving pointers. The separately owned
 `leapview_ducklake` database contains DuckLake metadata: analytical schemas,

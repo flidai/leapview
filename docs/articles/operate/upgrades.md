@@ -37,7 +37,7 @@ window; serving startup must never apply pending migrations implicitly.
 ## Prepare production
 
 1. Confirm recent provider-native recovery points for every authoritative storage boundary.
-2. Record current image digest, configuration version, active projects, and revisions.
+2. Record current image digest, configuration version, the active server-bound Project, and revisions.
 3. Validate the target configuration with `leapview config validate --production`.
 4. Pause or drain conflicting deployments, refreshes, and maintenance jobs.
 5. Confirm disk headroom for migrations and the deployment platform's image artifacts.

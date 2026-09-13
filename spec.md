@@ -8,22 +8,30 @@ API documentation.
 
 - A LeapView instance owns one process, one control-plane database, one
   analytical execution plane, and one configured environment.
-- A project is the atomic authored, validated, compiled, deployed, and served
-  unit. `ProjectID` is the canonical graph identity and appears in every
-  serving, authorization, audit, and workload identity that needs a project.
+- A Project is the durable control-plane namespace of one analytics product,
+  not an authored graph node. Issuer-owned `ProjectUID` is persisted in the
+  instance claim; existing `ProjectID` fields carry that canonical UID.
+- A source bundle is the deterministic, Project-free compilation unit. It
+  contains no ProjectUID, ResourceUID assignments, credentials, environment
+  bindings, or target state. Delivery binds it to the claimed target; an
+  immutable generation is the exact deployed release of that
+  Project/environment.
 - Environment is instance-bound configuration, not a request-time selector or
   a resource namespace. Development, staging, and production are separate
   instances when they need independent state or failure domains.
-- Resource IDs are stable and independent of file paths, display names,
-  domains, and deployment generations. Domains and folders are descriptive
-  metadata only.
+- Authored resource IDs are stable and unique across the six kinds in one
+  bundle. The instance registry allocates ResourceUID at first activation for
+  `(ProjectUID, metadata.id)`, fenced by kind. File paths, names, dbt
+  provenance, environment, candidates, and revisions do not allocate resource
+  identity.
 
 ## Project graph
 
-The project manifest discovers one immutable graph:
+Conventional directories discover one portable graph, without a Project
+manifest:
 
 ```text
-Project
+Source root
 ├── Connections
 ├── Sources
 ├── Models
@@ -102,7 +110,6 @@ Browser pages use unscoped product routes such as:
 API resources are project-scoped where identity matters:
 
 ```text
-/api/v1/projects
 /api/v1/projects/{project}
 /api/v1/projects/{project}/releases
 /api/v1/projects/{project}/delivery/...
@@ -115,6 +122,22 @@ Generated API contracts are authoritative. Browser commands, API operations,
 CLI clients, and agent tools share the same operation identity, authorization,
 idempotency, audit, and error semantics. Unknown or retired paths are errors;
 every caller uses the canonical route and operation contract.
+
+`{project}` asserts the already bound ProjectUID; a URL or profile is a mutable
+locator, not permission to change that UID. Bootstrap is the narrow
+instance-administrator operation at `/api/v1/instance/project-claim`.
+Browser/query selectors, Project pickers, native cross-Project imports, and
+same-process multi-Project isolation are unsupported. Separate environment
+instances may share one issuer ProjectUID, but never share instance-local
+ResourceUIDs.
+
+SemanticModel datasets resolve only to Models in the same candidate or
+generation. Serving uses immutable ResourceUID bindings and exact generation
+evidence, fails closed on mismatch, and never falls back to a global or foreign
+catalog. Promotion replans the portable bundle at the destination. Rollback
+retains same-scope historical bindings; recovery must preserve claim, registry,
+control, and physical evidence together. See [the public mental model](docs/articles/concepts/projects-environments.md)
+and [ADR-0018](adr/0018-retain-project-as-the-durable-deployment-namespace.md).
 
 ## Ownership and composition
 
