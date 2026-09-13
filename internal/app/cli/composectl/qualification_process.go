@@ -92,11 +92,14 @@ func (c *Controller) qualificationDocker(
 	stdin io.Reader,
 	args ...string,
 ) ([]byte, error) {
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		return nil, err
+	}
 	return qualificationProcess{
 		dir:         c.root,
 		executable:  c.dockerBin,
-		environment: os.Environ(),
-	}.Run(ctx, stdin, c.qualificationExecutor, args...)
+		environment: c.dockerEnvironment(os.Environ()),
+	}.Run(ctx, stdin, c.qualificationExecutor, c.dockerArguments(args...)...)
 }
 
 func composeArguments(root string, args ...string) ([]string, error) {
@@ -129,6 +132,9 @@ func (c *Controller) qualificationCompose(
 	root string,
 	args ...string,
 ) ([]byte, error) {
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		return nil, err
+	}
 	commandArgs, err := composeArguments(root, args...)
 	if err != nil {
 		return nil, err
@@ -138,8 +144,8 @@ func (c *Controller) qualificationCompose(
 		return nil, err
 	}
 	return qualificationProcess{
-		dir: c.root, executable: c.dockerBin, environment: processEnvironment,
-	}.Run(ctx, nil, c.qualificationExecutor, commandArgs...)
+		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
+	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
 }
 
 // qualificationComposeEnvironment supplies operation-only credentials to the
@@ -152,6 +158,9 @@ func (c *Controller) qualificationComposeEnvironment(
 	environment map[string]string,
 	args ...string,
 ) ([]byte, error) {
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		return nil, err
+	}
 	commandArgs, err := composeArguments(root, args...)
 	if err != nil {
 		return nil, err
@@ -169,8 +178,8 @@ func (c *Controller) qualificationComposeEnvironment(
 		return nil, err
 	}
 	return qualificationProcess{
-		dir: c.root, executable: c.dockerBin, environment: processEnvironment,
-	}.Run(ctx, nil, c.qualificationExecutor, commandArgs...)
+		dir: c.root, executable: c.dockerBin, environment: c.dockerEnvironment(processEnvironment),
+	}.Run(ctx, nil, c.qualificationExecutor, c.dockerArguments(commandArgs...)...)
 }
 
 // composeProcessEnvironment prevents host shell variables from

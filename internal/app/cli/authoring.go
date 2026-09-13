@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	"github.com/flidai/leapview/internal/app/cli/localdocker"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/digest"
@@ -36,7 +37,7 @@ func devCommand(ctx context.Context) *cobra.Command {
 		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
 		validateAuthoring: true,
 	}
-	return projectcli.DevCommand(
+	remote := projectcli.DevCommand(
 		ctx,
 		client,
 		projectcli.NewCandidateCheckpointStore(candidateCheckpointPath()),
@@ -44,6 +45,71 @@ func devCommand(ctx context.Context) *cobra.Command {
 		openSystemBrowser,
 		projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
 	)
+	return dispatchLocalDevCommand(ctx, remote, localdocker.Resolve, unavailableLocalDevRuntime)
+}
+
+type localDockerResolver func(context.Context, localdocker.Options) (localdocker.Endpoint, error)
+type localDevRuntime func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error
+
+// dispatchLocalDevCommand makes explicit --target the only route to the
+// existing remote workflow. Bare dev is decided here, before target profiles,
+// stored logins, or LEAPVIEW_TARGET can be resolved by the remote command.
+func dispatchLocalDevCommand(
+	ctx context.Context,
+	command *cobra.Command,
+	resolve localDockerResolver,
+	start localDevRuntime,
+) *cobra.Command {
+	remoteRun := command.RunE
+	var dockerContext, dockerHost string
+	command.Flags().StringVar(&dockerContext, "docker-context", "", "explicit local Docker context")
+	command.Flags().StringVar(&dockerHost, "docker-host", "", "explicit local Docker Unix socket")
+	command.RunE = func(command *cobra.Command, args []string) error {
+		if command.Flags().Changed("target") {
+			target, err := command.Flags().GetString("target")
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(target) == "" {
+				return fmt.Errorf("explicit remote --target must not be empty")
+			}
+			if command.Flags().Changed("docker-context") || command.Flags().Changed("docker-host") {
+				return fmt.Errorf("Docker endpoint flags cannot be combined with remote --target")
+			}
+			return remoteRun(command, args)
+		}
+		for _, name := range []string{"token", "project-id", "bootstrap"} {
+			if flag := command.Flags().Lookup(name); flag != nil && command.Flags().Changed(name) {
+				return fmt.Errorf("--%s requires an explicit remote --target", name)
+			}
+		}
+		if len(args) == 1 {
+			if flag := command.Flags().Lookup("source-root"); flag != nil && command.Flags().Changed("source-root") {
+				return fmt.Errorf("choose either --source-root or positional source root, not both")
+			}
+		}
+		if resolve == nil || start == nil {
+			return fmt.Errorf("local development runtime is not configured")
+		}
+		endpoint, err := resolve(ctx, localdocker.Options{
+			ExplicitContext: dockerContext,
+			ExplicitHost:    dockerHost,
+		})
+		if err != nil {
+			return err
+		}
+		return start(ctx, endpoint, command, args)
+	}
+	return command
+}
+
+func unavailableLocalDevRuntime(
+	_ context.Context,
+	_ localdocker.Endpoint,
+	_ *cobra.Command,
+	_ []string,
+) error {
+	return fmt.Errorf("this build does not include the local development runtime yet; use an explicit --target for remote development")
 }
 
 func (factory projectDevRemoteFactory) Remote(
