@@ -59,9 +59,9 @@ WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: UpdatePendingConversationMetadata :execrows
+-- Undo bookkeeping is not conversation activity; preserve history ordering.
 UPDATE agent_conversations
-SET metadata_json = sqlc.arg(metadata_json),
-    updated_at = CURRENT_TIMESTAMP
+SET metadata_json = sqlc.arg(metadata_json)
 WHERE id = sqlc.arg(conversation_id)
   AND principal_id = sqlc.arg(principal_id)
   AND status IN ('active', 'archived')

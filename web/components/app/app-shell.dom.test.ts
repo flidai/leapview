@@ -1084,6 +1084,34 @@ test('chat management network failure unlocks the dialog without handling unrela
   await page.close()
 })
 
+test('chat history can be hidden and reopened with mouse and keyboard without losing updates', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const heading = page.locator('summary.history-label')
+    await heading.waitFor({ timeout: 2000 })
+    const history = page.locator('details.history')
+    await heading.click()
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    expect(await page.getByRole('link', { name: 'Revenue check', exact: true }).isVisible()).toBe(false)
+    await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => item.id === 'c1' ? { ...item, title: 'Updated revenue check' } : item) } }
+      await sidebar.updateComplete
+    })
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    await heading.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('link', { name: 'Updated revenue check', exact: true }).waitFor()
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(true)
+    await page.keyboard.press('Space')
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    expect(await page.getByRole('link', { name: 'New chat', exact: true }).isVisible()).toBe(true)
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  } finally {
+    await page.close()
+  }
+})
+
 test('sidebar renders global chat action and recent history', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {

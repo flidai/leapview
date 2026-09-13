@@ -978,14 +978,17 @@ export class DashboardFilterPaneCard extends FilterShell {
 }
 
 export class DashboardSlicer extends FilterShell {
+  @property({ type: Boolean, attribute: 'auto-height', reflect: true }) autoHeight = false
+
   static styles = css`
     :host { display: block; height: 100%; }
     section { height: 100%; padding: 8px 10px; box-sizing: border-box; }
     lv-filter-leaf { display: block; width: 100%; height: 100%; }
+    :host([auto-height]), :host([auto-height]) section, :host([auto-height]) lv-filter-leaf { height: auto; }
   `
 
   render() {
-    return html`<section aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Slicer'}>${this.leaf(true, false, true)}</section>`
+    return html`<section aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Slicer'}>${this.leaf(true, this.autoHeight, true)}</section>`
   }
 }
 

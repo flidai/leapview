@@ -1,3 +1,4 @@
+import { applyBarLegendColors } from './bar-legend'
 import type { VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { axis, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legendDecoration, selectedDatasetSource, tooltipFormatterForRow, type EChartsTranslation } from './common'
@@ -239,7 +240,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ...axes,
     ...(comboAxes ? { xAxis: comboAxes.xAxis, yAxis: comboAxes.yAxis } : {}),
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
-    ...legendDecoration(spec.presentation.legend, context, false, spec.presentation, values.map((value, index) => ({ value: value.field, name: String(series[index]?.name ?? value.field) }))), dataZoom,
+    ...applyBarLegendColors(legendDecoration(spec.presentation.legend, context, false, spec.presentation, values.map((value, index) => ({ value: value.field, name: String(series[index]?.name ?? value.field) }))), envelope, series, values), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }
 }

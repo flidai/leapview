@@ -280,3 +280,14 @@ func dashboardInteractionSelectionEntries(values []dashboard.InteractionSelectio
 	}
 	return out
 }
+
+// MarshalJSON explicitly clears absent range bounds in Datastar merge patches.
+// Omitting a removed bound would retain the prior date or numeric limit.
+func (value DashboardRangeExpression) MarshalJSON() ([]byte, error) {
+	type rangeExpression DashboardRangeExpression
+	return json.Marshal(struct {
+		rangeExpression
+		Lower *DashboardFilterBound `json:"lower"`
+		Upper *DashboardFilterBound `json:"upper"`
+	}{rangeExpression(value), value.Lower, value.Upper})
+}

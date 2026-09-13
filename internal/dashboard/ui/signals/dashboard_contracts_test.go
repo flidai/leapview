@@ -100,3 +100,27 @@ func assertSameJSON(t *testing.T, left, right any) {
 		t.Fatalf("JSON differs:\nsource:   %s\ncontract: %s", leftJSON, rightJSON)
 	}
 }
+
+func TestRangeSignalClearsRemovedBounds(t *testing.T) {
+	for _, value := range []dashboardfilter.Expression{
+		{Kind: "range", Lower: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: "date", Value: "2026-01-01"}, Inclusive: true}},
+		{Kind: "range", Upper: &dashboardfilter.Bound{Value: dashboardfilter.Value{Kind: "date", Value: "2026-01-31"}, Inclusive: true}},
+	} {
+		encoded, err := json.Marshal(DashboardFilterExpressionFromDomain(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var patch map[string]json.RawMessage
+		if err := json.Unmarshal(encoded, &patch); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"lower", "upper"} {
+			if _, ok := patch[key]; !ok {
+				t.Fatalf("%s must be present (null removes the previous signal bound): %s", key, encoded)
+			}
+		}
+		if value.Lower == nil && string(patch["lower"]) != "null" || value.Upper == nil && string(patch["upper"]) != "null" {
+			t.Fatalf("removed bounds must serialize as null: %s", encoded)
+		}
+	}
+}
