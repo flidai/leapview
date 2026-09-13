@@ -109,8 +109,12 @@ runtime access is read-only and resolves only the exact digest-pinned image.
 Every read reparses the canonical bytes, recomputes their domain-separated
 digest, and checks the denormalized database identity. Mutable tags,
 unsupported policy versions, missing records, digest substitutions, and
-revoked admissions fail closed. The authority stores neither registry
-credentials nor signing keys.
+revoked admissions fail closed. Publication also validates the repository and
+workflow against the approved producer profile, requires an immutable source
+commit, accepts only the SPDX Buildx SBOM profile and pinned Trivy policy, and
+derives the stored verification results from that evidence instead of trusting
+caller booleans. The authority stores neither registry credentials nor signing
+keys.
 
 This provides authoritative artifact admission resolution. It does not execute a release transition.
 

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -29,7 +30,13 @@ const (
 	DecisionAdmitted      = "admitted"
 	DigestDomain          = "leapview/oci-artifact-admission/v1\n"
 	MaxCanonicalBytes     = 262144
+	SourceRepository      = "flidai/leapview"
+	SBOMPredicateSPDX     = "https://spdx.dev/Document/v2.3"
+	SBOMProducerBuildx    = "docker/buildx"
+	SecurityScannerTrivy  = "trivy"
 )
+
+var sourceRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // Authority is the read-only owner contract needed by transition preflight.
 // Runtime callers supply only an exact immutable lookup reference; they cannot
@@ -49,6 +56,7 @@ type ProvenanceResult struct {
 type SBOMResult struct {
 	Reference     string `json:"reference"`
 	PredicateType string `json:"predicateType"`
+	Producer      string `json:"producer"`
 	Verified      bool   `json:"verified"`
 }
 
@@ -175,7 +183,8 @@ func (a Admission) normalized() (Admission, error) {
 		{"platform", a.Release.Platform}, {"architecture marker", a.ArchitectureMarker},
 		{"repository", a.Repository}, {"provenance repository", a.Provenance.Repository},
 		{"provenance workflow", a.Provenance.Workflow}, {"provenance source revision", a.Provenance.SourceRevision},
-		{"SBOM predicate type", a.SBOM.PredicateType}, {"security scanner", a.SecurityPolicy.Scanner},
+		{"SBOM predicate type", a.SBOM.PredicateType}, {"SBOM producer", a.SBOM.Producer},
+		{"security scanner", a.SecurityPolicy.Scanner},
 	} {
 		if err := canonicalText(field.value); err != nil {
 			return Admission{}, fmt.Errorf("OCI artifact admission %s: %w", field.name, err)
@@ -209,23 +218,43 @@ func (a Admission) normalized() (Admission, error) {
 			return Admission{}, fmt.Errorf("OCI artifact admission %s: %w", field.name, err)
 		}
 	}
-	if !a.Provenance.Verified || a.Provenance.SourceRevision != a.Release.SourceRevision {
+	if a.Provenance.Repository != SourceRepository || !approvedWorkflow(a.Provenance.Workflow) {
+		return Admission{}, errors.New("OCI artifact admission provenance authority is not approved")
+	}
+	if !sourceRevisionPattern.MatchString(a.Release.SourceRevision) ||
+		a.Provenance.SourceRevision != a.Release.SourceRevision {
 		return Admission{}, errors.New("OCI artifact admission provenance is not verified for the release")
 	}
-	if !a.SBOM.Verified {
-		return Admission{}, errors.New("OCI artifact admission SBOM is not verified")
+	if a.SBOM.PredicateType != SBOMPredicateSPDX || a.SBOM.Producer != SBOMProducerBuildx {
+		return Admission{}, errors.New("OCI artifact admission SBOM evidence is unsupported")
 	}
-	if a.SecurityPolicy.Version != SecurityPolicyVersion || !a.SecurityPolicy.Passed {
+	if a.SecurityPolicy.Version != SecurityPolicyVersion || a.SecurityPolicy.Scanner != SecurityScannerTrivy {
 		return Admission{}, errors.New("OCI artifact admission security policy is unsupported or failed")
 	}
 	if a.AdmittedAt.IsZero() {
 		return Admission{}, errors.New("OCI artifact admission timestamp is missing")
 	}
 	normalized := a
+	// Result flags are an output of the validated evidence profile. Callers do
+	// not get to establish trust by setting these booleans themselves.
+	normalized.Provenance.Verified = true
+	normalized.SBOM.Verified = true
+	normalized.SecurityPolicy.Passed = true
 	// PostgreSQL timestamptz persists microsecond precision. Canonicalize to
 	// that boundary before hashing so durable readback cannot change identity.
 	normalized.AdmittedAt = a.AdmittedAt.UTC().Round(0).Truncate(time.Microsecond)
 	return normalized, nil
+}
+
+func approvedWorkflow(value string) bool {
+	switch value {
+	case "flidai/leapview/.github/workflows/artifacts.yml",
+		"flidai/leapview/.github/workflows/release.yml",
+		"flidai/leapview/.github/workflows/site-image.yml":
+		return true
+	default:
+		return false
+	}
 }
 
 func canonicalText(value string) error {

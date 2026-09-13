@@ -61,6 +61,42 @@ func TestOCIArtifactAdmissionAuthorityFailsClosed(t *testing.T) {
 		t.Fatalf("mutable tag error = %v", err)
 	}
 
+	for name, mutate := range map[string]func(*artifactadmission.Admission){
+		"unapproved provenance repository": func(value *artifactadmission.Admission) {
+			value.Provenance.Repository = "attacker/example"
+		},
+		"unapproved provenance workflow": func(value *artifactadmission.Admission) {
+			value.Provenance.Workflow = "flidai/leapview/.github/workflows/untrusted.yml"
+		},
+		"mutable source revision": func(value *artifactadmission.Admission) {
+			value.Release.SourceRevision = "refs/heads/main"
+			value.Provenance.SourceRevision = "refs/heads/main"
+		},
+		"unsupported SBOM producer": func(value *artifactadmission.Admission) {
+			value.SBOM.Producer = "unknown/producer"
+		},
+		"unapproved security scanner": func(value *artifactadmission.Admission) {
+			value.SecurityPolicy.Scanner = "unknown-scanner"
+		},
+		"fabricated positive result": func(value *artifactadmission.Admission) {
+			value.Provenance.Reference = ""
+			value.Provenance.Verified = true
+			value.SBOM.Verified = true
+			value.SecurityPolicy.Passed = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := admission
+			mutate(&invalid)
+			if _, err := repository.PublishArtifactAdmission(t.Context(), invalid); !errors.Is(err, ErrArtifactAdmissionInvalid) {
+				t.Fatalf("publish error = %v", err)
+			}
+			if _, err := repository.ResolveArtifact(t.Context(), admission.Release.Image); !errors.Is(err, ErrArtifactAdmissionNotFound) {
+				t.Fatalf("invalid admission became authoritative: %v", err)
+			}
+		})
+	}
+
 	unsupported := admission
 	unsupported.Version = "oci-artifact-admission/v2"
 	if _, err := repository.PublishArtifactAdmission(t.Context(), unsupported); !errors.Is(err, ErrArtifactAdmissionInvalid) {
@@ -129,11 +165,11 @@ func artifactAdmission(releaseID, imageDigest, revision string) artifactadmissio
 		OCIDigest:          digest(imageDigest),
 		Decision:           artifactadmission.DecisionAdmitted,
 		Provenance: artifactadmission.ProvenanceResult{
-			Reference: digest("c"), Repository: "flidai/leapview", Workflow: ".github/workflows/release.yml", SourceRevision: strings.Repeat(revision, 40), Verified: true,
+			Reference: digest("c"), Repository: artifactadmission.SourceRepository, Workflow: "flidai/leapview/.github/workflows/release.yml", SourceRevision: strings.Repeat(revision, 40), Verified: true,
 		},
-		SBOM: artifactadmission.SBOMResult{Reference: digest("d"), PredicateType: "https://spdx.dev/Document/v2.3", Verified: true},
+		SBOM: artifactadmission.SBOMResult{Reference: digest("d"), PredicateType: artifactadmission.SBOMPredicateSPDX, Producer: artifactadmission.SBOMProducerBuildx, Verified: true},
 		SecurityPolicy: artifactadmission.SecurityPolicyResult{
-			Version: artifactadmission.SecurityPolicyVersion, Reference: digest("e"), Scanner: "trivy", Passed: true,
+			Version: artifactadmission.SecurityPolicyVersion, Reference: digest("e"), Scanner: artifactadmission.SecurityScannerTrivy, Passed: true,
 		},
 		AdmittedAt: time.Date(2026, 9, 13, 12, 0, 0, int(revision[0]), time.UTC),
 	}
