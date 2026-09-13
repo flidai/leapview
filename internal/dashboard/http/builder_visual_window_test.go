@@ -53,11 +53,18 @@ func TestDashboardBuilderVisualWindowUsesExactSessionAndReturnsSignalEnvelope(t 
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := response["builderVisuals"]["orders"]["dataState"]; !ok {
+	windowKey := "window:" + servingStateID + ":overview:1:orders"
+	if _, ok := response["builderVisuals"]["orders"]; ok {
+		t.Fatal("window response must not overwrite the base preview")
+	}
+	if _, ok := response["builderVisuals"][windowKey]["dataState"]; !ok {
 		t.Fatalf("response did not contain visualization signal envelope: %s", recorder.Body.String())
 	}
-	if got := response["builderVisuals"]["orders"]["filterRevision"]; got != float64(1) {
+	if got := response["builderVisuals"][windowKey]["filterRevision"]; got != float64(1) {
 		t.Fatalf("response filter revision = %#v, want 1", got)
+	}
+	if got := response["builderVisuals"][windowKey]["servingStateID"]; got != servingStateID {
+		t.Fatalf("response must retain exact draft identity: got %#v, want %q", got, servingStateID)
 	}
 	if fake.previewCalls != 1 || fake.previewReq.Window == nil || fake.previewReq.Filters.CompiledState == nil || fake.previewReq.Filters.CompiledState.Revision != 1 {
 		t.Fatalf("preview request = %#v calls=%d", fake.previewReq, fake.previewCalls)

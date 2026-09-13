@@ -41,7 +41,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { emptyDashboardStatus } from '../shared/signal-defaults'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
-import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
+import { BuilderVisualizationState } from './builder-visualization-state'
 import { renderVisualTypeIcon } from './visual-type-icon'
 import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
@@ -169,7 +169,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private pendingVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private reversibleVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private copiedVisual: BuilderClipboard | null = null
-  private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
+  private readonly visualizationDecoder = new BuilderVisualizationState()
   private gridInteracting = false
   private updatingBuilder = false
   private builderUpdateSnapshot: DashboardBuilderSignal | null | undefined
@@ -2858,8 +2858,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   get builderVisuals(): Record<string, VisualizationEnvelope> {
     if (this.updatingBuilder && this.builderVisualUpdateSnapshot) return this.builderVisualUpdateSnapshot
-    const previews = this.visualizationDecoder.decodeAll(
-      this.signal<Record<string, DashboardVisualizationSignal>>('builderVisuals', {}),
+    const builder = this.builder
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })
+    const previews = this.visualizationDecoder.decode(
+      this.signal<Record<string, DashboardVisualizationSignal>>('builderVisuals', {}) ?? {},
+      runtime.servingStateId ?? '',
+      builder ? this.selectedPage(builder)?.id ?? '' : '',
+      this.builderFilterState.revision,
     )
     if (this.updatingBuilder) this.builderVisualUpdateSnapshot = previews
     return previews

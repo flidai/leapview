@@ -121,7 +121,11 @@ func (h Handler) DashboardBuilderVisualWindow(w nethttp.ResponseWriter, r *netht
 		writeBuilderVisualWindowError(w, fmt.Errorf("dashboard builder visual window response omitted visual %q", visualID))
 		return
 	}
-	writeJSON(w, nethttp.StatusOK, map[string]any{"builderVisuals": map[string]uisignals.DashboardVisualizationSignal{visualID: envelope}})
+	// Keep window results separate from the base preview. Otherwise an old
+	// response can erase a new preview before the browser has rendered it.
+	// Full preview replacement clears these bounded, per-context window slots.
+	windowKey := fmt.Sprintf("window:%s:%s:%d:%s", request.Key.ServingStateID, request.PageID, state.Revision, visualID)
+	writeJSON(w, nethttp.StatusOK, map[string]any{"builderVisuals": map[string]uisignals.DashboardVisualizationSignal{windowKey: envelope}})
 }
 
 func validateBuilderFilterRevision(posted int64, current uint64) error {

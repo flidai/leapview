@@ -1266,7 +1266,7 @@ func dashboardBuilderPreviewVisuals(builder uisignals.DashboardBuilderSignal, re
 		}
 		signal := uisignals.DashboardVisualizationSignalFromIR(envelope)
 		signal.VisualID = authoredVisualID
-		signal.ServingStateID = servingStateID
+		signal.ServingStateID = builderServingStateIDForGeneration(builder, servingStateID)
 		signal.StreamGeneration = generation
 		signal.FilterRevision = filterRevision
 		signal.InteractionRevision = int64(result.PagePatch.Filters.InteractionRevision)

@@ -761,7 +761,7 @@ test('dashboard builder explains incomplete target visuals without hidden retain
           schemaVersion: 10, visualID: 'sales-chart', rendererID: 'echarts', specRevision: revision, dataRevision: 1,
           spec: { kind: 'cartesian', title: 'Stale table preview', accessibility: { title: 'Stale table preview', description: 'Preview from the prior visual type.' }, fields: [], x: { dataset: 'primary', field: 'category' }, y: [{ dataset: 'primary', field: 'value' }] },
           dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
-          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
+          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'generation-7', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'overview/sales-chart',
         },
       } })
       await element.updateComplete

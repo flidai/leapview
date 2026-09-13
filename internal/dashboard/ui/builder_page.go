@@ -245,7 +245,7 @@ func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
 func builderVisualWindowAction(actions DashboardBuilderActionBindings) g.Node {
 	value := "$visualWindowCommand = evt.detail;"
 	if strings.TrimSpace(actions.VisualWindowPath) != "" {
-		value += " " + uiactions.EventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
+		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
 	}
 	return g.Attr("data-on:lv-visualization-window-request", value)
 }

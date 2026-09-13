@@ -75,6 +75,53 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('late window patches leave the current draft preview intact', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const observed = await page.locator('lv-dashboard-builder').evaluate(async (element: any, old) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { preview: { active: true } }, builderVisuals: { 'sales-chart': old } })
+      await element.updateComplete
+      const current = { ...old, servingStateID: 'next-draft', spec: { ...old.spec, title: 'Current draft table' } }
+      mergePatch({ runtime: { servingStateId: 'next-draft' }, builder: { revision: { id: 'rev-8', number: 8 } }, builderVisuals: { 'sales-chart': current } })
+      // No render between these patches: neither response may erase the other.
+      mergePatch({ builderVisuals: { 'window:generation-7:overview:0:sales-chart': old } })
+      await element.updateComplete
+      const host = element.shadowRoot.querySelector('lv-visualization-host') as any
+      return { revision: element.builder.revision.id, title: host.envelope.spec.title }
+    }, governedBarPreviewEnvelope('sha256:window-race'))
+    expect(observed).toEqual({ revision: 'rev-8', title: 'Current draft table' })
+  } finally { await page.close() }
+})
+
+test('concurrent Datastar window reads both deliver their independent results', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.route('**/windows', async route => {
+      const request = route.request().postDataJSON().visualWindowCommand
+      await new Promise(resolve => setTimeout(resolve, request.visualID === 'first' ? 200 : 50))
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ status: request.visualID === 'first' ? { refreshId: 'first' } : { lastUpdated: 'second' } }) })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      element.setAttribute('data-on:lv-visualization-window-request', "$visualWindowCommand = evt.detail; @post('/windows', {filterSignals: {include: /^(?:visualWindowCommand)(?:[.]|$)/}, requestCancellation: 'disabled'})")
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      for (const visualID of ['first', 'second']) {
+        element.dispatchEvent(new CustomEvent('lv-visualization-window-request', { detail: { visualID } }))
+        await new Promise(resolve => setTimeout(resolve, 20))
+      }
+    })
+    await page.waitForFunction(() => {
+      const builder = document.querySelector('lv-dashboard-builder') as any
+      const results = builder.signal('status', {})
+      return results.refreshId === 'first' && results.lastUpdated === 'second'
+    })
+  } finally { await page.close() }
+})
+
 test('compiled multi-series previews retain their data despite picker default limits', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
