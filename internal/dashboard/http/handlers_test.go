@@ -196,7 +196,7 @@ func TestUpdatesPreservesDrawerAgentStateOnReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	currentSignals := `{"agent":{"activeConversationId":"conversation-1"},"agentVisuals":{"chart":{"title":"Current result"}}}`
-	req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?project=workspace&dashboard=dash&page=overview&datastar="+url.QueryEscape(currentSignals), nil)
+	req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?dashboard=dash&page=overview&datastar="+url.QueryEscape(currentSignals), nil)
 	rec := httptest.NewRecorder()
 	bootstrapCalls := 0
 	handler := Handler{
@@ -256,7 +256,7 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 			return nil
 		},
 	}
-	path := "/updates?project=workspace&dashboard=dash&page=overview&clientId=client&streamInstance=stream"
+	path := "/updates?dashboard=dash&page=overview&clientId=client&streamInstance=stream"
 	for range 2 {
 		req := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, path, nil)
 		handler.Updates(httptest.NewRecorder(), req)
@@ -266,6 +266,18 @@ func TestUpdatesRecordsOneHumanViewForNewSession(t *testing.T) {
 	}
 	if got := views[0]; got.ProjectID != "workspace" || got.DashboardID != "dash" || got.PageID != "overview" || got.PrincipalID != "alice" {
 		t.Fatalf("recorded view = %#v", got)
+	}
+}
+
+func TestUpdatesRejectsClientProjectSelectorWithoutServerBinding(t *testing.T) {
+	handler := Handler{Metrics: fakeMetrics{}}
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/updates?project=project:foreign&dashboard=dash&page=overview", nil)
+
+	handler.Updates(response, request)
+
+	if response.Code != nethttp.StatusNotFound {
+		t.Fatalf("status = %d, body = %q; want concealed rejection", response.Code, response.Body.String())
 	}
 }
 

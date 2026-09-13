@@ -64,18 +64,24 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 		currentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: "principal-ui", DevBypass: true}, true
 		},
+		currentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:server-bound", nil
+		},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
 	r.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000011")
 	r.Header.Set("If-Match", `"1"`)
 	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
-	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{ProjectID: "sales", Publication: "executive", Action: "suspend", ExpectedRevision: 1})
+	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{Publication: "executive", Action: "suspend", ExpectedRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "018f4f2e-0000-7000-8000-000000000011" || service.invocation.ExpectedRevision != 1 {
 		t.Fatalf("invocation = %#v", service.invocation)
+	}
+	if service.mutationProject != "project:server-bound" {
+		t.Fatalf("mutation Project = %q, want authoritative server Project", service.mutationProject)
 	}
 }
 
@@ -97,6 +103,7 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 	m := &Module{
 		publications: service, publicationCommands: map[string]uicommand.Binding{"suspend": dashboardgen.GenUIActionSuspendDashboardPublication()},
 		currentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-ui"}, true },
+		currentProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:server-bound", nil },
 		currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
 			if allowed {
 				return []access.Capability{access.CapabilityResourcePublish}, nil
@@ -111,7 +118,7 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 		RequirePlatformAdmin:      func(next http.Handler) http.Handler { return next },
 		BrowserMutationMiddleware: protocol.BrowserMutationMiddleware,
 	})
-	body := `{"adminPublicationCommand":{"projectId":"sales","publication":"executive","action":"suspend","expectedRevision":1}}`
+	body := `{"adminPublicationCommand":{"publication":"executive","action":"suspend","expectedRevision":1}}`
 	request := func(requestID string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
@@ -134,10 +141,48 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 	if service.mutations != 1 {
 		t.Fatalf("publication mutation calls = %d, want 1", service.mutations)
 	}
+	if service.mutationProject != "project:server-bound" {
+		t.Fatalf("mutation Project = %q, want authoritative server Project", service.mutationProject)
+	}
 	allowed = false
 	denied := request("018f4f2e-0000-7000-8000-000000000923")
 	if denied.Code != http.StatusForbidden || service.mutations != 1 {
 		t.Fatalf("revoked publication replay = %d calls=%d body=%s", denied.Code, service.mutations, denied.Body.String())
+	}
+}
+
+func TestAdminPublicationRouteRejectsClientProjectSelectorsBeforeIdempotency(t *testing.T) {
+	service := &adminPublicationInvocationService{}
+	m := &Module{
+		publications:        service,
+		publicationCommands: map[string]uicommand.Binding{"suspend": dashboardgen.GenUIActionSuspendDashboardPublication()},
+		currentPrincipal:    func(*http.Request) (Principal, bool) { return Principal{ID: "principal-ui", DevBypass: true}, true },
+		currentProjectID:    func(context.Context) (projectgraph.ResourceID, error) { return "project:server-bound", nil },
+	}
+	m.handler.PublicationMutation = m.mutatePublication
+	router := chi.NewRouter()
+	m.MountAuthenticated(router, RouteGuard{
+		Authenticate:         func(next http.Handler) http.Handler { return next },
+		RequirePlatformAdmin: func(next http.Handler) http.Handler { return next },
+		BrowserMutationMiddleware: func(_ func(*http.Request) bool, next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("client Project selector reached durable idempotency")
+				next.ServeHTTP(w, r)
+			})
+		},
+	})
+	for _, selector := range []string{"projectId", "project_id", "projectUid", "PROJECT-ID"} {
+		body := `{"adminPublicationCommand":{"` + selector + `":"project:foreign","publication":"executive","action":"suspend","expectedRevision":1}}`
+		request := httptest.NewRequest(http.MethodPost, "/admin/publications/command", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || service.mutations != 0 {
+			t.Fatalf("selector %q: status=%d mutations=%d body=%s", selector, response.Code, service.mutations, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "project:foreign") {
+			t.Fatalf("selector %q value leaked into response", selector)
+		}
 	}
 }
 
@@ -212,6 +257,7 @@ func TestAdminPublicationsDoNotDiscloseForeignProjectRows(t *testing.T) {
 type adminPublicationInvocationService struct {
 	invocation       publication.CommandInvocation
 	mutations        int
+	mutationProject  string
 	publications     []publication.Publication
 	requestedProject projectgraph.ResourceID
 }
@@ -230,8 +276,9 @@ func (*adminPublicationInvocationService) PublicationDTO(publication.Publication
 func (*adminPublicationInvocationService) MutatePublication(context.Context, string, string, string, publication.Action) (publication.Publication, error) {
 	return publication.Publication{}, nil
 }
-func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
+func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, projectID string, _ string, _ string, _ publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	s.invocation = invocation
+	s.mutationProject = projectID
 	s.mutations++
 	return publication.Publication{Revision: 2}, nil
 }

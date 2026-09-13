@@ -1,6 +1,9 @@
 package module
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -75,7 +78,58 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	if guard.BrowserMutationMiddleware != nil {
 		publicationCommand = guard.BrowserMutationMiddleware(m.authorizePublicationReplay, publicationCommand)
 	}
+	publicationCommand = rejectClientPublicationProjectSelector(publicationCommand)
 	r.Post("/admin/publications/command", platformAdmin(guard, publicationCommand.ServeHTTP))
+}
+
+// rejectClientPublicationProjectSelector keeps the browser command boundary
+// compatible with the server-bound Project model. It runs outside durable
+// idempotency so a legacy or forged selector cannot influence replay lookup or
+// resource authorization.
+func rejectClientPublicationProjectSelector(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originalBody := r.Body
+		if originalBody == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(originalBody)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		_ = originalBody.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if publicationCommandContainsProjectSelector(body) {
+			http.Error(w, "Project is server-bound and must not be supplied", http.StatusBadRequest)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func publicationCommandContainsProjectSelector(body []byte) bool {
+	var signals map[string]json.RawMessage
+	if json.Unmarshal(body, &signals) != nil {
+		return false
+	}
+	for name, raw := range signals {
+		if !strings.EqualFold(name, "adminPublicationCommand") {
+			continue
+		}
+		var command map[string]json.RawMessage
+		if json.Unmarshal(raw, &command) != nil {
+			return false
+		}
+		for field := range command {
+			normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(field))
+			switch normalized {
+			case "project", "projectid", "projectuid":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func authenticated(guard RouteGuard, next http.HandlerFunc) http.HandlerFunc {

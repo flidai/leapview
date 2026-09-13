@@ -82,7 +82,6 @@ type Config struct {
 	CSRFToken                    func(*http.Request) string
 	CurrentPrincipal             func(*http.Request) (Principal, bool)
 	CurrentCredential            func(*http.Request) (access.APICredential, bool)
-	AuthorizeAnyProject          func(context.Context, string, *access.APICredential, access.Capability) (bool, error)
 	Publications                 PublicationService
 	AgentConfigCommand           uicommand.Binding
 	PublicationCommands          map[string]uicommand.Binding
@@ -112,7 +111,6 @@ type Module struct {
 	access                       AccessReader
 	currentPrincipal             func(*http.Request) (Principal, bool)
 	currentCredential            func(*http.Request) (access.APICredential, bool)
-	authorizeAnyProject          func(context.Context, string, *access.APICredential, access.Capability) (bool, error)
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	publications                 PublicationService
@@ -124,7 +122,7 @@ type Module struct {
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
-		currentCredential: config.CurrentCredential, authorizeAnyProject: config.AuthorizeAnyProject,
+		currentCredential:            config.CurrentCredential,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
 		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,

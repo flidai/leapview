@@ -31,9 +31,6 @@ var readStreamInstanceRandom = rand.Read
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	projectID, projectErr := h.projectIDForRequest(r.Context())
 	if projectErr != nil {
-		projectID, projectErr = projectgraph.NewResourceID(strings.TrimSpace(r.URL.Query().Get("project")))
-	}
-	if projectErr != nil {
 		nethttp.NotFound(w, r)
 		return
 	}
