@@ -39,10 +39,25 @@ type Config struct {
 	BearerToken               func(*http.Request) string
 	AcceptsBearer             func(*http.Request) bool
 	PrincipalID               func(*http.Request) (string, bool)
-	ReplayAuthorize           func(*http.Request) bool
-	PublicRequest             func(*http.Request) bool
-	CursorSnapshot            func(*http.Request) string
-	ProductName               string
+	// AuthoritativeScope resolves the server-owned identity boundary for a
+	// durable command. The protocol combines it with the authenticated caller,
+	// credential, operation and concrete resource locator before claiming an
+	// idempotency record; request bodies remain a separate conflict detector.
+	AuthoritativeScope func(*http.Request) (AuthoritativeScope, error)
+	ReplayAuthorize    func(*http.Request) bool
+	PublicRequest      func(*http.Request) bool
+	CursorSnapshot     func(*http.Request) string
+	ProductName        string
+}
+
+// AuthoritativeScope is the server-owned portion of a durable idempotency
+// identity. ProjectID and GenerationID are empty only for platform/bootstrap
+// commands that do not execute against an active Project generation.
+type AuthoritativeScope struct {
+	TargetID     string
+	ProjectID    string
+	Environment  string
+	GenerationID string
 }
 
 type Protocol struct {
@@ -69,6 +84,9 @@ func Build(ctx context.Context, config Config) (*Protocol, error) {
 	}
 	if config.Store == nil {
 		return nil, errors.New("API protocol requires an idempotency capability")
+	}
+	if config.AuthoritativeScope == nil {
+		return nil, errors.New("API protocol requires an authoritative idempotency scope resolver")
 	}
 	if len(config.ReclaimExpiredIdempotency) > 0 {
 		if _, ok := config.Store.(idempotency.ReclaimableStore); !ok {
@@ -362,12 +380,109 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 		callerScope = hex.EncodeToString(scopeHash[:])
 	}
 	credentialHash := sha256.Sum256([]byte(credentialScope))
-	scope := callerScope + ":" + hex.EncodeToString(credentialHash[:]) + ":" + r.Method + ":" + r.URL.EscapedPath() + ":" + key
+	authoritative, err := p.config.AuthoritativeScope(r)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "IDEMPOTENCY_SCOPE_UNAVAILABLE", "The authoritative idempotency scope is unavailable", nil)
+		return
+	}
+	scope, err := canonicalIdempotencyScope(r, callerScope, hex.EncodeToString(credentialHash[:]), key, authoritative)
+	if err != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "IDEMPOTENCY_SCOPE_UNAVAILABLE", "The authoritative idempotency scope is unavailable", nil)
+		return
+	}
 	if len(scope) > 4096 {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_SCOPE_TOO_LARGE", "The idempotency scope exceeds the configured size limit", nil)
 		return
 	}
 	p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize, p.reclaimsExpiredLease(r))
+}
+
+const idempotencyScopeDomain = "flid.http.idempotency-scope.v2"
+
+func canonicalIdempotencyScope(r *http.Request, caller, credential, key string, authoritative AuthoritativeScope) (string, error) {
+	if r == nil {
+		return "", errors.New("idempotency request is unavailable")
+	}
+	for name, value := range map[string]string{
+		"caller": caller, "credential": credential, "key": key,
+		"target": authoritative.TargetID, "environment": authoritative.Environment,
+	} {
+		if strings.TrimSpace(value) == "" || value != strings.TrimSpace(value) {
+			return "", fmt.Errorf("idempotency %s identity is unavailable or non-canonical", name)
+		}
+	}
+	for name, value := range map[string]string{"project": authoritative.ProjectID, "generation": authoritative.GenerationID} {
+		if value != strings.TrimSpace(value) {
+			return "", fmt.Errorf("idempotency %s identity is non-canonical", name)
+		}
+	}
+	operationID, resourceParameter, resourceID := operationIdempotencyIdentity(r)
+	if resourceParameter != "" && resourceID == "" {
+		return "", fmt.Errorf("idempotency resource %q is unavailable", resourceParameter)
+	}
+	wire := struct {
+		Version           int    `json:"version"`
+		Caller            string `json:"caller"`
+		Credential        string `json:"credential"`
+		Method            string `json:"method"`
+		Path              string `json:"path"`
+		OperationID       string `json:"operationId,omitempty"`
+		TargetID          string `json:"targetId"`
+		ProjectID         string `json:"projectId,omitempty"`
+		Environment       string `json:"environment"`
+		GenerationID      string `json:"generationId,omitempty"`
+		ResourceParameter string `json:"resourceParameter,omitempty"`
+		ResourceID        string `json:"resourceId,omitempty"`
+		Key               string `json:"key"`
+	}{
+		Version: 2, Caller: caller, Credential: credential, Method: r.Method, Path: r.URL.EscapedPath(),
+		OperationID: operationID, TargetID: authoritative.TargetID, ProjectID: authoritative.ProjectID,
+		Environment: authoritative.Environment, GenerationID: authoritative.GenerationID,
+		ResourceParameter: resourceParameter, ResourceID: resourceID, Key: key,
+	}
+	canonical, err := json.Marshal(wire)
+	if err != nil {
+		return "", fmt.Errorf("serialize idempotency scope: %w", err)
+	}
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(idempotencyScopeDomain))
+	_, _ = digest.Write([]byte{0})
+	_, _ = digest.Write(canonical)
+	return "v2:" + hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func operationIdempotencyIdentity(r *http.Request) (operationID, parameter, value string) {
+	if r == nil {
+		return "", "", ""
+	}
+	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
+	if !ok {
+		return "", "", ""
+	}
+	operationID = contract.OperationID
+	if contract.Command == nil || contract.Command.Target == nil {
+		return operationID, "", ""
+	}
+	parameter = strings.TrimSpace(contract.Command.Target.Parameter)
+	return operationID, parameter, pathParameter(contract.Path, r.URL.Path, parameter)
+}
+
+func pathParameter(template, concrete, parameter string) string {
+	if parameter == "" {
+		return ""
+	}
+	templateSegments := strings.Split(strings.Trim(template, "/"), "/")
+	concreteSegments := strings.Split(strings.Trim(concrete, "/"), "/")
+	if len(templateSegments) != len(concreteSegments) {
+		return ""
+	}
+	want := "{" + parameter + "}"
+	for index, segment := range templateSegments {
+		if segment == want {
+			return strings.TrimSpace(concreteSegments[index])
+		}
+	}
+	return ""
 }
 
 func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string, replayAuthorize func(*http.Request) bool, reclaimExpired bool) {

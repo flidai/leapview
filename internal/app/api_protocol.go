@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,7 +13,9 @@ import (
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
+	"github.com/flidai/leapview/internal/servingstate"
 )
 
 type apiProtocolPersistence struct {
@@ -39,7 +42,7 @@ func (p apiProtocolPersistence) authorities() (idempotency.Store, cursorsigning.
 	return idempotency.NewMemoryStore(), cursorsigning.NewEphemeralInitializer(), nil
 }
 
-func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, persistence apiProtocolPersistence) error {
+func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, persistence apiProtocolPersistence) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -48,6 +51,10 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 	idempotencyStore, cursorInitializer, err := persistence.authorities()
 	if err != nil {
 		return err
+	}
+	idempotencyProjectID := runtime.resolveProjectID
+	if runtimeConfig.IdempotencyProjectIDResolver != nil {
+		idempotencyProjectID = runtimeConfig.IdempotencyProjectIDResolver
 	}
 	protocol, err := apiprotocol.Build(ctx, apiprotocol.Config{
 		Store:                     idempotencyStore,
@@ -66,6 +73,9 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 			principal, _, ok := platform.auth.Authenticate(r)
 			return principal.ID, ok
 		},
+		AuthoritativeScope: func(r *http.Request) (apiprotocol.AuthoritativeScope, error) {
+			return authoritativeAPIIdempotencyScope(r, idempotencyProjectID, runtimeConfig)
+		},
 		ReplayAuthorize: func(r *http.Request) bool {
 			if platform.auth == nil {
 				return true
@@ -83,6 +93,57 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 	}
 	platform.apiProtocol = protocol
 	return nil
+}
+
+func authoritativeAPIIdempotencyScope(r *http.Request, resolveProjectID func(context.Context) (projectgraph.ResourceID, error), config runtimeAssemblyInputs) (apiprotocol.AuthoritativeScope, error) {
+	scope := apiprotocol.AuthoritativeScope{
+		TargetID: strings.TrimSpace(config.InstanceID), Environment: strings.TrimSpace(config.DefaultEnvironment),
+	}
+	if scope.TargetID == "" || scope.TargetID != config.InstanceID || scope.Environment == "" || scope.Environment != config.DefaultEnvironment {
+		return apiprotocol.AuthoritativeScope{}, errors.New("API idempotency target and environment identities are required")
+	}
+	if !projectScopedIdempotencyRequest(r) {
+		return scope, nil
+	}
+	if resolveProjectID == nil {
+		return apiprotocol.AuthoritativeScope{}, errors.New("API idempotency Project identity authority is unavailable")
+	}
+	projectID, err := resolveProjectID(r.Context())
+	if err != nil {
+		return apiprotocol.AuthoritativeScope{}, fmt.Errorf("resolve API idempotency Project identity: %w", err)
+	}
+	if err := projectID.Validate(); err != nil {
+		return apiprotocol.AuthoritativeScope{}, fmt.Errorf("validate API idempotency Project identity: %w", err)
+	}
+	scope.ProjectID = projectID.String()
+	if config.ServingSnapshotResolver == nil {
+		return scope, nil
+	}
+	generation, err := config.ServingSnapshotResolver(r.Context())
+	if err != nil {
+		if errors.Is(err, servingstate.ErrNotFound) {
+			return scope, nil
+		}
+		return apiprotocol.AuthoritativeScope{}, fmt.Errorf("resolve API idempotency generation identity: %w", err)
+	}
+	scope.GenerationID = strings.TrimSpace(generation)
+	if scope.GenerationID == "" || scope.GenerationID != generation {
+		return apiprotocol.AuthoritativeScope{}, errors.New("API idempotency generation identity is non-canonical")
+	}
+	return scope, nil
+}
+
+func projectScopedIdempotencyRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		// Browser mutation middleware is mounted only on Project authoring and
+		// publication commands.
+		return true
+	}
+	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
+	return ok && strings.Contains(contract.Path, "{project}")
 }
 
 func isPublicAPIGenRequest(r *http.Request) bool {

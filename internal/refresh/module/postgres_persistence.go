@@ -339,7 +339,7 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	if p == nil || p.repository == nil || p.operations == nil {
 		return refreshrun.RunRecord{}, nil, false, errors.New("refresh PostgreSQL run persistence is unavailable")
 	}
-	op, err := p.operations.Get(ctx, refreshOperationScope(identity.ProjectID.String(), identity.Environment), key)
+	op, err := p.operations.Get(ctx, refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), key)
 	if errors.Is(err, refreshpostgres.ErrNotFound) {
 		return refreshrun.RunRecord{}, nil, false, nil
 	}
@@ -384,11 +384,12 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	return rootRecord, childRecords, true, nil
 }
 
-func refreshOperationScope(projectID, environment string) string {
+func refreshOperationScope(projectID, environment, generationID string) string {
 	// Platform operation scopes are bounded to 255 bytes while authored
-	// project/environment identities may each approach their own maxima. Hash
-	// the canonical pair to preserve separation without truncation collisions.
-	digest := sha256.Sum256([]byte(projectID + "\x00" + environment))
+	// Project/environment/generation identities may each approach their own
+	// maxima. Hash the canonical tuple to preserve separation without
+	// truncation collisions.
+	digest := sha256.Sum256([]byte(projectID + "\x00" + environment + "\x00" + generationID))
 	return "refresh:" + hex.EncodeToString(digest[:])
 }
 
@@ -574,14 +575,14 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 		}
 		createErr = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
 			acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
-				Scope: refreshOperationScope(root.ProjectID, root.Environment), OperationType: "refresh_pipeline",
+				Scope: refreshOperationScope(root.ProjectID, root.Environment, root.GenerationID), OperationType: "refresh_pipeline",
 				IdempotencyKey: tree.IdempotencyKey, RequestDigest: tree.RequestDigest, OwnerID: root.PrincipalID,
 				Lease: 2 * time.Minute, Retention: 24 * time.Hour,
 			})
 			if acquireErr != nil {
 				return acquireErr
 			}
-			if acquired.Operation.Scope != refreshOperationScope(root.ProjectID, root.Environment) || acquired.Operation.OperationType != "refresh_pipeline" || acquired.Operation.IdempotencyKey != tree.IdempotencyKey || acquired.Operation.RequestDigest != tree.RequestDigest {
+			if acquired.Operation.Scope != refreshOperationScope(root.ProjectID, root.Environment, root.GenerationID) || acquired.Operation.OperationType != "refresh_pipeline" || acquired.Operation.IdempotencyKey != tree.IdempotencyKey || acquired.Operation.RequestDigest != tree.RequestDigest {
 				return refreshpostgres.ErrConflict
 			}
 			if acquired.Status == refreshoperation.Replay || acquired.Replay {
@@ -1089,14 +1090,14 @@ func (p *postgresRunPersistence) CancelRunWithAuditKeyed(ctx context.Context, id
 	replayed := false
 	err = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
 		acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
-			Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "refresh_pipeline_cancel",
+			Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), OperationType: "refresh_pipeline_cancel",
 			IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actorID,
 			Lease: 2 * time.Minute, Retention: 24 * time.Hour,
 		})
 		if acquireErr != nil {
 			return acquireErr
 		}
-		if acquired.Operation.Scope != refreshOperationScope(identity.ProjectID.String(), identity.Environment) || acquired.Operation.OperationType != "refresh_pipeline_cancel" || acquired.Operation.IdempotencyKey != idempotencyKey || acquired.Operation.RequestDigest != requestDigest {
+		if acquired.Operation.Scope != refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID) || acquired.Operation.OperationType != "refresh_pipeline_cancel" || acquired.Operation.IdempotencyKey != idempotencyKey || acquired.Operation.RequestDigest != requestDigest {
 			return refreshpostgres.ErrConflict
 		}
 		if acquired.Status == refreshoperation.Replay || acquired.Replay {

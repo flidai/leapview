@@ -94,6 +94,9 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
 		Store:         apiidempotencysqlite.NewStore(store.SQLDB()),
 		CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		AuthoritativeScope: func(*http.Request) (apiprotocol.AuthoritativeScope, error) {
+			return apiprotocol.AuthoritativeScope{TargetID: "target:test", ProjectID: "project:server-bound", Environment: "test", GenerationID: "generation:test"}, nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
