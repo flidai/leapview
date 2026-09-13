@@ -1,0 +1,127 @@
+# Internal runtime payload for the released `leapview dev` lifecycle.
+#
+# The host CLI must supply a unique Compose project name derived from the
+# canonical checkout and must verify/pin a supported local Docker endpoint
+# before evaluating or applying this file. This file is not a standalone
+# replacement for that lifecycle controller.
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
+    restart: unless-stopped
+    command: [postgres, -c, listen_addresses=127.0.0.1]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: leapview_bootstrap
+      POSTGRES_PASSWORD: ${LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD:?local PostgreSQL bootstrap password is required}
+      LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:?local control runtime password is required}
+      LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:?local control readonly password is required}
+      LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:?local DuckLake runtime password is required}
+      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:?local control migrator password is required}
+      LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD:?local upgrade coordinator password is required}
+      LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:?local control maintenance password is required}
+      LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:?local DuckLake migrator password is required}
+      LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:?local DuckLake maintenance password is required}
+    # The application joins this service's network namespace so its
+    # TLS-disabled development database URLs remain genuinely loopback-only.
+    # PostgreSQL itself is never published to the host.
+    ports:
+      - "127.0.0.1:${LEAPVIEW_LOCAL_APP_PORT:?local application port is required}:8080"
+    volumes:
+      - leapview-postgres:/var/lib/postgresql
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-leapview-roles.sh:ro
+    labels:
+      io.leapview.local-runtime: "true"
+      io.leapview.local-runtime.schema: "1"
+      io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
+    healthcheck:
+      test: [CMD-SHELL, "PGPASSWORD=$${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD} psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --command 'SELECT 1' >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  leapview:
+    image: ${LEAPVIEW_IMAGE:?version-matched LeapView image digest is required}
+    restart: unless-stopped
+    init: true
+    network_mode: service:postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    command: [serve, --environment, dev]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 2m
+    environment:
+      # The host publication remains loopback-only. Listening on the shared
+      # container namespace makes that published port reachable without a
+      # development authentication bypass.
+      LEAPVIEW_ADDR: 0.0.0.0:8080
+      LEAPVIEW_PUBLIC_URL: http://127.0.0.1:${LEAPVIEW_LOCAL_APP_PORT:?local application port is required}
+      LEAPVIEW_ALLOWED_HOSTS: 127.0.0.1,localhost
+      LEAPVIEW_ENVIRONMENT: dev
+      LEAPVIEW_PRODUCTION: "false"
+      LEAPVIEW_HOME: /var/lib/leapview/home
+      LEAPVIEW_MANAGED_DATA_BACKEND: local
+      LEAPVIEW_MANAGED_DATA_DIR: /var/lib/leapview/home/managed-data
+      LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES: ${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}
+      LEAPVIEW_OBJECT_STORE_BACKEND: filesystem
+      LEAPVIEW_OBJECT_STORE_FILESYSTEM_ROOT: /var/lib/leapview/home/artifacts/object-store
+      LEAPVIEW_LOCAL_AUTH: "true"
+      LEAPVIEW_CSRF_KEY: ${LEAPVIEW_CSRF_KEY:?local CSRF key is required}
+      LEAPVIEW_POSTGRES_EXPECTED_MAJOR: "18"
+      LEAPVIEW_POSTGRES_REQUIRE_TLS: "false"
+      LEAPVIEW_POSTGRES_CONTROL_URL: postgresql://leapview_control_runtime:${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:?local control runtime password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
+      LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE: leapview_control_runtime
+      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL: postgresql://leapview_control_migrator:${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:?local control migrator password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
+      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE: leapview_control_migrator
+      LEAPVIEW_POSTGRES_CONTROL_READONLY_URL: postgresql://leapview_control_readonly:${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:?local control readonly password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
+      LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE: leapview_control_readonly
+      LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL: postgresql://leapview_control_maintenance:${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:?local control maintenance password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
+      LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE: leapview_control_maintenance
+      LEAPVIEW_POSTGRES_DUCKLAKE_URL: postgresql://leapview_ducklake_runtime:${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:?local DuckLake runtime password is required}@127.0.0.1:5432/leapview_ducklake?sslmode=disable
+      LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE: leapview_ducklake_runtime
+      LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL: postgresql://leapview_ducklake_maintenance:${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:?local DuckLake maintenance password is required}@127.0.0.1:5432/leapview_ducklake?sslmode=disable
+      LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE: leapview_ducklake_maintenance
+      # Contributor-only diagnostics are independent of the environment name
+      # and remain disabled in the released local authoring experience.
+      LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS: "false"
+    volumes:
+      # This one private application volume durably contains analytical files,
+      # managed objects, immutable source/artifact objects, DuckDB state, and
+      # runtime artifacts under the same reviewed LEAPVIEW_HOME layout.
+      - leapview-runtime:/var/lib/leapview
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 536870912
+          mode: 01777
+    labels:
+      io.leapview.local-runtime: "true"
+      io.leapview.local-runtime.schema: "1"
+      io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
+
+volumes:
+  leapview-postgres:
+    labels:
+      io.leapview.local-runtime: "true"
+      io.leapview.local-runtime.schema: "1"
+      io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
+      io.leapview.local-runtime.storage: postgres
+  leapview-runtime:
+    labels:
+      io.leapview.local-runtime: "true"
+      io.leapview.local-runtime.schema: "1"
+      io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
+      io.leapview.local-runtime.storage: application
