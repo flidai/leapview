@@ -26,7 +26,7 @@ ADR-0016 completion.
 | Authored analytics/control-plane boundary | FAI-616, PR [#572](https://github.com/flidai/leapview/pull/572) | Removed-kind discovery/schema tests; dashboard-publication deployment guard; architecture ownership guard | Implemented | Project namespace and ResourceUID lifecycle remain ADR-0018-owned. |
 | Generated structural authority and governance metadata | FAI-619/632, PRs [#472](https://github.com/flidai/leapview/pull/472) and [#516](https://github.com/flidai/leapview/pull/516) | TypeSpec-generated Go/JSON Schema; metadata, stable-check-ID, structural-authority, `TestSourceDeprecationContext`, `TestModelDeprecationUsesContextualValidation`, and publication replay tests | Implemented | Source and Model projections reject missing/self replacements, replacement cycles, and `deprecation.since` later than the containing contract version. |
 | Canonical Source/Model/SemanticModel projections | FAI-620/662, PR [#534](https://github.com/flidai/leapview/pull/534) | Reconciled CAN/SRC/MOD/SEM/SER rows in the versioning ledger; sealed projection, exclusion manifest, analyzed SQL, typed normalization, RFC 8785 and independent fixture tests | Implemented | Only the named `leapview.contract/v1` resource projections are claimed. |
-| Compatibility, security impact, and immutable publication | FAI-622/662, PR [#548](https://github.com/flidai/leapview/pull/548) | Unified classifier tests; immutable PostgreSQL publication evidence; replay/conflict/concurrency tests; exact baseline/candidate and direct affected-resource seed | Partial | The publication package deliberately supplies a direct graph-owned affected-resource seed. No transitive consumer-graph conformance claim is made. |
+| Compatibility, security impact, immutable publication, and affected dashboards | FAI-622/662/632, PR [#548](https://github.com/flidai/leapview/pull/548) | Unified classifier tests; immutable PostgreSQL publication evidence; replay/conflict/concurrency tests; exact baseline/candidate and direct affected-resource seed; `TestDirectAffectedResourceSeedQualifiesTransitiveDashboardConsumers` | Implemented for immutable publication and the qualified dashboard-consumer profile | Publication retains only the direct seed. The Project graph qualifies sorted, deduplicated direct/transitive dashboard consumers and rejects invalid graphs; no generic all-resource consumer closure is claimed. |
 | Protected semantic activation evidence | FAI-649, PR [#575](https://github.com/flidai/leapview/pull/575) | Exact publication/policy evidence in plan identity; approval binding; transaction-bound registry/control and deployed-policy revalidation | Implemented for the qualified ADR-0017 profile | Unsupported consumers and plan shapes remain fail closed under ADR-0017. |
 | ODCS 3.1 export/document profile | FAI-623, PR [#550](https://github.com/flidai/leapview/pull/550) | Pinned schema/checksum, independent CLI oracle, mapping/loss reports, security exclusions, adapter isolation tests | Implemented | Source and Model export only. Import, round-trip, execution, and transport are not claimed. |
 | OpenLineage 2.0.2 projection/document profile | FAI-629, PR [#551](https://github.com/flidai/leapview/pull/551) | Pinned event/facet schemas; schema/version, quality, statistics, parent and column-lineage tests; single-path/no-transport architecture tests | Implemented | No collector, transport, import, round-trip, or end-to-end emission claim. |
@@ -56,13 +56,14 @@ They require a demonstrated capability need and separately reviewed work.
 
 ## Validation
 
-Results are recorded only after execution against the branch based on current
-`origin/main` (`3cdf5df8bd87925af88b230542862fa8c5d4306d`):
+Results are recorded only after execution against the FAI-632 branch based on
+`origin/main` at `3cdf5df8bd87925af88b230542862fa8c5d4306d`:
 
 | Command | Result |
 |---|---|
 | `task adr0016-conformance:check` | Pass |
 | Contextual Source/Model deprecation regression tests | Pass |
+| Direct-seed to transitive dashboard-consumer qualification | Pass |
 | Contract projection/version/publication focused suites | Pass |
 | `go test ./internal/project/contractodcs -count=1` | Pass |
 | `task odcs:oracle` | Pass with the pinned independent `datacontract` 1.1.3 tool prepared on `PATH`; the first local invocation correctly reported the absent CI-only tool |
@@ -83,8 +84,9 @@ generated snapshot gate without changing test requirements.
 
 ## Qualification decision
 
-FAI-632 closes contextual field-deprecation qualification and evidence for the
-implemented external profiles, but ADR-0016 remains partial while the active
-affected-graph claim is limited to a direct graph-owned seed. The focused
-historical migration-upgrade fixture is an evidence gap, not permission to
-alter a migration in this qualification layer.
+FAI-632 closes contextual field-deprecation and affected-dashboard graph
+qualification for the implemented profiles. Publication remains intentionally
+limited to an immutable direct seed; transitive dashboard expansion belongs to
+the Project graph and does not claim arbitrary consumer kinds. ADR-0016 remains
+partial because the focused historical migration-upgrade fixture is an evidence
+gap, not permission to alter a migration in this qualification layer.

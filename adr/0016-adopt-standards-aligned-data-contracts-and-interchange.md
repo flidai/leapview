@@ -786,8 +786,13 @@ receive production credentials by default.
   contract version.
 - Compatibility fixtures classify additive, behavioral, breaking, and
   indeterminate changes across Source, Model, and published SemanticModel
-  contracts. Candidate evidence binds the exact active baseline, affected graph,
-  classification, and policy result.
+  contracts. Candidate evidence binds the exact active baseline, direct
+  affected-resource seed, classification, and policy result.
+  `TestDirectAffectedResourceSeedQualifiesTransitiveDashboardConsumers` proves
+  that the Project-owned graph expands that seed to directly and transitively
+  dependent dashboards, excludes unrelated dashboards, produces deterministic
+  output for duplicate change inputs, and rejects duplicate-edge or cyclic
+  graphs. No generic all-resource consumer closure is claimed.
 - Canonicalization fixtures classify every public DTO field, prove the exact
   `leapview.contract/v1` projection and defaults, produce byte-identical RFC
   8785 and SHA-256 results in Go and an independent implementation, and reject
