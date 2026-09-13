@@ -102,6 +102,7 @@ func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.Command
 		return err
 	}
 	return m.recordAudit(ctx, access.AuditEventInput{
+		ProjectID:     strings.TrimSpace(input.Scope.ProjectID),
 		PrincipalID:   strings.TrimSpace(input.Scope.PrincipalID),
 		Action:        command.Audit.SuccessAction,
 		ResourceKind:  targetType,

@@ -37,6 +37,17 @@ SELECT event_id::text AS event_id, retry_identity, project_id, principal_id,
 FROM audit.query_event
 WHERE event_id = sqlc.arg(event_id)::uuid;
 
+-- name: GetQueryEventForProject :one
+SELECT event_id::text AS event_id, retry_identity, project_id, principal_id,
+       surface, operation, query_kind, model_id, target, object_type, object_id,
+       request_id, correlation_id, status, duration_ms, queue_wait_ms,
+       planning_ms, connection_wait_ms, database_ms, execution_ms,
+       execution_state, rows_returned, bytes_estimate, error, sql_text,
+       plan_text, query_json::text AS query_json, created_at
+FROM audit.query_event
+WHERE event_id = sqlc.arg(event_id)::uuid
+  AND project_id = sqlc.arg(project_id)::text;
+
 -- name: FindQueryEventByIdentity :one
 SELECT event_id::text AS event_id, retry_identity, project_id, principal_id,
        surface, operation, query_kind, model_id, target, object_type, object_id,
@@ -91,6 +102,7 @@ LIMIT sqlc.arg(page_size)::int;
 SELECT project_id AS value, count(*) AS count
 FROM audit.query_event
 WHERE project_id <> ''
+	AND project_id = sqlc.arg(project_id)::text
   AND (sqlc.arg(search)::text = '' OR project_id ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY project_id
 ORDER BY count DESC, value ASC
@@ -100,6 +112,7 @@ LIMIT sqlc.arg(page_size)::int;
 SELECT principal_id AS value, count(*) AS count
 FROM audit.query_event
 WHERE principal_id <> ''
+	AND project_id = sqlc.arg(project_id)::text
   AND (sqlc.arg(search)::text = '' OR principal_id ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY principal_id
 ORDER BY count DESC, value ASC
@@ -109,6 +122,7 @@ LIMIT sqlc.arg(page_size)::int;
 SELECT surface AS value, count(*) AS count
 FROM audit.query_event
 WHERE surface <> ''
+	AND project_id = sqlc.arg(project_id)::text
   AND (sqlc.arg(search)::text = '' OR surface ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY surface
 ORDER BY count DESC, value ASC
@@ -118,6 +132,7 @@ LIMIT sqlc.arg(page_size)::int;
 SELECT query_kind AS value, count(*) AS count
 FROM audit.query_event
 WHERE query_kind <> ''
+	AND project_id = sqlc.arg(project_id)::text
   AND (sqlc.arg(search)::text = '' OR query_kind ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY query_kind
 ORDER BY count DESC, value ASC
@@ -127,6 +142,7 @@ LIMIT sqlc.arg(page_size)::int;
 SELECT status AS value, count(*) AS count
 FROM audit.query_event
 WHERE status <> ''
+	AND project_id = sqlc.arg(project_id)::text
   AND (sqlc.arg(search)::text = '' OR status ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY status
 ORDER BY count DESC, value ASC

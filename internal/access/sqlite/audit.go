@@ -23,7 +23,7 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 		return err
 	}
 	return r.q.InsertAuditEvent(ctx, platformdb.InsertAuditEventParams{
-		ID: id, PrincipalID: nullableString(input.PrincipalID),
+		ID: id, ProjectID: nullableString(input.ProjectID), PrincipalID: nullableString(input.PrincipalID),
 		Action: input.Action, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, Capability: string(input.Capability),
 		Status: input.Status, RequestID: input.RequestID, CorrelationID: input.CorrelationID, MetadataJson: input.MetadataJSON,
 	})
@@ -42,10 +42,11 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	}
 	from, to, cursorTime := sqliteAuditTime(filter.From), sqliteAuditTime(filter.To), sqliteAuditTime(filter.CursorTime)
 	rows, err := r.q.ListAuditEvents(ctx, platformdb.ListAuditEventsParams{
-		Column1: filter.PrincipalID, PrincipalID: nullableString(filter.PrincipalID),
-		Column3: filter.Action, Action: filter.Action, Column5: filter.ResourceKind, ResourceKind: filter.ResourceKind,
-		Column7: filter.ResourceID, ResourceID: filter.ResourceID, Column9: string(filter.Capability), Capability: string(filter.Capability), Column11: from, CreatedAt: from, Column13: to, CreatedAt_2: to,
-		Column15: cursorTime, CreatedAt_3: cursorTime, CreatedAt_4: cursorTime, ID: filter.CursorID, Limit: int64(limit),
+		HasProject: strings.TrimSpace(filter.ProjectID) != "", ProjectID: nullableString(filter.ProjectID), IncludeUnscoped: filter.IncludeUnscoped,
+		PrincipalFilter: filter.PrincipalID, PrincipalID: nullableString(filter.PrincipalID),
+		ActionFilter: filter.Action, Action: filter.Action, ResourceKindFilter: filter.ResourceKind, ResourceKind: filter.ResourceKind,
+		ResourceIDFilter: filter.ResourceID, ResourceID: filter.ResourceID, CapabilityFilter: string(filter.Capability), Capability: string(filter.Capability),
+		FromTime: from, ToTime: to, CursorTime: cursorTime, CursorID: filter.CursorID, PageSize: int64(limit),
 	})
 	if err != nil {
 		return nil, err
@@ -53,7 +54,7 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	events := make([]access.AuditEvent, 0, len(rows))
 	for _, row := range rows {
 		events = append(events, access.AuditEvent{
-			ID: row.ID, PrincipalID: row.PrincipalID.String, Action: row.Action,
+			ID: row.ID, ProjectID: row.ProjectID.String, PrincipalID: row.PrincipalID.String, Action: row.Action,
 			ResourceKind: row.ResourceKind, ResourceID: row.ResourceID, Capability: access.Capability(row.Capability), Status: row.Status,
 			RequestID: row.RequestID, CorrelationID: row.CorrelationID, MetadataJSON: row.MetadataJson, CreatedAt: row.CreatedAt,
 		})

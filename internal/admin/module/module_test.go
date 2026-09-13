@@ -20,6 +20,7 @@ import (
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -181,14 +182,44 @@ func TestCapabilityAllowedPreservesTokenDynamicAndDenyAll(t *testing.T) {
 	}
 }
 
+func TestAdminPublicationsDoNotDiscloseForeignProjectRows(t *testing.T) {
+	service := &adminPublicationInvocationService{publications: []publication.Publication{
+		{ID: "publication-local", ProjectID: "project:test", Name: "local"},
+		{ID: "publication-foreign", ProjectID: "project:foreign", Name: "foreign"},
+	}}
+	m := &Module{
+		publications: service,
+		currentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:test", nil
+		},
+		currentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "principal-admin", DevBypass: true}, true
+		},
+	}
+
+	rows, allowed, err := m.adminPublications(httptest.NewRequest(http.MethodGet, "/admin/publications", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.requestedProject != "project:test" {
+		t.Fatalf("publication repository Project = %q", service.requestedProject)
+	}
+	if !allowed || len(rows) != 1 || rows[0].ProjectID != "project:test" || rows[0].Name != "local" {
+		t.Fatalf("publications = %#v, allowed=%v", rows, allowed)
+	}
+}
+
 type adminPublicationInvocationService struct {
-	invocation publication.CommandInvocation
-	mutations  int
+	invocation       publication.CommandInvocation
+	mutations        int
+	publications     []publication.Publication
+	requestedProject projectgraph.ResourceID
 }
 
 func (*adminPublicationInvocationService) PublicationsConfigured() bool { return true }
-func (*adminPublicationInvocationService) AllPublications(context.Context) ([]publication.Publication, error) {
-	return nil, nil
+func (s *adminPublicationInvocationService) ProjectPublications(_ context.Context, projectID projectgraph.ResourceID) ([]publication.Publication, error) {
+	s.requestedProject = projectID
+	return append([]publication.Publication(nil), s.publications...), nil
 }
 func (*adminPublicationInvocationService) PublicationEvents(context.Context, string) ([]publication.Event, error) {
 	return nil, nil

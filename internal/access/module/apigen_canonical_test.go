@@ -363,11 +363,11 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 	if got := call(denySecret); got != http.StatusForbidden {
 		t.Fatalf("deny-all token status = %d, want 403", got)
 	}
-	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{Action: "authorization.denied"})
+	events, err := repository.ListAuditEvents(t.Context(), access.AuditEventFilter{ProjectID: "project_demo", Action: "authorization.denied"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].PrincipalID != principal.ID || events[0].ResourceKind != string(projectgraph.KindDashboard) || events[0].ResourceID != resourceID.String() || events[0].Capability != access.CapabilityResourceRead || events[0].Status != "denied" || events[0].RequestID != "request_resource_denial" {
+	if len(events) != 1 || events[0].ProjectID != "project_demo" || events[0].PrincipalID != principal.ID || events[0].ResourceKind != string(projectgraph.KindDashboard) || events[0].ResourceID != resourceID.String() || events[0].Capability != access.CapabilityResourceRead || events[0].Status != "denied" || events[0].RequestID != "request_resource_denial" {
 		t.Fatalf("authorization denial audit = %#v", events)
 	}
 	if err := repository.RevokeAPIToken(t.Context(), dynamicToken.ID); err != nil {
