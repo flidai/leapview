@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/access/avatar"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -62,6 +63,7 @@ type Handler struct {
 	CurrentCredential            CredentialProvider
 	CurrentSession               SessionProvider
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
@@ -318,7 +320,7 @@ func sessionDTOFor(row access.Session, current string) map[string]any {
 }
 func sessionDTO(row access.Session) map[string]any { return sessionDTOFor(row, "") }
 func auditEventDTO(row access.AuditEvent) map[string]any {
-	return map[string]any{"id": row.ID, "principalId": emptyToNil(row.PrincipalID), "action": row.Action, "resourceKind": row.ResourceKind, "resourceId": row.ResourceID, "capability": emptyToNil(string(row.Capability)), "status": row.Status, "requestId": emptyToNil(row.RequestID), "correlationId": emptyToNil(row.CorrelationID), "metadata": json.RawMessage(row.MetadataJSON), "createdAt": row.CreatedAt}
+	return map[string]any{"id": row.ID, "projectId": emptyToNil(row.ProjectID), "principalId": emptyToNil(row.PrincipalID), "action": row.Action, "resourceKind": row.ResourceKind, "resourceId": row.ResourceID, "capability": emptyToNil(string(row.Capability)), "status": row.Status, "requestId": emptyToNil(row.RequestID), "correlationId": emptyToNil(row.CorrelationID), "metadata": json.RawMessage(row.MetadataJSON), "createdAt": row.CreatedAt}
 }
 
 func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceID string, capability access.Capability, status string, metadata map[string]any) access.AuditEventInput {

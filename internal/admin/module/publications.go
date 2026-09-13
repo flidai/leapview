@@ -2,6 +2,7 @@ package module
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,7 +131,14 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	if !ok {
 		return nil, false, nil
 	}
-	rows, err := m.publications.AllPublications(r.Context())
+	if m.currentProjectID == nil {
+		return nil, false, errors.New("active Project identity is unavailable")
+	}
+	projectID, err := m.currentProjectID(r.Context())
+	if err != nil || projectID.Validate() != nil {
+		return nil, false, errors.New("active Project identity is unavailable")
+	}
+	rows, err := m.publications.ProjectPublications(r.Context(), projectID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -147,6 +155,9 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	}
 	out := make([]ui.AdminPublication, 0, len(rows))
 	for _, row := range rows {
+		if row.ProjectID != projectID {
+			continue
+		}
 		allowed := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
 		if !allowed {
 			credentialValue := access.APICredential{}

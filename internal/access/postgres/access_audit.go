@@ -54,7 +54,8 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 		return err
 	}
 	return accessdb.New(db).InsertAccessAuditEvent(ctx, accessdb.InsertAccessAuditEventParams{AuditID: auditID, PrincipalID: input.PrincipalID,
-		Action: input.Action, ResourceKind: auditText(input.ResourceKind), ResourceID: auditText(input.ResourceID), Capability: input.Capability.String(), Status: input.Status,
+		ProjectID: input.ProjectID,
+		Action:    input.Action, ResourceKind: auditText(input.ResourceKind), ResourceID: auditText(input.ResourceID), Capability: input.Capability.String(), Status: input.Status,
 		RequestID: input.RequestID, CorrelationID: input.CorrelationID, AggregateKey: aggregateKey, IntentDigest: intentDigest, Metadata: []byte(metadata)})
 }
 
@@ -62,10 +63,10 @@ func auditText(value string) *string { return &value }
 
 func auditInputDigest(input access.AuditEventInput, metadata string) string {
 	payload, _ := json.Marshal(struct {
-		PrincipalID, Action, ResourceKind, ResourceID, Capability, Status string
-		RequestID, CorrelationID, MetadataJSON                            string
+		ProjectID, PrincipalID, Action, ResourceKind, ResourceID, Capability, Status string
+		RequestID, CorrelationID, MetadataJSON                                       string
 	}{
-		PrincipalID: input.PrincipalID, Action: input.Action, ResourceKind: input.ResourceKind,
+		ProjectID: input.ProjectID, PrincipalID: input.PrincipalID, Action: input.Action, ResourceKind: input.ResourceKind,
 		ResourceID: input.ResourceID, Capability: input.Capability.String(), Status: input.Status,
 		RequestID: input.RequestID, CorrelationID: input.CorrelationID, MetadataJSON: metadata,
 	})
@@ -100,14 +101,14 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 			return nil, err
 		}
 	}
-	rows, err := accessdb.New(db).ListAccessAuditEvents(ctx, accessdb.ListAccessAuditEventsParams{PrincipalID: filter.PrincipalID, Action: filter.Action, ResourceKind: filter.ResourceKind, ResourceID: filter.ResourceID,
+	rows, err := accessdb.New(db).ListAccessAuditEvents(ctx, accessdb.ListAccessAuditEventsParams{ProjectID: filter.ProjectID, HasProject: strings.TrimSpace(filter.ProjectID) != "", IncludeUnscoped: filter.IncludeUnscoped, PrincipalID: filter.PrincipalID, Action: filter.Action, ResourceKind: filter.ResourceKind, ResourceID: filter.ResourceID,
 		Capability: filter.Capability.String(), FromTime: filter.From, ToTime: filter.To, CursorTime: filter.CursorTime, CursorID: cursorID, PageSize: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]access.AuditEvent, 0, len(rows))
 	for _, row := range rows {
-		value := access.AuditEvent{ID: row.AuditID, PrincipalID: principalUUID(row.PrincipalID), Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+		value := access.AuditEvent{ID: row.AuditID, ProjectID: auditNullableText(row.ProjectID), PrincipalID: principalUUID(row.PrincipalID), Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
 			Capability: access.Capability(row.Capability), Status: row.Outcome, RequestID: auditNullableText(row.RequestID), CorrelationID: auditNullableText(row.CorrelationID), MetadataJSON: row.MetadataJson, CreatedAt: principalTimestamp(row.OccurredAt)}
 		out = append(out, value)
 	}

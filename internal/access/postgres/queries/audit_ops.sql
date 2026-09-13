@@ -77,10 +77,10 @@ LIMIT sqlc.arg(page_size)::int;
 
 -- name: InsertAccessAuditEvent :exec
 INSERT INTO audit.audit_event
-    (audit_id, principal_id, source, operation, action, resource_kind,
+    (audit_id, project_id, principal_id, source, operation, action, resource_kind,
      resource_id, capability, outcome, request_id, correlation_id,
      aggregate_key, aggregate_sequence, intent_digest, metadata)
-VALUES (sqlc.arg(audit_id)::uuid, NULLIF(sqlc.arg(principal_id)::text, '')::uuid,
+VALUES (sqlc.arg(audit_id)::uuid, NULLIF(sqlc.arg(project_id)::text, ''), NULLIF(sqlc.arg(principal_id)::text, '')::uuid,
         'access', 'repository', sqlc.arg(action), sqlc.arg(resource_kind),
         sqlc.arg(resource_id), sqlc.arg(capability),
         CASE WHEN sqlc.arg(status)::text = '' THEN 'success' ELSE sqlc.arg(status)::text END,
@@ -89,13 +89,17 @@ VALUES (sqlc.arg(audit_id)::uuid, NULLIF(sqlc.arg(principal_id)::text, '')::uuid
 
 -- name: ListAccessAuditEvents :many
 SELECT audit_id::text AS audit_id,
+       project_id,
        principal_id,
        action, COALESCE(resource_kind, '') AS resource_kind,
        COALESCE(resource_id, '') AS resource_id, capability, outcome,
        request_id, correlation_id,
        metadata::text AS metadata_json, occurred_at
 FROM audit.audit_event
-WHERE (sqlc.arg(principal_id)::text = '' OR principal_id = sqlc.arg(principal_id)::uuid)
+WHERE (NOT sqlc.arg(has_project)::boolean
+       OR project_id = sqlc.arg(project_id)::text
+       OR (sqlc.arg(include_unscoped)::boolean AND project_id IS NULL))
+  AND (sqlc.arg(principal_id)::text = '' OR principal_id = sqlc.arg(principal_id)::uuid)
   AND (sqlc.arg(action)::text = '' OR action = sqlc.arg(action)::text)
   AND (sqlc.arg(resource_kind)::text = '' OR resource_kind = sqlc.arg(resource_kind)::text)
   AND (sqlc.arg(resource_id)::text = '' OR resource_id = sqlc.arg(resource_id)::text)

@@ -116,9 +116,12 @@ func TestRepositoryExactReplayConflictAndBounds(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("event count = %d, want 2", count)
 	}
-	got, err := r.GetQueryEvent(ctx, input.EventID)
+	got, err := r.GetQueryEvent(ctx, input.ProjectID, input.EventID)
 	if err != nil || got.CreatedAt == "" || got.QueryJSON != `{"target":"orders"}` {
 		t.Fatalf("get = %#v, %v", got, err)
+	}
+	if _, err := r.GetQueryEvent(ctx, "project:foreign", input.EventID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign Project get = %v, want not found", err)
 	}
 	if err := r.RecordQueryEvent(ctx, queryEventInput("")); err == nil {
 		t.Fatal("missing durable identity accepted")
@@ -130,7 +133,7 @@ func TestRepositoryExactReplayConflictAndBounds(t *testing.T) {
 	if err := r.RecordQueryEvent(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
-	row, err := r.GetQueryEvent(ctx, secret.EventID)
+	row, err := r.GetQueryEvent(ctx, secret.ProjectID, secret.EventID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +236,21 @@ func TestRepositoryPaginationFilteringAndAppendOnly(t *testing.T) {
 	if err != nil || len(filtered) != 3 {
 		t.Fatalf("filtered = %d, %v", len(filtered), err)
 	}
+	foreign := queryEventInput("01900000-0000-7000-8000-000000000030")
+	foreign.ProjectID = "project:foreign"
+	foreign.Surface = "foreign-surface"
+	if err := r.RecordQueryEvent(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	options, err := r.ListQueryEventFilterOptions(ctx, "project:test", "surface", "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, option := range options {
+		if option.Value == "foreign-surface" {
+			t.Fatalf("foreign Project filter option disclosed: %#v", options)
+		}
+	}
 	if _, err := db.Exec(ctx, `UPDATE audit.query_event SET status='error' WHERE event_id=$1`, first[0].ID); err == nil {
 		t.Fatal("query event UPDATE accepted")
 	}
@@ -305,7 +323,7 @@ func TestRepositoryDeterministicRetryIdentity(t *testing.T) {
 	if err := r.RecordQueryEvent(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.GetQueryEvent(context.Background(), "not-a-uuid"); !errors.Is(err, ErrInvalid) {
+	if _, err := r.GetQueryEvent(context.Background(), projectgraph.ResourceID("project:test"), "not-a-uuid"); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("invalid get = %v", err)
 	}
 }

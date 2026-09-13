@@ -342,9 +342,25 @@ WHERE service_principal_id = sqlc.arg(service_principal_id)
   AND id = sqlc.arg(id);
 
 -- name: InsertAuditEvent :exec
-INSERT INTO audit_events (id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO audit_events (id, project_id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 -- name: ListAuditEvents :many
-SELECT id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json, created_at FROM audit_events WHERE (? = '' OR principal_id = ?) AND (? = '' OR action = ?) AND (? = '' OR resource_kind = ?) AND (? = '' OR resource_id = ?) AND (? = '' OR capability = ?) AND (? = '' OR created_at >= ?) AND (? = '' OR created_at <= ?) AND (? = '' OR created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT ?;
+SELECT id, project_id, principal_id, action, resource_kind, resource_id, capability,
+       status, request_id, correlation_id, metadata_json, created_at
+FROM audit_events
+WHERE (NOT sqlc.arg(has_project)
+       OR project_id = sqlc.narg(project_id)
+       OR (sqlc.arg(include_unscoped) AND project_id IS NULL))
+  AND (sqlc.arg(principal_filter) = '' OR principal_id = sqlc.narg(principal_id))
+  AND (sqlc.arg(action_filter) = '' OR action = sqlc.arg(action))
+  AND (sqlc.arg(resource_kind_filter) = '' OR resource_kind = sqlc.arg(resource_kind))
+  AND (sqlc.arg(resource_id_filter) = '' OR resource_id = sqlc.arg(resource_id))
+  AND (sqlc.arg(capability_filter) = '' OR capability = sqlc.arg(capability))
+  AND (sqlc.arg(from_time) = '' OR created_at >= sqlc.arg(from_time))
+  AND (sqlc.arg(to_time) = '' OR created_at <= sqlc.arg(to_time))
+  AND (sqlc.arg(cursor_time) = '' OR created_at < sqlc.arg(cursor_time)
+       OR (created_at = sqlc.arg(cursor_time) AND id < sqlc.arg(cursor_id)))
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(page_size);
 -- name: ListPrincipals :many
 WITH params AS (
   SELECT CAST(sqlc.arg(email) AS TEXT) AS email, CAST(sqlc.arg(search) AS TEXT) AS search

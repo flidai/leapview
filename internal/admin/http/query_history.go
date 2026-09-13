@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -19,6 +20,8 @@ const (
 	adminQueryHistoryDefaultLimit = 50
 	adminQueryHistoryMaxLimit     = 100
 )
+
+var errQueryHistoryProjectScope = errors.New("query history is outside the active Project")
 
 type queryHistoryCommandSignals struct {
 	AdminQueryHistory        uisignals.AdminQueryHistorySignal  `json:"adminQueryHistory"`
@@ -59,7 +62,8 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	command := normalizeQueryHistoryCommand(signals.AdminQueryHistoryCommand)
-	repo, err := h.readModel().queryAuditReader()
+	readModel := h.readModel()
+	repo, err := readModel.queryAuditReader()
 	if err != nil || repo == nil {
 		errorText := queryHistoryErrorText(err)
 		if errorText == "" {
@@ -81,9 +85,19 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	projectID, err := readModel.projectID(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	command.Filters, err = bindQueryHistoryFilters(command.Filters, projectID)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
 	switch command.Action {
 	case "select_detail":
-		event, err := repo.GetQueryEvent(r.Context(), uisignals.ValueOrZero(command.EventID))
+		event, err := repo.GetQueryEvent(r.Context(), projectID, uisignals.ValueOrZero(command.EventID))
 		if err != nil {
 			detail := signals.AdminQueryDetail
 			detail.EventID = command.EventID
@@ -105,16 +119,21 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 		history.Loading = false
 		history.Error = ""
 		filterMenu := uisignals.ValueOrZero(command.FilterMenu)
-		history.FilterMenus = uisignals.OptionalSlice(h.readModel().queryHistoryFilterMenus(r, repo, command.Filters, uisignals.ValueOrZero(filterMenu.MenuID), uisignals.ValueOrZero(filterMenu.Search)))
+		history.FilterMenus = uisignals.OptionalSlice(readModel.queryHistoryFilterMenus(r, repo, projectID, command.Filters, uisignals.ValueOrZero(filterMenu.MenuID), uisignals.ValueOrZero(filterMenu.Search)))
 		h.publishQueryHistoryPatch(clientID, history)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if command.Action == "filter_toggle" || command.Action == "filter_clear" {
 		command.Filters = applyFilterMenuCommand(command.Filters, uisignals.ValueOrZero(command.FilterMenu))
+		command.Filters, err = bindQueryHistoryFilters(command.Filters, projectID)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
+		}
 		command.PageToken = nil
 	}
-	events, nextCursor, hasMore, err := queryHistoryPage(r, repo, command.Filters, uisignals.ValueOrZero(command.PageToken), int(uisignals.ValueOrZero(command.Limit)))
+	events, nextCursor, hasMore, err := queryHistoryPage(r, repo, projectID, command.Filters, uisignals.ValueOrZero(command.PageToken), int(uisignals.ValueOrZero(command.Limit)))
 	history := signals.AdminQueryHistory
 	incomingCount := len(history.Table.Rows)
 	if command.Action == "load_more" {
@@ -124,7 +143,7 @@ func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
 		history.Table = ui.AdminQueryHistorySignalFromData(ui.AdminQueryHistoryData{Events: events}).Table
 		incomingCount = 0
 	}
-	history.FilterMenus = uisignals.OptionalSlice(h.readModel().queryHistoryFilterMenus(r, repo, command.Filters, "", ""))
+	history.FilterMenus = uisignals.OptionalSlice(readModel.queryHistoryFilterMenus(r, repo, projectID, command.Filters, "", ""))
 	history.Filters = command.Filters
 	history.NextCursor = nextCursor
 	history.HasMore = hasMore
@@ -192,6 +211,20 @@ func normalizeQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters) ui
 		From:       uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(filters.From))),
 		To:         uisignals.Optional(strings.TrimSpace(uisignals.ValueOrZero(filters.To))),
 	}
+}
+
+func bindQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters, projectID projectgraph.ResourceID) (uisignals.AdminQueryHistoryFilters, error) {
+	filters = normalizeQueryHistoryFilters(filters)
+	if err := projectID.Validate(); err != nil {
+		return filters, errQueryHistoryProjectScope
+	}
+	for _, requested := range uisignals.ValueOrZero(filters.Projects) {
+		if requested != projectID.String() {
+			return filters, errQueryHistoryProjectScope
+		}
+	}
+	filters.Projects = uisignals.OptionalSlice([]string{projectID.String()})
+	return filters, nil
 }
 
 func normalizeFilterMenuCommand(command uisignals.FilterMenuCommand) uisignals.FilterMenuCommand {
@@ -274,7 +307,7 @@ func queryHistoryLoadedCountLabel(count int) string {
 	return strconv.Itoa(count) + " queries loaded"
 }
 
-func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Reader, filters uisignals.AdminQueryHistoryFilters, searchMenuID, search string) []uisignals.FilterMenuSignal {
+func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Reader, projectID projectgraph.ResourceID, filters uisignals.AdminQueryHistoryFilters, searchMenuID, search string) []uisignals.FilterMenuSignal {
 	menus := []struct {
 		id          string
 		label       string
@@ -298,7 +331,7 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		if menu.id == searchMenuID {
 			menuSearch = strings.TrimSpace(search)
 		}
-		options, err := repo.ListQueryEventFilterOptions(r.Context(), menu.id, menuSearch, 100)
+		options, err := repo.ListQueryEventFilterOptions(r.Context(), projectID, menu.id, menuSearch, 100)
 		if err != nil {
 			return queryHistoryFilterMenusWithError(filters, err.Error())
 		}
@@ -432,10 +465,10 @@ func queryHistoryStreamID(clientID string) string {
 	return "admin-queries:" + clientID
 }
 
-func queryHistoryPage(r *http.Request, repo queryaudit.Reader, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ([]ui.AdminQueryEvent, string, bool, error) {
+func queryHistoryPage(r *http.Request, repo queryaudit.Reader, projectID projectgraph.ResourceID, filters uisignals.AdminQueryHistoryFilters, pageToken string, limit int) ([]ui.AdminQueryEvent, string, bool, error) {
 	limit = normalizeQueryHistoryLimit(limit)
 	rows, err := repo.ListQueryEvents(r.Context(), queryaudit.Filter{
-		ProjectIDs:   projectIDs(uisignals.ValueOrZero(filters.Projects)),
+		ProjectID:    projectID,
 		PrincipalIDs: cleanStringSlice(uisignals.ValueOrZero(filters.Principals)),
 		Surfaces:     cleanStringSlice(uisignals.ValueOrZero(filters.Surfaces)),
 		QueryKinds:   cleanStringSlice(uisignals.ValueOrZero(filters.Kinds)),
@@ -462,18 +495,6 @@ func queryHistoryPage(r *http.Request, repo queryaudit.Reader, filters uisignals
 		out = append(out, queryEventFromAudit(row))
 	}
 	return out, nextCursor, hasMore, nil
-}
-
-func projectIDs(values []string) []projectgraph.ResourceID {
-	cleaned := cleanStringSlice(values)
-	if len(cleaned) == 0 {
-		return nil
-	}
-	out := make([]projectgraph.ResourceID, 0, len(cleaned))
-	for _, value := range cleaned {
-		out = append(out, projectgraph.ResourceID(value))
-	}
-	return out
 }
 
 func queryEventFromAudit(row queryaudit.Event) ui.AdminQueryEvent {

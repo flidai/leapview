@@ -160,6 +160,10 @@ func storedFromGet(row auditdb.GetQueryEventRow) (storedEvent, error) {
 	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
 }
 
+func storedFromProjectGet(row auditdb.GetQueryEventForProjectRow) (storedEvent, error) {
+	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
+}
+
 func storedFromFind(row auditdb.FindQueryEventByIdentityRow) (storedEvent, error) {
 	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
 }
@@ -226,18 +230,25 @@ func (r *Repository) RecordQueryEvent(ctx context.Context, input queryaudit.Even
 	return nil
 }
 
-func (r *Repository) GetQueryEvent(ctx context.Context, id string) (queryaudit.Event, error) {
+func (r *Repository) GetQueryEvent(ctx context.Context, projectID projectgraph.ResourceID, id string) (queryaudit.Event, error) {
 	if r == nil || r.db == nil {
 		return queryaudit.Event{}, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
+	}
+	if err := projectID.Validate(); err != nil {
+		return queryaudit.Event{}, fmt.Errorf("%w: query event project id: %v", ErrInvalid, err)
 	}
 	eventID, err := parseUUID(id)
 	if err != nil {
 		return queryaudit.Event{}, err
 	}
-	stored, err := r.getStored(ctx, eventID)
+	row, err := auditdb.New(r.db).GetQueryEventForProject(ctx, auditdb.GetQueryEventForProjectParams{EventID: pgtype.UUID{Bytes: eventID, Valid: true}, ProjectID: projectID.String()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return queryaudit.Event{}, ErrNotFound
 	}
+	if err != nil {
+		return queryaudit.Event{}, err
+	}
+	stored, err := storedFromProjectGet(row)
 	if err != nil {
 		return queryaudit.Event{}, err
 	}
@@ -339,9 +350,12 @@ func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filt
 	return events, nil
 }
 
-func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, search string, limit int) ([]queryaudit.FilterOption, error) {
+func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, projectID projectgraph.ResourceID, field, search string, limit int) ([]queryaudit.FilterOption, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
+	}
+	if err := projectID.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: query event project id: %v", ErrInvalid, err)
 	}
 	field = strings.TrimSpace(field)
 	if _, ok := filterColumn(field); !ok {
@@ -364,7 +378,7 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 	}
 	switch field {
 	case "project":
-		rows, err := auditdb.New(r.db).ListQueryEventFilterOptions(ctx, auditdb.ListQueryEventFilterOptionsParams{Search: search, PageSize: pageSize})
+		rows, err := auditdb.New(r.db).ListQueryEventFilterOptions(ctx, auditdb.ListQueryEventFilterOptionsParams{ProjectID: projectID.String(), Search: search, PageSize: pageSize})
 		if err != nil {
 			return nil, err
 		}
@@ -372,7 +386,7 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 			appendOption(row.Value, row.Count)
 		}
 	case "principal":
-		rows, err := auditdb.New(r.db).ListPrincipalFilterOptions(ctx, auditdb.ListPrincipalFilterOptionsParams{Search: search, PageSize: pageSize})
+		rows, err := auditdb.New(r.db).ListPrincipalFilterOptions(ctx, auditdb.ListPrincipalFilterOptionsParams{ProjectID: projectID.String(), Search: search, PageSize: pageSize})
 		if err != nil {
 			return nil, err
 		}
@@ -380,7 +394,7 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 			appendOption(row.Value, row.Count)
 		}
 	case "surface":
-		rows, err := auditdb.New(r.db).ListSurfaceFilterOptions(ctx, auditdb.ListSurfaceFilterOptionsParams{Search: search, PageSize: pageSize})
+		rows, err := auditdb.New(r.db).ListSurfaceFilterOptions(ctx, auditdb.ListSurfaceFilterOptionsParams{ProjectID: projectID.String(), Search: search, PageSize: pageSize})
 		if err != nil {
 			return nil, err
 		}
@@ -388,7 +402,7 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 			appendOption(row.Value, row.Count)
 		}
 	case "kind":
-		rows, err := auditdb.New(r.db).ListKindFilterOptions(ctx, auditdb.ListKindFilterOptionsParams{Search: search, PageSize: pageSize})
+		rows, err := auditdb.New(r.db).ListKindFilterOptions(ctx, auditdb.ListKindFilterOptionsParams{ProjectID: projectID.String(), Search: search, PageSize: pageSize})
 		if err != nil {
 			return nil, err
 		}
@@ -396,7 +410,7 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 			appendOption(row.Value, row.Count)
 		}
 	case "status":
-		rows, err := auditdb.New(r.db).ListStatusFilterOptions(ctx, auditdb.ListStatusFilterOptionsParams{Search: search, PageSize: pageSize})
+		rows, err := auditdb.New(r.db).ListStatusFilterOptions(ctx, auditdb.ListStatusFilterOptionsParams{ProjectID: projectID.String(), Search: search, PageSize: pageSize})
 		if err != nil {
 			return nil, err
 		}
