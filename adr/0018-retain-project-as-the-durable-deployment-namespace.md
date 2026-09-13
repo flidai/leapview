@@ -6,6 +6,10 @@ Decision date: 2026-09-02
 
 Implementation: pending
 
+Implementation evidence:
+[Project namespace conformance](specifications/project-namespace-conformance.md),
+[final conformance evidence reconciliation](specifications/project-namespace-final-conformance-evidence.md)
+
 Amended by: [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md),
 dbt mapping and external-source examples only
 

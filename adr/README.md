@@ -60,6 +60,7 @@ historical records.
 - [OpenLineage projection conformance](specifications/openlineage-conformance.md)
 - [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md)
 - [Project namespace conformance](specifications/project-namespace-conformance.md)
+- [ADR-0018 final conformance evidence reconciliation](specifications/project-namespace-final-conformance-evidence.md)
 - [Analytics development CLI contract](specifications/analytics-development-cli-contract.md)
 
 ## Conventions
