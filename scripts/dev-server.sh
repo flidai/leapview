@@ -609,6 +609,9 @@ start() {
   export PORT="$port"
   export LEAPVIEW_ADDR="127.0.0.1:$port"
   export LEAPVIEW_DEV_WORKTREE="$ROOT"
+  # `task dev` is the source-contributor workflow. Released local authoring
+  # runs the same development policy with this diagnostic surface disabled.
+  export LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS=true
   export LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES="${LEAPVIEW_MANAGED_DATA_MIN_FREE_BYTES:-67108864}"
   if [[ -z "${LEAPVIEW_AGENT_API_KEY:-}" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
     export LEAPVIEW_AGENT_API_KEY="$DEEPSEEK_API_KEY"

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.flid.ai/schemas/local-runtime-package-v1.json",
+  "title": "LeapView local runtime package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "persistentStateSchemaVersion",
+    "composeMinimumVersion",
+    "leapview",
+    "postgres"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "persistentStateSchemaVersion": {
+      "const": 1
+    },
+    "composeMinimumVersion": {
+      "const": "2.17.0"
+    },
+    "leapview": {
+      "$ref": "#/$defs/leapview"
+    },
+    "postgres": {
+      "$ref": "#/$defs/postgres"
+    }
+  },
+  "$defs": {
+    "leapview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "revision", "image"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["major", "image"],
+      "properties": {
+        "major": {
+          "const": 18
+        },
+        "image": {
+          "const": "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+        }
+      }
+    }
+  }
+}
