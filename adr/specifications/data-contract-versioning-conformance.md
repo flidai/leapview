@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.contract/v1`
 
-Last updated: 2026-09-01
+Last updated: 2026-09-13
 
 Owners: LeapView maintainers
 
@@ -196,17 +196,24 @@ profile identifier is part of canonical bytes and conformance evidence.
 
 | Requirement range | Evidence | Status |
 |---|---|---|
-| RID-01–RID-10 | Identity registry, collision, tombstone, restore, rollback, and reference tests | Pending |
-| CAN-01–CAN-07 | TypeSpec classification and generated projection checks | Pending |
-| SRC-01–SRC-02 | Source canonical golden fixtures | Pending |
-| MOD-01–MOD-03 | Model AST and quality-contract golden fixtures | Pending |
-| SEM-01–SEM-03 | Semantic and access-contract golden fixtures | Pending |
-| SER-01–SER-10 | Cross-language RFC 8785 and typed-normalization corpus | Pending |
-| VER-01–VER-06 | `internal/project/contractversion`, `internal/project/contractpublication`, and `project.contract_publication` classification, immutable append/replay, direct affected-resource identity, profile, digest, and evidence tests | Implemented by FAI-622; dependency-graph expansion and activation remain governed separately |
+| RID-01–RID-10 | Resource identity, tombstone, restore, and recovery evidence is maintained by ADR-0018 and is excluded from FAI-632. This row remains as historical context only and does not transfer that ownership back to ADR-0016. | Not assessed by FAI-632 |
+| CAN-01–CAN-07 | FAI-619/620/662; PRs [#472](https://github.com/flidai/leapview/pull/472), [#516](https://github.com/flidai/leapview/pull/516), and [#534](https://github.com/flidai/leapview/pull/534). `TestAuthoredContractMetadataIsAuthoritative`, `TestSealedProjectionIntegrity`, `TestExclusionManifestIsCompleteAndQueryAble`, `TestExclusionManifestRejectsTampering`, and generated TypeSpec/schema checks prove the sealed, classified projection boundary. | Implemented |
+| SRC-01–SRC-02 | FAI-620, PR [#534](https://github.com/flidai/leapview/pull/534). `TestCurrentCrossLanguageFixtureMatchesSourceProjection`, `TestGovernanceFieldsAreProjectedAndAnnotationsExcluded`, `TestModelCheckDefaultsAndSetOrder`, and exclusion-manifest coverage prove included schema/governance/default fields and excluded physical/secret/runtime fields. | Implemented |
+| MOD-01–MOD-03 | FAI-620, PR [#534](https://github.com/flidai/leapview/pull/534). `TestModelCheckDefaultsAndSetOrder`, `TestSQLProjectionUsesStableIDsAcrossDependencyRenames`, `TestDecodeModelPublicationValidatesClosedSQLProjection`, and `TestContractSQLProjectionPreservesMeaningAndIgnoresFormatting` cover stable checks, analyzed SQL identity, dependencies, and operational exclusions. | Implemented |
+| SEM-01–SEM-03 | FAI-619/620 plus the qualified ADR-0017 profile; PRs [#472](https://github.com/flidai/leapview/pull/472), [#516](https://github.com/flidai/leapview/pull/516), [#534](https://github.com/flidai/leapview/pull/534), and [#575](https://github.com/flidai/leapview/pull/575). `TestDatasetLocalMembersReachCanonicalSemanticProjection`, `TestSemanticProtectionProjectionIdentity`, `TestSemanticProjectionRejectsUnusableAuthority`, and semantic activation evidence tests cover stable member IDs, result-affecting semantics, access identity, and control-value exclusion. | Implemented for the qualified semantic-access profile |
+| SER-01–SER-10 | FAI-620/662, PR [#534](https://github.com/flidai/leapview/pull/534). `TestCurrentCrossLanguageFixtureMatchesSourceProjection`, `TestRFC8785NumberCorpus`, `TestCanonicalSemanticLiteralTypes`, canonical URL tests, sealed projection tests, and `scripts/contract_projection_fixture.test.ts` prove the single RFC 8785 authority, typed normalization, deterministic SHA-256 identity, and independent fixture parity. | Implemented |
+| VER-01–VER-06 | FAI-622/662 and the ADR-0017 activation binding; PRs [#548](https://github.com/flidai/leapview/pull/548) and [#575](https://github.com/flidai/leapview/pull/575). `internal/project/contractversion`, `internal/project/contractpublication`, `project.contract_publication`, PostgreSQL 18 conformance, replay/conflict/concurrency tests, and semantic activation evidence tests cover classification, immutable append/replay, exact direct-resource seed, profile/digest binding, approval, and transaction-bound revalidation. | Implemented for immutable publication and the qualified protected SemanticModel activation profile; policy evidence intentionally exposes a direct graph-owned seed rather than claiming a transitive consumer graph |
 | ODX-01–ODX-07 | FAI-623 added the isolated [ODCS 3.1 export adapter](../../internal/project/contractodcs), pinned upstream schema and checksum, explicit mapping manifest, generated mapping/loss reports, sealed provenance extension, security exclusions, and a CI-only independent CLI oracle. The maintained [ODCS export conformance specification](odcs-export-conformance.md) records the exact document/export claim and known loss boundaries. | Implemented by FAI-623; export/document level only |
 
 FAI-623 adds ODCS 3.1 Source/Model export only. ODCS import/round-trip, ODPS,
 DCAT, and runtime transports remain capability-gated.
+
+The generated [ADR-0016 standards conformance matrix](standards-conformance-matrix.md)
+is derived from the reviewed machine-readable
+[`standards-conformance-profiles.json`](standards-conformance-profiles.json)
+registry. Its generator verifies registered adapter/specification paths and
+computes schema digests from the exact vendored bytes. Deferred entries cannot
+claim an adapter, conformance level, or validation command.
 
 ## Maintained verification
 
