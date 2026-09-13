@@ -213,6 +213,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     super.connectedCallback()
     this.restoreCollapsedPanes()
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.addEventListener('datastar-signal-patch', this.handleVisualSignalPatch)
     document.addEventListener('leapview-theme-applied', this.handleThemeApplied)
     document.addEventListener('pointerdown', this.handleToolbarPointerDown)
     this.addEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
@@ -226,6 +227,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   override disconnectedCallback(): void {
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.removeEventListener('datastar-signal-patch', this.handleVisualSignalPatch)
     document.removeEventListener('leapview-theme-applied', this.handleThemeApplied)
     document.removeEventListener('pointerdown', this.handleToolbarPointerDown)
     this.removeEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
@@ -3157,6 +3159,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const mode: BuilderResolvedTheme = this.resolvedTheme === 'dark' ? 'light' : 'dark'
     this.resolvedTheme = mode
     document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } }))
+  }
+
+  private readonly handleVisualSignalPatch = (event: Event): void => {
+    const patch = (event as CustomEvent<Record<string, unknown>>).detail
+    if (!patch || !Object.hasOwn(patch, 'builderVisuals')) return
+    // Consume each completed signal patch before Lit can coalesce responses.
+    // Otherwise a late window can hide a newer sort (or another row block)
+    // in the shared transport slot before the next render sees it.
+    void this.builderVisuals
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {

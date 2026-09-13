@@ -456,3 +456,60 @@ test('filter settings stay with their selected card and fit a narrow pane', asyn
     expect(nextBox!.y).toBeGreaterThanOrEqual(editorBox!.y + editorBox!.height - 1)
   } finally { await page.close() }
 })
+
+
+test('coalesced table windows retain the newer sort and rendered rows', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any, source) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const schema = source.spec.datasets[0]
+      const spec = {
+        kind: 'table', title: 'Orders', datasets: [schema],
+        accessibility: source.spec.accessibility, dataBudget: source.spec.dataBudget, interactions: [],
+        columns: [{ field: { dataset: 'primary', field: 'category' }, label: 'Status', width: 160, formatting: [] }],
+        presentation: { rowHeight: 32, showHeader: true, striped: false },
+      }
+      element.testTableWindow = (resetVersion: number, requestSeq: number, direction: string) => {
+        const sort = [{ field: { dataset: 'primary', field: 'category' }, direction }]
+        const rows = direction === 'ascending' ? [['A', 1], ['B', 2], ['C', 3]] : [['C', 3], ['B', 2], ['A', 1]]
+        const data = {
+          kind: 'windowed', specRevision: source.specRevision, dataRevision: source.dataRevision, generation: 1,
+          schema, cardinality: { kind: 'exact', count: 3 }, availableRows: 3, rowCap: 100, chunkSize: 3,
+          resetVersion, sort, blocks: { a: { id: 'a', start: 0, rows, requestSeq, resetVersion, sort } },
+        }
+        return { ...source, rendererID: 'tanstack', spec,
+          dataState: { ...source.dataState, kind: 'windowed', payload: JSON.stringify(data) } }
+      }
+      const builder = element.builder
+      mergePatch({ builder: { preview: { active: true }, pages: [{ ...builder.pages[0], visuals: [{
+        ...builder.pages[0].visuals[0], type: 'table', slots: [{ id: 'detail', label: 'Status', kind: 'detail', fieldId: 'orders.status', required: true }],
+      }] }, builder.pages[1]] }, builderVisuals: { 'sales-chart': element.testTableWindow(1, 0, 'descending') } })
+      await element.updateComplete
+    }, governedBarPreviewEnvelope('sha256:sort-race'))
+    await page.locator('lv-report-table').waitFor()
+    const initial = await page.locator('lv-report-table').evaluate((table: any) => table.table.sort.direction)
+    expect(initial).toBe('desc')
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const key = 'window:generation-7:overview:0:sales-chart'
+      // Both responses arrive before Lit can render the newer sort.
+      mergePatch({ builderVisuals: { [key]: element.testTableWindow(2, 3, 'ascending') } })
+      mergePatch({ builderVisuals: { [key]: element.testTableWindow(1, 2, 'descending') } })
+      await element.updateComplete
+    })
+    await page.waitForFunction(() => {
+      const builder = document.querySelector('lv-dashboard-builder') as any
+      const host = builder.shadowRoot.querySelector('lv-visualization-host') as any
+      return host?.shadowRoot.querySelector('lv-report-table')?.table.resetVersion === 2
+    }, undefined, { timeout: 2000 })
+    const result = await page.locator('lv-report-table').evaluate(async (table: any) => {
+      await table.updateComplete
+      return { reset: table.table.resetVersion, sort: table.table.sort.direction,
+        rows: table.visibleRows.filter((slot: any) => slot.kind === 'row').map((slot: any) => slot.row.category) }
+    })
+    expect(result).toEqual({ reset: 2, sort: 'asc', rows: ['A', 'B', 'C'] })
+  } finally { await page.close() }
+})
