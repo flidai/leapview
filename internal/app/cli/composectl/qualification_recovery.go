@@ -1024,9 +1024,14 @@ func (c *Controller) startQualificationClientCommandWithEnv(
 		environment,
 		arguments...,
 	)
+	dockerArguments = c.dockerArguments(dockerArguments...)
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		_ = output.Close()
+		return nil, err
+	}
 	command := exec.CommandContext(ctx, c.dockerBin, dockerArguments...)
 	command.Dir = c.root
-	command.Env = os.Environ()
+	command.Env = c.dockerEnvironment(os.Environ())
 	command.Stdout = output
 	command.Stderr = output
 	if err := command.Start(); err != nil {

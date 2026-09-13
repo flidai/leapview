@@ -44,6 +44,7 @@ type Options struct {
 	Now                     func() time.Time
 	Sleep                   func(context.Context, time.Duration) error
 	DockerPlatform          string
+	DockerEndpoint          PinnedDockerEndpoint
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 }
@@ -57,6 +58,7 @@ type Controller struct {
 	now                     func() time.Time
 	sleep                   func(context.Context, time.Duration) error
 	dockerPlatform          string
+	dockerEndpoint          PinnedDockerEndpoint
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 	startOverride           func(context.Context) error
@@ -112,13 +114,17 @@ func New(options Options) (*Controller, error) {
 		executor = osQualificationCommandExecutor{}
 	}
 	containers := options.qualificationContainers
+	if options.DockerEndpoint != nil && strings.TrimSpace(options.DockerEndpoint.Host()) == "" {
+		return nil, fmt.Errorf("pinned Docker endpoint host is required")
+	}
 	if containers == nil {
-		containers = newDockerCLIQualificationRuntime(root, dockerBin, executor)
+		containers = newDockerCLIQualificationRuntime(root, dockerBin, executor, options.DockerEndpoint)
 	}
 	return &Controller{
 		root: root, dockerBin: dockerBin, stdin: stdin, stdout: stdout,
 		stderr: stderr, now: now, sleep: sleep,
 		dockerPlatform:          strings.TrimSpace(options.DockerPlatform),
+		dockerEndpoint:          options.DockerEndpoint,
 		qualificationExecutor:   executor,
 		qualificationContainers: containers,
 	}, nil
@@ -152,6 +158,7 @@ func (c *Controller) scoped(root string, stdout io.Writer) (*Controller, error) 
 			absoluteRoot,
 			c.dockerBin,
 			c.qualificationExecutor,
+			c.dockerEndpoint,
 		)
 	}
 	return &Controller{
@@ -163,6 +170,7 @@ func (c *Controller) scoped(root string, stdout io.Writer) (*Controller, error) 
 		now:                     c.now,
 		sleep:                   c.sleep,
 		dockerPlatform:          c.dockerPlatform,
+		dockerEndpoint:          c.dockerEndpoint,
 		qualificationExecutor:   c.qualificationExecutor,
 		qualificationContainers: containers,
 		startOverride:           c.startOverride,
@@ -515,9 +523,13 @@ func (c *Controller) docker(ctx context.Context, stdin io.Reader, stdout, stderr
 }
 
 func (c *Controller) dockerWithEnvironment(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, environment []string, args ...string) error {
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		return err
+	}
+	args = c.dockerArguments(args...)
 	command := exec.CommandContext(ctx, c.dockerBin, args...)
 	command.Dir = c.root
-	command.Env = environment
+	command.Env = c.dockerEnvironment(environment)
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
