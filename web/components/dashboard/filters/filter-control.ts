@@ -18,6 +18,9 @@ import {
 import { lucideIcon } from '../../shared/lucide-icons'
 import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 import { formatDisplayDate } from './date-picker'
+import { timestampDateBound } from './timestamp-date-range'
+import { rangeDraftFromExpression, rangeValidationMessage, type RangeDraft } from './filter-range'
+import { filterControlStyles } from './filter-control-styles'
 import type { DatePickerInputDetail, DashboardDatePicker } from './date-picker'
 
 export type FilterMutationDetail = {
@@ -32,15 +35,11 @@ export type FilterOptionsNeededDetail = {
   limit: number
 }
 
-type RangeDraft = {
-  lower: string
-  upper: string
-  baseExpression: string
-  dirty: boolean
-}
+
 
 const unfiltered: DashboardFilterExpression = { kind: 'unfiltered' }
 const NULL_OPTION_KEY = '__lv_null_option__'
+const maxRelativePeriodCount = 1000
 
 export class DashboardFilterLeaf extends LitElement {
   @property({ attribute: false }) definition?: DashboardCompiledFilterDefinition
@@ -60,6 +59,16 @@ export class DashboardFilterLeaf extends LitElement {
   private hasRequestedOptions = false
   private optionDirty = true
   private requestedOptionContext = ''
+  private requestedOptionCursor = ''
+  private acceptedOptionRequestGeneration = 0
+  private acceptedOptionServingStateID = ''
+  private acceptedOptionQueryKey = ''
+  private loadedOptionPage?: {
+    queryKey: string
+    items: DashboardFilterOptionItem[]
+    complete: boolean
+    nextCursor?: string
+  }
   private resizeObserver?: ResizeObserver
   @state() private optionLoading = false
   @state() private rangeDraft?: RangeDraft
@@ -69,182 +78,7 @@ export class DashboardFilterLeaf extends LitElement {
   private dropdownSearchTimer = 0
   private dropdownOpenOnPointerDown = false
 
-  static styles = css`
-    :host { display: block; min-width: 0; font: inherit; }
-    fieldset { display: grid; min-width: 0; gap: var(--base-size-6); border: 0; margin: 0; padding: 0; }
-    fieldset.list.bounded {
-      height: 100%;
-      min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr) auto;
-      box-sizing: border-box;
-    }
-    legend.visually-hidden {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
-      clip-path: inset(50%);
-      white-space: nowrap;
-    }
-    .field-heading {
-      display: flex;
-      min-width: 0;
-      align-items: baseline;
-      justify-content: space-between;
-      gap: var(--base-size-6);
-      font: var(--lv-type-caption);
-    }
-    .field-heading[data-title='false'] { justify-content: flex-end; }
-    .field-title {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-weight: var(--base-text-weight-medium);
-    }
-    .filter-clear {
-      flex: 0 0 auto;
-      border: 0;
-      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
-      background: transparent;
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      padding: 0 var(--base-size-6);
-      font: var(--lv-type-caption);
-    }
-    .filter-clear[data-active='false'] { visibility: hidden; }
-    .filter-clear:hover:not(:disabled) { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
-    .filter-clear:disabled { cursor: default; opacity: .45; }
-    input, select, button {
-      min-height: var(--control-medium-size);
-      font: var(--lv-type-body-compact);
-    }
-    input, select {
-      width: 100%; min-width: 0; border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
-      color: inherit; padding-inline: var(--base-size-8); box-sizing: border-box;
-    }
-    .dropdown-trigger {
-      display: flex;
-      width: 100%;
-      min-width: 0;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--base-size-8);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      color: inherit;
-      cursor: pointer;
-      padding: 0 var(--base-size-8);
-      text-align: left;
-    }
-    .dropdown-trigger:hover { background: var(--lv-bg-control-hover); }
-    .dropdown-trigger svg { width: var(--base-size-16); height: var(--base-size-16); flex: 0 0 auto; transition: transform var(--lv-duration-fast); }
-    .dropdown-trigger[aria-expanded='true'] svg { transform: rotate(180deg); }
-    .dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dropdown-popover {
-      position: fixed;
-      inset: auto;
-      top: 0;
-      left: 0;
-      display: none;
-      width: 240px;
-      max-width: calc(100vw - var(--base-size-16));
-      max-height: 320px;
-      box-sizing: border-box;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: var(--base-size-6);
-      overflow: hidden;
-      margin: 0;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-overlay, var(--lv-bg-panel));
-      color: var(--lv-fg-default);
-      box-shadow: var(--shadow-floating-small);
-      padding: var(--base-size-8);
-    }
-    .dropdown-popover:popover-open { display: grid; }
-    .dropdown-toolbar {
-      display: grid;
-      min-width: 0;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--base-size-6);
-    }
-    .dropdown-search { position: relative; display: flex; align-items: center; }
-    .dropdown-search svg { position: absolute; left: var(--base-size-8); width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); pointer-events: none; }
-    .dropdown-search input { padding-left: calc(var(--base-size-16) + var(--base-size-12)); }
-    .dropdown-clear {
-      grid-column: 2;
-      justify-self: end;
-      border: 0;
-      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
-      background: transparent;
-      color: var(--lv-fg-muted);
-      cursor: pointer;
-      padding: 0 var(--base-size-8);
-    }
-    .dropdown-clear:hover:not(:disabled) { background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
-    .dropdown-clear:disabled { cursor: default; opacity: .45; }
-    .dropdown-options { min-height: 0; overflow: auto; }
-    .dropdown-option {
-      display: grid;
-      min-height: var(--control-medium-size);
-      grid-template-columns: auto minmax(0, 1fr) auto;
-      align-items: center;
-      gap: var(--base-size-8);
-      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
-      cursor: pointer;
-      padding: 0 var(--base-size-8);
-      font: var(--lv-type-body-compact);
-    }
-    .dropdown-option:hover { background: var(--lv-bg-control-hover); }
-    .dropdown-option input { width: auto; min-height: 0; margin: 0; }
-    .dropdown-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dropdown-option-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    .dropdown-empty { margin: 0; color: var(--lv-fg-muted); padding: var(--base-size-8); font: var(--lv-type-caption); }
-    .options { display: grid; max-height: 220px; gap: 2px; overflow: auto; }
-    fieldset.list.bounded .options { min-height: 0; max-height: 100%; }
-    .option { display: flex; align-items: center; gap: 8px; border-radius: 4px; padding: 4px; }
-    .option[data-unavailable='true'] { color: var(--lv-fg-muted); }
-    .option input { width: auto; min-height: 0; }
-    .buttons { display: flex; flex-wrap: wrap; gap: 4px; }
-    .buttons button[aria-pressed='true'] { background: var(--bgColor-accent-muted); }
-    .range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-    :host([data-layout-variant='stacked']) .range { grid-template-columns: minmax(0, 1fr); }
-    .range label { display: grid; min-width: 0; gap: var(--base-size-4); }
-    .range-error {
-      grid-column: 1 / -1;
-      margin: 0;
-      color: var(--lv-fg-danger, var(--fgColor-danger));
-      font: var(--lv-type-caption);
-    }
-    .field-label {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-    .input-control { display: grid; gap: var(--base-size-4); }
-    .operator {
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-    .relative { display: grid; grid-template-columns: 1fr 72px 1fr; gap: 6px; }
-    :host([data-layout-variant='stacked']) .relative { grid-template-columns: minmax(0, 1fr); }
-    .status,
-    .selection-summary {
-      min-width: 0;
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .status { flex: 0 1 auto; }
-    :host([pending]) fieldset { opacity: .78; }
-    button:focus-visible, input:focus-visible, select:focus-visible { outline: var(--lv-border-width-focus) solid var(--lv-accent); outline-offset: var(--base-size-2); }
-  `
+  static styles = filterControlStyles
 
   protected firstUpdated() {
     this.requestInitialOptions()
@@ -265,18 +99,61 @@ export class DashboardFilterLeaf extends LitElement {
   protected updated(changed: Map<PropertyKey, unknown>) {
     if (changed.has('options')) {
       if (this.options) {
-        this.optionLoading = false
-        this.optionDirty = false
-        this.requestedOptionContext = ''
+        if (
+          this.acceptedOptionServingStateID
+          && this.options.servingStateID !== this.acceptedOptionServingStateID
+        ) {
+          this.acceptedOptionRequestGeneration = 0
+          this.loadedOptionPage = undefined
+          this.acceptedOptionQueryKey = ''
+        }
+        const queryKey = this.optionQueryKey(this.dropdownSearch)
+        const sameAcceptedPage = this.options.requestGeneration > 0
+          && this.options.requestGeneration === this.acceptedOptionRequestGeneration
+          && this.options.servingStateID === this.acceptedOptionServingStateID
+          && queryKey === this.acceptedOptionQueryKey
+        const staleOptionPage =
+          this.options.requestGeneration > 0
+          && this.acceptedOptionRequestGeneration > 0
+          && this.options.requestGeneration < this.acceptedOptionRequestGeneration
+        if (!sameAcceptedPage && !staleOptionPage) {
+          const append = Boolean(this.requestedOptionCursor)
+            && this.loadedOptionPage?.queryKey === queryKey
+          const items = append
+            ? mergeOptionItems(this.loadedOptionPage?.items ?? [], this.options.items)
+            : [...this.options.items]
+          this.loadedOptionPage = {
+            queryKey,
+            items,
+            complete: this.options.complete,
+            ...(this.options.nextCursor ? { nextCursor: this.options.nextCursor } : {}),
+          }
+          this.acceptedOptionRequestGeneration = Math.max(
+            this.acceptedOptionRequestGeneration,
+            this.options.requestGeneration,
+          )
+          this.acceptedOptionServingStateID = this.options.servingStateID
+          this.acceptedOptionQueryKey = queryKey
+          this.optionLoading = false
+          this.optionDirty = false
+          this.requestedOptionContext = ''
+          this.requestedOptionCursor = ''
+        }
       } else if (changed.get('options') !== undefined) {
-        this.optionLoading = false
-        this.optionDirty = true
-        if (this.hasRequestedOptions && this.visibleOptionsControl()) this.requestOptions()
+        // A parent render can hide the prior page while a newer request is
+        // pending. Keep that continuation unless its filter context changed.
+        const continuing = this.optionLoading && this.requestedOptionCursor
+          && this.requestedOptionContext === `${this.optionQueryKey(this.dropdownSearch)}\u0000${this.requestedOptionCursor}`
+        if (!continuing) {
+          this.optionLoading = false
+          this.optionDirty = true
+          if (this.hasRequestedOptions && (this.visibleOptionsControl() || this.dropdownFocused())) this.requestOptions()
+        }
       }
     }
     if (changed.has('optionContext') && changed.get('optionContext') !== undefined) {
       this.optionDirty = true
-      if (this.visibleOptionsControl()) this.requestOptions()
+      if (this.visibleOptionsControl() || this.dropdownFocused()) this.requestOptions()
     }
     if (
       (changed.has('optionRequestReady') && changed.get('optionRequestReady') === false && this.optionRequestReady)
@@ -365,21 +242,24 @@ export class DashboardFilterLeaf extends LitElement {
     if (advanced) return this.renderSearchableDropdown(selected)
     const selectedKey = selected.values().next().value ?? ''
     return html`
-      <select
-        aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Filter'}
-        .value=${selectedKey}
-        @focus=${this.requestOptions}
-        @change=${this.onDropdown}
-      >
-        <option value="">All</option>
-        ${this.optionItems().map((option) => html`
-          <option
-            value=${filterOptionKey(option)}
-            ?selected=${selected.has(filterOptionKey(option))}
-            ?disabled=${!option.available && !option.selected}
-          >${option.label}${option.count === undefined ? '' : ` (${option.count})`}</option>
-        `)}
-      </select>
+      <div class="simple-dropdown">
+        <select
+          aria-label=${this.presentation?.ariaLabel || this.definition?.label || 'Filter'}
+          .value=${selectedKey}
+          @focus=${this.requestOptions}
+          @change=${this.onDropdown}
+        >
+          <option value="">All</option>
+          ${this.optionItems().map((option) => html`
+            <option
+              value=${filterOptionKey(option)}
+              ?selected=${selected.has(filterOptionKey(option))}
+              ?disabled=${!option.available && !option.selected}
+            >${option.label}${option.count === undefined ? '' : ` (${option.count})`}</option>
+          `)}
+        </select>
+        ${this.renderLoadMoreOptions()}
+      </div>
     `
   }
 
@@ -403,12 +283,13 @@ export class DashboardFilterLeaf extends LitElement {
       </button>
       <div
         class="dropdown-popover"
+        data-toolbar=${String(Boolean(this.presentation?.search || selected.size > 0))}
         popover="auto"
         role="dialog"
         aria-label=${`${label} filter options`}
         @toggle=${this.onDropdownToggle}
       >
-        <div class="dropdown-toolbar">
+        ${this.presentation?.search || selected.size > 0 ? html`<div class="dropdown-toolbar">
           ${this.presentation?.search ? html`
             <label class="dropdown-search">
               ${lucideIcon(Search)}
@@ -428,7 +309,7 @@ export class DashboardFilterLeaf extends LitElement {
             ?disabled=${selected.size === 0}
             @click=${this.clearDropdownSelection}
           >Clear filter</button>
-        </div>
+        </div>` : nothing}
         <div class="dropdown-options" role="group" aria-label=${`${label} options`}>
           ${items.map((option) => html`
             <label class="dropdown-option" data-unavailable=${String(!option.available)}>
@@ -445,6 +326,7 @@ export class DashboardFilterLeaf extends LitElement {
             </label>
           `)}
           ${items.length === 0 ? html`<p class="dropdown-empty">${this.optionLoading ? 'Loading values...' : 'No values found'}</p>` : nothing}
+          ${this.renderLoadMoreOptions()}
         </div>
       </div>
     `
@@ -474,7 +356,9 @@ export class DashboardFilterLeaf extends LitElement {
       this.dropdownOpen = false
       return
     }
-    this.dropdownOpen = toggleAnchoredPopover(trigger, popover)
+    this.dropdownOpen = toggleAnchoredPopover(trigger, popover, {
+      minWidth: this.presentation?.search ? 240 : 0,
+    })
     if (!this.dropdownOpen) return
     this.requestOptions()
     queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.dropdown-search input')?.focus())
@@ -527,6 +411,7 @@ export class DashboardFilterLeaf extends LitElement {
             @click=${() => this.toggleOption(option, multiple)}
           >${option.label}</button>
         `)}
+        ${this.renderLoadMoreOptions()}
       </div>`
     }
     return html`<div class="options" role=${multiple ? 'group' : 'radiogroup'}>
@@ -543,7 +428,20 @@ export class DashboardFilterLeaf extends LitElement {
           <span>${option.label}${option.count === undefined ? '' : ` (${option.count})`}</span>
         </label>
       `)}
+      ${this.renderLoadMoreOptions()}
     </div>`
+  }
+
+  private renderLoadMoreOptions() {
+    if (!this.hasMoreOptions()) return nothing
+    return html`
+      <button
+        class="load-more-options"
+        type="button"
+        ?disabled=${this.optionLoading}
+        @click=${this.loadMoreOptions}
+      >${this.optionLoading ? 'Loading more values...' : 'Load more values'}</button>
+    `
   }
 
   private renderInput() {
@@ -569,7 +467,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private renderRange(type: 'number' | 'date') {
-    const draft = this.rangeDraft ?? rangeDraftFromExpression(this.expression)
+    const draft = this.rangeDraft ?? rangeDraftFromExpression(this.expression, this.definition?.timezone)
     const invalid = this.rangeError !== ''
     return html`<div class="range">
       <label>
@@ -578,7 +476,7 @@ export class DashboardFilterLeaf extends LitElement {
           <lv-date-picker
             .value=${draft.lower}
             label="Start date"
-            placeholder="No start date"
+            placeholder="DD/MM/YYYY"
             .weekStart=${this.definition?.weekStart || 'monday'}
             .error=${invalid ? this.rangeError : ''}
             ?invalid=${invalid}
@@ -607,7 +505,7 @@ export class DashboardFilterLeaf extends LitElement {
           <lv-date-picker
             .value=${draft.upper}
             label="End date"
-            placeholder="No end date"
+            placeholder="DD/MM/YYYY"
             .weekStart=${this.definition?.weekStart || 'monday'}
             .error=${invalid ? this.rangeError : ''}
             ?invalid=${invalid}
@@ -640,7 +538,7 @@ export class DashboardFilterLeaf extends LitElement {
       <select aria-label="Direction" data-relative="direction" @change=${this.onRelative}>
         ${['previous', 'current', 'next'].map((value) => html`<option value=${value} ?selected=${(relative?.direction ?? 'previous') === value}>${value}</option>`)}
       </select>
-      <input type="number" min="1" max="1000" aria-label="Period count" data-relative="count" .value=${String(relative?.count ?? 1)} @change=${this.onRelative}>
+      <input type="number" min="1" max=${maxRelativePeriodCount} step="1" aria-label="Period count" data-relative="count" .value=${String(relative?.count ?? 1)} @change=${this.onRelative}>
       <select aria-label="Period unit" data-relative="unit" @change=${this.onRelative}>
         ${['day', 'week', 'month', 'quarter', 'year'].map((value) => html`<option value=${value} ?selected=${(relative?.unit ?? 'month') === value}>${value}</option>`)}
       </select>
@@ -725,10 +623,20 @@ export class DashboardFilterLeaf extends LitElement {
       this.rangeError = validation
       return
     }
-    const expression: DashboardFilterExpression = !lower && !upper ? unfiltered : {
-      kind: 'range',
-      ...(lower ? { lower: { value: typedValue(this.definition!, lower), inclusive: true } } : {}),
-      ...(upper ? { upper: { value: typedValue(this.definition!, upper), inclusive: true } } : {}),
+    let expression: DashboardFilterExpression
+    try {
+      expression = !lower && !upper ? unfiltered : {
+        kind: 'range',
+        ...(lower ? { lower: this.definition?.valueKind === 'timestamp'
+          ? timestampDateBound(lower, this.definition.timezone, false)
+          : { value: typedValue(this.definition!, lower), inclusive: true } } : {}),
+        ...(upper ? { upper: this.definition?.valueKind === 'timestamp'
+          ? timestampDateBound(upper, this.definition.timezone, true)
+          : { value: typedValue(this.definition!, upper), inclusive: true } } : {}),
+      }
+    } catch (error) {
+      this.rangeError = error instanceof Error ? error.message : 'Choose a valid date range.'
+      return
     }
     this.rangeDraft = { lower, upper, baseExpression: expressionKey(expression), dirty: false }
     this.rangeError = ''
@@ -736,7 +644,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   public discardRangeDraft() {
-    this.rangeDraft = rangeDraftFromExpression(this.expression)
+    this.rangeDraft = rangeDraftFromExpression(this.expression, this.definition?.timezone)
     this.rangeError = ''
   }
 
@@ -748,7 +656,7 @@ export class DashboardFilterLeaf extends LitElement {
     }
     const key = expressionKey(this.expression)
     if (this.rangeDraft?.dirty && this.rangeDraft.baseExpression === key) return
-    const next = rangeDraftFromExpression(this.expression)
+    const next = rangeDraftFromExpression(this.expression, this.definition?.timezone)
     if (
       this.rangeDraft?.lower === next.lower
       && this.rangeDraft.upper === next.upper
@@ -766,12 +674,14 @@ export class DashboardFilterLeaf extends LitElement {
 
   private onRelative = () => {
     const direction = this.renderRoot.querySelector<HTMLSelectElement>('[data-relative="direction"]')?.value ?? 'previous'
-    const count = Number(this.renderRoot.querySelector<HTMLInputElement>('[data-relative="count"]')?.value ?? '1')
+    const input = this.renderRoot.querySelector<HTMLInputElement>('[data-relative="count"]')
+    const count = normalizeRelativePeriodCount(Number(input?.value ?? '1'))
+    if (input) input.value = String(count)
     const unit = this.renderRoot.querySelector<HTMLSelectElement>('[data-relative="unit"]')?.value ?? 'month'
     this.commit({
       kind: 'relative_period',
       direction: direction as 'previous' | 'current' | 'next',
-      count: Number.isInteger(count) && count > 0 ? count : 1,
+      count,
       unit: unit as 'minute' | 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year',
       includeCurrent: false,
       anchor: 'current_time',
@@ -796,7 +706,7 @@ export class DashboardFilterLeaf extends LitElement {
   private optionItems(): DashboardFilterOptionItem[] {
     const selected = selectedOptionKeys(this.expression)
     const base = this.options
-      ? this.options.items
+      ? this.dynamicOptionItems()
       : this.definition?.options.kind === 'static'
         ? this.definition.options.values.map((option) => ({
             ...option,
@@ -832,10 +742,34 @@ export class DashboardFilterLeaf extends LitElement {
 
   private requestOptions = () => {
     if (this.options && !this.optionDirty) return
-    this.loadOptions()
+    this.loadOptions(this.dropdownSearch)
   }
 
-  private loadOptions(search = '') {
+  private loadMoreOptions = () => {
+    const cursor = this.loadedOptionPage?.queryKey === this.optionQueryKey(this.dropdownSearch)
+      ? this.loadedOptionPage.nextCursor
+      : undefined
+    if (!cursor || this.optionLoading) return
+    this.loadOptions(this.dropdownSearch, cursor)
+  }
+
+  private hasMoreOptions(): boolean {
+    if (!this.options || this.definition?.options.kind !== 'distinct') return false
+    if (this.loadedOptionPage?.queryKey !== this.optionQueryKey(this.dropdownSearch)) return false
+    return Boolean(this.loadedOptionPage.nextCursor) && !this.loadedOptionPage.complete
+  }
+
+  private dynamicOptionItems(): DashboardFilterOptionItem[] {
+    const queryKey = this.optionQueryKey(this.dropdownSearch)
+    if (this.loadedOptionPage?.queryKey === queryKey) return this.loadedOptionPage.items
+    return this.options?.items ?? []
+  }
+
+  private optionQueryKey(search: string): string {
+    return `${this.optionContext}\u0000${search}`
+  }
+
+  private loadOptions(search = '', cursor?: string) {
     if (
       this.stale
       || !this.optionRequestReady
@@ -844,16 +778,18 @@ export class DashboardFilterLeaf extends LitElement {
       || this.definition.options.kind === 'none'
       || this.definition.options.kind === 'static'
     ) return
-    const requestContext = `${this.optionContext}\u0000${search}`
+    const requestContext = `${this.optionQueryKey(search)}\u0000${cursor ?? ''}`
     if (this.optionLoading && this.requestedOptionContext === requestContext) return
     this.hasRequestedOptions = true
     this.optionLoading = true
     this.requestedOptionContext = requestContext
+    this.requestedOptionCursor = cursor ?? ''
     this.dispatchEvent(new CustomEvent<FilterOptionsNeededDetail>('lv-filter-options-needed', {
       bubbles: true, composed: true,
       detail: {
         bindingKey: this.binding.key,
         search,
+        ...(cursor ? { cursor } : {}),
         limit: this.definition.options.limit || 50,
       },
     }))
@@ -865,7 +801,10 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private dropdownFocused(): boolean {
-    return this.dropdownOpen || this.shadowRoot?.activeElement?.tagName === 'SELECT'
+    // Native popovers close synchronously; their toggle event is deferred.
+    // Read the actual state so a just-closed control does not fetch again.
+    return Boolean(this.renderRoot.querySelector('.dropdown-popover')?.matches(':popover-open'))
+      || this.shadowRoot?.activeElement?.tagName === 'SELECT'
   }
 
   private applyResponsiveLayout(width: number, height: number): void {
@@ -922,9 +861,11 @@ abstract class FilterShell extends LitElement {
 
 export class DashboardFilterPaneCard extends FilterShell {
   static styles = css`
-    :host { display: block; }
+    :host { display: block; min-width: 0; }
     section {
       display: grid;
+      min-width: 0;
+      box-sizing: border-box;
       gap: var(--base-size-8);
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -939,16 +880,14 @@ export class DashboardFilterPaneCard extends FilterShell {
     .card-header {
       display: flex;
       min-width: 0;
-      align-items: center;
+      align-items: start;
       justify-content: space-between;
       gap: var(--base-size-8);
     }
     .title {
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body);
+      overflow-wrap: anywhere;
+      font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-semibold);
     }
     .pending-badge {
@@ -956,6 +895,7 @@ export class DashboardFilterPaneCard extends FilterShell {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
     }
+    .actions:empty { display: none; }
     .actions { display: flex; flex: 0 0 auto; gap: var(--base-size-4); }
     button {
       min-height: var(--lv-control-compact);
@@ -984,13 +924,13 @@ export class DashboardFilterPaneCard extends FilterShell {
         <div class="card-header">
           <span class="title">${label}${this.dirty ? html`<span class="pending-badge">Pending</span>` : nothing}</span>
           <div class="actions">
-            <button
+            ${this.expression.kind !== 'unfiltered' ? html`<button
               type="button"
               aria-label=${`Clear ${label}`}
               title="Clear filter"
-              ?disabled=${!editable || this.expression.kind === 'unfiltered'}
+              ?disabled=${!editable}
               @click=${this.clear}
-            >Clear</button>
+            >Clear</button>` : nothing}
             ${hasMeaningfulDefault ? html`
               <button
                 type="button"
@@ -1097,27 +1037,6 @@ function expressionKey(expression: DashboardFilterExpression): string {
   return JSON.stringify(expression)
 }
 
-function rangeDraftFromExpression(expression: DashboardFilterExpression): RangeDraft {
-  return {
-    lower: expression.kind === 'range' && expression.lower ? String(expression.lower.value.value) : '',
-    upper: expression.kind === 'range' && expression.upper ? String(expression.upper.value.value) : '',
-    baseExpression: expressionKey(expression),
-    dirty: false,
-  }
-}
-
-function rangeValidationMessage(lower: string, upper: string, valueKind?: DashboardCompiledFilterDefinition['valueKind']): string {
-  if (!lower || !upper) return ''
-  if (valueKind === 'date' || valueKind === 'timestamp') {
-    return lower > upper ? 'Start date must be on or before end date.' : ''
-  }
-  const lowerNumber = Number(lower)
-  const upperNumber = Number(upper)
-  return Number.isFinite(lowerNumber) && Number.isFinite(upperNumber) && lowerNumber > upperNumber
-    ? 'Minimum must be less than or equal to maximum.'
-    : ''
-}
-
 function typedValue(definition: DashboardCompiledFilterDefinition, value: string): DashboardFilterValue {
   switch (definition.valueKind) {
     case 'boolean':
@@ -1155,8 +1074,22 @@ function valueKey(value?: DashboardFilterValue): string {
   return value === undefined ? '' : JSON.stringify(value)
 }
 
+function mergeOptionItems(previous: DashboardFilterOptionItem[], next: DashboardFilterOptionItem[]): DashboardFilterOptionItem[] {
+  const merged = new Map<string, DashboardFilterOptionItem>()
+  for (const option of [...previous, ...next]) {
+    merged.set(filterOptionKey(option), option)
+  }
+  return [...merged.values()]
+}
+
 export function filterOptionKey(option: Pick<DashboardFilterOptionItem, 'null' | 'value'>): string {
   return option.null ? NULL_OPTION_KEY : valueKey(option.value)
+}
+
+export function normalizeRelativePeriodCount(value: number): number {
+  return Number.isInteger(value) && value >= 1
+    ? Math.min(maxRelativePeriodCount, value)
+    : 1
 }
 
 export function filterOptionToggleExpression(

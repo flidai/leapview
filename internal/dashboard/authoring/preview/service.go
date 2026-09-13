@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -52,6 +54,10 @@ type CompileRuntime interface {
 type Runtime interface {
 	CompileRuntime
 	QueryDashboardPageForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters) (dashboard.Patch, error)
+}
+
+type visualizationWindowRuntime interface {
+	QueryVisualizationWindowForDefinition(context.Context, dashboarddefinition.Definition, string, dashboard.Filters, visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error)
 }
 
 // Lease is the exact project-generation capability used by preview. It is
@@ -104,6 +110,7 @@ type PreviewRequest struct {
 	ExpectedRevision authoring.RevisionToken
 	PageID           string
 	Filters          dashboard.Filters
+	Window           *visualizationir.VisualizationWindowRequest
 	// BestEffortVisuals is reserved for the interactive builder. It isolates
 	// visual lowering failures while keeping strict structural, semantic,
 	// filter, and layout validation. Headless preview and publish remain strict.
@@ -188,7 +195,33 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		return Preview{}, err
 	}
 	defer prepared.release()
-	patch, err := prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
+	// Preview executes directly on the leased runtime, bypassing the published
+	// metrics audit wrapper. Retain the authorized actor for scoped data/tile
+	// capabilities, which subsequent HTTP requests redeem as that principal.
+	metadata := dataquery.MetadataFromContext(ctx)
+	if metadata.PrincipalID == "" {
+		metadata.PrincipalID = strings.TrimSpace(request.ActorID)
+		ctx = dataquery.WithMetadata(ctx, metadata)
+	}
+	var patch dashboard.Patch
+	if request.Window != nil {
+		windowRuntime, ok := prepared.runtime.(visualizationWindowRuntime)
+		if !ok || windowRuntime == nil {
+			return Preview{}, fmt.Errorf("active runtime does not provide dashboard visual window capability")
+		}
+		envelope, queryErr := windowRuntime.QueryVisualizationWindowForDefinition(ctx, prepared.Definition, pageID, request.Filters, *request.Window)
+		patch = dashboard.Patch{Filters: request.Filters, Visuals: map[string]visualizationir.VisualizationEnvelope{request.Window.VisualID: envelope}}
+		result := Preview{
+			Revision: prepared.Revision, Definition: prepared.Definition,
+			PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
+		}
+		if queryErr != nil {
+			return result, fmt.Errorf("query dashboard draft visual window: %w", queryErr)
+		}
+		return result, nil
+	}
+	patch, err = prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
+	patch = normalizeWindowResetVersions(patch)
 	result := Preview{
 		Revision: prepared.Revision, Definition: prepared.Definition,
 		PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,

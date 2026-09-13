@@ -51,6 +51,26 @@ describe('DashboardNavigationController', () => {
     expect(controller.complete('next')).toEqual({ href: '/next', pageId: 'next' })
     expect(prompts).toHaveLength(1)
   })
+
+  test('active-page clicks cancel an earlier deferred destination', () => {
+    const controller = new DashboardNavigationController()
+    expect(controller.begin({ href: '/details', pageId: 'details' }, {
+      active: false,
+      deferred: true,
+      dirty: true,
+      confirm: () => true,
+    })).toBe('apply')
+    expect(controller.request).toEqual({ href: '/details', pageId: 'details' })
+
+    expect(controller.begin({ href: '/overview', pageId: 'overview' }, {
+      active: true,
+      deferred: true,
+      dirty: true,
+      confirm: () => { throw new Error('active-page clicks must not prompt') },
+    })).toBe('cancel')
+    expect(controller.request).toBeNull()
+    expect(controller.navigationRequested).toBe(false)
+  })
 })
 
 describe('DashboardOptimisticInteractionController', () => {

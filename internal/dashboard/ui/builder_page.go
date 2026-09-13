@@ -37,6 +37,7 @@ type DashboardBuilderActionBindings struct {
 	// writes the authored document.
 	FilterCommandPath string
 	FilterOptionPath  string
+	VisualWindowPath  string
 	AgentCommands     AgentCommandBindings
 }
 
@@ -63,6 +64,7 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		builderCommandAction(actions),
 		builderFilterCommandAction(actions),
 		builderFilterOptionsAction(actions),
+		builderVisualWindowAction(actions),
 	}
 	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
 	if agentEnabled {
@@ -238,4 +240,12 @@ func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
 		value += " " + uiactions.EventPost(actions.FilterOptionPath, "builder", "runtime", "builderFilterOptionRequest")
 	}
 	return g.Attr("data-on:lv-builder-filter-options-request", value)
+}
+
+func builderVisualWindowAction(actions DashboardBuilderActionBindings) g.Node {
+	value := "$visualWindowCommand = evt.detail;"
+	if strings.TrimSpace(actions.VisualWindowPath) != "" {
+		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
+	}
+	return g.Attr("data-on:lv-visualization-window-request", value)
 }

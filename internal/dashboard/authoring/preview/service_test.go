@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -260,6 +261,7 @@ func (l *previewLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *previewLease) Release()                        { l.releases++ }
 
 type previewRuntime struct {
+	queryMetadata               dataquery.Metadata
 	modelID                     graph.ResourceID
 	model                       *semanticmodel.Model
 	projectionCalls, queryCalls int
@@ -275,7 +277,26 @@ func (r *previewRuntime) SemanticModelProjection(id graph.ResourceID) (*semantic
 	copy := *r.model
 	return &copy, true
 }
-func (r *previewRuntime) QueryDashboardPageForDefinition(context.Context, definition.Definition, string, dashboard.Filters) (dashboard.Patch, error) {
+func (r *previewRuntime) QueryDashboardPageForDefinition(ctx context.Context, _ definition.Definition, _ string, _ dashboard.Filters) (dashboard.Patch, error) {
 	r.queryCalls++
+	r.queryMetadata = dataquery.MetadataFromContext(ctx)
 	return dashboard.EmptyPatch(dashboard.Filters{}, nil), nil
+}
+
+func TestPreviewBindsDataCapabilitiesToAuthorizedActor(t *testing.T) {
+	f := newPreviewFixture(t)
+	if _, err := f.service.Preview(t.Context(), f.request); err != nil {
+		t.Fatal(err)
+	}
+	if f.runtime.queryMetadata.PrincipalID != f.request.ActorID {
+		t.Fatalf("preview principal = %q", f.runtime.queryMetadata.PrincipalID)
+	}
+	f = newPreviewFixture(t)
+	ctx := dataquery.WithMetadata(t.Context(), dataquery.Metadata{PrincipalID: "existing-principal", StreamID: "stream-1"})
+	if _, err := f.service.Preview(ctx, f.request); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.runtime.queryMetadata; got.PrincipalID != "existing-principal" || got.StreamID != "stream-1" {
+		t.Fatalf("preview discarded existing metadata: %#v", got)
+	}
 }

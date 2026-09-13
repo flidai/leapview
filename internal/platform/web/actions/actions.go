@@ -24,6 +24,12 @@ func EventPost(path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, "")
 }
 
+// ConcurrentEventPost lets independent read requests to one endpoint complete.
+// The consumer must reject stale responses using its own revision identity.
+func ConcurrentEventPost(path string, signalPaths ...string) string {
+	return strings.TrimSuffix(EventPost(path, signalPaths...), "})") + ", requestCancellation: 'disabled'})"
+}
+
 func CommandPost(binding uicommand.Binding, path string, signalPaths ...string) string {
 	return request("post", path, signalPaths, jsString(binding.OperationID()))
 }

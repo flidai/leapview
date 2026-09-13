@@ -84,6 +84,7 @@ export class ChatManager extends DatastarLit(LitElement) {
   private archivesOpen = false
   private lastFocus: HTMLElement | null = null
   private undoTimers = new Map<string, number>()
+  private refreshAfterPending = false
 
   static styles = css`
     :host { display: contents; color: var(--lv-fg-default); font: var(--lv-type-body); }
@@ -150,7 +151,12 @@ export class ChatManager extends DatastarLit(LitElement) {
     if (action?.action === 'undo') {
       const undoPending = this.undoPendings.find(pending => pending.requestId === requestId)
       if (undoPending) this.scheduleUndo(undoPending)
+    } else if (!action) {
+      // An expiry refresh has no mutation action to clear this local sidebar
+      // marker. Release it when the read request fails so the UI can recover.
+      this.emitRemovalPending()
     }
+    this.flushQueuedRefresh()
   }
 
   private get management(): ChatManagementSignal { return this.signal('chatManagement', emptyManagement) }
@@ -238,7 +244,10 @@ export class ChatManager extends DatastarLit(LitElement) {
     this.clearUndoTimer(requestId)
     this.undoPendings = this.undoPendings.filter(value => value.requestId !== requestId)
     clearStoredUndo(requestId)
-    this.emitRemovalPending()
+    // The durable action is committed by the worker after the Undo window.
+    // Refresh the sidebar projection before releasing its temporary hide
+    // marker, otherwise stale signal state makes the removed chat reappear.
+    this.requestManagementRefresh()
     // Expiry only refreshes the view. Closing this tab cannot cancel the
     // persisted operation, and no second mutation is needed from the browser.
     const current = window.location.pathname.match(/^\/chats\/([^/]+)$/)?.[1]
@@ -257,6 +266,24 @@ export class ChatManager extends DatastarLit(LitElement) {
   private emitRemovalPending() {
     const conversationIds = this.undoPendings.map(pending => pending.action.conversationId)
     this.dispatchEvent(new CustomEvent('lv-chat-removal-pending', { bubbles: true, composed: true, detail: { conversationIds } }))
+  }
+
+  private requestManagementRefresh(): void {
+    if (this.pending) {
+      this.refreshAfterPending = true
+      return
+    }
+    this.pendingAction = null
+    this.pending = crypto.randomUUID()
+    this.failure = ''
+    this.dispatchEvent(new CustomEvent('lv-chat-management-load', { bubbles: true, composed: true, detail: { requestId: this.pending } }))
+  }
+
+  private flushQueuedRefresh(): void {
+    if (!this.pending && this.refreshAfterPending) {
+      this.refreshAfterPending = false
+      this.requestManagementRefresh()
+    }
   }
 
   protected updated() {
@@ -279,13 +306,17 @@ export class ChatManager extends DatastarLit(LitElement) {
       if (action?.action === 'undo') {
         const undoPending = this.undoPendings.find(pending => pending.requestId === completedRequestId)
         if (undoPending) this.scheduleUndo(undoPending)
+      } else if (!action) {
+        this.emitRemovalPending()
       }
+      this.flushQueuedRefresh()
       return
     }
     if (action?.action === 'archive_pending' || action?.action === 'delete_pending') {
       const deadline = Date.parse(result.undoDeadline || '')
       if (!Number.isFinite(deadline)) {
         this.failure = 'The action was saved, but its Undo deadline could not be loaded.'
+        this.flushQueuedRefresh()
         return
       }
       const originalAction = action.action === 'archive_pending' ? 'archive' : 'delete'
@@ -295,6 +326,7 @@ export class ChatManager extends DatastarLit(LitElement) {
       this.emitRemovalPending()
       this.scheduleUndo(pendingUndo)
       this.feedback = ''
+      this.flushQueuedRefresh()
       return
     }
     if (action?.action === 'undo') {
@@ -305,11 +337,12 @@ export class ChatManager extends DatastarLit(LitElement) {
     if (!action) this.emitRemovalPending()
     this.feedback = result.message || ''
     this.confirmation = null
-    if (!this.archivesOpen) this.close()
+    if (action && !this.archivesOpen) this.close()
     if (action && ['archive', 'delete', 'archive_all', 'delete_all'].includes(action.action)) {
       const current = window.location.pathname.match(/^\/chats\/([^/]+)$/)?.[1]
       if (current && current !== 'new' && (action.action.endsWith('_all') || decodeURIComponent(current) === action.conversationId)) window.location.assign('/chats/new')
     }
+    this.flushQueuedRefresh()
   }
 
   private close() {

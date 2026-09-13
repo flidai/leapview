@@ -1,3 +1,5 @@
+import { reportViewPathChangedEvent } from '../report-view-state'
+
 const dataStarURLSyncEvent = 'datastar-url-params-sync'
 export {}
 
@@ -80,8 +82,15 @@ function emit(params: URLParamsShape): URLParamsShape {
 function updateHistory(method: 'pushState' | 'replaceState', value: unknown, path = window.location.pathname): string {
   const next = toURL(path, value)
   const current = `${window.location.pathname}${window.location.search}`
+  const currentPathname = window.location.pathname
   if (next !== current) {
     window.history[method]({}, '', next)
+    const nextPathname = new URL(next, window.location.href).pathname
+    if (nextPathname !== currentPathname) {
+      window.dispatchEvent(new CustomEvent(reportViewPathChangedEvent, {
+        detail: { pathname: nextPathname },
+      }))
+    }
   }
   return next
 }

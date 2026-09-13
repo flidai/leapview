@@ -923,6 +923,7 @@ func TestCompileGraphShowcase(t *testing.T) {
 		}
 	}
 	showcase := project.Manifest.DashboardDefinitions["dashboard:visual-showcase"]
+	assertShowcasePurchasePeriod(t, showcase)
 	wantHeatmapTargets := []string{
 		"chart-heatmap/category-status-heatmap",
 		"chart-heatmap/category-status-heatmap-labels",

@@ -137,7 +137,10 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   return {
     ...decoration,
     ...(graphics.length ? { graphic: graphics } : {}),
-    series: [series],
+    // ECharts renders a light-gray ring for an empty pie dataset. A donut
+    // with no rows has no geometry to show, so leave the shared status graphic
+    // as the only empty-state visual.
+    series: spec.mark === 'donut' && categoryValues.length === 0 ? [] : [series],
     aria: { decal: { show: repeatsColors } },
   }
 }
@@ -146,6 +149,12 @@ export function proportionalCenterText(envelope: VisualizationEnvelope, context:
   const spec = envelope.spec
   if (spec.kind !== 'proportional' || spec.mark !== 'donut') return undefined
   const dataset = inlineDataset(envelope, spec.value.dataset)
+  if (
+    !dataset?.rows.length
+    || envelope.status.kind === 'idle'
+    || envelope.status.kind === 'loading'
+    || envelope.status.kind === 'no_data'
+  ) return undefined
   const categoryIndex = dataset?.columns.indexOf(spec.category.field) ?? -1
   const valueIndex = dataset?.columns.indexOf(spec.value.field) ?? -1
   if (activeRow) {

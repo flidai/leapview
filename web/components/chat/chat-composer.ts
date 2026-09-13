@@ -106,7 +106,7 @@ class ChatComposer extends LitElement {
     this.resizeTextarea()
   }
 
-  public setDraft(value: string): void {
+  public setDraft(value: string, focus = true): void {
     this.draft = value
     this.mentionIndex = 0
     this.mentionSearchPending = false
@@ -114,8 +114,10 @@ class ChatComposer extends LitElement {
     void this.updateComplete.then(() => {
       const textarea = this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')
       if (!textarea) return
-      textarea.focus()
-      textarea.setSelectionRange(value.length, value.length)
+      if (focus) {
+        textarea.focus()
+        textarea.setSelectionRange(value.length, value.length)
+      }
       this.resizeTextarea(textarea)
     })
   }

@@ -114,7 +114,7 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 	previewResult, previewErr := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
-		ExpectedRevision: request.Revision, PageID: request.PageID, Filters: filters,
+		ExpectedRevision: request.Revision, PageID: request.PageID, Filters: filters, BestEffortVisuals: true,
 	})
 	if previewErr != nil {
 		writeJSON(w, nethttp.StatusOK, builderFilterValidationResponse(compiled.Definition, state, false, previewErr.Error(), signals.BuilderFilterCommand.ClientMutationID))

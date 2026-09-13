@@ -88,6 +88,22 @@ test('inspector shows live signal state without backend history', async () => {
   }
 })
 
+test('inspector launcher accepts a host offset when surrounding UI reserves the bottom edge', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 650 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('datastar-inspector'))
+    const bottom = await page.locator('datastar-inspector').evaluate(async (element: any) => {
+      element.style.setProperty('--ds-toggle-bottom', '80px')
+      await element.updateComplete
+      return getComputedStyle((element.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.toggle')!).bottom
+    })
+    expect(bottom).toBe('80px')
+  } finally {
+    await page.close()
+  }
+})
+
 test('collapsed inspector subscribes to the signal snapshot only while open', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 650 } })
   try {

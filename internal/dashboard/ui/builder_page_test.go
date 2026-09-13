@@ -21,12 +21,13 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		},
 	}
 	actions := DashboardBuilderActionBindings{
-		BackHref:       "/dashboards",
-		PreviewHref:    "/dashboards/revenue/preview",
-		ExportYAMLHref: "/dashboards/revenue/export.yaml",
-		PageBaseHref:   "/dashboards/revenue/edit",
-		CommandPath:    "/dashboards/revenue/commands",
-		CommandBinding: dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(),
+		BackHref:         "/dashboards",
+		PreviewHref:      "/dashboards/revenue/preview",
+		ExportYAMLHref:   "/dashboards/revenue/export.yaml",
+		PageBaseHref:     "/dashboards/revenue/edit",
+		CommandPath:      "/dashboards/revenue/commands",
+		VisualWindowPath: "/dashboards/revenue/draft/visual-window",
+		CommandBinding:   dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(),
 		AgentCommands: AgentCommandBindings{
 			CreateConversation: agentgen.GenUIActionCreateAgentConversation(),
 			CreateRun:          agentgen.GenUIActionCreateAgentRun(),
@@ -41,6 +42,8 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		`<lv-dashboard-builder`, `slot="page"`, `dashboard-id="revenue"`, `draft-id="draft-7"`,
 		`/static/dashboard-builder.js`, `route=dashboard_builder`, `dashboard=revenue`, `draft=draft-7`,
 		`data-on:lv-builder-command`, `@post('/dashboards/revenue/commands'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
+		`data-on:lv-visualization-window-request`, `'/dashboards/revenue/draft/visual-window'`,
+		`requestCancellation: 'disabled'`,
 		`back-href="/dashboards"`, `preview-href="/dashboards/revenue/preview"`,
 		`page-base-href="/dashboards/revenue/edit"`,
 		`data-on:lv-chat-submit`, `data-on:lv-chat-restore`, `data-on:lv-chat-new`,

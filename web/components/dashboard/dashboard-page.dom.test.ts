@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
 import validateVisualizationEnvelope from '../../generated/visualization/validate'
+import { verifyDashboardOptionRequests } from './dashboard-option-requests.test'
 import { evaluateAcrossContextTurnover, testDocument, testVisualizationEnvelopes } from './dashboard-page-test-fixtures'
 
 let server: Server
@@ -103,51 +104,7 @@ test('dashboard refresh loading does not mark unrelated filter controls stale', 
   }
 })
 
-test('dashboard coalesces duplicate option requests for one binding context', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
-    const stateFilter = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
-      const seen: unknown[] = []
-      element.addEventListener('lv-filter-options-request', (event: CustomEvent) => seen.push(event.detail))
-      for (let index = 0; index < 2; index++) {
-        element.dispatchEvent(new CustomEvent('lv-filter-options-needed', {
-          bubbles: true,
-          composed: true,
-          detail: { bindingKey: 'fb_state', search: '', limit: 50 },
-        }))
-      }
-      await element.updateComplete
-      return {
-        requests: seen,
-        definition: element.signal('filterContract', {}).definitions?.state,
-        binding: element.signal('filterContract', {}).bindings?.fb_state,
-        page: element.signal('filterOptionPages', {}).fb_state,
-        purchaseDateDefinition: element.signal('filterContract', {}).definitions?.purchase_date,
-        purchaseDateBinding: element.signal('filterContract', {}).bindings?.fb_purchase_date,
-      }
-    })
-    expect(stateFilter.requests).toHaveLength(1)
-    expect(stateFilter.definition).toMatchObject({
-      field: 'sales_orders.state',
-      options: { kind: 'distinct', limit: 50, values: [] },
-    })
-    expect(stateFilter.binding).toMatchObject({ selectionMode: 'multiple', maxSelectedValues: 50 })
-    expect(stateFilter.page).toMatchObject({
-      bindingKey: 'fb_state', complete: true,
-      items: [{ label: 'SP', available: true }],
-    })
-    expect(stateFilter.purchaseDateDefinition).toMatchObject({
-      field: 'sales_orders.purchase_date', valueKind: 'date',
-      predicates: [{ kind: 'range', operators: [] }],
-      options: { kind: 'none', limit: 0, values: [] },
-    })
-    expect(stateFilter.purchaseDateBinding).toMatchObject({ scope: 'report', default: { kind: 'unfiltered' } })
-  } finally {
-    await page.close()
-  }
-})
+test('dashboard deduplicates identical options but preserves new searches and cursors', () => verifyDashboardOptionRequests(browser, baseURL))
 
 test('dashboard categorical filter options expose their visible labels to assistive technology', async () => {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
@@ -2168,7 +2125,7 @@ test('range filters reject reversed bounds without replacing the draft', async (
   }
 })
 
-test('active dashboard slicers reserve an atomic clear action', async () => {
+test('dashboard slicers expose atomic clear only while active', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2219,7 +2176,7 @@ test('active dashboard slicers reserve an atomic clear action', async () => {
       return {
         activeVisibility,
         pendingDisabled,
-        inactiveVisibility: getComputedStyle(clear).visibility,
+        inactiveDisplay: getComputedStyle(clear).display,
         values: Array.from((leaf.shadowRoot as ShadowRoot).querySelectorAll<HTMLInputElement>('.range input')).map((input) => input.value),
         mutations,
       }
@@ -2227,7 +2184,7 @@ test('active dashboard slicers reserve an atomic clear action', async () => {
     expect(result).toEqual({
       activeVisibility: 'visible',
       pendingDisabled: false,
-      inactiveVisibility: 'hidden',
+      inactiveDisplay: 'none',
       values: ['', ''],
       mutations: [{ bindingKey: 'delivery_days', expression: { kind: 'unfiltered' } }],
     })
@@ -2810,6 +2767,7 @@ test('visible dynamic list controls request options when their contract arrives 
         showCounts: false, showSummary: true, compact: false,
       }
       await leaf.updateComplete
+      await leaf.updateComplete
       return seen
     })
     expect(requests).toEqual([{ bindingKey: 'fb_status', search: '', limit: 20 }])
@@ -2817,6 +2775,7 @@ test('visible dynamic list controls request options when their contract arrives 
     await page.close()
   }
 })
+
 
 test('static filter controls render compiled options without requesting an option page', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })

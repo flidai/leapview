@@ -1138,7 +1138,8 @@ func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testi
 	}
 	selectedPage := "overview"
 	got := dashboardBuilderPreviewVisuals(uisignals.DashboardBuilderSignal{
-		DashboardID: "sales", SelectedPageID: &selectedPage,
+		DashboardID: "sales", SelectedPageID: &selectedPage, DraftID: "draft-7",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "rev-7", Number: 7, ContentHash: "sha256:abc"},
 	}, preview.Preview{
 		PagePatch: dashboard.Patch{
 			Filters: dashboard.Filters{InteractionRevision: 4},
@@ -1151,7 +1152,7 @@ func TestDashboardBuilderPreviewVisualsUseAuthoredIDsAndRuntimeMetadata(t *testi
 	if !ok {
 		t.Fatalf("preview visuals = %#v, want authored orders key", got)
 	}
-	if signal.VisualID != "orders" || signal.ServingStateID != "state-7" || signal.StreamGeneration != 9 || signal.InteractionRevision != 4 || signal.ConsumerIdentity != "overview/orders" {
+	if signal.VisualID != "orders" || signal.ServingStateID != "builder:draft-7:rev-7:sha256:abc:generation:state-7" || signal.StreamGeneration != 9 || signal.InteractionRevision != 4 || signal.ConsumerIdentity != "overview/orders" {
 		t.Fatalf("preview visual metadata = %#v", signal)
 	}
 }
