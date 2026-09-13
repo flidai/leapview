@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_agent_model_request_usage.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_agent_model_request_usage.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,37 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestOCIArtifactAdmissionAuthorityMigrationIsImmutableAndRoleSeparated(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "015_oci_artifact_admission_authority.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"release.oci_artifact_admission",
+		"release.oci_artifact_admission_revocation",
+		"artifact_reference = repository_identity || '@' || oci_digest",
+		"admission_digest text NOT NULL UNIQUE",
+		"oci_artifact_admission_immutable",
+		"oci_artifact_admission_no_truncate",
+		"GRANT SELECT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_runtime",
+		"GRANT SELECT, INSERT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_maintenance",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"OCI artifact admission authority migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("OCI artifact admission migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("OCI artifact admission migration Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("OCI artifact admission migration must restore the migrator role")
 	}
 }
 

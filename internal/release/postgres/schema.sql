@@ -216,6 +216,60 @@ CREATE TABLE IF NOT EXISTS release.release_transition_policy (
     CHECK ((jsonb_array_length(policy_json -> 'rules') BETWEEN 1 AND 128) IS TRUE)
 );
 
+CREATE TABLE IF NOT EXISTS release.oci_artifact_admission (
+    artifact_reference text PRIMARY KEY,
+    repository_identity text NOT NULL,
+    oci_digest text NOT NULL,
+    admission_version text NOT NULL,
+    admission_digest text NOT NULL UNIQUE,
+    admission_bytes bytea NOT NULL,
+    admitted_at timestamptz NOT NULL,
+    published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (artifact_reference = repository_identity || '@' || oci_digest),
+    CHECK (oci_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (admission_version = 'oci-artifact-admission/v1'),
+    CHECK (admission_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (octet_length(admission_bytes) BETWEEN 1 AND 262144),
+    UNIQUE (artifact_reference, admission_digest)
+);
+
+CREATE TABLE IF NOT EXISTS release.oci_artifact_admission_revocation (
+    artifact_reference text PRIMARY KEY,
+    admission_digest text NOT NULL,
+    revoked_at timestamptz NOT NULL,
+    reason text NOT NULL,
+    CHECK (admission_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (octet_length(reason) BETWEEN 1 AND 1024),
+    FOREIGN KEY (artifact_reference, admission_digest)
+        REFERENCES release.oci_artifact_admission(artifact_reference, admission_digest)
+);
+
+CREATE OR REPLACE FUNCTION release.reject_oci_admission_mutation()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, release
+AS $$
+BEGIN
+    RAISE EXCEPTION 'OCI artifact admission authority evidence is immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS oci_artifact_admission_immutable ON release.oci_artifact_admission;
+CREATE TRIGGER oci_artifact_admission_immutable
+    BEFORE UPDATE OR DELETE ON release.oci_artifact_admission
+    FOR EACH ROW EXECUTE FUNCTION release.reject_oci_admission_mutation();
+DROP TRIGGER IF EXISTS oci_artifact_admission_no_truncate ON release.oci_artifact_admission;
+CREATE TRIGGER oci_artifact_admission_no_truncate
+    BEFORE TRUNCATE ON release.oci_artifact_admission
+    FOR EACH STATEMENT EXECUTE FUNCTION release.reject_oci_admission_mutation();
+DROP TRIGGER IF EXISTS oci_artifact_admission_revocation_immutable ON release.oci_artifact_admission_revocation;
+CREATE TRIGGER oci_artifact_admission_revocation_immutable
+    BEFORE UPDATE OR DELETE ON release.oci_artifact_admission_revocation
+    FOR EACH ROW EXECUTE FUNCTION release.reject_oci_admission_mutation();
+DROP TRIGGER IF EXISTS oci_artifact_admission_revocation_no_truncate ON release.oci_artifact_admission_revocation;
+CREATE TRIGGER oci_artifact_admission_revocation_no_truncate
+    BEFORE TRUNCATE ON release.oci_artifact_admission_revocation
+    FOR EACH STATEMENT EXECUTE FUNCTION release.reject_oci_admission_mutation();
+
 CREATE OR REPLACE FUNCTION release.reject_transition_policy_mutation()
 RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, release
@@ -238,6 +292,7 @@ REVOKE ALL ON SCHEMA release FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA release FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA release FROM PUBLIC;
 REVOKE ALL ON FUNCTION release.reject_transition_policy_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION release.reject_oci_admission_mutation() FROM PUBLIC;
 
 DO $$
 BEGIN
@@ -264,12 +319,18 @@ BEGIN
             ON release.deployment_linkage TO leapview_control_runtime;
         REVOKE ALL ON release.release_transition_policy FROM leapview_control_runtime;
         GRANT SELECT ON release.release_transition_policy TO leapview_control_runtime;
+		GRANT SELECT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+			ON release.oci_artifact_admission, release.oci_artifact_admission_revocation FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_maintenance;
         GRANT SELECT, INSERT ON release.release_transition_policy TO leapview_control_maintenance;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.release_transition_policy FROM leapview_control_maintenance;
+		GRANT SELECT, INSERT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_maintenance;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+			ON release.oci_artifact_admission, release.oci_artifact_admission_revocation FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_readonly;
