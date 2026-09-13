@@ -16,7 +16,6 @@ import '../shared/record-table'
 import '../shared/user-avatar'
 import './agent-tools'
 import './agent-prompt-editor'
-import './agent-usage-limit'
 import './personal-settings'
 import './product-settings'
 import './settings-surfaces'
@@ -732,10 +731,6 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     const systemPrompt = this.agentPrompt || agent?.systemPrompt || ''
     return html`
       ${agent ? html`
-        <section class="section" aria-label="Agent request limit">
-          <h2>Daily request limit</h2>
-          <lv-agent-usage-limit .limit=${agent.dailyRequestLimit ?? 100} .used=${agent.requestsUsed ?? 0} .resetsAt=${agent.requestsResetAt ?? ''} ?disabled=${!agent.canWrite}></lv-agent-usage-limit>
-        </section>
         <section class="section" aria-label="System prompt">
           <h2>System prompt</h2>
           <slot name="agent-prompt">

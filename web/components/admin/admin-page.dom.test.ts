@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
-import { chromium, expect as playwrightExpect, type Browser } from '@playwright/test'
+import { chromium, type Browser } from '@playwright/test'
 import { typographyTestTokens } from '../test-typography-tokens'
 
 let server: Server
@@ -2272,44 +2272,3 @@ function escapeHTML(value: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
 }
-
-test('Agent daily limit preserves drafts on failure and blocks invalid or duplicate saves', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-agent-usage-limit'))
-    const editor = page.locator('lv-agent-usage-limit')
-    await page.evaluate(() => {
-      const element = document.createElement('lv-agent-usage-limit') as any
-      element.limit = 100
-      element.used = 12
-      element.resetsAt = '2026-09-14T00:00:00Z'
-      document.body.append(element)
-      ;(window as any).usageCommands = []
-      element.addEventListener('lv-agent-usage-limit-save', (event: CustomEvent) => (window as any).usageCommands.push(event.detail))
-    })
-    await playwrightExpect(editor).toContainText('12 of 100 requests used today')
-    await playwrightExpect(editor).toContainText('88 remaining')
-    const input = editor.locator('input')
-    const save = editor.locator('button')
-    await input.fill('0')
-    await save.click()
-    await playwrightExpect(editor.locator('[role=alert]')).toContainText('whole number')
-    expect(await page.evaluate(() => (window as any).usageCommands)).toEqual([])
-    await input.fill('250')
-    await save.click()
-    await playwrightExpect(save).toBeDisabled()
-    expect(await page.evaluate(() => (window as any).usageCommands)).toEqual([{ dailyRequestLimit: 250 }])
-    // An unrelated request cannot change this pending form.
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } })))
-    await playwrightExpect(save).toBeDisabled()
-    await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.querySelector('lv-agent-usage-limit'), argsRaw: { status: 503 } } })))
-    await playwrightExpect(save).toBeEnabled()
-    await playwrightExpect(input).toHaveValue('250')
-    await playwrightExpect(editor.locator('[role=alert]')).toContainText('temporarily unavailable')
-    await playwrightExpect(editor).toContainText('12 of 100 requests used today')
-    await page.evaluate(() => { (document.querySelector('lv-agent-usage-limit') as any).disabled = true })
-    await playwrightExpect(save).toBeDisabled()
-    await playwrightExpect(input).toBeDisabled()
-  } finally { await page.close() }
-})

@@ -36,11 +36,6 @@ LEAPVIEW_AGENT_API_KEY=<secret>
 
 Store the API key in the deployment secret manager. The global administrator-controlled system prompt is configured in the agent administration page. Provider prompts and responses may contain business context; review the provider's data handling, retention, regional, and contractual requirements before enabling it.
 
-Platform administrators can set **Daily request limit** in **Admin → Agent**. The default is 100 model requests per UTC day, shared by all users of the instance. The setting accepts whole numbers from 1 to 1,000,000. Every model call reserves one request before contacting the provider, including tool follow-ups, context compaction, automatic conversation titles, and failed provider attempts. One chat message can therefore use multiple requests.
-
-Usage persists across server restarts and concurrent requests share the same counter. The next UTC day starts at midnight UTC. Changing the limit does not reset usage: increasing it makes the remaining difference available, while lowering it below current usage blocks further model calls until the daily reset or another increase. Provider rate limits and quotas still apply independently. Usage before this feature's database migration is not reconstructed; the new counter starts at zero.
-
-
 The MCP endpoint does not depend on this provider configuration. External MCP hosts can use LeapView tools when the built-in model is disabled.
 
 ## Ask through the CLI

@@ -192,7 +192,6 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		return ui.AdminAgentData{}, err
 	}
 	data := ui.AdminAgentData{
-		DailyRequestLimit: details.DailyRequestLimit, RequestsUsed: details.RequestsUsed, RequestsResetAt: details.RequestsResetAt,
 		Enabled:      details.Enabled,
 		Model:        details.Model,
 		SystemPrompt: details.SystemPrompt,
@@ -200,7 +199,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 		UpdatePath:   "/admin/agent/config",
 		CanWrite:     !m.AuthConfigured,
 	}
-	data.Revision, err = apigencommand.RevisionToken(details.ConfigurationRevision())
+	data.Revision, err = apigencommand.RevisionToken(details)
 	if err != nil {
 		return ui.AdminAgentData{}, err
 	}

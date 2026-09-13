@@ -360,9 +360,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/AgentConfigResponse'
               example:
-                dailyRequestLimit: 1
-                requestsResetAt: "2026-01-02T15:04:05Z"
-                requestsUsed: 1
                 systemPrompt: example
         '400':
           description: The server could not understand the request due to invalid
@@ -620,9 +617,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/AgentConfigResponse'
               example:
-                dailyRequestLimit: 1
-                requestsResetAt: "2026-01-02T15:04:05Z"
-                requestsUsed: 1
                 systemPrompt: example
         '400':
           description: The server could not understand the request due to invalid
@@ -868,7 +862,6 @@ paths:
             schema:
               $ref: '#/components/schemas/AgentConfigUpdateRequest'
             example:
-              dailyRequestLimit: 1
               systemPrompt: example
       x-apigen-operation-kind: command
       x-apigen-command:
@@ -60175,45 +60168,21 @@ components:
       type: object
       required:
         - systemPrompt
-        - dailyRequestLimit
-        - requestsUsed
-        - requestsResetAt
       properties:
         systemPrompt:
           type: string
           example: example
-        dailyRequestLimit:
-          type: integer
-          format: int64
-          example: 1
-        requestsUsed:
-          type: integer
-          format: int64
-          example: 1
-        requestsResetAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
       example:
-        dailyRequestLimit: 1
-        requestsResetAt: "2026-01-02T15:04:05Z"
-        requestsUsed: 1
         systemPrompt: example
     AgentConfigUpdateRequest:
       type: object
+      required:
+        - systemPrompt
       properties:
         systemPrompt:
           type: string
-          description: Update exactly one setting per command.
           example: example
-        dailyRequestLimit:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 1000000
-          example: 1
       example:
-        dailyRequestLimit: 1
         systemPrompt: example
     AgentConversationCreateRequest:
       type: object
