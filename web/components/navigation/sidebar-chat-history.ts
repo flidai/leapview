@@ -1,5 +1,5 @@
 import { css, html } from 'lit'
-import { Archive, Pin, PinOff, Trash2 } from 'lucide'
+import { Archive, ChevronRight, Pin, PinOff, Trash2 } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -27,6 +27,12 @@ export const sidebarChatHistoryStyles = css`
   }
 
   .history-label {
+    display: flex;
+    align-items: center;
+    gap: var(--base-size-4);
+    min-height: var(--control-small-size);
+    cursor: pointer;
+    list-style: none;
     overflow: hidden;
     margin:
       0
@@ -39,6 +45,14 @@ export const sidebarChatHistoryStyles = css`
     font: var(--lv-type-caption);
     letter-spacing: 0;
   }
+
+  .history-label::-webkit-details-marker { display: none; }
+  .history-label:hover { color: var(--lv-fg-default); }
+  .history-label:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); border-radius: var(--lv-radius-default); }
+  .history-label-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-chevron { display: inline-flex; flex-shrink: 0; }
+  .history[open] .history-chevron { transform: rotate(90deg); }
+  .history:not([open]) .history-list { display: none; }
 
   .history-list {
     display: grid;
@@ -102,13 +116,16 @@ export function renderSidebarChatHistory(
   const pending = new Set(pendingRemovalIds)
   const items = (Array.isArray(history.items) ? history.items : []).filter(item => !pending.has(item.id))
   return html`
-    <section class="history" aria-label=${history.label || 'Chats'}>
-      <strong class="history-label">${history.label || 'Chats'}</strong>
+    <details class="history" open>
+      <summary class="history-label">
+        <span class="history-label-text">${history.label || 'Chats'}</span>
+        <span class="history-chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
+      </summary>
       <div class="history-list">
         ${items.length === 0 ? html`<span class="history-empty">${history.emptyText || 'No chats yet.'}</span>` : null}
         ${items.map((item) => renderSidebarChatHistoryItem(item, followInternalLink, chatAction))}
       </div>
-    </section>
+    </details>
   `
 }
 
