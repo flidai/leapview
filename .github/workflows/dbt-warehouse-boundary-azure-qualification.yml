@@ -1,0 +1,239 @@
+name: dbt warehouse boundary Azure qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dbt-warehouse-boundary-azure-qualification
+  cancel-in-progress: false
+
+env:
+  AZURE_CORE_OUTPUT: none
+  AZURE_STORAGE_ACCOUNT: ${{ vars.DBT_PRODUCER_STORAGE_ACCOUNT }}
+  AZURE_SOURCE_CONTAINER: ${{ vars.DBT_PRODUCER_SOURCE_CONTAINER }}
+  AZURE_PUBLICATION_CONTAINER: ${{ vars.DBT_PRODUCER_PUBLICATION_CONTAINER }}
+  DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT: ${{ vars.DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT }}
+  DBT_QUALIFICATION_DUCKLAKE_CONTAINER: ${{ vars.DBT_QUALIFICATION_DUCKLAKE_CONTAINER }}
+  DBT_QUALIFICATION_PROJECT_UID: ${{ vars.DBT_QUALIFICATION_PROJECT_UID }}
+  DBT_QUALIFICATION_ENVIRONMENT: ${{ vars.DBT_QUALIFICATION_ENVIRONMENT }}
+
+jobs:
+  identity-preflight:
+    name: Validate Azure identity separation
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: dbt-warehouse-boundary-azure-qualification
+    permissions:
+      contents: read
+    env:
+      DBT_PRODUCER_CLIENT_ID: ${{ vars.DBT_PRODUCER_CLIENT_ID }}
+      DBT_QUALIFICATION_SOURCE_CLIENT_ID: ${{ vars.DBT_QUALIFICATION_SOURCE_CLIENT_ID }}
+      DBT_QUALIFICATION_DUCKLAKE_CLIENT_ID: ${{ vars.DBT_QUALIFICATION_DUCKLAKE_CLIENT_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Validate distinct qualification identities and scopes
+        run: ./scripts/dbt-warehouse-boundary-azure-qualify.sh preflight
+
+  producer-publication:
+    name: Qualify producer publication
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    needs: [identity-preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: dbt-warehouse-boundary-azure-qualification
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      publication_prefix: ${{ steps.publish.outputs.publication_prefix }}
+      partial_prefix: ${{ steps.publish.outputs.partial_prefix }}
+      dim_customers_sha256: ${{ steps.publish.outputs.dim_customers_sha256 }}
+      fct_orders_sha256: ${{ steps.publish.outputs.fct_orders_sha256 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+          cache: pip
+          cache-dependency-path: examples/dbt-warehouse-boundary/dbt/requirements.txt
+
+      - name: Install pinned dbt dependencies
+        run: python -m pip install --disable-pip-version-check --requirement examples/dbt-warehouse-boundary/dbt/requirements.txt
+
+      - name: Authenticate producer-write identity
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.DBT_PRODUCER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the bounded producer inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          seed_dir="examples/dbt-warehouse-boundary/dbt/seeds"
+          for input in raw_customers.csv raw_orders.csv; do
+            az storage blob download \
+              --auth-mode login \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --container-name "$AZURE_SOURCE_CONTAINER" \
+              --name "dbt-warehouse-boundary/$input" \
+              --file "$seed_dir/$input" \
+              --overwrite true \
+              --no-progress \
+              --output none \
+              --only-show-errors
+          done
+
+      - name: Build and verify physical Parquet
+        run: DBT_BIN="$(command -v dbt)" ./scripts/dbt-warehouse-boundary.sh build
+
+      - name: Qualify immutable checksummed publication
+        id: publish
+        run: ./scripts/dbt-warehouse-boundary-azure-qualify.sh publish
+
+      - name: End producer credential session
+        if: always()
+        run: az logout
+
+  source-read-boundary:
+    name: Qualify Source read-only boundary
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    needs: [producer-publication]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: dbt-warehouse-boundary-azure-qualification
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PUBLICATION_PREFIX: ${{ needs.producer-publication.outputs.publication_prefix }}
+      EXPECTED_DIM_CUSTOMERS_SHA256: ${{ needs.producer-publication.outputs.dim_customers_sha256 }}
+      EXPECTED_FCT_ORDERS_SHA256: ${{ needs.producer-publication.outputs.fct_orders_sha256 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Authenticate Source-read identity
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.DBT_QUALIFICATION_SOURCE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prove checksummed reads and denied producer mutations
+        run: ./scripts/dbt-warehouse-boundary-azure-qualify.sh source-read
+
+      - name: End Source credential session
+        if: always()
+        run: az logout
+
+  ducklake-write-boundary:
+    name: Qualify DuckLake write boundary
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    needs: [producer-publication]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: dbt-warehouse-boundary-azure-qualification
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PUBLICATION_PREFIX: ${{ needs.producer-publication.outputs.publication_prefix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Authenticate DuckLake-write identity
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.DBT_QUALIFICATION_DUCKLAKE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prove isolated DuckLake write scope
+        run: ./scripts/dbt-warehouse-boundary-azure-qualify.sh ducklake-write
+
+      - name: End DuckLake credential session
+        if: always()
+        run: az logout
+
+  consumer-failure-lifecycle:
+    name: Qualify consumer failure lifecycle
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    needs: [identity-preflight]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: dbt-warehouse-boundary-azure-qualification
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached LeapView CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Prove consumer failures retain the active generation
+        run: |
+          task ci:prepare
+          go test -tags duckdb_arrow ./internal/app \
+            -run '^TestProducerNeutralWarehouseBoundaryQualification$' \
+            -count=1 -v
+
+  qualification-gate:
+    name: Azure qualification gate
+    if: always()
+    needs: [producer-publication, source-read-boundary, ducklake-write-boundary, consumer-failure-lifecycle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      PRODUCER_RESULT: ${{ needs.producer-publication.result }}
+      SOURCE_RESULT: ${{ needs.source-read-boundary.result }}
+      DUCKLAKE_RESULT: ${{ needs.ducklake-write-boundary.result }}
+      LIFECYCLE_RESULT: ${{ needs.consumer-failure-lifecycle.result }}
+      PUBLICATION_PREFIX: ${{ needs.producer-publication.outputs.publication_prefix }}
+      PARTIAL_PREFIX: ${{ needs.producer-publication.outputs.partial_prefix }}
+    steps:
+      - name: Require every qualification boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in "$PRODUCER_RESULT" "$SOURCE_RESULT" "$DUCKLAKE_RESULT" "$LIFECYCLE_RESULT"; do
+            test "$result" = "success"
+          done
+          test -n "$PUBLICATION_PREFIX"
+          test -n "$PARTIAL_PREFIX"
+          {
+            echo "## Azure warehouse-boundary qualification"
+            echo
+            echo "- three distinct OIDC identities: PASS"
+            echo "- immutable exact-file publication and SHA-256 verification: PASS"
+            echo "- Source read with create/overwrite/delete denial: PASS"
+            echo "- DuckLake write scope isolated from producer publication: PASS"
+            echo "- consumer failure retains prior generation: PASS"
+            echo "- orphan partial prefix retained for configured storage lifecycle: `$PARTIAL_PREFIX`"
+          } >>"$GITHUB_STEP_SUMMARY"
