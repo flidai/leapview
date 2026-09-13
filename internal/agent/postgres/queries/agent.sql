@@ -239,3 +239,34 @@ FROM agent.events WHERE run_id = sqlc.arg(run_id) AND event_key = sqlc.arg(event
 SELECT event_id, run_id, aggregate_version, stream_sequence, event_type, severity, payload_json::text, event_key, created_at
 FROM agent.events WHERE run_id = sqlc.arg(run_id) AND event_id > sqlc.arg(after_id)
 ORDER BY event_id LIMIT sqlc.arg(page_limit);
+
+-- name: GetModelRequestUsage :one
+WITH clock AS (
+    SELECT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date AS today
+)
+SELECT
+    CAST(CASE
+        WHEN u.usage_day IS NULL OR u.usage_day < clock.today THEN 0::bigint
+        ELSE u.used_requests
+    END AS bigint) AS used_requests,
+    ((CASE WHEN u.usage_day > clock.today THEN u.usage_day ELSE clock.today END + 1)::timestamp AT TIME ZONE 'UTC')::timestamptz AS resets_at
+FROM clock
+LEFT JOIN agent.model_request_usage u ON u.singleton_id = 1;
+
+-- name: ReserveModelRequest :one
+INSERT INTO agent.model_request_usage (singleton_id, usage_day, used_requests)
+SELECT 1, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, 1
+WHERE sqlc.arg(request_limit)::bigint > 0
+ON CONFLICT (singleton_id) DO UPDATE SET
+    usage_day = CASE
+        WHEN agent.model_request_usage.usage_day < EXCLUDED.usage_day THEN EXCLUDED.usage_day
+        ELSE agent.model_request_usage.usage_day
+    END,
+    used_requests = CASE
+        WHEN agent.model_request_usage.usage_day < EXCLUDED.usage_day THEN 1
+        ELSE agent.model_request_usage.used_requests + 1
+    END
+WHERE agent.model_request_usage.usage_day < EXCLUDED.usage_day
+   OR agent.model_request_usage.used_requests < sqlc.arg(request_limit)::bigint
+RETURNING used_requests,
+    ((usage_day + 1)::timestamp AT TIME ZONE 'UTC')::timestamptz AS resets_at;

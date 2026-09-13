@@ -135,11 +135,17 @@ model AgentRunCreateRequest {
 }
 
 model AgentConfigUpdateRequest {
-  systemPrompt: string;
+  @doc("Update exactly one setting per command.")
+  systemPrompt?: string;
+  @minValue(1) @maxValue(1000000)
+  dailyRequestLimit?: int64;
 }
 
 model AgentConfigResponse {
   systemPrompt: string;
+  dailyRequestLimit: int64;
+  requestsUsed: int64;
+  requestsResetAt: utcDateTime;
 }
 
 alias ListAgentConversationsOK = OkJson<AgentConversationListResponse>;

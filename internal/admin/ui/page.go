@@ -61,14 +61,17 @@ type AdminPublication struct {
 }
 
 type AdminAgentData struct {
-	Enabled      bool
-	Model        string
-	SystemPrompt string
-	Revision     string
-	CanWrite     bool
-	CSRFToken    string
-	UpdatePath   string
-	Tools        []AdminAgentTool
+	DailyRequestLimit int64
+	RequestsUsed      int64
+	RequestsResetAt   string
+	Enabled           bool
+	Model             string
+	SystemPrompt      string
+	Revision          string
+	CanWrite          bool
+	CSRFToken         string
+	UpdatePath        string
+	Tools             []AdminAgentTool
 }
 
 type AdminAgentTool struct {
@@ -248,7 +251,8 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "agent" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = evt.detail; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
+			g.Attr("data-on:lv-agent-system-prompt-save", "$adminAgentCommand = {systemPrompt: evt.detail.systemPrompt, dailyRequestLimit: null}; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
+			g.Attr("data-on:lv-agent-usage-limit-save", "$adminAgentCommand = {systemPrompt: '', dailyRequestLimit: evt.detail.dailyRequestLimit}; "+uiactions.CommandPatch(data.AgentConfigCommand, "/admin/agent/config", data.Agent.Revision)),
 		)
 	}
 	if active == "queries" {
@@ -599,6 +603,7 @@ func adminAgentSignal(data AdminAgentData) uisignals.AdminAgentSignal {
 		})
 	}
 	return uisignals.AdminAgentSignal{
+		DailyRequestLimit: uisignals.Pointer(data.DailyRequestLimit), RequestsUsed: uisignals.Pointer(data.RequestsUsed), RequestsResetAt: uisignals.Optional(data.RequestsResetAt),
 		Enabled:      data.Enabled,
 		Model:        uisignals.Optional(data.Model),
 		SystemPrompt: data.SystemPrompt,

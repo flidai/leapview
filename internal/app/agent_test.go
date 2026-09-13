@@ -310,3 +310,83 @@ func writeRawJSON(t *testing.T, w http.ResponseWriter, body string) {
 		t.Fatalf("write response: %v", err)
 	}
 }
+
+func TestAgentDailyLimitConfiguration(t *testing.T) {
+	ctx := t.Context()
+	store := testStore(t)
+	owner := testPlatformPrincipal(t, ctx, store, "limit-owner@example.com", "Owner")
+	token := testAPIToken(t, ctx, store, owner.ID, "agent-limit")
+	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	service := agent.NewService(testAgentRepository(store), agent.Config{})
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Agent: service}))
+	request := func(method, body, etag string) *httptest.ResponseRecorder {
+		req := authedJSONRequest(method, "/api/v1/agent/config", token, body)
+		if etag != "" {
+			req.Header.Set("If-Match", etag)
+		}
+		rec := httptest.NewRecorder()
+		server.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+	initial := request(http.MethodGet, "", "")
+	if initial.Code != 200 || !strings.Contains(initial.Body.String(), `"dailyRequestLimit":100`) {
+		t.Fatalf("initial: %d %s", initial.Code, initial.Body.String())
+	}
+	etag := initial.Header().Get("ETag")
+	for _, body := range []string{`{"dailyRequestLimit":0}`, `{"dailyRequestLimit":-1}`, `{"dailyRequestLimit":1.5}`, `{"dailyRequestLimit":1000001}`, `{"dailyRequestLimit":200,"systemPrompt":"both"}`} {
+		rec := request(http.MethodPatch, body, etag)
+		if rec.Code < 400 || rec.Code >= 500 {
+			t.Fatalf("invalid %s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	usageStore, ok := testAgentRepository(store).(agent.ModelRequestUsageStore)
+	if !ok {
+		t.Fatal("Agent repository lacks persistent usage")
+	}
+	if _, err := usageStore.ReserveModelRequest(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	afterUsage := request(http.MethodGet, "", "")
+	if afterUsage.Header().Get("ETag") != etag || !strings.Contains(afterUsage.Body.String(), `"requestsUsed":1`) {
+		t.Fatalf("usage must not invalidate settings revision: %s", afterUsage.Body.String())
+	}
+	update := request(http.MethodPatch, `{"dailyRequestLimit":200}`, etag)
+	if update.Code != 200 || !strings.Contains(update.Body.String(), `"dailyRequestLimit":200`) {
+		t.Fatalf("update: %d %s", update.Code, update.Body.String())
+	}
+	if got, err := store.GetSetting(ctx, agentconfig.DailyRequestLimitSettingKey); err != nil || got != "200" {
+		t.Fatalf("saved=%q err=%v", got, err)
+	}
+	stale := request(http.MethodPatch, `{"dailyRequestLimit":300}`, etag)
+	if stale.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale: %d %s", stale.Code, stale.Body.String())
+	}
+	prompt := request(http.MethodPatch, `{"systemPrompt":"Keep the daily limit."}`, update.Header().Get("ETag"))
+	if prompt.Code != 200 || !strings.Contains(prompt.Body.String(), `"dailyRequestLimit":200`) {
+		t.Fatalf("prompt: %d %s", prompt.Code, prompt.Body.String())
+	}
+	usage, err := usageStore.ModelRequestUsage(ctx)
+	if err != nil || usage.Used != 1 {
+		t.Fatalf("configuration reset usage: %+v err=%v", usage, err)
+	}
+	viewer := testPrincipal(t, ctx, store, "limit-viewer@example.com", "Viewer")
+	viewerToken := testAPIToken(t, ctx, store, viewer.ID, "no-limit-admin")
+	deniedReq := authedJSONRequest(http.MethodPatch, "/api/v1/agent/config", viewerToken, `{"dailyRequestLimit":500}`)
+	deniedReq.Header.Set("If-Match", prompt.Header().Get("ETag"))
+	denied := httptest.NewRecorder()
+	server.Routes().ServeHTTP(denied, deniedReq)
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("viewer update: %d %s", denied.Code, denied.Body.String())
+	}
+	events, err := testAccessRepository(store).ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: owner.ID, Action: "agent.config.updated"})
+	if err != nil || len(events) != 2 {
+		t.Fatalf("audits=%d err=%v", len(events), err)
+	}
+	found := false
+	for _, event := range events {
+		found = found || event.ResourceID == agentconfig.DailyRequestLimitSettingKey
+	}
+	if !found {
+		t.Fatal("missing limit audit")
+	}
+}

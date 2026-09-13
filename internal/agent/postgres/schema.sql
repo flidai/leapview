@@ -77,6 +77,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS events_run_key_idx
     ON agent.events(run_id, event_key) WHERE event_key <> '';
 CREATE INDEX IF NOT EXISTS events_run_sequence_idx ON agent.events(run_id, aggregate_version, event_id);
 
+-- The model request counter is one mutable singleton owned by the Agent
+-- capability. usage_day is advanced by the request reservation query using
+-- the database's UTC date, so process startup never resets the counter.
+CREATE TABLE IF NOT EXISTS agent.model_request_usage (
+    singleton_id  smallint PRIMARY KEY CHECK (singleton_id = 1),
+    usage_day     date NOT NULL,
+    used_requests bigint NOT NULL DEFAULT 0 CHECK (used_requests >= 0)
+);
+INSERT INTO agent.model_request_usage (singleton_id, usage_day, used_requests)
+VALUES (1, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date, 0)
+ON CONFLICT (singleton_id) DO NOTHING;
+
 -- Retention floors are durable evidence of the latest fully drained policy
 -- boundary for each agent evidence class.  A floor is a cursor, never an
 -- authorization shortcut: runtime writes continue to use the normal
@@ -477,7 +489,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA agent TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON agent.conversations, agent.runs TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON agent.conversations, agent.runs, agent.model_request_usage TO leapview_control_runtime;
         GRANT SELECT, INSERT ON agent.messages, agent.events TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION agent.delete_agent_conversation(text, text) TO leapview_control_runtime;
         GRANT USAGE ON ALL SEQUENCES IN SCHEMA agent TO leapview_control_runtime;
@@ -496,16 +508,16 @@ BEGIN
         GRANT USAGE ON SCHEMA agent TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION agent.prune_archived_agent_history(timestamptz, integer) TO leapview_control_maintenance;
         REVOKE EXECUTE ON FUNCTION agent.prune_archived_run_events(timestamptz, integer), agent.prune_archived_conversations(timestamptz, integer) FROM leapview_control_maintenance;
-        REVOKE ALL ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor FROM leapview_control_maintenance;
+        REVOKE ALL ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor, agent.model_request_usage FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA agent TO leapview_control_readonly;
-        GRANT SELECT ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor TO leapview_control_readonly;
-        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor FROM leapview_control_readonly;
+        GRANT SELECT ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor, agent.model_request_usage TO leapview_control_readonly;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor, agent.model_request_usage FROM leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA agent TO leapview_control_backup;
-        GRANT SELECT ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor TO leapview_control_backup;
+        GRANT SELECT ON agent.conversations, agent.runs, agent.messages, agent.events, agent.retention_floor, agent.model_request_usage TO leapview_control_backup;
     END IF;
 END
 $$;

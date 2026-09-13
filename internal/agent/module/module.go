@@ -285,6 +285,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, Logger: config.Logger,
 		APIGenToolContracts: apiGenToolContracts(m.apiOperations),
 	})
+	if service != nil {
+		if err := service.SetDailyRequestLimitProvider(m.handler.DailyRequestLimit); err != nil && (config.Production || config.Persistence != nil) {
+			return nil, err
+		}
+	}
 	m.configureTools()
 	return m, nil
 }

@@ -354,6 +354,9 @@ enum PopularityLevel {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentSignal {
+  `dailyRequestLimit`?: int64;
+  `requestsUsed`?: int64;
+  `requestsResetAt`?: string;
   `canWrite`: boolean;
   `enabled`: boolean;
   `model`?: string;
@@ -484,6 +487,7 @@ model AdminPageEnvelope {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminAgentCommandSignal {
+  `dailyRequestLimit`?: int64;
   `systemPrompt`: string;
 }
 

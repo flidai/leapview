@@ -278,3 +278,38 @@ WHERE resource_kind = 'agent_run'
       AND c.archived_at <> ''
       AND c.archived_at < sqlc.arg(cutoff)
   );
+
+-- name: GetModelRequestUsage :one
+WITH clock AS (
+  SELECT date('now') AS today
+)
+SELECT
+  CAST(CASE
+    WHEN u.usage_day IS NULL OR u.usage_day < clock.today THEN 0
+    ELSE u.used_requests
+  END AS INTEGER) AS used_requests,
+  CAST(strftime(
+    '%Y-%m-%dT%H:%M:%SZ',
+    CASE WHEN u.usage_day > clock.today THEN u.usage_day ELSE clock.today END,
+    '+1 day'
+  ) AS TEXT) AS resets_at
+FROM clock
+LEFT JOIN agent_model_request_usage u ON u.singleton_id = 1;
+
+-- name: ReserveModelRequest :one
+INSERT INTO agent_model_request_usage (singleton_id, usage_day, used_requests)
+SELECT 1, date('now'), 1
+WHERE CAST(sqlc.arg(request_limit) AS INTEGER) > 0
+ON CONFLICT(singleton_id) DO UPDATE SET
+  usage_day = CASE
+    WHEN agent_model_request_usage.usage_day < excluded.usage_day THEN excluded.usage_day
+    ELSE agent_model_request_usage.usage_day
+  END,
+  used_requests = CASE
+    WHEN agent_model_request_usage.usage_day < excluded.usage_day THEN 1
+    ELSE agent_model_request_usage.used_requests + 1
+  END
+WHERE agent_model_request_usage.usage_day < excluded.usage_day
+   OR agent_model_request_usage.used_requests < CAST(?1 AS INTEGER)
+RETURNING used_requests,
+  usage_day AS resets_at;

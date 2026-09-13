@@ -641,10 +641,13 @@ func (h *Handler) GetAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
+	writeJSON(w, stdhttp.StatusOK, agentConfigResponse(details))
 }
 
 func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
 	var signals adminAgentCommandSignals
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
@@ -659,7 +662,7 @@ func (h *Handler) UpdateAdminConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	h.updateAgentConfig(w, r.WithContext(ctx), systemPrompt)
+	h.updateAgentConfig(w, r.WithContext(ctx), systemPrompt, signals.AdminAgentCommand.DailyRequestLimit, true)
 }
 
 func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -671,7 +674,7 @@ func (h *Handler) UpdateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
 		return
 	}
-	h.updateAgentConfig(w, r, input.SystemPrompt)
+	h.updateAgentConfig(w, r, input.SystemPrompt, input.DailyRequestLimit, false)
 }
 
 func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Request) bool {
@@ -700,7 +703,7 @@ func (h *Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	return true
 }
 
-func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string) {
+func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request, systemPrompt string, dailyLimit *int64, uiRequest bool) {
 	current, err := h.AdminDetails(r.Context())
 	if err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
@@ -715,16 +718,32 @@ func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, err)
 		return
 	}
-	prompt, err := agentconfig.NormalizeSystemPrompt(systemPrompt)
-	if err != nil {
-		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", err))
-		return
+	settingKey := agentconfig.SystemPromptSettingKey
+	settingValue := ""
+	if dailyLimit != nil {
+		if strings.TrimSpace(systemPrompt) != "" {
+			h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", fmt.Errorf("update one Agent setting at a time")))
+			return
+		}
+		limit, limitErr := agentconfig.NormalizeDailyRequestLimit(*dailyLimit)
+		if limitErr != nil {
+			h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", limitErr))
+			return
+		}
+		settingKey, settingValue = agentconfig.DailyRequestLimitSettingKey, strconv.FormatInt(limit, 10)
+	} else {
+		prompt, promptErr := agentconfig.NormalizeSystemPrompt(systemPrompt)
+		if promptErr != nil {
+			h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("invalid", promptErr))
+			return
+		}
+		settingValue = prompt
 	}
 	if h.options.Settings == nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", agent.ErrDisabled))
 		return
 	}
-	if err := h.options.Settings.UpsertSetting(r.Context(), agentconfig.SystemPromptSettingKey, prompt); err != nil {
+	if err := h.options.Settings.UpsertSetting(r.Context(), settingKey, settingValue); err != nil {
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
 		return
 	}
@@ -733,12 +752,19 @@ func (h *Handler) updateAgentConfig(w stdhttp.ResponseWriter, r *stdhttp.Request
 		h.writeCommandFailure(w, r, updateAgentConfigOperation, apigenfailure.Wrap("unavailable", err))
 		return
 	}
-	h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config", agentconfig.SystemPromptSettingKey)
+	h.recordCommandAudit(r, updateAgentConfigOperation, h.chatScope(r), "agent_config", settingKey)
+	if uiRequest {
+		_ = pagestream.Redirect(w, r, "/admin/agent")
+		return
+	}
 	w.Header().Set("ETag", agentResourceETag(details))
-	writeJSON(w, stdhttp.StatusOK, agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt})
+	writeJSON(w, stdhttp.StatusOK, agentConfigResponse(details))
 }
 
 func agentResourceETag(value any) string {
+	if config, ok := value.(api.AdminAgentResponse); ok {
+		value = config.ConfigurationRevision()
+	}
 	token, err := apigencommand.RevisionToken(value)
 	if err != nil {
 		return ""
@@ -751,7 +777,16 @@ func (h *Handler) AdminDetails(ctx context.Context) (api.AdminAgentResponse, err
 	if err != nil {
 		return api.AdminAgentResponse{}, err
 	}
+	limit, err := h.DailyRequestLimit(ctx)
+	if err != nil {
+		return api.AdminAgentResponse{}, err
+	}
+	usage, err := h.options.Service.ModelRequestUsage(ctx)
+	if err != nil {
+		return api.AdminAgentResponse{}, err
+	}
 	out := api.AdminAgentResponse{
+		DailyRequestLimit: limit, RequestsUsed: usage.Used, RequestsResetAt: usage.ResetsAt.Format(time.RFC3339),
 		Enabled:      h.options.Service != nil && h.options.Service.Enabled(),
 		SystemPrompt: prompt,
 	}
@@ -826,7 +861,8 @@ func (h *Handler) SystemPrompt(ctx context.Context) (string, error) {
 type adminAgentCommandSignals struct {
 	SystemPrompt      string `json:"systemPrompt"`
 	AdminAgentCommand struct {
-		SystemPrompt string `json:"systemPrompt"`
+		DailyRequestLimit *int64 `json:"dailyRequestLimit"`
+		SystemPrompt      string `json:"systemPrompt"`
 	} `json:"adminAgentCommand"`
 }
 
@@ -1068,4 +1104,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (h *Handler) DailyRequestLimit(ctx context.Context) (int64, error) {
+	if h.options.Settings == nil {
+		return agentconfig.DefaultDailyRequestLimit, nil
+	}
+	value, err := h.options.Settings.GetSetting(ctx, agentconfig.DailyRequestLimitSettingKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agentconfig.DefaultDailyRequestLimit, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return agentconfig.ParseDailyRequestLimit(value)
+}
+
+func agentConfigResponse(details api.AdminAgentResponse) agentgen.GenSchemaAgentConfigResponse {
+	return agentgen.GenSchemaAgentConfigResponse{SystemPrompt: details.SystemPrompt, DailyRequestLimit: details.DailyRequestLimit, RequestsUsed: details.RequestsUsed, RequestsResetAt: details.RequestsResetAt}
 }

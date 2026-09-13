@@ -75,12 +75,23 @@ type AdminAgentToolResponse struct {
 }
 
 type AdminAgentResponse struct {
-	Enabled      bool                     `json:"enabled"`
-	Model        string                   `json:"model,omitempty"`
-	SystemPrompt string                   `json:"systemPrompt"`
-	Tools        []AdminAgentToolResponse `json:"tools"`
+	DailyRequestLimit int64                    `json:"dailyRequestLimit"`
+	RequestsUsed      int64                    `json:"requestsUsed"`
+	RequestsResetAt   string                   `json:"requestsResetAt"`
+	Enabled           bool                     `json:"enabled"`
+	Model             string                   `json:"model,omitempty"`
+	SystemPrompt      string                   `json:"systemPrompt"`
+	Tools             []AdminAgentToolResponse `json:"tools"`
 }
 
 type AdminAgentConfigPatchRequest struct {
-	SystemPrompt string `json:"systemPrompt"`
+	DailyRequestLimit *int64 `json:"dailyRequestLimit,omitempty"`
+	SystemPrompt      string `json:"systemPrompt"`
+}
+
+// ConfigurationRevision excludes changing usage counters from edit concurrency.
+func (value AdminAgentResponse) ConfigurationRevision() AdminAgentResponse {
+	value.RequestsUsed = 0
+	value.RequestsResetAt = ""
+	return value
 }
