@@ -161,6 +161,13 @@ func (m *Module) AllPublications(ctx context.Context) ([]publication.Publication
 	return m.publications.ListAll(ctx)
 }
 
+func (m *Module) ProjectPublications(ctx context.Context, projectID projectgraph.ResourceID) ([]publication.Publication, error) {
+	if m == nil || m.publications == nil || projectID.Validate() != nil {
+		return nil, publication.ErrNotFound
+	}
+	return m.publications.List(ctx, projectID)
+}
+
 func (m *Module) PublicationEvents(ctx context.Context, publicationID string) ([]publication.Event, error) {
 	if m == nil || m.publications == nil {
 		return nil, publication.ErrNotFound

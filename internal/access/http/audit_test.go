@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -12,7 +13,93 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+type auditReadRepository struct {
+	access.Repository
+	filter access.AuditEventFilter
+	events []access.AuditEvent
+	called bool
+}
+
+func (r *auditReadRepository) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
+	r.called = true
+	r.filter = filter
+	return append([]access.AuditEvent(nil), r.events...), nil
+}
+
+func projectAuditHandler(repo *auditReadRepository) Handler {
+	return Handler{
+		Repository: func() (access.Repository, error) { return repo, nil },
+		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "principal-admin"}, true
+		},
+		PlatformAdmin: func(context.Context, string) (bool, error) { return true, nil },
+		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:test", nil
+		},
+	}
+}
+
+func TestListAuditEventsBindsProjectAndPreservesProjectIdentity(t *testing.T) {
+	repo := &auditReadRepository{events: []access.AuditEvent{{
+		ID: "audit-1", ProjectID: "project:test", Action: "project.read",
+		ResourceKind: "project", ResourceID: "project:test", MetadataJSON: `{}`,
+		CreatedAt: "2026-09-13T00:00:00Z",
+	}}}
+	handler := projectAuditHandler(repo)
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:test/audit-events", nil)
+	response := httptest.NewRecorder()
+
+	handler.ListAuditEventsForProject(response, request, "project:test")
+
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repo.filter.ProjectID != "project:test" || repo.filter.IncludeUnscoped {
+		t.Fatalf("audit filter = %#v, want exact Project scope", repo.filter)
+	}
+	var payload struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0]["projectId"] != "project:test" {
+		t.Fatalf("audit response = %#v, want Project identity", payload.Items)
+	}
+}
+
+func TestListAuditEventsRejectsForeignProjectBeforeRepositoryRead(t *testing.T) {
+	repo := &auditReadRepository{}
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:foreign/audit-events", nil)
+	response := httptest.NewRecorder()
+
+	projectAuditHandler(repo).ListAuditEventsForProject(response, request, "project:foreign")
+
+	if response.Code != stdhttp.StatusNotFound {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repo.called {
+		t.Fatal("foreign Project reached the audit repository")
+	}
+}
+
+func TestListPlatformAuditEventsLimitsProjectRowsAndIncludesPlatformEvents(t *testing.T) {
+	repo := &auditReadRepository{}
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/audit-events", nil)
+	response := httptest.NewRecorder()
+
+	projectAuditHandler(repo).ListPlatformAuditEvents(response, request)
+
+	if response.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	if repo.filter.ProjectID != "project:test" || !repo.filter.IncludeUnscoped {
+		t.Fatalf("platform audit filter = %#v, want bound Project plus unscoped events", repo.filter)
+	}
+}
 
 type auditedMutationRepository struct {
 	access.Repository

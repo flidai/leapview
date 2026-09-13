@@ -6,10 +6,32 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/go-chi/chi/v5"
 )
 
 func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	requestedProject := strings.TrimSpace(chi.URLParam(r, "project"))
+	if requestedProject == "" {
+		requestedProject = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+	h.listAuditEvents(w, r, requestedProject, false)
+}
+
+func (h Handler) ListAuditEventsForProject(w stdhttp.ResponseWriter, r *stdhttp.Request, requestedProject string) {
+	h.listAuditEvents(w, r, requestedProject, false)
+}
+
+func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.listAuditEvents(w, r, strings.TrimSpace(r.URL.Query().Get("project")), true)
+}
+
+func (h Handler) listAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, requestedProject string, includeUnscoped bool) {
 	if !h.requirePlatformAdmin(w, r) {
+		return
+	}
+	projectID, ok := h.auditProjectScope(w, r, requestedProject)
+	if !ok {
 		return
 	}
 	repo, err := h.repository()
@@ -28,15 +50,17 @@ func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	rows, err := repo.ListAuditEvents(r.Context(), access.AuditEventFilter{
-		PrincipalID:  r.URL.Query().Get("principalId"),
-		Action:       r.URL.Query().Get("action"),
-		ResourceKind: r.URL.Query().Get("resourceKind"),
-		ResourceID:   r.URL.Query().Get("resourceId"),
-		Capability:   access.Capability(r.URL.Query().Get("capability")),
-		From:         r.URL.Query().Get("from"),
-		To:           r.URL.Query().Get("to"),
-		PageToken:    pageToken,
-		Limit:        limit + 1,
+		ProjectID:       projectID.String(),
+		IncludeUnscoped: includeUnscoped,
+		PrincipalID:     r.URL.Query().Get("principalId"),
+		Action:          r.URL.Query().Get("action"),
+		ResourceKind:    r.URL.Query().Get("resourceKind"),
+		ResourceID:      r.URL.Query().Get("resourceId"),
+		Capability:      access.Capability(r.URL.Query().Get("capability")),
+		From:            r.URL.Query().Get("from"),
+		To:              r.URL.Query().Get("to"),
+		PageToken:       pageToken,
+		Limit:           limit + 1,
 	})
 	if err != nil {
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
@@ -54,6 +78,21 @@ func (h Handler) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{"items": items, "page": map[string]any{"nextCursor": next}})
 }
-func (h Handler) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.ListAuditEvents(w, r)
+
+func (h Handler) auditProjectScope(w stdhttp.ResponseWriter, r *stdhttp.Request, requested string) (projectgraph.ResourceID, bool) {
+	if h.CurrentProjectID == nil {
+		writeJSONError(w, errors.New("active Project identity is unavailable"), stdhttp.StatusServiceUnavailable)
+		return "", false
+	}
+	projectID, err := h.CurrentProjectID(r.Context())
+	if err != nil || projectID.Validate() != nil {
+		writeJSONError(w, errors.New("active Project identity is unavailable"), stdhttp.StatusServiceUnavailable)
+		return "", false
+	}
+	requested = strings.TrimSpace(requested)
+	if requested != "" && requested != projectID.String() {
+		writeJSONError(w, errors.New("audit events not found"), stdhttp.StatusNotFound)
+		return "", false
+	}
+	return projectID, true
 }

@@ -84,9 +84,9 @@ type Recorder interface {
 }
 
 type Reader interface {
-	GetQueryEvent(ctx context.Context, id string) (Event, error)
+	GetQueryEvent(ctx context.Context, projectID projectgraph.ResourceID, id string) (Event, error)
 	ListQueryEvents(ctx context.Context, filter Filter) ([]Event, error)
-	ListQueryEventFilterOptions(ctx context.Context, field, search string, limit int) ([]FilterOption, error)
+	ListQueryEventFilterOptions(ctx context.Context, projectID projectgraph.ResourceID, field, search string, limit int) ([]FilterOption, error)
 }
 
 // Store is the capability contract shared by query-history readers and
