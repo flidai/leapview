@@ -148,25 +148,18 @@ spec:
       query:
         type: aggregate
         dimensions: [segment]
-        metrics: [revenue_variance]
-        sort: [{field: revenue_variance, direction: asc}]
+        metrics: [revenue_above_budget, revenue_below_budget]
+        sort: [{field: revenue_below_budget, direction: asc}, {field: revenue_above_budget, direction: asc}]
         limit: 10
       presentation:
         type: cartesian
         labelPosition: outside
+        stacking: normal
+        seriesIntent:
+        - {value: revenue_above_budget, color: success}
+        - {value: revenue_below_budget, color: danger}
         axes:
         - {id: primary_y, scale: automatic, zero: automatic, maximum: 1000000, tickDensity: normal}
-        conditionalFormatting:
-        - id: revenue-variance-tone
-          target: mark_fill
-          field: revenue_variance
-          rule:
-            kind: rules
-            rules:
-            - {operator: greater_or_equal, value: 0, style: {color: success, icon: arrow_up}}
-            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: circle}
     product_scorecard:
       type: matrix
       interactions:
