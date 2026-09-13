@@ -31,7 +31,7 @@ ADR-0016 completion.
 | ODCS 3.1 export/document profile | FAI-623, PR [#550](https://github.com/flidai/leapview/pull/550) | Pinned schema/checksum, independent CLI oracle, mapping/loss reports, security exclusions, adapter isolation tests | Implemented | Source and Model export only. Import, round-trip, execution, and transport are not claimed. |
 | OpenLineage 2.0.2 projection/document profile | FAI-629, PR [#551](https://github.com/flidai/leapview/pull/551) | Pinned event/facet schemas; schema/version, quality, statistics, parent and column-lineage tests; single-path/no-transport architecture tests | Implemented | No collector, transport, import, round-trip, or end-to-end emission claim. |
 | Generated standards conformance matrix | FAI-632 | [`standards-conformance-profiles.json`](standards-conformance-profiles.json), generated [`standards-conformance-matrix.md`](standards-conformance-matrix.md), `task adr0016-conformance:check` | Implemented | Only implemented or selected capability-gated profiles are registered. |
-| Current PostgreSQL migration qualification | FAI-622/662 | `TestBaselinePostgreSQL18`, publication constraint/grant checks, repository integrity tests, Goose ordering/immutability and generic previous-version upgrade tests | Partial evidence | Fresh initialization is qualified. A focused retained-data upgrade fixture from the revision immediately before `007_contract_publication_evidence.sql` is not present. No migration change is authorized by FAI-632. |
+| Current PostgreSQL migration qualification | FAI-622/662/632 | `TestBaselinePostgreSQL18`, `TestContractPublicationMigrationUpgradesRevisionSixWithRetainedData`, publication constraint/grant checks, repository integrity tests, Goose ordering/immutability and generic previous-version upgrade tests | Qualified for fresh initialization and the exact retained-data 006-to-007 path | The fixture uses the embedded immutable migrations on PostgreSQL 18, preserves a runtime-written Source record, and verifies publication append/replay after 007. It does not claim every historical upgrade origin. |
 | Final repository qualification | FAI-632 | Commands and results below, including the clean-worktree `task ci` contract | Qualified | Qualification is green; the separately listed active implementation and evidence boundaries keep ADR-0016 partial. |
 
 ## Supported profiles
@@ -64,6 +64,7 @@ Results are recorded only after execution against the FAI-632 branch based on
 | `task adr0016-conformance:check` | Pass |
 | Contextual Source/Model deprecation regression tests | Pass |
 | Direct-seed to transitive dashboard-consumer qualification | Pass |
+| PostgreSQL 18 retained-data migration 006-to-007 qualification | Pass; required container gate, no skip |
 | Contract projection/version/publication focused suites | Pass |
 | `go test ./internal/project/contractodcs -count=1` | Pass |
 | `task odcs:oracle` | Pass with the pinned independent `datacontract` 1.1.3 tool prepared on `PATH`; the first local invocation correctly reported the absent CI-only tool |
@@ -84,9 +85,11 @@ generated snapshot gate without changing test requirements.
 
 ## Qualification decision
 
-FAI-632 closes contextual field-deprecation and affected-dashboard graph
-qualification for the implemented profiles. Publication remains intentionally
-limited to an immutable direct seed; transitive dashboard expansion belongs to
-the Project graph and does not claim arbitrary consumer kinds. ADR-0016 remains
-partial because the focused historical migration-upgrade fixture is an evidence
-gap, not permission to alter a migration in this qualification layer.
+FAI-632 closes the identified contextual field-deprecation, affected-dashboard
+graph, and retained-data migration qualification gaps for the implemented
+profiles. Publication remains intentionally limited to an immutable direct
+seed; transitive dashboard expansion belongs to the Project graph and does not
+claim arbitrary consumer kinds. The migration claim is limited to fresh
+initialization and the exact embedded revision 006-to-007 path on PostgreSQL 18.
+No identified FAI-632 evidence blocker remains; ADR-0016 stays partial until its
+final reconciliation records the reviewed completion decision and boundaries.

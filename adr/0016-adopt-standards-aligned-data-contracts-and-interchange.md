@@ -793,6 +793,13 @@ receive production credentials by default.
   dependent dashboards, excludes unrelated dashboards, produces deterministic
   output for duplicate change inputs, and rejects duplicate-edge or cyclic
   graphs. No generic all-resource consumer closure is claimed.
+- `TestContractPublicationMigrationUpgradesRevisionSixWithRetainedData` applies
+  the immutable PostgreSQL migrations through revision 006, writes retained
+  Source delivery data through the runtime role, upgrades through
+  `007_contract_publication_evidence.sql`, proves the retained row is unchanged,
+  and appends and exactly replays canonical contract publication evidence.
+  This qualifies the exact 006-to-007 PostgreSQL 18 path, not arbitrary
+  historical upgrade origins.
 - Canonicalization fixtures classify every public DTO field, prove the exact
   `leapview.contract/v1` projection and defaults, produce byte-identical RFC
   8785 and SHA-256 results in Go and an independent implementation, and reject
