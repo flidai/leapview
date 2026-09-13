@@ -2289,6 +2289,14 @@
       "x-lifecycle": "internal",
       "x-scope": "MinIO conformance gate"
     },
+    "LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS": {
+      "default": "false",
+      "description": "Enable source-contributor browser diagnostics; disabled by default independently of the serving environment.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_COOKIE_SECURE": {
       "description": "Secure-cookie override; defaults to true for production browser authentication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
@@ -2650,12 +2658,31 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_LOCAL_APP_PORT": {
+      "description": "Checkout-scoped loopback host port selected by the local runtime controller.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "released local runtime package"
+    },
     "LEAPVIEW_LOCAL_AUTH": {
       "description": "Enable administrator-managed local browser authentication.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_LOCAL_CHECKOUT_ID": {
+      "description": "Canonical checkout identity supplied by the local runtime controller for resource labeling.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "released local runtime package"
+    },
+    "LEAPVIEW_LOCAL_OWNER_ID": {
+      "description": "Owner identity supplied by the local runtime controller for resource labeling.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "released local runtime package"
     },
     "LEAPVIEW_MANAGED_DATA_BACKEND": {
       "default": "local",
