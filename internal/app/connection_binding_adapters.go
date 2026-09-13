@@ -44,6 +44,7 @@ func (recorder connectionRotationAuditRecorder) RecordCredentialRotation(
 		return nil
 	}
 	return recorder.record(ctx, access.AuditEventInput{
+		ProjectID:    event.ProjectID.String(),
 		PrincipalID:  principalID,
 		Action:       string(event.Operation),
 		ResourceKind: "connection",
@@ -73,6 +74,7 @@ func (recorder connectionAdministrationAuditRecorder) RecordConnectionAdministra
 		return nil
 	}
 	return recorder.record(ctx, access.AuditEventInput{
+		ProjectID:    event.ProjectID.String(),
 		PrincipalID:  event.Actor,
 		Action:       string(event.Action),
 		ResourceKind: "connection",

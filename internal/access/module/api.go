@@ -125,8 +125,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.PreviewSemanticAttributeImpact(w, r)
 	case "restoreSemanticAttribute":
 		m.handler.RestoreSemanticAttribute(w, r)
-	case "listAuditEvents", "listPlatformAuditEvents":
+	case "listAuditEvents":
 		m.handler.ListAuditEvents(w, r)
+	case "listPlatformAuditEvents":
+		m.handler.ListPlatformAuditEvents(w, r)
 	default:
 		return false
 	}

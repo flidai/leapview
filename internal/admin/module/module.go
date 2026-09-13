@@ -18,13 +18,14 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type PublicationService interface {
 	PublicationsConfigured() bool
-	AllPublications(context.Context) ([]publication.Publication, error)
+	ProjectPublications(context.Context, projectgraph.ResourceID) ([]publication.Publication, error)
 	PublicationEvents(context.Context, string) ([]publication.Event, error)
 	PublicationDTO(publication.Publication) dashboardapi.PublicationResponse
 	MutatePublicationWithInvocation(context.Context, string, string, string, publication.Action, publication.CommandInvocation) (publication.Publication, error)
@@ -100,6 +101,7 @@ type Config struct {
 	SettingsAccess               SettingsAccess
 	AuthorizationProjection      adminsettings.AuthorizationProjectionReader
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	PersonalAvatar               PersonalAvatar
 	AuthoringSessions            AuthoringSessions
 	CurrentSession               func(*http.Request) (string, bool)
@@ -112,6 +114,7 @@ type Module struct {
 	currentCredential            func(*http.Request) (access.APICredential, bool)
 	authorizeAnyProject          func(context.Context, string, *access.APICredential, access.Capability) (bool, error)
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	publications                 PublicationService
 	product                      *product.Handler
 	publicationCommands          map[string]uicommand.Binding
@@ -123,6 +126,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
 		currentCredential: config.CurrentCredential, authorizeAnyProject: config.AuthorizeAnyProject,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		currentProjectID:             config.CurrentProjectID,
 		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	readModel := adminhttp.ReadModel{
@@ -139,6 +143,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			}, ok
 		},
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+		CurrentProjectID:             config.CurrentProjectID,
 		Publications:                 m.adminPublications,
 		AgentConfigCommand:           config.AgentConfigCommand,
 		PublicationCommands:          config.PublicationCommands,

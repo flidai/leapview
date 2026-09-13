@@ -94,6 +94,32 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if projectID != "project_extended" || environment != "production" || generationID != "generation_extended" || principalID != user.Principal.ID || action != "project.read" || capability != access.CapabilityProjectAdmin.String() || outcome != "denied" || requestID == "" || correlationID == "" || metadata != `{"a": 1, "z": 2}` {
 		t.Fatalf("canonical audit row = %q/%q/%q/%q/%q/%q/%q/%q/%q/%q", projectID, environment, generationID, principalID, action, capability, outcome, requestID, correlationID, metadata)
 	}
+	foreign := canonical
+	foreign.Identity.ProjectID = "project_foreign"
+	foreign.Action = "project.foreign.read"
+	foreign.Resource, err = access.NewResourceRef("project_foreign", graph.KindProjectNamespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordCanonicalAuditEvent(t.Context(), foreign); err != nil {
+		t.Fatal(err)
+	}
+	projectEvents, err := repo.ListAuditEvents(t.Context(), access.AuditEventFilter{ProjectID: "project_extended", Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectEvents) != 1 || projectEvents[0].ProjectID != "project_extended" || projectEvents[0].Action != "project.read" {
+		t.Fatalf("Project-scoped audit events = %#v", projectEvents)
+	}
+	platformEvents, err := repo.ListAuditEvents(t.Context(), access.AuditEventFilter{ProjectID: "project_extended", IncludeUnscoped: true, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range platformEvents {
+		if event.ProjectID == "project_foreign" {
+			t.Fatalf("foreign Project audit event disclosed: %#v", event)
+		}
+	}
 	rollbackEvent := canonical
 	rollbackEvent.Action = "project.rollback"
 	if err := repo.RunAuditedMutation(t.Context(), func(txRepo access.Repository) (access.AuditEventInput, error) {
@@ -220,6 +246,17 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	}
 	if replayAudits != 1 {
 		t.Fatalf("idempotent replay audit count=%d, want 1", replayAudits)
+	}
+	var authoringAudits, projectScopedAuthoringAudits int
+	if err := db.admin.QueryRow(t.Context(), `
+		SELECT count(*), count(*) FILTER (WHERE project_id='project_extended')
+		FROM audit.audit_event
+		WHERE action LIKE 'authoring.%'
+	`).Scan(&authoringAudits, &projectScopedAuthoringAudits); err != nil {
+		t.Fatal(err)
+	}
+	if authoringAudits == 0 || projectScopedAuthoringAudits != authoringAudits {
+		t.Fatalf("Project-scoped authoring audits = %d/%d, want all", projectScopedAuthoringAudits, authoringAudits)
 	}
 	if _, err := db.admin.Exec(t.Context(), `UPDATE access.device_authorization SET consumed_at=NULL WHERE id='da_extended'`); err == nil {
 		t.Fatal("device consumption rewind accepted")
