@@ -1300,6 +1300,19 @@ tasks:
         -run '^TestFAI520ManagedDataS3DRSeedQualification$'
         -count=1 -timeout=15m -v
 
+  qualify:ubdr:release-transition-preflight:
+    desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - >-
+        go test -race -tags='fai518qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI518'
+        -count=1 -timeout=10m -v
+
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
     cmds:
