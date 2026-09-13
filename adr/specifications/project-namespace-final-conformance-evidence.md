@@ -43,7 +43,7 @@ The evidence states are:
 | FAI-675 | [PR #549](https://github.com/flidai/leapview/pull/549), head `fbe7ffb37`, merged as `372039da7`; required CI and Security gates passed | Merged. Closed-graph and unsupported-foreign-reference evidence is available on main. |
 | FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns the maintained architecture and public integration, security, operations, and recovery documentation | ISO-03's documentation mismatch is resolved: clients cannot enumerate or switch Projects, and Project scope comes from the server-bound authority. |
 | FAI-678 | [PR #581](https://github.com/flidai/leapview/pull/581), head `e1c56b830`, merged as `f4ad4a032`; exact merge-queue CI and Security passed | Merged. dbt and independent multi-Source adoption evidence is available on main. |
-| FAI-679 | [PR #587](https://github.com/flidai/leapview/pull/587) contains this reconciliation inventory and the maintained-documentation audit | The five non-exhaustive requirement inventories remain open. Protected CI, Security, CodeQL, and SAST are the merge evidence for this documentation-only reconciliation. |
+| FAI-679 | [PR #587](https://github.com/flidai/leapview/pull/587) contains this reconciliation inventory and the maintained-documentation audit | The five non-exhaustive requirement inventories remain open. Protected CI and Security results, including CodeQL path classification and selected SAST, are the merge evidence for this documentation-only reconciliation. |
 
 ## Requirement evidence map
 
@@ -91,7 +91,7 @@ The evidence states are:
 | SEM-05 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Closed topology and foreign-reference tests are independent of future hosting topology | — (Main) |
 | ISO-01 | Baseline | Project-qualified authorization plus instance-bound runtime/claim evidence on main | Authorization snapshot and bound runtime tests | — (Main) |
 | ISO-02 | Baseline | Singleton Project/environment runtime topology on main | Second-Project and environment-mismatch admission rejection tests | — (Main) |
-| ISO-03 | FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns [`spec.md`](../../spec.md) and maintained public documentation with the merged Project-free source, singleton claim, and instance-local ResourceUID model | The architecture and public guides explicitly state that Project identity is server-bound, clients cannot enumerate or switch Projects, and exact `{project}` parameters assert rather than select scope; documentation, generated, protected CI, Security, CodeQL, and SAST validation passed before merge | — (Main) |
+| ISO-03 | FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns [`spec.md`](../../spec.md) and maintained public documentation with the merged Project-free source, singleton claim, and instance-local ResourceUID model | The architecture and public guides explicitly state that Project identity is server-bound, clients cannot enumerate or switch Projects, and exact `{project}` parameters assert rather than select scope; documentation and generated checks passed, protected CI and Security passed, selected SAST passed, and CodeQL's path classifier excluded the documentation-only change | — (Main) |
 | XPR-01 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7`; [#581](https://github.com/flidai/leapview/pull/581) supplies upstream-package coverage | Deterministic foreign-qualified reference rejection without foreign catalog disclosure | — (Main) |
 | XPR-02 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Unsupported `projectOutput` Source variant fails closed without selector disclosure | — (Main) |
 | XPR-03 | Baseline | Ordinary Connection-backed Sources and reusable closed source bundles on main | Source-to-Model-to-SemanticModel closed graph compilation tests | — (Main) |
@@ -126,9 +126,10 @@ The resulting maintained contract is consistent throughout:
 - Separate instances may reuse enterprise identities, but that does not imply
   same-process multi-Project hosting.
 
-PR #587's documentation checks, generated checks, protected CI, Security,
-CodeQL, and SAST runs are the validation evidence for this audit. No runtime,
-API, compiler, deployment, ResourceUID, dbt, or recovery behavior changed.
+PR #587's documentation and generated checks, protected CI and Security results,
+selected SAST results, and CodeQL documentation-only path classification are
+the validation evidence for this audit. No runtime, API, compiler, deployment,
+ResourceUID, dbt, or recovery behavior changed.
 
 ## Ownership audit
 
