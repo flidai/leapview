@@ -399,7 +399,7 @@ export function formatCanonicalDate(year: number, month: number, day: number): s
 
 export function formatDisplayDate(value: string): string {
   const date = parseCanonicalDate(value)
-  return date ? `${String(date.day).padStart(2, '0')}/${String(date.month + 1).padStart(2, '0')}/${String(date.year).padStart(4, '0')}` : ''
+  return date ? `${String(date.month + 1).padStart(2, '0')}/${String(date.day).padStart(2, '0')}/${String(date.year).padStart(4, '0')}` : ''
 }
 
 function todayValue(): string {

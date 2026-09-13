@@ -208,7 +208,7 @@ The create/fork operation never deploys, publishes a serving generation, mutates
 
 ## Update existing copies of Visual Showcase
 
-The shared `dashboards/dashboards/visual-showcase.yaml` defines **Purchase period** as a `dateRange` control on `purchase_timestamp`. The browser displays Start and End dates as **DD/MM/YYYY**, and the timestamp range includes the full selected end date. The filter retains its `purchase_time` ID, existing targets, and unfiltered default. Its canvas component also retains its existing ID so references remain stable. Relative-period controls remain available for other filters and dashboards.
+The shared `dashboards/dashboards/visual-showcase.yaml` defines **Purchase period** as a `dateRange` control on `purchase_timestamp`. The browser displays Start and End dates as **MM/DD/YYYY**, and the timestamp range includes the full selected end date. The filter retains its `purchase_time` ID, existing targets, and unfiltered default. Its canvas component also retains its existing ID so references remain stable. Relative-period controls remain available for other filters and dashboards.
 
 No database schema or automatic saved-dashboard migration is required. The rollout depends on how the dashboard is stored:
 

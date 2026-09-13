@@ -115,7 +115,7 @@ test('date range owns compact calendars, Monday-first weeks, and canonical selec
     })
     expect(result.geometry.width).toBeGreaterThanOrEqual(240)
     expect(result.geometry.width).toBeLessThanOrEqual(320)
-    expect(result.selected).toEqual({ display: '08/02/2025', mutations: 0 })
+    expect(result.selected).toEqual({ display: '02/08/2025', mutations: 0 })
     expect(result.whileInside).toEqual({ open: true, mutations: 0 })
     expect(result.mutations).toEqual([{
       bindingKey: 'purchase_date',
@@ -165,7 +165,7 @@ test('date range Escape discards the draft and non-editable controls stay disabl
       await leaf.updateComplete
       return { afterEscape, disabled: ((picker.shadowRoot as ShadowRoot).querySelector('.date-trigger') as HTMLButtonElement).disabled, mutations }
     })
-    expect(result).toEqual({ afterEscape: '01/02/2025', disabled: true, mutations: [] })
+    expect(result).toEqual({ afterEscape: '02/01/2025', disabled: true, mutations: [] })
   } finally {
     await page.close()
   }
@@ -463,7 +463,7 @@ test('timestamp date ranges commit whole calendar days and retain their displaye
       lower: { value: { kind: 'timestamp', value: '2025-03-09T05:00:00Z' }, inclusive: true },
       upper: { value: { kind: 'timestamp', value: '2025-03-10T04:00:00Z' }, inclusive: false },
     })
-    expect(result.displayed).toEqual(['09/03/2025', '09/03/2025'])
+    expect(result.displayed).toEqual(['03/09/2025', '03/09/2025'])
   } finally { await page.close() }
 })
 

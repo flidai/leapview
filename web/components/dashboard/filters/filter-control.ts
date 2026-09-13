@@ -476,7 +476,7 @@ export class DashboardFilterLeaf extends LitElement {
           <lv-date-picker
             .value=${draft.lower}
             label="Start date"
-            placeholder="DD/MM/YYYY"
+            placeholder="MM/DD/YYYY"
             .weekStart=${this.definition?.weekStart || 'monday'}
             .error=${invalid ? this.rangeError : ''}
             ?invalid=${invalid}
@@ -505,7 +505,7 @@ export class DashboardFilterLeaf extends LitElement {
           <lv-date-picker
             .value=${draft.upper}
             label="End date"
-            placeholder="DD/MM/YYYY"
+            placeholder="MM/DD/YYYY"
             .weekStart=${this.definition?.weekStart || 'monday'}
             .error=${invalid ? this.rangeError : ''}
             ?invalid=${invalid}
