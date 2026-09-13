@@ -111,6 +111,8 @@ BEGIN
 			ON release.candidate_provenance TO leapview_control_runtime;
         GRANT INSERT (deployment_id, project_id, release_id, rollback_of)
             ON release.deployment_linkage TO leapview_control_runtime;
+		GRANT SELECT ON release.release_transition_policy TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON release.release_transition_policy FROM leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery TO leapview_control_runtime;
 		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON delivery.delivery_target FROM leapview_control_runtime;
 		-- PostgreSQL row-locking clauses require UPDATE on at least one column.
@@ -172,7 +174,9 @@ BEGIN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
-		GRANT USAGE ON SCHEMA dashboard, event, jobs, physical_pool, recovery TO leapview_control_maintenance;
+		GRANT USAGE ON SCHEMA dashboard, event, jobs, physical_pool, recovery, release TO leapview_control_maintenance;
+		GRANT SELECT, INSERT ON release.release_transition_policy TO leapview_control_maintenance;
+		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON release.release_transition_policy FROM leapview_control_maintenance;
 		GRANT SELECT, INSERT, UPDATE ON recovery.recovery_set, recovery.validation_attempt TO leapview_control_maintenance;
 		GRANT SELECT, INSERT ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result TO leapview_control_maintenance;
 		REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_maintenance;

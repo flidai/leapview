@@ -190,9 +190,54 @@ CREATE INDEX IF NOT EXISTS release_record_project_created_idx
 CREATE INDEX IF NOT EXISTS candidate_provenance_generation_idx
     ON release.candidate_provenance(project_id, (provenance -> 'plan' -> 'identity' ->> 'environment'), (provenance -> 'plan' -> 'identity' ->> 'generationId'));
 
+-- Release transition policies are trusted, immutable metadata.  The exact
+-- artifact pair is the primary key: a later policy may not replace the
+-- policy selected for an already-published predecessor/candidate pair.
+-- Policy semantics, canonical digest, and the matching rollback direction
+-- are revalidated by the Go authority on both publication and readback.
+CREATE TABLE IF NOT EXISTS release.release_transition_policy (
+    predecessor_artifact_digest text NOT NULL,
+    candidate_artifact_digest text NOT NULL,
+    policy_version text NOT NULL,
+    policy_digest text NOT NULL,
+    policy_json jsonb NOT NULL,
+    published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (predecessor_artifact_digest, candidate_artifact_digest),
+    CHECK (predecessor_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (candidate_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (predecessor_artifact_digest <> candidate_artifact_digest),
+    CHECK (policy_version = 'release-policy/v1'),
+    CHECK (policy_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (jsonb_typeof(policy_json) = 'object'),
+    CHECK (octet_length(policy_json::text) BETWEEN 1 AND 262144),
+    CHECK ((policy_json ->> 'version' = policy_version) IS TRUE),
+    CHECK ((policy_json ->> 'digest' = policy_digest) IS TRUE),
+    CHECK ((jsonb_typeof(policy_json -> 'rules') = 'array') IS TRUE),
+    CHECK ((jsonb_array_length(policy_json -> 'rules') BETWEEN 1 AND 128) IS TRUE)
+);
+
+CREATE OR REPLACE FUNCTION release.reject_transition_policy_mutation()
+RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, release
+AS $$
+BEGIN
+    RAISE EXCEPTION 'release transition policy is immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS release_transition_policy_immutable ON release.release_transition_policy;
+CREATE TRIGGER release_transition_policy_immutable
+    BEFORE UPDATE OR DELETE ON release.release_transition_policy
+    FOR EACH ROW EXECUTE FUNCTION release.reject_transition_policy_mutation();
+DROP TRIGGER IF EXISTS release_transition_policy_no_truncate ON release.release_transition_policy;
+CREATE TRIGGER release_transition_policy_no_truncate
+    BEFORE TRUNCATE ON release.release_transition_policy
+    FOR EACH STATEMENT EXECUTE FUNCTION release.reject_transition_policy_mutation();
+
 REVOKE ALL ON SCHEMA release FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA release FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA release FROM PUBLIC;
+REVOKE ALL ON FUNCTION release.reject_transition_policy_mutation() FROM PUBLIC;
 
 DO $$
 BEGIN
@@ -217,6 +262,14 @@ BEGIN
             ON release.candidate_provenance TO leapview_control_runtime;
         GRANT INSERT (deployment_id, project_id, release_id, rollback_of)
             ON release.deployment_linkage TO leapview_control_runtime;
+        REVOKE ALL ON release.release_transition_policy FROM leapview_control_runtime;
+        GRANT SELECT ON release.release_transition_policy TO leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA release TO leapview_control_maintenance;
+        GRANT SELECT, INSERT ON release.release_transition_policy TO leapview_control_maintenance;
+        REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON release.release_transition_policy FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_readonly;

@@ -139,3 +139,21 @@ FROM release.release_record
 WHERE project_id = $1 AND environment = $2 AND generation_id = $3 AND status = 'ready'
 ORDER BY finalized_at DESC, release_id DESC
 LIMIT 1;
+
+-- Transition policy authority.  Publication is insert-only and the exact
+-- pair is read back so the repository can distinguish an idempotent replay
+-- from a conflicting policy for the same immutable artifacts.
+
+-- name: InsertReleaseTransitionPolicy :execrows
+INSERT INTO release.release_transition_policy
+    (predecessor_artifact_digest, candidate_artifact_digest,
+     policy_version, policy_digest, policy_json)
+VALUES (sqlc.arg(predecessor_artifact_digest), sqlc.arg(candidate_artifact_digest),
+        sqlc.arg(policy_version), sqlc.arg(policy_digest), sqlc.arg(policy_json)::jsonb)
+ON CONFLICT (predecessor_artifact_digest, candidate_artifact_digest) DO NOTHING;
+
+-- name: GetReleaseTransitionPolicy :one
+SELECT predecessor_artifact_digest, candidate_artifact_digest,
+       policy_version, policy_digest, policy_json::text, published_at
+FROM release.release_transition_policy
+WHERE predecessor_artifact_digest = $1 AND candidate_artifact_digest = $2;

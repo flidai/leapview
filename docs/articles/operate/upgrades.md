@@ -89,6 +89,16 @@ PostgreSQL, run Goose or River migrations, contact a provider, acquire a
 fence, select an image, or mutate persistent state. FAI-519 must revalidate the
 same immutable evidence at its execution boundary.
 
+The release-owned PostgreSQL policy authority stores one immutable policy for
+each exact predecessor/candidate artifact-digest pair. Policy publication is a
+controlled maintenance operation; the application runtime has read-only
+resolution access and cannot replace an admitted pair. Resolution recomputes
+the existing `release-policy/v1` digest and verifies the rollback direction
+against both artifact identities. It never derives policy from mutable release
+rows, runtime configuration, or a caller-supplied policy projection.
+
+This provides authoritative policy resolution. It does not execute a release transition.
+
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
 not infer cross-version safety from tuple equality. A binary policy also binds
