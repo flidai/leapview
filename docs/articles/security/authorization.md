@@ -4,9 +4,9 @@ LeapView authorization assigns privileges on securable resources to principals, 
 
 ## Securable hierarchy
 
-Securable objects include projects, dashboards, semantic models, sources, Models, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
+Securable objects include the server-bound Project, dashboards, semantic models, sources, Models, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants. This hierarchy does not provide Project enumeration or switching.
 
-The authored project graph has exactly six source-root kinds: `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are target policy or publication inputs compiled into authorization and publication snapshots; they are not additional source-root catalog nodes.
+The portable source graph has exactly six source-root kinds: `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are target policy or publication inputs compiled into authorization and publication snapshots; they are not additional source-root catalog nodes.
 
 Review the effective privilege result rather than assuming a direct binding is the only source of access. The Current User and Access APIs expose effective-privilege views for this purpose.
 

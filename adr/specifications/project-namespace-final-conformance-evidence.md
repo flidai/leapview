@@ -1,6 +1,6 @@
 # ADR-0018 final conformance evidence reconciliation
 
-Status: reconciled against merged behavior; protected validation pending
+Status: reconciled against merged behavior; ADR closure remains pending on five partial evidence inventories
 
 Evidence snapshot: 2026-09-13
 
@@ -32,8 +32,6 @@ The evidence states are:
 - **Main**: the cited implementation is merged on the repository baseline.
 - **Partial**: merged implementation covers a defined slice, but the full
   requirement still lacks maintained evidence.
-- **Candidate**: the requirement is satisfied by this documentation-only
-  candidate but has not yet passed protected validation and merged.
 - **Gap**: required documentation alignment or maintained evidence is absent.
 
 ## Dependency snapshot
@@ -43,9 +41,9 @@ The evidence states are:
 | FAI-670 | [PR #542](https://github.com/flidai/leapview/pull/542), head `a4f7efa53`, merged as `c9e6482a8`; required CI and Security gates passed | Merged. RID lifecycle evidence is authoritative on main; acceptance evidence and Linear status were reconciled to Done on 2026-09-13. |
 | FAI-671 | [PR #546](https://github.com/flidai/leapview/pull/546), head `01fc491eb`, merged as `4435ea6c1`; required CI and Security gates passed | Merged. The maintained runtime-boundary audit deliberately identifies its non-exhaustive BND/API evidence. |
 | FAI-675 | [PR #549](https://github.com/flidai/leapview/pull/549), head `fbe7ffb37`, merged as `372039da7`; required CI and Security gates passed | Merged. Closed-graph and unsupported-foreign-reference evidence is available on main. |
-| FAI-677 | Its Project-free mental model is incorporated by this FAI-679 documentation-only candidate | ISO-03's maintained-documentation mismatch is resolved in the candidate; protected validation and merge remain. |
+| FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns the maintained architecture and public integration, security, operations, and recovery documentation | ISO-03's documentation mismatch is resolved: clients cannot enumerate or switch Projects, and Project scope comes from the server-bound authority. |
 | FAI-678 | [PR #581](https://github.com/flidai/leapview/pull/581), head `e1c56b830`, merged as `f4ad4a032`; exact merge-queue CI and Security passed | Merged. dbt and independent multi-Source adoption evidence is available on main. |
-| FAI-679 | This reconciliation inventory and the aligned top-level architecture specification | The five non-exhaustive requirement inventories and exact-candidate protected validation remain open. |
+| FAI-679 | [PR #587](https://github.com/flidai/leapview/pull/587) contains this reconciliation inventory and the maintained-documentation audit | The five non-exhaustive requirement inventories remain open. Protected CI, Security, CodeQL, and SAST are the merge evidence for this documentation-only reconciliation. |
 
 ## Requirement evidence map
 
@@ -93,7 +91,7 @@ The evidence states are:
 | SEM-05 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Closed topology and foreign-reference tests are independent of future hosting topology | — (Main) |
 | ISO-01 | Baseline | Project-qualified authorization plus instance-bound runtime/claim evidence on main | Authorization snapshot and bound runtime tests | — (Main) |
 | ISO-02 | Baseline | Singleton Project/environment runtime topology on main | Second-Project and environment-mismatch admission rejection tests | — (Main) |
-| ISO-03 | FAI-677 | This FAI-679 documentation-only candidate aligns [`spec.md`](../../spec.md) with the merged Project-free source, singleton claim, and instance-local ResourceUID model | The top-level architecture now explicitly rejects Project selectors, Project pickers, native cross-Project imports, and same-process multi-Project isolation; documentation and conformance checks remain to run | Protected validation and merge required (Candidate) |
+| ISO-03 | FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns [`spec.md`](../../spec.md) and maintained public documentation with the merged Project-free source, singleton claim, and instance-local ResourceUID model | The architecture and public guides explicitly state that Project identity is server-bound, clients cannot enumerate or switch Projects, and exact `{project}` parameters assert rather than select scope; documentation, generated, protected CI, Security, CodeQL, and SAST validation passed before merge | — (Main) |
 | XPR-01 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7`; [#581](https://github.com/flidai/leapview/pull/581) supplies upstream-package coverage | Deterministic foreign-qualified reference rejection without foreign catalog disclosure | — (Main) |
 | XPR-02 | FAI-675 | [#549](https://github.com/flidai/leapview/pull/549) / `372039da7` | Unsupported `projectOutput` Source variant fails closed without selector disclosure | — (Main) |
 | XPR-03 | Baseline | Ordinary Connection-backed Sources and reusable closed source bundles on main | Source-to-Model-to-SemanticModel closed graph compilation tests | — (Main) |
@@ -106,16 +104,42 @@ The evidence states are:
 | DBT-05 | FAI-678 | [#581](https://github.com/flidai/leapview/pull/581) / `f4ad4a032` | Upstream package resolution occurs before the physical warehouse handoff; no dbt Mesh runtime resolver is introduced | — (Main) |
 | DBT-06 | FAI-678 | [#581](https://github.com/flidai/leapview/pull/581) / `f4ad4a032` | The proof compiles two Connections and Sources from independent producers into one closed semantic graph; PostgreSQL qualification preserves the complete generation ResourceUID inventory | — (Main) |
 
+## ISO-03 maintained-documentation audit
+
+The FAI-679 audit searched maintained architecture and public documentation for
+Project listing, discovery, selection, switching, and same-process
+multi-Project claims. It corrected the unsupported collection endpoint and
+Project-discovery workflow in the [API quickstart](../../docs/articles/integrate/api-quickstart.md),
+the Project-list hierarchy in the [agent integration](../../docs/articles/integrate/agent.md)
+and [agent tool guide](../../docs/articles/integrate/agent-tools.md), and
+ambiguous same-instance language in the integration overview, authorization,
+OIDC, SCIM, token, upgrade, troubleshooting, and storage/recovery guides.
+
+The resulting maintained contract is consistent throughout:
+
+- Project identity is bound by the target's authoritative server context.
+- Clients cannot enumerate, select, or switch arbitrary Projects.
+- `/api/v1/projects/{project}` asserts the expected bound identity; there is no
+  `/api/v1/projects` collection endpoint.
+- Catalog search and root listing operate inside the active Project graph and
+  never return a set of Projects from which the caller chooses.
+- Separate instances may reuse enterprise identities, but that does not imply
+  same-process multi-Project hosting.
+
+PR #587's documentation checks, generated checks, protected CI, Security,
+CodeQL, and SAST runs are the validation evidence for this audit. No runtime,
+API, compiler, deployment, ResourceUID, dbt, or recovery behavior changed.
+
 ## Ownership audit
 
 - Requirements mapped: **54**.
 - Unique requirement identifiers: **54**.
 - Requirements without an accountable owner: **0**.
 - Requirements with more than one accountable owner: **0**.
-- Requirements with merged maintained evidence: **48**.
+- Requirements with merged maintained evidence: **49**.
 - Requirements with merged partial evidence: **5** (`BND-06`, `API-01`,
   `API-02`, `API-05`, and `API-06`).
-- Requirements resolved by this documentation-only candidate: **1**
+- Requirements resolved by the documentation-only reconciliation: **1**
   (`ISO-03`).
 - Requirements with an unaddressed gap: **0**.
 - Supporting evidence that crosses issue boundaries is labeled as supporting
@@ -128,10 +152,6 @@ ADR-0018 must remain `pending` until all of the following are true:
 1. Maintained evidence for `BND-06`, `API-01`, `API-02`, `API-05`, and
    `API-06` remains non-exhaustive. The rows above identify the proven slices
    and the exact inventory still required; no row is upgraded by inference.
-2. The exact documentation/evidence candidate passes generation, documentation,
-   conformance, CI, and Security validation before ADR-0018's Implementation
-   field changes.
-
 FAI-670, FAI-671, FAI-675, and FAI-678 are no longer implementation merge
 blockers. Their merged evidence replaces the stale provisional and gap claims
 from the previous snapshot.
