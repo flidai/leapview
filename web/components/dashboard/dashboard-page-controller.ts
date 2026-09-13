@@ -119,7 +119,13 @@ export class DashboardNavigationController {
     dirty: boolean
     confirm: (message: string) => boolean
   }): DashboardNavigationDecision {
-    if (options.active) return 'cancel'
+    // Clicking the active page is a cancellation gesture. Clear an earlier
+    // deferred request as well, otherwise its apply/cancel response can
+    // dispatch navigation after the user has explicitly stayed put.
+    if (options.active) {
+      this.clear()
+      return 'cancel'
+    }
     this.pending = { ...request }
     this.requested = false
     if (!options.deferred || !options.dirty) return 'navigate'

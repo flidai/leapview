@@ -687,3 +687,8 @@ body:has(lv-chat-page) datastar-inspector,
 body:has(lv-dashboard-page[data-agent-open]) datastar-inspector {
   display: none;
 }
+
+/* Keep the development inspector launcher above the dashboard builder composer. */
+body:has(lv-dashboard-builder) datastar-inspector {
+  --ds-toggle-bottom: var(--base-size-80);
+}

@@ -87,3 +87,16 @@ test('proportional labels honor hidden and inside presentation settings without 
   expect(insideSeries.label.formatter({ value: ['Status 0', 1] })).toBe('1')
   expect(insideSeries.labelLayout({ dataIndex: 0 })).toEqual({ hideOverlap: true })
 })
+
+test('empty and loading donuts show only the shared status graphic', () => {
+  for (const [kind, text] of [['no_data', 'No data'], ['loading', 'Loading…']] as const) {
+    const envelope = proportionalFixture('donut') as any
+    envelope.spec.presentation.centerLabel = undefined
+    envelope.dataState.datasets[0].rows = []
+    envelope.status = { kind }
+
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series).toEqual([])
+    expect(option.graphic.map((graphic: any) => graphic.style?.text)).toEqual([text])
+  }
+})

@@ -645,3 +645,33 @@ for (const failureMode of ['missing', 'constructor', 'observe'] as const) {
     }
   })
 }
+
+for (const variant of ['chart', 'headerless chart', 'table']) {
+  test(`expanded ${variant} hides Expand and restores it when returned to the dashboard`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => (window as any).__lvSourceHosts)
+      await page.evaluate(async variant => {
+        const host = document.createElement('lv-visualization-host') as any
+        host.id = 'focus-test'
+        host.style.cssText = '--base-size-48:48px;display:block;width:600px;height:400px'
+        const source = (window as any).__lvSourceHosts[variant === 'table' ? 'orders' : 'orders_chart']
+        host.envelope = { ...source.envelope, status: { kind: 'ready' }, spec: { ...source.envelope.spec, titleVisible: variant !== 'headerless chart' } }
+        document.body.append(host)
+        await host.ensureMounted()
+      }, variant)
+      const host = page.locator('#focus-test')
+      const expand = host.getByRole('button', { name: /^Expand / })
+      await expand.waitFor({ state: 'visible' })
+      await host.evaluate(element => element.setAttribute('slot', 'focus-visual'))
+      expect(await expand.count()).toBe(0)
+      const options = host.getByLabel('Visual options', { exact: true })
+      expect(await options.count()).toBe(1)
+      const reserved = await options.evaluate(node => document.querySelector('#focus-test')!.getBoundingClientRect().right - node.getBoundingClientRect().right)
+      expect(reserved).toBeGreaterThanOrEqual(48)
+      await host.evaluate(element => element.removeAttribute('slot'))
+      await expand.waitFor({ state: 'visible' })
+    } finally { await page.close() }
+  })
+}

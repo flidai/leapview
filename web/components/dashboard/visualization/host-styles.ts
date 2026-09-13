@@ -10,6 +10,7 @@ export const visualizationHostStyles = css`
     background: var(--lv-chart-surface);
     font-family: var(--fontStack-system);
   }
+  :host([slot='focus-visual']) { --lv-visual-expand-display: none; --lv-visual-focus-close-space: var(--base-size-48); }
   .surface { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }

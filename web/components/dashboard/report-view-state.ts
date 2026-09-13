@@ -17,13 +17,14 @@ export type ZoomState = {
 }
 
 export const autoMobileLayoutQuery = '(max-width: 640px)'
+export const reportViewPathChangedEvent = 'lv-report-view-path-change'
 
 export function layoutStorageKey(): string {
-  return `leapview-report-layout:${location.pathname}`
+  return `leapview-report-layout:${reportViewPathname()}`
 }
 
 export function zoomScaleStorageKey(): string {
-  return `leapview-report-zoom-scale:${location.pathname}`
+  return `leapview-report-zoom-scale:${reportViewPathname()}`
 }
 
 export function storedZoomMode(): ZoomMode {
@@ -76,5 +77,10 @@ export function clampFittedScale(value: number): number {
 }
 
 export function zoomStorageKey(): string {
-  return `leapview-report-zoom:${location.pathname}`
+  return `leapview-report-zoom:${reportViewPathname()}`
+}
+
+/** Return the route portion used to scope report-view preferences. */
+export function reportViewPathname(): string {
+  return typeof window !== 'undefined' ? window.location.pathname : ''
 }

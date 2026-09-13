@@ -946,6 +946,104 @@ test('chat actions keep independent Undo notifications without waiting for the f
   }
 })
 
+test('expired chat Undo refreshes the sidebar before releasing its temporary hide', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      ;(window as any).managementLoads = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-management-load', (event: Event) => (window as any).managementLoads.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.waitForFunction(() => (window as any).chatActions.length === 1)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    })
+    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.waitForFunction(() => (window as any).managementLoads.length > 0)
+
+    const duringRefresh = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      return {
+        refreshRequested: Boolean(manager.pending),
+        hidden: !sidebar.shadowRoot.querySelector('a[href="/chats/c1"]'),
+      }
+    })
+    expect(duringRefresh).toEqual({ refreshRequested: true, hidden: true })
+
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager')
+      document.dispatchEvent(new CustomEvent('datastar-fetch', {
+        detail: { type: 'error', el: manager, argsRaw: { status: 503 } },
+      }))
+    })
+    await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
+    const afterFailure = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      return {
+        refreshPending: Boolean(manager.pending),
+        visible: Boolean(sidebar.shadowRoot.querySelector('a[href="/chats/c1"]')),
+      }
+    })
+    expect(afterFailure).toEqual({ refreshPending: false, visible: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('expired chat refresh keeps the current focus when the sidebar read succeeds', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      ;(window as any).managementLoads = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-management-load', (event: Event) => (window as any).managementLoads.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.waitForFunction(() => (window as any).chatActions.length === 1)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    })
+    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.waitForFunction(() => (window as any).managementLoads.length > 0)
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      ;(sidebar.shadowRoot.querySelector('a[href="/"]') as HTMLElement).focus()
+    })
+
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const requestId = (window as any).managementLoads.at(-1).requestId
+      runtime.mergePatch({ chatManagement: { action: '', completedRequestId: requestId, archivedConversations: [] } })
+    })
+    await page.locator('lv-chat-manager').evaluate((element: any) => element.updateComplete)
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      return {
+        focusHref: sidebar.shadowRoot.activeElement?.getAttribute('href'),
+        managerOpen: manager.opened,
+        refreshPending: Boolean(manager.pending),
+      }
+    })
+    expect(state).toEqual({ focusHref: '/', managerOpen: false, refreshPending: false })
+  } finally {
+    await page.close()
+  }
+})
+
 test('archived chat manager restores a saved chat and waits for server acknowledgement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)

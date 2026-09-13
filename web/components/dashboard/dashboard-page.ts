@@ -105,7 +105,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }, () => this.status.generation)
   private readonly filterOptionGenerations = new Map<string, number>()
   private readonly filterOptionRequestContexts = new Map<string, Map<number, string>>()
-  private readonly filterOptionInFlight = new Map<string, { context: string, generation: number, startedAt: number }>()
+  private readonly filterOptionInFlight = new Map<string, { context: string, signature: string, generation: number, startedAt: number }>()
   private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
   private retainedFilterOptionServingStateID = ''
   private readonly filterController = new DashboardFilterController((command) => {
@@ -661,6 +661,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       if (page.bindingKey !== key || page.servingStateID !== servingStateID) continue
       const binding = this.filterContract.bindings[key]
       if (!binding) continue
+      const generation = this.filterOptionGenerations.get(key)
+      if (generation !== undefined && page.requestGeneration !== generation) continue
       const requestContext = this.filterOptionRequestContexts.get(key)?.get(page.requestGeneration)
       const currentContext = this.filterOptionContext(binding)
       const currentLegacyPage = requestContext === undefined
@@ -675,7 +677,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
     }
     return Object.fromEntries([...this.retainedFilterOptionPages].filter(([key, page]) =>
-      page.servingStateID === servingStateID && Boolean(this.filterContract.bindings[key])))
+      page.servingStateID === servingStateID && Boolean(this.filterContract.bindings[key])
+      && (this.filterOptionGenerations.get(key) === undefined || page.requestGeneration === this.filterOptionGenerations.get(key))))
   }
 
   private get filterOptionsReady(): boolean {
@@ -1437,11 +1440,12 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const binding = this.filterContract.bindings[detail.bindingKey]
     if (!binding) return
     const context = this.filterOptionContext(binding)
+    const signature = `${context}\u0000${detail.search}\u0000${detail.cursor ?? ''}`
     const inFlight = this.filterOptionInFlight.get(detail.bindingKey)
-    if (inFlight?.context === context && Date.now() - inFlight.startedAt < 250) return
+    if (inFlight?.signature === signature && Date.now() - inFlight.startedAt < 250) return
     const generation = (this.filterOptionGenerations.get(detail.bindingKey) ?? 0) + 1
     this.filterOptionGenerations.set(detail.bindingKey, generation)
-    this.filterOptionInFlight.set(detail.bindingKey, { context, generation, startedAt: Date.now() })
+    this.filterOptionInFlight.set(detail.bindingKey, { context, signature, generation, startedAt: Date.now() })
     const contexts = this.filterOptionRequestContexts.get(detail.bindingKey) ?? new Map<number, string>()
     contexts.set(generation, context)
     for (const existingGeneration of contexts.keys()) {

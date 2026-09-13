@@ -72,6 +72,107 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
   } finally { await page.close() }
 })
 
+test('dashboard agent reads fresh signal state between render cycles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer'))
+    const observed = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-one' } })
+      await drawer.updateComplete
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      // The signal patch schedules Lit asynchronously. Reads made by event
+      // handlers in this gap must not reuse the previous render snapshot.
+      return drawer.agent.activeConversationId
+    })
+    expect(observed).toBe('conversation-two')
+  } finally { await page.close() }
+})
+
+test('dashboard agent clears draft and references when the active conversation changes', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({
+        agent: {
+          activeConversationId: 'conversation-one',
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask' },
+        },
+      })
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      drawer.openDrawer()
+      await drawer.updateComplete
+      drawer.openWithReference({
+        reference: { kind: 'visual', id: 'sales.orders' },
+        name: 'Orders',
+        hierarchy: ['Sales'],
+        href: '/dashboards/sales/pages/overview',
+        locations: [],
+        context: ['current_page'],
+      })
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
+      composer.setDraft('Keep this draft')
+      await composer.updateComplete
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      await drawer.updateComplete
+      await composer.updateComplete
+      return {
+        draft: composer.shadowRoot.querySelector('textarea')?.value,
+        references: composer.references.length,
+      }
+    })
+    expect(state).toEqual({ draft: '', references: 0 })
+  } finally { await page.close() }
+})
+
+test('dashboard agent clears a closed draft without stealing focus on conversation switch', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({
+        agent: {
+          activeConversationId: 'conversation-one',
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask' },
+        },
+      })
+      const root = element.shadowRoot as ShadowRoot
+      const drawer = root.querySelector('lv-chat-drawer') as any
+      const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
+      await drawer.updateComplete
+      drawer.openDrawer()
+      await drawer.updateComplete
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
+      composer.setDraft('Keep this draft')
+      await composer.updateComplete
+      drawer.open = false
+      await drawer.updateComplete
+      trigger.focus()
+
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      await drawer.updateComplete
+      await composer.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return {
+        draft: composer.shadowRoot.querySelector('textarea')?.value,
+        drawerOpen: drawer.open,
+        focusOutsideDrawer: root.activeElement === trigger,
+      }
+    })
+    expect(state).toEqual({ draft: '', drawerOpen: false, focusOutsideDrawer: true })
+  } finally { await page.close() }
+})
+
 test('dashboard agent drawer carries page context and explicit visual references', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {

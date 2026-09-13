@@ -40,6 +40,8 @@ for (const state of states) {
             localStorage.removeItem('leapview-sidebar-collapsed')
           }, mode)
           await openStableDashboard(page, new URL(state.path, baseURL!).toString(), state.heading)
+          // The footer lays out independently of the visualization hosts.
+          await expect(page.locator('lv-report-footer').locator('footer')).toBeInViewport({ ratio: 1 })
           const screenshot = await page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' })
           const isDenseDesktopTable = viewport.name === 'desktop' && state.name === 'visual-showcase-tables'
           const isDesktop = viewport.name === 'desktop'

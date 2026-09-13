@@ -936,6 +936,8 @@ export class ReportTable extends LitElement {
     }
 
     .empty {
+      position: sticky;
+      left: 0;
       display: grid;
       min-height: 240px;
       place-items: center;
@@ -1630,7 +1632,7 @@ export class ReportTable extends LitElement {
           </div>
           <div class="visual-actions">
             <slot name="agent-action"></slot>
-            <button class="icon-action" type="button" aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
+            <button class="icon-action" type="button" data-visualization-expand aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
             <details class="visual-options">
               <summary aria-label="Visual options" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
               <div class="menu" role="menu">
@@ -1671,7 +1673,7 @@ export class ReportTable extends LitElement {
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
               ${showHeader ? this.renderGroupHeaderRows(headers) : nothing}
               ${showHeader ? this.renderHeaderRow(headers) : nothing}
-              ${this.availableRows === 0 && !loading ? html`<div class="empty">Waiting for table data</div>` : html`
+              ${this.availableRows === 0 && !loading ? nothing : html`
                 <div class="canvas" role="rowgroup" style=${`height:${totalHeight}px`}>
                   <div class="grid-lines" aria-hidden="true">
                     ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}`}></span>`)}
@@ -1685,10 +1687,11 @@ export class ReportTable extends LitElement {
                 </div>
               `}
             </div>
+            ${this.availableRows === 0 && !loading ? html`<div class="empty">${this.table.cardinality.kind === 'exact' && this.table.cardinality.value === 0 ? 'No rows to display' : 'Waiting for table data'}</div>` : nothing}
           </div>
         </div>
         <div class="footer">
-          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.table.rowCap.toLocaleString()}` : nothing}</span>
+          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.availableRows.toLocaleString()}` : nothing}</span>
           <span>${selectedText}</span>
         </div>
       </section>
@@ -1700,7 +1703,10 @@ export class ReportTable extends LitElement {
     const currentStart = Math.floor(Math.floor(this.viewportTop / this.rowHeight) / this.chunkSize) * this.chunkSize
     const desired = this.desiredStarts(currentStart)
     const desiredSet = new Set(desired)
-    const loadedStarts = new Set(blockIDs.map((id) => this.blocks[id]?.start ?? -1))
+    const loadedStarts = new Set(blockIDs.flatMap((id) => {
+      const block = this.blocks[id]
+      return block?.rows.length ? [block.start] : []
+    }))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
 
@@ -1766,7 +1772,9 @@ export class ReportTable extends LitElement {
       const starts = this.allBlockStarts(start)
       blockIDs.forEach((id, index) => {
         const expectedStart = starts[index]
-        this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
+        if (expectedStart < this.availableRows) {
+          this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
+        }
       })
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })

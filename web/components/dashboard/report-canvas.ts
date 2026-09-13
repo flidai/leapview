@@ -6,6 +6,8 @@ import {
   clampScale,
   layoutStorageKey,
   resolvedLayoutMode,
+  reportViewPathname,
+  reportViewPathChangedEvent,
   storedCustomScale,
   storedLayoutMode,
   storedZoomMode,
@@ -47,6 +49,7 @@ class ReportCanvas extends LitElement {
   @state() private contentWidth = this.width
   private customScale = storedCustomScale()
   private zoomAnchor?: ZoomAnchor
+  private viewPathname = reportViewPathname()
 
   private resizeObserver?: ResizeObserver
   private autoLayoutMediaQuery?: MediaQueryList
@@ -255,6 +258,7 @@ class ReportCanvas extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     document.addEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
+    window.addEventListener(reportViewPathChangedEvent, this.onViewPathChanged)
     this.autoLayoutMediaQuery = window.matchMedia(autoMobileLayoutQuery)
     this.autoLayoutMediaQuery.addEventListener('change', this.onAutoLayoutChange)
     this.syncResolvedLayout()
@@ -272,6 +276,7 @@ class ReportCanvas extends LitElement {
 
   disconnectedCallback(): void {
     document.removeEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
+    window.removeEventListener(reportViewPathChangedEvent, this.onViewPathChanged)
     this.autoLayoutMediaQuery?.removeEventListener('change', this.onAutoLayoutChange)
     this.autoLayoutMediaQuery = undefined
     this.resizeObserver?.disconnect()
@@ -279,8 +284,29 @@ class ReportCanvas extends LitElement {
   }
 
   updated(): void {
+    const viewPathChanged = this.syncStoredViewState()
     this.positionVisuals()
     this.updateScale()
+    if (viewPathChanged) this.emitZoomState()
+  }
+
+  private syncStoredViewState(): boolean {
+    const pathname = reportViewPathname()
+    if (pathname === this.viewPathname) return false
+    this.viewPathname = pathname
+    this.layoutMode = storedLayoutMode()
+    this.zoomMode = storedZoomMode()
+    this.customScale = storedCustomScale()
+    this.zoomAnchor = undefined
+    this.syncResolvedLayout()
+    return true
+  }
+
+  private onViewPathChanged = (): void => {
+    if (!this.syncStoredViewState()) return
+    this.positionVisuals()
+    this.updateScale()
+    this.emitZoomState()
   }
 
   private updateScale(): void {

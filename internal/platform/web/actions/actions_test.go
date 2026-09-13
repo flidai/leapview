@@ -21,6 +21,14 @@ func TestRequestWithoutSignalFilter(t *testing.T) {
 	}
 }
 
+func TestConcurrentEventPostKeepsIndependentWindowRequests(t *testing.T) {
+	got := ConcurrentEventPost("/windows", "runtime", "window")
+	want := `@post('/windows', {filterSignals: {include: /^(?:runtime|window)(?:[.]|$)/}, headers: window.LeapViewCommand.headers(), requestCancellation: 'disabled'})`
+	if got != want {
+		t.Fatalf("ConcurrentEventPost() = %q, want %q", got, want)
+	}
+}
+
 func TestCommandRequestsCarryTypedGeneratedOperationIdentity(t *testing.T) {
 	binding := apigenui.MustAction("widget.create", "createWidget")
 	if got, want := CommandPost(binding, "/widgets", "widget"), `@post('/widgets', {filterSignals: {include: /^(?:widget)(?:[.]|$)/}, headers: window.LeapViewCommand.headers('createWidget')})`; got != want {

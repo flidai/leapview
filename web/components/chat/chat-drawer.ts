@@ -34,6 +34,17 @@ const emptyAgent: ChatSignal = {
   composer: { value: '', disabled: true, placeholder: 'Agent is not configured.' },
 }
 
+const emptyVisuals: Record<string, VisualizationEnvelope> = {}
+const emptyDashboardFilters: NonNullable<AgentContextSignal['filters']> = {
+	revision: 0,
+	appliedControls: {},
+	draftControls: {},
+	dirtyBindings: [],
+	defaultsRevision: '',
+}
+const emptyDashboardSelections: DashboardInteractionSelection[] = []
+const emptyReferenceSearch: AgentReferenceSearchSignal = { query: '', requestId: 0, results: [] }
+
 class ChatDrawer extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) open = false
   @property({ type: Boolean, reflect: true }) embedded = false
@@ -44,6 +55,8 @@ class ChatDrawer extends DatastarLit(LitElement) {
   private focusReturnTarget: HTMLElement | null = null
 	private trackedConversationID: string | null = null
 	private trackedAcceptedRunID: string | null = null
+	private updateSignalCache = new Map<string, unknown>()
+	private cachingUpdateSignals = false
 
   static styles = css`
     :host {
@@ -257,30 +270,47 @@ class ChatDrawer extends DatastarLit(LitElement) {
     }
   `
 
+	override performUpdate(): void {
+		// DatastarLit materializes a signal tree on every read. The drawer reads
+		// the agent transcript in both updated() and render(), so keep one
+		// snapshot for the complete Lit update and avoid cloning a long transcript
+		// twice when the dashboard pane toggles.
+		this.cachingUpdateSignals = true
+		this.updateSignalCache.clear()
+		try {
+			super.performUpdate()
+		} finally {
+			this.cachingUpdateSignals = false
+			this.updateSignalCache.clear()
+		}
+	}
+
+	private cachedSignal<T>(path: string, fallback: T): T {
+		if (!this.cachingUpdateSignals) return this.signal<T>(path, fallback)
+		if (this.updateSignalCache.has(path)) return this.updateSignalCache.get(path) as T
+		const value = this.signal<T>(path, fallback)
+		this.updateSignalCache.set(path, value)
+		return value
+	}
+
   get agent(): ChatSignal {
-    return this.signal<ChatSignal>('agent', emptyAgent)
+		return this.cachedSignal<ChatSignal>('agent', emptyAgent)
   }
 
   get context(): AgentContextSignal | null {
-    return this.signal<AgentContextSignal | null>('agentContext', null)
-  }
+		return this.cachedSignal<AgentContextSignal | null>('agentContext', null)
+	}
 
 	get visuals(): Record<string, VisualizationEnvelope> {
-		return this.signal<Record<string, VisualizationEnvelope>>('agentVisuals', {})
-  }
+		return this.cachedSignal<Record<string, VisualizationEnvelope>>('agentVisuals', emptyVisuals)
+	}
 
 	get dashboardFilters(): AgentContextSignal['filters'] {
-		return this.signal<AgentContextSignal['filters']>('filterState', this.context?.filters ?? {
-			revision: 0,
-			appliedControls: {},
-			draftControls: {},
-			dirtyBindings: [],
-			defaultsRevision: '',
-		})
+		return this.cachedSignal<AgentContextSignal['filters']>('filterState', this.context?.filters ?? emptyDashboardFilters)
 	}
 
 	get dashboardSelections(): DashboardInteractionSelection[] {
-		return this.signal<DashboardInteractionSelection[]>('interactionSelections', [])
+		return this.cachedSignal<DashboardInteractionSelection[]>('interactionSelections', emptyDashboardSelections)
 	}
 
   get pending(): boolean {
@@ -288,9 +318,7 @@ class ChatDrawer extends DatastarLit(LitElement) {
   }
 
 	get referenceSearch(): AgentReferenceSearchSignal {
-		return this.signal<AgentReferenceSearchSignal>('agentReferenceSearch', {
-			query: '', requestId: 0, results: [],
-		})
+		return this.cachedSignal<AgentReferenceSearchSignal>('agentReferenceSearch', emptyReferenceSearch)
 	}
 
   public openDrawer(): void {
@@ -467,18 +495,26 @@ class ChatDrawer extends DatastarLit(LitElement) {
 		this.references = mergeReferences(detail.references ?? []).slice(0, this.normalizedReferenceLimit())
 		this.referenceLimitMessage = ''
 		this.notifyReferences()
-		this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft(detail.text ?? '')
+		this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string, focus?: boolean): void }>('lv-chat-composer')?.setDraft(detail.text ?? '')
 	}
 
 	private syncEditState(): void {
 		const conversationID = this.agent.activeConversationId?.trim() ?? ''
 		const acceptedRunID = latestAcceptedRunId(this.agent.transcript ?? [])
-		if (this.editMessageId && this.trackedConversationID !== null && this.trackedConversationID !== conversationID) {
-			this.references = []
-			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string): void }>('lv-chat-composer')?.setDraft('')
+		const conversationChanged = this.trackedConversationID !== null && this.trackedConversationID !== conversationID
+		if (conversationChanged) {
+			// Composer state belongs to the active conversation. A route signal can
+			// switch conversations without recreating the drawer, so clear an
+			// unsent draft and attached references before they leak into the next
+			// conversation.
+			if (this.references.length > 0) {
+				this.references = []
+				this.notifyReferences()
+			}
+			this.shadowRoot?.querySelector<HTMLElement & { setDraft(value: string, focus?: boolean): void }>('lv-chat-composer')?.setDraft('', false)
 		}
 		if (
-			(this.trackedConversationID !== null && this.trackedConversationID !== conversationID)
+			conversationChanged
 			|| (this.trackedAcceptedRunID !== null && acceptedRunID && this.trackedAcceptedRunID !== acceptedRunID)
 		) {
 			this.clearEditMessage()

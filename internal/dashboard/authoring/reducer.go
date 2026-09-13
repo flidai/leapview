@@ -1107,19 +1107,33 @@ func updateCanonicalFilter(value *document.DashboardDocument, patch UpdateFilter
 		if filter.ID != patch.FilterID {
 			continue
 		}
+		previousControlType, _ := filter.Control.Type()
 		control, err := canonicalBuilderFilterControl(patch.ControlType, patch.Dataset, &filter.Control)
 		if err != nil {
 			return err
 		}
+		migrateCanonicalFilterState(filter, previousControlType, patch.ControlType, control)
 		filter.Label = strings.TrimSpace(patch.Label)
 		filter.Description = optionalCanonicalString(patch.Description)
 		filter.Control = control
-		filter.Required = &patch.Required
+		required := patch.Required
+		if required && !canonicalFilterHasDefault(filter.Default) {
+			required = false
+		}
+		filter.Required = &required
 		filter.ReaderEditable = &patch.ReaderEditable
 		filter.URLParameter = optionalCanonicalString(patch.URLParameter)
 		return nil
 	}
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+}
+
+func canonicalFilterHasDefault(expression *document.DashboardFilterExpression) bool {
+	if expression == nil {
+		return false
+	}
+	_, unfiltered := expression.Value.(*document.UnfilteredDashboardFilterExpression)
+	return !unfiltered
 }
 
 // setCanonicalFilterTargets updates only a filter's target policy. A nil
@@ -1143,84 +1157,6 @@ func setCanonicalFilterTargets(value *document.DashboardDocument, patch SetFilte
 		return nil
 	}
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
-}
-
-func setCanonicalFilterScope(value *document.DashboardDocument, patch SetFilterScopePayload) error {
-	filterFound := false
-	for filterIndex := range value.Spec.Filters {
-		filter := &value.Spec.Filters[filterIndex]
-		if filter.ID == patch.FilterID {
-			filterFound = true
-			if patch.Scope != "report" || len(patch.Targets) == 0 {
-				filter.Targets = nil
-			} else {
-				targets := append([]string(nil), patch.Targets...)
-				filter.Targets = &targets
-			}
-			break
-		}
-	}
-	if !filterFound {
-		return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
-	}
-	if patch.Scope == "report" {
-		// Restoring report scope removes every explicit page binding while
-		// preserving slicer components, which now resolve to the report binding.
-		for pageIndex := range value.Spec.Pages {
-			page := &value.Spec.Pages[pageIndex]
-			if page.FilterBindings == nil {
-				continue
-			}
-			retained := (*page.FilterBindings)[:0]
-			for _, binding := range *page.FilterBindings {
-				if binding.Filter != patch.FilterID {
-					retained = append(retained, binding)
-				}
-			}
-			if len(retained) == 0 {
-				page.FilterBindings = nil
-			} else {
-				copied := append([]document.DashboardPageFilterBinding(nil), retained...)
-				page.FilterBindings = &copied
-			}
-		}
-		return nil
-	}
-	for pageIndex := range value.Spec.Pages {
-		page := &value.Spec.Pages[pageIndex]
-		if page.ID != patch.PageID {
-			continue
-		}
-		if len(patch.Targets) > 0 {
-			if err := ensureCanonicalPageTargetsHaveIndependentVisuals(value, pageIndex, patch.Targets); err != nil {
-				return err
-			}
-		}
-		bindings := []document.DashboardPageFilterBinding{}
-		if page.FilterBindings != nil {
-			bindings = append(bindings, (*page.FilterBindings)...)
-			for bindingIndex := range bindings {
-				binding := &bindings[bindingIndex]
-				if binding.Filter == patch.FilterID {
-					binding.Targets = optionalCanonicalTargets(patch.Targets)
-					page.FilterBindings = &bindings
-					return nil
-				}
-			}
-		}
-		bindings = append(bindings, document.DashboardPageFilterBinding{ID: nextCanonicalPageFilterBindingID(*page, patch.FilterID), Filter: patch.FilterID, Targets: optionalCanonicalTargets(patch.Targets)})
-		page.FilterBindings = &bindings
-		return nil
-	}
-	return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
-}
-
-func optionalCanonicalTargets(targets []string) *[]string {
-	if len(targets) == 0 {
-		return nil
-	}
-	copied := append([]string(nil), targets...)
-	return &copied
 }
 
 // ensureCanonicalPageTargetsHaveIndependentVisuals preserves true component
@@ -1462,34 +1398,6 @@ func optionalCanonicalString(value string) *string {
 		return nil
 	}
 	return &value
-}
-
-func canonicalBuilderFilterControl(controlType, dataset string, existing *document.DashboardFilterControl) (document.DashboardFilterControl, error) {
-	controlType, dataset = strings.TrimSpace(controlType), strings.TrimSpace(dataset)
-	if existing != nil {
-		if existingType, err := existing.Type(); err == nil && existingType == controlType {
-			return *existing, nil
-		}
-	}
-	distinct := func() *document.DashboardFilterOptions {
-		return &document.DashboardFilterOptions{Value: &document.DistinctDashboardFilterOptions{Type: "distinct", Dataset: dataset}}
-	}
-	switch controlType {
-	case "singleSelect":
-		return document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: controlType, Options: distinct()}}, nil
-	case "multiSelect":
-		return document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: controlType, Options: distinct()}}, nil
-	case "text":
-		return document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{Type: controlType}}, nil
-	case "numericRange":
-		return document.DashboardFilterControl{Value: &document.NumericRangeDashboardFilterControl{Type: controlType}}, nil
-	case "dateRange":
-		return document.DashboardFilterControl{Value: &document.DateRangeDashboardFilterControl{Type: controlType}}, nil
-	case "relativePeriod":
-		return document.DashboardFilterControl{Value: &document.RelativePeriodDashboardFilterControl{Type: controlType}}, nil
-	default:
-		return document.DashboardFilterControl{}, fmt.Errorf("%w: unsupported filter control %q", ErrInvalidPayload, controlType)
-	}
 }
 
 func resolveCanonicalInteractionVisual(value document.DashboardDocument, pageID, visualID string) (string, error) {
