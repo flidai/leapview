@@ -110,19 +110,6 @@ func (r *Repository) ResolveReleasePolicy(ctx context.Context, predecessor, cand
 	return r.resolveReleasePolicy(ctx, r.db, predecessorDigest, candidateDigest)
 }
 
-// ResolveReleasePolicyTx is the read-only transaction/connection form used
-// by callers that already own a PostgreSQL transaction boundary.
-func (r *Repository) ResolveReleasePolicyTx(ctx context.Context, db DBTX, predecessor, candidate transitionpreflight.ArtifactIdentity) (transitionpreflight.ReleasePolicy, error) {
-	if db == nil {
-		return transitionpreflight.ReleasePolicy{}, ErrPolicyInvalid
-	}
-	predecessorDigest, candidateDigest, err := validatePolicyPair(predecessor, candidate)
-	if err != nil {
-		return transitionpreflight.ReleasePolicy{}, err
-	}
-	return r.resolveReleasePolicy(ctx, db, predecessorDigest, candidateDigest)
-}
-
 func (r *Repository) resolveReleasePolicy(ctx context.Context, db DBTX, predecessorDigest, candidateDigest string) (transitionpreflight.ReleasePolicy, error) {
 	row, err := releasedb.New(db).GetReleaseTransitionPolicy(ctx, releasedb.GetReleaseTransitionPolicyParams{
 		PredecessorArtifactDigest: predecessorDigest,
