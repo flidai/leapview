@@ -215,6 +215,11 @@ registry. Its generator verifies registered adapter/specification paths and
 computes schema digests from the exact vendored bytes. Deferred entries cannot
 claim an adapter, conformance level, or validation command.
 
+The implemented CAN/SRC/MOD/SEM/SER/VER requirements and the bounded ODCS and
+OpenLineage profiles are qualified. ODCS import/round-trip, Bitol ODPS, and W3C
+DCAT remain deferred; their registry entries are safeguards against accidental
+claims, not partial implementations.
+
 ## Maintained verification
 
 Implementation must add focused identity, canonicalization, cross-language

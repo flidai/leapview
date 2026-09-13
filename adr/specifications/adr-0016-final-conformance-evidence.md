@@ -1,6 +1,6 @@
 # ADR-0016 final conformance evidence
 
-Status: qualification complete; active implementation remains partial
+Status: implemented and qualified for the accepted bounded profiles
 
 Last updated: 2026-09-13
 
@@ -21,18 +21,18 @@ ADR-0016 completion.
 
 ## Acceptance ledger
 
-| Requirement | Implementation owner | Evidence | Status | Remaining boundary |
-|---|---|---|---|---|
-| Authored analytics/control-plane boundary | FAI-616, PR [#572](https://github.com/flidai/leapview/pull/572) | Removed-kind discovery/schema tests; dashboard-publication deployment guard; architecture ownership guard | Implemented | Project namespace and ResourceUID lifecycle remain ADR-0018-owned. |
-| Generated structural authority and governance metadata | FAI-619/632, PRs [#472](https://github.com/flidai/leapview/pull/472) and [#516](https://github.com/flidai/leapview/pull/516) | TypeSpec-generated Go/JSON Schema; metadata, stable-check-ID, structural-authority, `TestSourceDeprecationContext`, `TestModelDeprecationUsesContextualValidation`, and publication replay tests | Implemented | Source and Model projections reject missing/self replacements, replacement cycles, and `deprecation.since` later than the containing contract version. |
-| Canonical Source/Model/SemanticModel projections | FAI-620/662, PR [#534](https://github.com/flidai/leapview/pull/534) | Reconciled CAN/SRC/MOD/SEM/SER rows in the versioning ledger; sealed projection, exclusion manifest, analyzed SQL, typed normalization, RFC 8785 and independent fixture tests | Implemented | Only the named `leapview.contract/v1` resource projections are claimed. |
-| Compatibility, security impact, immutable publication, and affected dashboards | FAI-622/662/632, PR [#548](https://github.com/flidai/leapview/pull/548) | Unified classifier tests; immutable PostgreSQL publication evidence; replay/conflict/concurrency tests; exact baseline/candidate and direct affected-resource seed; `TestDirectAffectedResourceSeedQualifiesTransitiveDashboardConsumers` | Implemented for immutable publication and the qualified dashboard-consumer profile | Publication retains only the direct seed. The Project graph qualifies sorted, deduplicated direct/transitive dashboard consumers and rejects invalid graphs; no generic all-resource consumer closure is claimed. |
-| Protected semantic activation evidence | FAI-649, PR [#575](https://github.com/flidai/leapview/pull/575) | Exact publication/policy evidence in plan identity; approval binding; transaction-bound registry/control and deployed-policy revalidation | Implemented for the qualified ADR-0017 profile | Unsupported consumers and plan shapes remain fail closed under ADR-0017. |
-| ODCS 3.1 export/document profile | FAI-623, PR [#550](https://github.com/flidai/leapview/pull/550) | Pinned schema/checksum, independent CLI oracle, mapping/loss reports, security exclusions, adapter isolation tests | Implemented | Source and Model export only. Import, round-trip, execution, and transport are not claimed. |
-| OpenLineage 2.0.2 projection/document profile | FAI-629, PR [#551](https://github.com/flidai/leapview/pull/551) | Pinned event/facet schemas; schema/version, quality, statistics, parent and column-lineage tests; single-path/no-transport architecture tests | Implemented | No collector, transport, import, round-trip, or end-to-end emission claim. |
-| Generated standards conformance matrix | FAI-632 | [`standards-conformance-profiles.json`](standards-conformance-profiles.json), generated [`standards-conformance-matrix.md`](standards-conformance-matrix.md), `task adr0016-conformance:check` | Implemented | Only implemented or selected capability-gated profiles are registered. |
-| Current PostgreSQL migration qualification | FAI-622/662/632 | `TestBaselinePostgreSQL18`, `TestContractPublicationMigrationUpgradesRevisionSixWithRetainedData`, publication constraint/grant checks, repository integrity tests, Goose ordering/immutability and generic previous-version upgrade tests | Qualified for fresh initialization and the exact retained-data 006-to-007 path | The fixture uses the embedded immutable migrations on PostgreSQL 18, preserves a runtime-written Source record, and verifies publication append/replay after 007. It does not claim every historical upgrade origin. |
-| Final repository qualification | FAI-632 | Commands and results below, including the clean-worktree `task ci` contract | Qualified | Qualification is green; the separately listed active implementation and evidence boundaries keep ADR-0016 partial. |
+| Requirement | Owner | PR / commit evidence | Validation evidence | Status | Qualified boundary |
+|---|---|---|---|---|---|
+| Authored analytics/control-plane boundary | FAI-616 | PR [#572](https://github.com/flidai/leapview/pull/572) | Removed-kind discovery/schema tests; dashboard-publication deployment guard; architecture ownership guard | Implemented | Project namespace and ResourceUID lifecycle remain ADR-0018-owned. |
+| Generated structural authority and governance metadata | FAI-619/632 | PRs [#472](https://github.com/flidai/leapview/pull/472), [#516](https://github.com/flidai/leapview/pull/516); FAI-632 commit `9654b41d1` | TypeSpec-generated Go/JSON Schema; metadata, stable-check-ID and structural-authority tests; `TestSourceDeprecationContext`; `TestModelDeprecationUsesContextualValidation`; publication replay | Implemented | Source and Model projections reject missing/self replacements, replacement cycles, and `deprecation.since` later than the containing contract version. |
+| Canonical Source/Model/SemanticModel projections | FAI-620/662 | PR [#534](https://github.com/flidai/leapview/pull/534) | CAN/SRC/MOD/SEM/SER ledger rows; sealed projection; exclusion manifest; analyzed SQL; typed normalization; RFC 8785 and independent fixtures | Implemented | Only the named `leapview.contract/v1` resource projections are claimed. |
+| Compatibility, security impact, immutable publication, and affected dashboards | FAI-622/662/632 | PR [#548](https://github.com/flidai/leapview/pull/548); FAI-632 commit `ee87c819d` | Unified classifier; PostgreSQL publication replay/conflict/concurrency; exact baseline/candidate and direct seed; `TestDirectAffectedResourceSeedQualifiesTransitiveDashboardConsumers` | Implemented and qualified | Publication retains the direct seed; the Project graph qualifies sorted, deduplicated direct/transitive dashboard consumers. No generic all-resource closure is claimed. |
+| Protected semantic activation evidence | FAI-649 | PR [#575](https://github.com/flidai/leapview/pull/575) | Exact publication/policy plan identity; approval binding; transaction-bound registry/control and deployed-policy revalidation | Implemented and qualified for the admitted ADR-0017 profile | Unsupported consumers and plan shapes remain fail closed. |
+| ODCS 3.1 export/document profile | FAI-623 | PR [#550](https://github.com/flidai/leapview/pull/550), commit `dcfca350e` | Pinned schema/checksum; independent CLI oracle; mapping/loss reports; security exclusions; adapter isolation tests | Implemented and qualified | Source and Model export/document only. Import, round-trip, execution, and transport are not claimed. |
+| OpenLineage 2.0.2 projection/document profile | FAI-629 | PR [#551](https://github.com/flidai/leapview/pull/551), commit `e1851bc4d` | Pinned event/facet schemas; schema/version, quality, statistics, parent and column-lineage tests; single-path/no-transport architecture tests | Implemented and qualified | No collector, transport, import, round-trip, or end-to-end emission claim. |
+| Generated standards conformance matrix | FAI-632 | FAI-632 commit `626384fa3` | [`standards-conformance-profiles.json`](standards-conformance-profiles.json); generated [`standards-conformance-matrix.md`](standards-conformance-matrix.md); `task adr0016-conformance:check` | Implemented and qualified | Only implemented profiles and explicitly capability-gated deferred profiles are registered. |
+| PostgreSQL migration qualification | FAI-622/662/632 | PR [#548](https://github.com/flidai/leapview/pull/548); FAI-632 commit `4d9cf1eaa` | `TestBaselinePostgreSQL18`; `TestContractPublicationMigrationUpgradesRevisionSixWithRetainedData`; constraint/grant, repository integrity, ordering and immutability tests | Qualified | Fresh initialization and the exact retained-data 006-to-007 PostgreSQL 18 path; no claim for every historical origin. |
+| Final repository qualification | FAI-632 | FAI-632 commits `626384fa3`, `9654b41d1`, `ee87c819d`, `4d9cf1eaa` | Commands and results below: clean-worktree `task ci` at the qualification base plus required focused gates after each bounded gap closure | Qualified | No unresolved requirement remains inside the accepted bounded profiles. |
 
 ## Supported profiles
 
@@ -73,7 +73,7 @@ Results are recorded only after execution against the FAI-632 branch based on
 | `task test:go:postgres-conformance` | Pass against pinned PostgreSQL 18 container image; no silent skips |
 | `task generated:check` | Pass |
 | `task docs:check` | Pass after the required clean-worktree generation preparation |
-| `task ci` | Pass in a clean detached worktree at the qualification commit; 32m13s |
+| `task ci` | Pass in a clean detached worktree at FAI-632 qualification base `626384fa3`; 32m13s. Later bounded commits carry their separately recorded focused validation. |
 
 The first `task ci` attempt in the long-lived development worktree encountered
 stale ignored sqlc files left by older branches, and the standalone full
@@ -83,13 +83,17 @@ passed SQL generation/audit, APIGen, Go and external-service suites,
 PostgreSQL 18 conformance, architecture checks, all frontend shards, and the
 generated snapshot gate without changing test requirements.
 
-## Qualification decision
+## Final reconciliation
 
-FAI-632 closes the identified contextual field-deprecation, affected-dashboard
-graph, and retained-data migration qualification gaps for the implemented
-profiles. Publication remains intentionally limited to an immutable direct
-seed; transitive dashboard expansion belongs to the Project graph and does not
-claim arbitrary consumer kinds. The migration claim is limited to fresh
-initialization and the exact embedded revision 006-to-007 path on PostgreSQL 18.
-No identified FAI-632 evidence blocker remains; ADR-0016 stays partial until its
-final reconciliation records the reviewed completion decision and boundaries.
+ADR-0016 is implemented and qualified for the accepted bounded profiles listed
+above. Publication remains intentionally limited to an immutable direct seed;
+transitive dashboard expansion belongs to the Project graph and does not claim
+arbitrary consumer kinds. Migration qualification covers fresh initialization
+and the exact embedded revision 006-to-007 path on PostgreSQL 18.
+
+ODCS import/round-trip, Bitol ODPS, and W3C DCAT remain capability-gated and
+deferred. ODCS execution/runtime transport, OpenLineage collection or delivery,
+generic all-resource consumer closure, and semantic surfaces outside the
+ADR-0017 admitted profile are not supported conformance claims. ADR-0018,
+ResourceUID, dbt, and recovery work neither block nor contribute to this
+completion decision.

@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: partial; active profiles qualified
+Implementation: complete for the qualified profiles; capability-gated profiles deferred
 
 Deciders: LeapView maintainers
 
@@ -41,6 +41,29 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [Looker access control](https://docs.cloud.google.com/looker/docs/access-control-and-permission-management);
 [Lightdash user attributes](https://docs.lightdash.com/workspace-admin/user-attributes);
 [Rill data access control](https://docs.rilldata.com/developers/build/metrics-view/security)
+
+## Implementation status
+
+ADR-0016 is implemented and qualified for its accepted bounded profiles:
+
+- generated Source, Model, and SemanticModel contract authority and the sealed
+  `leapview.contract/v1` projections;
+- deterministic compatibility/security classification, immutable publication,
+  the qualified dashboard-consumer impact profile, and the bounded protected
+  SemanticModel activation profile;
+- Bitol ODCS 3.1.0 Source/Model export at document level; and
+- OpenLineage 2.0.2 export-only projection at document level.
+
+The following profiles remain capability-gated and **Deferred**, with no
+adapter or conformance claim: ODCS import/round-trip, Bitol ODPS 1.0.0 export,
+and W3C DCAT 3 export.
+
+The qualified profiles do **not support or claim** ODCS execution or runtime
+transport, OpenLineage collection/transport/import/round-trip/end-to-end
+emission, a generic all-resource consumer closure, or semantic consumers and
+plan shapes outside the ADR-0017 admitted profile. Project namespace,
+ResourceUID/tombstone lifecycle, dbt, and recovery qualification are owned by
+other decisions and are not evidence for ADR-0016 completion.
 
 ## Context and problem statement
 
@@ -748,10 +771,9 @@ receive production credentials by default.
   directories, and produces one atomic graph without `leapview.yaml`, a public
   Project ID, or include-glob behavior. Public routes, API schemas, grants, and
   audit subjects contain no Project resource.
-- Identity fixtures prove candidate-wide cross-kind ID uniqueness, stable UIDs
-  across source-root and file moves, kind-change rejection, tombstone
-  non-reuse, explicit restore behavior, rollback identity, and durable
-  control-plane references that cannot silently rebind.
+- ResourceUID, tombstone, restore, rollback-identity, and recovery evidence is
+  maintained by ADR-0018 and is intentionally excluded from this ADR's final
+  implementation claim.
 - TypeSpec owns the six authored structures, including the shared envelope,
   metadata, contract evolution, quality identity, field governance,
   deprecation, and the ADR-0017 SemanticModel access contract. It generates Go
