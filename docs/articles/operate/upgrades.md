@@ -99,6 +99,21 @@ rows, runtime configuration, or a caller-supplied policy projection.
 
 This provides authoritative policy resolution. It does not execute a release transition.
 
+The OCI artifact admission authority converts a reviewed CI admission result
+into one canonical, append-only release record for an exact
+`repository@sha256:digest` identity. The record binds immutable release and
+repository identity to the admitted decision, provenance and SBOM references,
+security-policy result, admission contract version, and admission timestamp.
+Maintenance can publish an exact record or append a revocation; application
+runtime access is read-only and resolves only the exact digest-pinned image.
+Every read reparses the canonical bytes, recomputes their domain-separated
+digest, and checks the denormalized database identity. Mutable tags,
+unsupported policy versions, missing records, digest substitutions, and
+revoked admissions fail closed. The authority stores neither registry
+credentials nor signing keys.
+
+This provides authoritative artifact admission resolution. It does not execute a release transition.
+
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
 not infer cross-version safety from tuple equality. A binary policy also binds
