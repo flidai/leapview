@@ -3,7 +3,7 @@
 .enterprise {
   padding: 105px clamp(20px, 5vw, 78px) 112px;
   border-top: 1px solid var(--border);
-  background: radial-gradient(ellipse 58% 70% at 93% 84%, var(--glow), transparent 74%), var(--frame-bg);
+  background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   scroll-margin-top: 72px;
 }
 

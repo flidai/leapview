@@ -1,7 +1,7 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
 .enterprise.openness {
-  background: radial-gradient(ellipse 60% 70% at 8% 86%, var(--glow), transparent 78%), var(--bg);
+  background: var(--bg);
 }
 .open-demo--host, .open-demo--model, .open-demo--standards { gap: 0; }
 .open-host-source { align-self: center; min-width: 176px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 3px; background: var(--glow); color: var(--ink); text-align: center; font-weight: 750; }
