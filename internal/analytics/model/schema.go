@@ -316,15 +316,24 @@ func (m *Model) ValidateDiscoveredSourceSchemas() error {
 				if !ok {
 					return fmt.Errorf("source %q check %q references unavailable source %q", sourceName, check.ID, targetName)
 				}
+				var targetColumn ColumnSchema
 				found := false
 				for _, column := range target.Schema.Columns {
 					if column.Name == targetField {
+						targetColumn = column
 						found = true
 						break
 					}
 				}
 				if !found {
 					return fmt.Errorf("source %q check %q target field %q is not discovered", sourceName, check.ID, check.To)
+				}
+				if sourceColumn, exists := columns[check.Field]; exists {
+					sourceType := LogicalDataTypeFromPhysicalType(sourceColumn.PhysicalType)
+					targetType := LogicalDataTypeFromPhysicalType(targetColumn.PhysicalType)
+					if !relationshipTypesCompatible(MetricDimension{Datatype: sourceType}, MetricDimension{Datatype: targetType}, false) {
+						return fmt.Errorf("source %q check %q relationship field %q type %q is incompatible with target %q type %q", sourceName, check.ID, check.Field, sourceType, check.To, targetType)
+					}
 				}
 			}
 			for _, field := range fields {

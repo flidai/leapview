@@ -32,7 +32,7 @@ func TestADR0023AuthoredSourceAndModelChecksQualifyTheirOwnData(t *testing.T) {
 		{
 			name:          "transformation repairs invalid source rows",
 			csv:           "order_id,state,note\na,valid,first\na,invalid,second\nb,valid,third\n",
-			sql:           "SELECT order_id FROM source.raw_orders UNION SELECT order_id FROM source.raw_orders",
+			sql:           "SELECT order_id FROM source.raw_orders WHERE state = 'valid'",
 			sourceOutcome: release.GateBlocking, modelOutcome: release.GateSuccess, modelRows: 2,
 		},
 		{

@@ -319,6 +319,10 @@ func prepareSQLAnalysisDatabase(ctx context.Context, db *sql.DB) error {
 		"SET autoinstall_known_extensions = false",
 		"SET autoload_known_extensions = false",
 		"SET enable_external_access = false",
+		// The planning tables hold synthetic rows. Filter pushdown can use
+		// their values to erase a real Source scan (or its predicate field)
+		// before we derive the columns needed by the runtime read.
+		"SET disabled_optimizers = 'filter_pushdown'",
 		"SET lock_configuration = true",
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {

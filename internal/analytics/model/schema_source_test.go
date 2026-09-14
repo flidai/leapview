@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateDiscoveredSourceSchemaModesAndTypes(t *testing.T) {
 	nullable := true
@@ -65,6 +68,23 @@ func TestValidateDiscoveredSourceCheckFields(t *testing.T) {
 	model.Sources["orders"] = Source{SchemaMode: "compatible", Schema: TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "INTEGER"}}}, Checks: []ModelCheck{{ID: "present", Type: "non_null", Field: "id", Severity: "error"}}}
 	if err := model.ValidateDiscoveredSourceSchemas(); err != nil {
 		t.Fatalf("source check rejected a discovered but undeclared field: %v", err)
+	}
+}
+
+func TestValidateDiscoveredSourceRelationshipTypesMatchModelPolicy(t *testing.T) {
+	model := &Model{Sources: map[string]Source{
+		"orders": {
+			Schema: TableSchema{Columns: []ColumnSchema{{Name: "customer_id", PhysicalType: "INTEGER"}}},
+			Checks: []ModelCheck{{ID: "customer_exists", Type: "relationship", Field: "customer_id", To: "customers.id", Severity: "error"}},
+		},
+		"customers": {Schema: TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "VARCHAR"}}}},
+	}}
+	if err := model.ValidateDiscoveredSourceSchemas(); err == nil || !strings.Contains(err.Error(), "incompatible") {
+		t.Fatalf("incompatible Source relationship result = %v", err)
+	}
+	model.Sources["customers"] = Source{Schema: TableSchema{Columns: []ColumnSchema{{Name: "id", PhysicalType: "BIGINT"}}}}
+	if err := model.ValidateDiscoveredSourceSchemas(); err != nil {
+		t.Fatalf("matching Source relationship result = %v", err)
 	}
 }
 
