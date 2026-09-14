@@ -123,7 +123,7 @@ async function selectFile(key, animate = false) {
 
 function canAdvance() {
   return inView && !userPaused && phaseIndex < walkthrough.length - 1 &&
-    !reducedMotion.matches && !document.hidden && !explorer.matches(':hover') &&
+    !reducedMotion.matches && !document.hidden &&
     !explorer.contains(document.activeElement);
 }
 
@@ -165,8 +165,6 @@ if ('IntersectionObserver' in window) {
   inView = true;
   scheduleNextPhase();
 }
-explorer.addEventListener('mouseenter', scheduleNextPhase);
-explorer.addEventListener('mouseleave', scheduleNextPhase);
 explorer.addEventListener('focusin', scheduleNextPhase);
 explorer.addEventListener('focusout', () => requestAnimationFrame(scheduleNextPhase));
 codeScroll.addEventListener('pointerdown', () => {
