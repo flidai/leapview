@@ -13,9 +13,8 @@
 
 .enterprise-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(26px, 3vw, 52px); margin-top: 68px; }
 .enterprise-feature { display: flex; flex-direction: column; min-width: 0; padding-top: 28px; border-top: 1px solid var(--border); }
-.enterprise-feature-top { display: flex; align-items: center; gap: 12px; color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .16em; }
-.enterprise-feature-top svg { width: 29px; height: 29px; flex: none; }
-.enterprise-feature h3 { min-height: 63px; margin: 18px 0 0; font-size: clamp(23px, 2.1vw, 30px); font-weight: 580; line-height: 1.17; letter-spacing: -.035em; text-wrap: balance; }
+.enterprise-feature h3 { display: flex; align-items: flex-start; gap: 12px; margin: 0; font-size: clamp(23px, 2.1vw, 30px); font-weight: 580; line-height: 1.17; letter-spacing: -.035em; text-wrap: balance; }
+.enterprise-feature h3 svg { width: 29px; height: 29px; flex: none; margin-top: .08em; color: var(--accent); }
 .enterprise-feature > p { margin: 9px 0 0; color: var(--muted); font-size: 15px; line-height: 1.65; text-wrap: pretty; }
 .enterprise-feature .enterprise-caveat { min-height: 35px; margin-top: 13px; font-size: 11px; line-height: 1.5; }
 .enterprise-feature > a { display: inline-flex; align-items: center; gap: 14px; align-self: flex-start; min-height: 34px; margin-top: auto; padding-top: 19px; border-bottom: 1px solid var(--accent); color: var(--ink); font-size: 13px; font-weight: 650; text-decoration: none; transition: gap .2s, color .2s; }
@@ -25,7 +24,6 @@
 @media (max-width: 960px) {
   .enterprise { padding: 85px 32px 90px; }
   .enterprise-grid { grid-template-columns: 1fr; gap: 39px; max-width: 700px; margin-top: 50px; }
-  .enterprise-feature h3 { min-height: 0; }
   .enterprise-feature .enterprise-caveat { min-height: 0; }
   .enterprise-feature > a { margin-top: 16px; padding-top: 0; }
 }
@@ -36,9 +34,8 @@
   .enterprise-heading > p:last-child { max-width: 380px; margin-top: 14px; font-size: 14px; }
   .enterprise-grid { gap: 39px; margin-top: 46px; }
   .enterprise-feature { display: flex; padding-top: 23px; }
-  .enterprise-feature-top { font-size: 9px; }
-  .enterprise-feature-top svg { width: 26px; height: 26px; }
-  .enterprise-feature h3 { margin-top: 14px; font-size: 25px; }
+  .enterprise-feature h3 { font-size: 25px; }
+  .enterprise-feature h3 svg { width: 26px; height: 26px; }
   .enterprise-feature > p { max-width: 430px; margin-top: 10px; font-size: 13px; }
   .enterprise-feature .enterprise-caveat { font-size: 11px; }
   .enterprise-feature > a { margin-top: 18px; padding-top: 0; font-size: 12px; }
