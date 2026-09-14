@@ -35,7 +35,6 @@
 .project-editor-breadcrumb { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; padding: 0 20px; color: var(--muted); font: 11px/1.2 var(--fontStack-monospace); }
 .project-editor-breadcrumb > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .project-editor-language { flex: none; color: var(--accent); font-size: 9px; font-weight: 750; letter-spacing: .08em; }
-.project-line-count { flex: none; padding-top: 3px; color: var(--muted); font: 750 9px/1.5 var(--fontStack-monospace); letter-spacing: .06em; }
 .project-code-scroll { height: 402px; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
 .project-code-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .project-code { width: max-content; min-width: 100%; margin: 0; padding: 15px 0 29px; color: var(--ink); font: 13px/1.8 var(--fontStack-monospace); tab-size: 2; }
@@ -47,14 +46,6 @@
 .project-syntax-value { color: var(--project-code-value); }
 .project-syntax-sql { color: var(--project-code-sql); }
 .project-syntax-comment { color: var(--project-code-comment); }
-.project-editor-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 43px; padding: 0 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .13em; }
-.project-editor-footer i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 11px var(--glow); }
-.project-editor-footer .project-line-count { margin-left: auto; padding-top: 0; }
-.project-editor-footer a { color: var(--accent); text-decoration: none; white-space: nowrap; }
-.project-editor-footer a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.project-footnote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; margin: 18px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.project-footnote a { color: var(--accent); text-decoration: none; }
-.project-footnote a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 @media (max-width: 900px) {
   .project-section { padding: 85px 32px 85px; }
@@ -67,12 +58,9 @@
   .project-tabs button { flex-basis: 157px; min-height: 42px; padding-inline: 11px; }
   .project-tab-filename { font-size: 11px; }
   .project-editor-breadcrumb { min-height: 32px; padding-inline: 12px; font-size: 10px; }
-  .project-line-count { font-size: 8px; white-space: nowrap; }
   .project-code-scroll { height: 370px; }
   .project-code { font-size: 11px; }
   .project-line-number { width: 41px; padding-right: 11px; }
-  .project-editor-footer { padding-inline: 12px; font-size: 8px; }
-  .project-footnote { font-size: 10px; }
 }
 
 }

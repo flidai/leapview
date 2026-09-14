@@ -1,28 +1,10 @@
 const projectFiles = {
-  connection: {
-    path: 'connections/olist.yaml', step: '01 / CONNECT', title: 'Start with a connection.',
-    summary: 'A managed connection tells LeapView how this example reads uploaded CSV data.'
-  },
-  source: {
-    path: 'sources/olist.payments.yaml', step: '02 / DESCRIBE', title: 'Name the source.',
-    summary: 'The source identifies the payments file, its format, and the fields it exposes.'
-  },
-  model: {
-    path: 'models/sales_orders.yaml', step: '03 / TRANSFORM', title: 'Shape the data.',
-    summary: 'A SQL model builds order-level sales facts, including the revenue field.'
-  },
-  semantics: {
-    path: 'semantic-models/sales.yaml', step: '04 / DEFINE', title: 'Shared metrics, one definition.',
-    summary: 'The semantic model names datasets, relationships, dimensions, and shared metrics.'
-  },
-  pipeline: {
-    path: 'pipelines/sales-refresh.yaml', step: '05 / REFRESH', title: 'Keep the project current.',
-    summary: 'A pipeline selects the sales semantic model for refresh.'
-  },
-  dashboard: {
-    path: 'dashboards/executive-sales.yaml', step: '06 / PRESENT', title: 'Declare the dashboard.',
-    summary: 'The dashboard uses the sales semantic model to define filters and visuals.'
-  }
+  connection: 'connections/olist.yaml',
+  source: 'sources/olist.payments.yaml',
+  model: 'models/sales_orders.yaml',
+  semantics: 'semantic-models/sales.yaml',
+  pipeline: 'pipelines/sales-refresh.yaml',
+  dashboard: 'dashboards/executive-sales.yaml'
 };
 
 const explorer = document.querySelector('#project-explorer');
@@ -74,17 +56,8 @@ function renderLine(line, container) {
   container.textContent = line;
 }
 
-function renderSource(source, file) {
-  const comments = [`# ${file.step}`, `# ${file.title}`];
-  let comment = '#';
-  for (const word of file.summary.split(' ')) {
-    if (`${comment} ${word}`.length > 42 && comment !== '#') {
-      comments.push(comment);
-      comment = '#';
-    }
-    comment += ` ${word}`;
-  }
-  const lines = [...comments, comment, '', ...source.trimEnd().split('\n')];
+function renderSource(source) {
+  const lines = source.trimEnd().split('\n');
   const fragment = document.createDocumentFragment();
   lines.forEach((line, index) => {
     const row = document.createElement('span');
@@ -100,13 +73,12 @@ function renderSource(source, file) {
     fragment.append(row);
   });
   code.replaceChildren(fragment);
-  document.querySelector('#project-line-count').textContent = `${lines.length} LINES`;
   codeScroll.scrollTo(0, 0);
 }
 
 async function selectFile(key) {
-  const file = projectFiles[key];
-  if (!file) return;
+  const path = projectFiles[key];
+  if (!path) return;
   const selection = ++latestSelection;
   const selectedTab = tabs.find(tab => tab.dataset.projectFile === key);
   tabs.forEach(tab => {
@@ -116,25 +88,23 @@ async function selectFile(key) {
   });
   panel.setAttribute('aria-labelledby', selectedTab.id);
   revealTab(selectedTab);
-  document.querySelector('#project-file-path').textContent = `sales-project / ${file.path.replace('/', ' / ')}`;
-  document.querySelector('#project-source-link').href = `https://github.com/flidai/leapview/blob/main/dashboards/${file.path}`;
-  codeScroll.setAttribute('aria-label', `${file.path} source code`);
+  document.querySelector('#project-file-path').textContent = `sales-project / ${path.replace('/', ' / ')}`;
+  codeScroll.setAttribute('aria-label', `${path} source code`);
 
   if (fileCache.has(key)) {
-    renderSource(fileCache.get(key), file);
+    renderSource(fileCache.get(key));
     return;
   }
   code.textContent = 'Loading file…';
-  document.querySelector('#project-line-count').textContent = 'YAML';
   try {
-    const response = await fetch(`/static/home/project-files/${file.path}`);
+    const response = await fetch(`/static/home/project-files/${path}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const source = await response.text();
     fileCache.set(key, source);
-    if (selection === latestSelection) renderSource(source, file);
+    if (selection === latestSelection) renderSource(source);
   } catch {
     if (selection === latestSelection) {
-      code.textContent = 'Could not load this file. View the source on GitHub instead.';
+      code.textContent = 'Could not load this file.';
     }
   }
 }
