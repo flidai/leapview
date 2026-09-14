@@ -4,12 +4,8 @@
     position: relative;
     padding: 88px 24px 92px;
     border-block: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg) 82%, #0d3359);
+    background: var(--bg);
     scroll-margin-top: 72px;
-  }
-
-  :scope.is-light .mission {
-    background: color-mix(in srgb, var(--bg) 94%, #cfe5ff);
   }
 
   .mission-inner {

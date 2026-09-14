@@ -7,14 +7,13 @@
   position: relative;
   padding: 105px clamp(20px, 5vw, 78px) 100px;
   border-top: 1px solid var(--border);
-  background: radial-gradient(ellipse 58% 45% at 50% 77%, rgba(31, 111, 235, .09), transparent 78%), var(--bg);
+  background: var(--bg);
   scroll-margin-top: 72px;
 }
 :scope.is-light .project-section {
   --project-code-key: #0550ae;
   --project-code-value: #8250df;
   --project-code-sql: #1a7f37;
-  background: radial-gradient(ellipse 58% 45% at 50% 77%, rgba(9, 105, 218, .06), transparent 78%), var(--bg);
 }
 .project-inner { width: min(100%, 1320px); margin: 0 auto; }
 .project-heading h2 { margin: 0; font-size: clamp(40px, 3.9vw, 54px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }

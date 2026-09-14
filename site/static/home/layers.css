@@ -6,10 +6,9 @@
   scroll-margin-top: 72px;
   padding: 96px clamp(18px, 4vw, 64px) 105px;
   border-top: 1px solid var(--border);
-  background: radial-gradient(ellipse 54% 42% at 50% 66%, rgba(31, 111, 235, .1), transparent 82%), var(--bg);
+  background: var(--bg);
   color: var(--ink);
 }
-:scope.is-light .architecture { background: radial-gradient(ellipse 54% 42% at 50% 66%, rgba(9, 105, 218, .065), transparent 82%), var(--bg); }
 .architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
 .architecture-heading { max-width: 850px; margin: 0 0 62px; }
 .architecture-heading h2 { margin: 0; font-size: clamp(38px, 3.6vw, 50px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }

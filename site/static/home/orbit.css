@@ -1,7 +1,6 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
-.orbit-section{position:relative;overflow:hidden;padding-top:76px;border-top:1px solid var(--border);background:radial-gradient(ellipse 46% 47% at 50% 47%,rgba(31,111,235,.12),transparent 80%),var(--bg);scroll-margin-top:72px}
-:scope.is-light .orbit-section{background:radial-gradient(ellipse 46% 47% at 50% 47%,rgba(9,105,218,.07),transparent 80%),var(--bg)}
+.orbit-section{position:relative;overflow:hidden;padding-top:76px;border-top:1px solid var(--border);background:var(--bg);scroll-margin-top:72px}
 .orbit-stage{position:relative;width:min(100%,1440px);height:850px;margin:auto;isolation:isolate}
 .orbit-grid{position:absolute;inset:0;z-index:-2;background-image:radial-gradient(var(--grid-line) 1px,transparent 1px);background-size:27px 27px;mask-image:radial-gradient(ellipse 63% 57% at 50% 51%,#000,transparent 100%)}
 .orbit-ring{position:absolute;z-index:-1;top:49%;left:50%;border:1px solid color-mix(in srgb,var(--border) 33%,transparent);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
