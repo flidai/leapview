@@ -300,9 +300,7 @@ func siteHeader(isDocs, showcase bool) g.Node {
 		actions = append(actions, h.Div(h.Class("site-nav-links site-nav-links-docs"), siteActiveSearch()))
 	} else {
 		actions = append(actions, h.Div(h.Class("site-nav-links"),
-			h.A(h.Href("/download"), g.Text("Desktop")),
 			h.A(h.Href("/docs"), g.Text("Docs")),
-			h.A(h.Href("/visuals"), g.Text("Visuals")),
 			g.If(showcase, h.A(h.Href("/showcase"), g.Text("Live demo"))),
 		))
 	}
@@ -701,7 +699,6 @@ func siteFooter() g.Node {
 			siteFooterGroup("Explore", []siteFooterLink{
 				{label: "Documentation", href: "/docs"},
 				{label: "Getting started", href: "/docs/getting-started"},
-				{label: "Visual gallery", href: "/visuals"},
 			}),
 			siteFooterGroup("Project", []siteFooterLink{
 				{label: "GitHub", href: "https://github.com/flidai/leapview"},

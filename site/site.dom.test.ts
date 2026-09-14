@@ -248,11 +248,12 @@ test('desktop download page presents the same manifest-backed early preview', as
   }
 })
 
-test('homepage keeps the existing desktop navigation', async () => {
+test('homepage navigation hides Desktop and Visuals while their pages remain available', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(baseURL)
-    expect(await page.locator('.site-header').getByRole('link', { name: 'Desktop' }).getAttribute('href')).toBe('/download')
+    expect(await page.locator('.site-header a[href="/download"], .site-header a[href="/visuals"], .site-footer a[href="/visuals"]').count()).toBe(0)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'Docs' }).count()).toBe(1)
   } finally {
     await page.close()
   }
@@ -304,7 +305,7 @@ test('documentation header keeps only search and theme actions', async () => {
     const siteActions = page.locator('.site-header .site-nav-actions')
     expect(await siteActions.getByRole('link', { name: 'Docs', exact: true }).count()).toBe(1)
     expect(await siteActions.getByRole('link', { name: 'Demo', exact: true }).count()).toBe(0)
-    expect(await siteActions.getByRole('link', { name: 'Visuals', exact: true }).count()).toBe(1)
+    expect(await siteActions.getByRole('link', { name: 'Visuals', exact: true }).count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -340,6 +341,7 @@ test('mobile homepage keeps the shared navigation and all sections usable', asyn
     await button.click()
     expect(await button.getAttribute('aria-expanded')).toBe('true')
     expect(await menu.getByRole('link', { name: 'Docs' }).count()).toBe(1)
+    expect(await menu.getByRole('link', { name: 'Visuals' }).count()).toBe(0)
     expect(await page.locator('.orbit-node').count()).toBe(17)
     expect(await page.locator('[data-project-file]').count()).toBe(6)
     for (const width of [320, 390, 768]) {
