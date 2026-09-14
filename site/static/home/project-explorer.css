@@ -21,6 +21,9 @@
 .project-heading h2 { margin: 0; font-size: clamp(40px, 3.9vw, 54px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
 .project-phase-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 27px; margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 .project-phase-copy > span:first-child { color: var(--accent); font: 750 12px/1.6 var(--fontStack-monospace); letter-spacing: .1em; white-space: nowrap; }
+.project-phase-copy.is-changing > span { animation: project-phase-enter .48s cubic-bezier(.2, .8, .2, 1) both; }
+.project-phase-copy.is-changing > span:last-child { animation-delay: 80ms; }
+@keyframes project-phase-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }
 .project-tabs { display: flex; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--frame-bg) 82%, var(--bg)); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
@@ -28,6 +31,9 @@
 .project-tabs button:last-child { border-right: 0; }
 .project-tabs button:hover { background: var(--glow); color: var(--ink); }
 .project-tabs button[aria-selected="true"] { border-top-color: var(--accent); background: var(--bg); color: var(--ink); }
+.project-explorer.is-autoplay .project-tabs button[aria-selected="true"] { position: relative; border-top-color: transparent; }
+.project-explorer.is-autoplay .project-tabs button[aria-selected="true"]::before { position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: var(--accent); content: ''; transform-origin: left; animation: project-tab-progress var(--project-phase-duration) linear both; }
+@keyframes project-tab-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .project-tabs button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--accent); outline-offset: -3px; }
 .project-yaml-icon { display: inline-grid; place-items: center; width: 16px; height: 18px; flex: none; border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent); border-radius: 2px; color: var(--accent); font: 750 10px/1 var(--fontStack-monospace); }
 .project-tab-filename { min-width: 0; overflow: hidden; font: 12px/1.2 var(--fontStack-monospace); text-overflow: ellipsis; white-space: nowrap; }
@@ -67,6 +73,7 @@
   .project-line-number { width: 41px; padding-right: 11px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .project-phase-copy.is-changing > span { animation: none; }
   .project-code-row.is-entering { animation: none; }
 }
 

@@ -7,11 +7,16 @@ const projectFiles = {
   dashboard: { path: 'dashboards/executive-sales.yaml', label: '06 / DASHBOARD', detail: 'Define the governed dashboard.' }
 };
 const walkthrough = ['connection', 'source', 'model', 'semantics'];
+const phaseDuration = 5500;
 
 const explorer = document.querySelector('#project-explorer');
+explorer.style.setProperty('--project-phase-duration', `${phaseDuration}ms`);
 const tabList = explorer.querySelector('.project-tabs');
 const tabs = [...tabList.querySelectorAll('[data-project-file]')];
 const panel = explorer.querySelector('#project-file-panel');
+const phaseCopy = document.querySelector('.project-phase-copy');
+const phaseLabel = document.querySelector('#project-phase-label');
+const phaseDetail = document.querySelector('#project-phase-detail');
 const code = document.querySelector('#project-code');
 const codeScroll = document.querySelector('#project-code-scroll');
 const fileCache = new Map();
@@ -98,8 +103,14 @@ async function selectFile(key, animate = false) {
   });
   panel.setAttribute('aria-labelledby', selectedTab.id);
   revealTab(selectedTab);
-  document.querySelector('#project-phase-label').textContent = file.label;
-  document.querySelector('#project-phase-detail').textContent = file.detail;
+  const phaseChanged = phaseLabel.textContent !== file.label || phaseDetail.textContent !== file.detail;
+  if (phaseChanged) {
+    phaseCopy.classList.remove('is-changing');
+    void phaseCopy.offsetWidth;
+  }
+  phaseLabel.textContent = file.label;
+  phaseDetail.textContent = file.detail;
+  if (phaseChanged && !reducedMotion.matches) phaseCopy.classList.add('is-changing');
   document.querySelector('#project-file-path').textContent = `sales-project / ${file.path.replace('/', ' / ')}`;
   codeScroll.setAttribute('aria-label', `${file.path} source code`);
 
@@ -129,17 +140,21 @@ function canAdvance() {
 
 function scheduleNextPhase() {
   clearTimeout(timer);
+  explorer.classList.remove('is-autoplay');
   if (!canAdvance()) return;
+  void explorer.offsetWidth;
+  explorer.classList.add('is-autoplay');
   timer = setTimeout(() => {
     phaseIndex += 1;
     selectFile(walkthrough[phaseIndex], true);
     scheduleNextPhase();
-  }, 5500);
+  }, phaseDuration);
 }
 
 function pauseForSelection(key) {
   userPaused = true;
   clearTimeout(timer);
+  explorer.classList.remove('is-autoplay');
   selectFile(key);
 }
 
@@ -170,6 +185,7 @@ explorer.addEventListener('focusout', () => requestAnimationFrame(scheduleNextPh
 codeScroll.addEventListener('pointerdown', () => {
   userPaused = true;
   clearTimeout(timer);
+  explorer.classList.remove('is-autoplay');
 });
 document.addEventListener('visibilitychange', scheduleNextPhase);
 reducedMotion.addEventListener('change', scheduleNextPhase);

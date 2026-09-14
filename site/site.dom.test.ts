@@ -85,17 +85,23 @@ test('analytics code walkthrough advances when visible and stops after a file is
     expect(await page.locator('#project-explorer').evaluate((element) => element.matches(':hover'))).toBe(true)
     expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
     expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(true)
+    expect(await page.locator('#project-tab-connection').evaluate((element) => getComputedStyle(element, '::before').animationDuration)).toBe('5.5s')
     await page.clock.runFor(5600)
     expect(await page.locator('#project-tab-source').getAttribute('aria-selected')).toBe('true')
     expect(await page.locator('#project-phase-label').textContent()).toBe('02 / DEFINE SOURCES')
+    expect(await page.locator('.project-phase-copy').evaluate((element) => element.classList.contains('is-changing'))).toBe(true)
+    expect(await page.locator('#project-phase-label').evaluate((element) => getComputedStyle(element).animationName)).toBe('project-phase-enter')
     expect(await page.locator('.project-code-row.is-entering').count()).toBeGreaterThan(0)
     await page.clock.runFor(11200)
     expect(await page.locator('#project-tab-semantics').getAttribute('aria-selected')).toBe('true')
     expect(await page.locator('#project-phase-label').textContent()).toBe('04 / SEMANTIC MODEL')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
     await page.locator('#project-tab-dashboard').click()
     await page.clock.runFor(12000)
     expect(await page.locator('#project-tab-dashboard').getAttribute('aria-selected')).toBe('true')
     expect(await page.locator('#project-phase-label').textContent()).toBe('06 / DASHBOARD')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
   } finally {
     await page.close()
   }
@@ -110,6 +116,8 @@ test('analytics code walkthrough stays still for reduced motion', async () => {
     await page.clock.runFor(20000)
     expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
     expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
+    expect(await page.locator('.project-phase-copy').evaluate((element) => element.classList.contains('is-changing'))).toBe(false)
   } finally {
     await page.close()
   }
