@@ -324,9 +324,14 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   const titlelessHorizontalBar = cartesianIsHorizontal(spec)
     && spec.mark === 'bar'
     && !(spec.axes ?? []).some((candidate) => candidate.title || candidate.unit)
+  const outsideHorizontalLabels = spec.mark === 'bar' && cartesianIsHorizontal(spec)
+    && ['outside', 'right'].includes(spec.presentation.labelPosition ?? '')
   return {
     left: 12 + (spec.presentation.legend === 'left' ? sideInset : 0),
-    right: 28 + (spec.presentation.legend === 'right' ? sideInset : 0),
+    // Retain value-label space at compact widths and when hiding positive bars
+    // moves zero to the right edge. A pixel string preserves this compact inset.
+    right: outsideHorizontalLabels ? `${80 + (spec.presentation.legend === 'right' ? sideInset : 0)}px`
+      : 28 + (spec.presentation.legend === 'right' ? sideInset : 0),
     top: (spec.presentation.legend === 'top' ? 44 : 16) + (spec.presentation.legend === 'top' ? titleInset : 0),
     bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom === true ? 42 : 0) + (bottomLegend ? titleInset : 0),
     containLabel: !titlelessHorizontalBar,

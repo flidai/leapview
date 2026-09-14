@@ -218,7 +218,7 @@ class ReportCanvas extends LitElement {
     }
 
     :host([data-layout='mobile']) ::slotted([data-slicer-style='dropdown']) {
-      min-height: 90px;
+      min-height: 72px;
     }
 
     :host([data-layout='mobile']) ::slotted([data-slicer-style='input']) {
@@ -242,9 +242,16 @@ class ReportCanvas extends LitElement {
     }
 
     :host([data-layout='mobile']) ::slotted([data-component-kind='visual']:not([data-visual-type='kpi'])) {
-      height: 520px !important;
+      height: 360px !important;
       min-height: 320px;
       overflow: hidden;
+    }
+
+    :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='table']),
+    :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='matrix']),
+    :host([data-layout='mobile']) ::slotted([data-component-kind='visual'][data-visual-type='pivot']) {
+      height: var(--lv-mobile-table-height, 400px) !important;
+      min-height: 0;
     }
 
     @media (max-width: 640px) {

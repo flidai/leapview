@@ -467,6 +467,20 @@ spec:
       description: Negative revenue variance at the current query grain; other outcomes have no bar.
       unit: USD
       format: currency
+    ebitda_positive_impact:
+      type: derived
+      expression: nullif((${variance_impact} + abs(${variance_impact})) / 2, ${variance_impact} * 0)
+      label: Increases EBITDA
+      description: Positive EBITDA variance contribution at the current query grain; other outcomes have no bar.
+      unit: USD
+      format: currency
+    ebitda_negative_impact:
+      type: derived
+      expression: nullif((${variance_impact} - abs(${variance_impact})) / 2, ${variance_impact} * 0)
+      label: Decreases EBITDA
+      description: Negative EBITDA variance contribution at the current query grain; other outcomes have no bar.
+      unit: USD
+      format: currency
     revenue_variance_percent:
       type: ratio
       numerator: revenue_variance
