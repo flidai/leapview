@@ -36,6 +36,12 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 	if _, err := store.Put(t.Context(), sharedBlob, bytes.NewReader(sharedContent)); err != nil {
 		t.Fatal(err)
 	}
+	projectBOnlyContent := []byte("managed bytes retained only by Project B")
+	projectBOnlyHash := sha256.Sum256(projectBOnlyContent)
+	projectBOnlyBlob := storage.Blob{SHA256: hex.EncodeToString(projectBOnlyHash[:]), Size: int64(len(projectBOnlyContent))}
+	if _, err := store.Put(t.Context(), projectBOnlyBlob, bytes.NewReader(projectBOnlyContent)); err != nil {
+		t.Fatal(err)
+	}
 	orphanContent := []byte("unprotected managed bytes")
 	orphanHash := sha256.Sum256(orphanContent)
 	orphanBlob := storage.Blob{SHA256: hex.EncodeToString(orphanHash[:]), Size: int64(len(orphanContent))}
@@ -43,7 +49,7 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createRevision := func(projectID, suffix, path string) manageddata.Revision {
+	createRevision := func(projectID, suffix, path string, projectOnlyBlob *storage.Blob) manageddata.Revision {
 		t.Helper()
 		collection, err := repository.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
 			ID: projectgraph.ResourceID("collection_bnd06_" + suffix), ProjectID: projectgraph.ResourceID(projectID), ConnectionID: projectgraph.ResourceID("connection_bnd06_" + suffix), Name: "BND-06 " + suffix,
@@ -52,6 +58,12 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 			t.Fatal(err)
 		}
 		manifest := manageddata.Manifest{Files: []manageddata.File{{Path: path, Size: sharedBlob.Size, SHA256: sharedBlob.SHA256}}}
+		files := []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "blobs/sha256/" + sharedBlob.SHA256}}
+		if projectOnlyBlob != nil {
+			projectOnlyFile := manageddata.File{Path: "project-b/z-project-only.bin", Size: projectOnlyBlob.Size, SHA256: projectOnlyBlob.SHA256}
+			manifest.Files = append(manifest.Files, projectOnlyFile)
+			files = append(files, manageddata.StoredFile{File: projectOnlyFile, StorageKey: "blobs/sha256/" + projectOnlyBlob.SHA256})
+		}
 		session, err := repository.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
 			ID: manageddata.UploadID("upload_bnd06_" + suffix), CollectionID: collection.ID, Manifest: manifest,
 			StorageBackend: "filesystem", StagingPrefix: "uploads/bnd06/" + suffix, ExpiresAt: time.Now().UTC().Add(time.Hour),
@@ -60,7 +72,7 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 			t.Fatal(err)
 		}
 		revision, err := repository.CompleteUpload(t.Context(), manageddata.CompleteUploadInput{
-			SessionID: session.ID, Files: []manageddata.StoredFile{{File: manifest.Files[0], StorageKey: "blobs/sha256/" + sharedBlob.SHA256}},
+			SessionID: session.ID, Files: files,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -68,8 +80,8 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 		return revision
 	}
 
-	projectARevision := createRevision("project-bnd06-a", "a", "project-a/shared.bin")
-	projectBRevision := createRevision("project-bnd06-b", "b", "project-b/shared.bin")
+	projectARevision := createRevision("project-bnd06-a", "a", "project-a/shared.bin", nil)
+	projectBRevision := createRevision("project-bnd06-b", "b", "project-b/shared.bin", &projectBOnlyBlob)
 	projectARoot, err := repository.RecordRetentionRoot(t.Context(), RetentionRoot{
 		RootID: "root-bnd06-a", ProjectID: "project-bnd06-a", Environment: "prod", RevisionID: projectARevision.ID.String(),
 		Evidence: []byte(`{"qualification":"BND-06","project":"A"}`),
@@ -116,13 +128,16 @@ func TestBND06CrossProjectManagedBlobGCProtectsSharedContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Deleted != 1 || result.ReclaimedBytes != orphanBlob.Size {
-		t.Fatalf("GC result = %#v, want only the unprotected blob deleted", result)
+	if result.Deleted != 2 || result.ReclaimedBytes != orphanBlob.Size+projectBOnlyBlob.Size {
+		t.Fatalf("GC result = %#v, want the orphan and expired Project B-only blob deleted", result)
 	}
 	if _, err := store.Stat(t.Context(), sharedBlob.SHA256); err != nil {
 		t.Fatalf("shared bytes protected by Project A were deleted: %v", err)
 	}
 	if _, err := store.Stat(t.Context(), orphanBlob.SHA256); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("unprotected blob error = %v, want not found", err)
+	}
+	if _, err := store.Stat(t.Context(), projectBOnlyBlob.SHA256); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expired Project B-only blob error = %v, want not found", err)
 	}
 }
