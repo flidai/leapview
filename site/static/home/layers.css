@@ -12,7 +12,7 @@
 :scope.is-light .architecture { background: radial-gradient(ellipse 54% 42% at 50% 66%, rgba(9, 105, 218, .065), transparent 82%), var(--bg); }
 .architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
 .architecture-heading { max-width: 850px; margin: 0 0 62px; }
-.architecture-heading h2 { margin: 0; font-size: clamp(46px, 4.6vw, 66px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
+.architecture-heading h2 { margin: 0; font-size: clamp(38px, 3.6vw, 50px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
 .architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
 
 .architecture-board { position: relative; min-height: 620px; isolation: isolate; }
@@ -69,7 +69,7 @@
 }
 @media (max-width: 580px) {
   .architecture { padding: 70px 17px 70px; }
-  .architecture-heading h2 { font-size: clamp(42px, 11vw, 58px); }
+  .architecture-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .architecture-heading > p:last-child { max-width: 350px; margin-top: 16px; font-size: 13px; }
   .architecture-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .architecture-stack { grid-column: 1 / -1; grid-row: 2; margin: 10px auto 3px; }

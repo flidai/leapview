@@ -17,7 +17,7 @@
   background: radial-gradient(ellipse 58% 45% at 50% 77%, rgba(9, 105, 218, .06), transparent 78%), var(--bg);
 }
 .project-inner { width: min(100%, 1320px); margin: 0 auto; }
-.project-heading h2 { margin: 0; font-size: clamp(58px, 6vw, 85px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
+.project-heading h2 { margin: 0; font-size: clamp(40px, 3.9vw, 54px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
 .project-heading > p:last-child { margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }
@@ -75,7 +75,7 @@
 }
 @media (max-width: 650px) {
   .project-section { padding: 73px 18px 72px; }
-  .project-heading h2 { font-size: clamp(46px, 11vw, 63px); }
+  .project-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .project-heading > p:last-child { max-width: 360px; margin-top: 12px; font-size: 13px; }
   .project-explorer { margin-top: 35px; }
   .project-window-bar { grid-template-columns: 1fr auto; padding: 0 11px; font-size: 9px; }
