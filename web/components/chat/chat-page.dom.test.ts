@@ -509,7 +509,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       const root = list.shadowRoot
       let archivedOpened = false
       list.addEventListener('lv-chat-settings-open', () => { archivedOpened = true })
-      root.querySelector<HTMLButtonElement>('button')?.click()
+      ;(root.querySelector('button') as HTMLButtonElement | null)?.click()
       return {
         title: root.querySelector('.empty-title')?.textContent?.trim(),
         detail: root.querySelector('.empty-detail')?.textContent?.trim(),
