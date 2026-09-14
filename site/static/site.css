@@ -119,9 +119,7 @@ a {
   z-index: var(--zIndex-sticky);
   top: 0;
   isolation: isolate;
-  border-bottom: 1px solid transparent;
   background: transparent;
-  transition: border-color var(--site-motion-duration-short) var(--site-motion-easing);
 }
 
 .site-header::before {
@@ -137,10 +135,6 @@ a {
     background-color var(--site-motion-duration-short) var(--site-motion-easing),
     -webkit-backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing),
     backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing);
-}
-
-.site-header.is-scrolled {
-  border-bottom: var(--lv-border-muted);
 }
 
 .site-header.is-scrolled::before {

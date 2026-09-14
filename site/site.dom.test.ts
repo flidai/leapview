@@ -368,12 +368,14 @@ test('site header follows homepage section colors on scroll', async () => {
     await page.goto(baseURL)
     const header = page.locator('.site-header')
     expect(await header.evaluate((element) => element.classList.contains('is-scrolled'))).toBe(false)
+    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
 
     await page.evaluate(() => {
       document.documentElement.style.scrollBehavior = 'auto'
       window.scrollTo(0, 600)
     })
     await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
+    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
     expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
 
