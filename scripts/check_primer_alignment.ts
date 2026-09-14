@@ -42,6 +42,9 @@ const runtimeTokenNames = new Set([
   "--lv-cell-bg-color",
   "--lv-cell-bg-fade",
   "--lv-group-head-height",
+  // Per-visual geometry supplied by the dashboard and visualization host.
+  "--lv-mobile-table-height",
+  "--lv-table-agent-action-space",
   "--lv-head-top",
   "--lv-pin-left",
   "--lv-resize-guide-x",

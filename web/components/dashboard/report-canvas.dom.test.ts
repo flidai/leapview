@@ -106,3 +106,23 @@ test('report canvas restores route-scoped view preferences through URL sync hist
 function testDocument(): string {
   return `<!doctype html><html><head><style>html,body{width:100%;height:100%;margin:0;}lv-report-canvas{display:block;width:100%;height:100%;--lv-report-canvas-bg:#eef1f4;--lv-report-page-bg:#fff;--lv-scrollbar-thumb:#8c959f;--lv-scrollbar-thumb-hover:#6e7781;}</style></head><body><lv-report-canvas width="1366" height="768"></lv-report-canvas><script type="module" src="/report-canvas.js"></script><script type="module" src="/url-sync.js"></script></body></html>`
 }
+
+test('mobile cards use compact chart heights and content-sized table heights', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => document.querySelector('lv-report-canvas')?.getAttribute('data-layout') === 'mobile')
+    await page.locator('lv-report-canvas').evaluate(canvas => {
+      for (const kind of ['cartesian', 'matrix']) {
+        const card = document.createElement('div')
+        card.setAttribute('data-canvas-visual', '')
+        card.dataset.componentKind = 'visual'
+        card.dataset.visualType = kind
+        if (kind === 'matrix') card.style.setProperty('--lv-mobile-table-height', '254px')
+        canvas.append(card)
+      }
+    })
+    expect(await page.locator('[data-visual-type="cartesian"]').evaluate(e => e.getBoundingClientRect().height)).toBe(360)
+    expect(await page.locator('[data-visual-type="matrix"]').evaluate(e => e.getBoundingClientRect().height)).toBe(254)
+  } finally { await page.close() }
+})
