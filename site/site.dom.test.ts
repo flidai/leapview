@@ -72,6 +72,45 @@ test('homepage presents the new sections inside the shared site shell', async ()
   }
 })
 
+test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.clock.install({ time: new Date('2026-09-14T12:00:00Z') })
+    await page.goto(baseURL)
+    await page.locator('#build').scrollIntoViewIfNeeded()
+    await page.clock.runFor(100)
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+    await page.clock.runFor(5600)
+    expect(await page.locator('#project-tab-source').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('02 / DEFINE SOURCES')
+    expect(await page.locator('.project-code-row.is-entering').count()).toBeGreaterThan(0)
+    await page.clock.runFor(11200)
+    expect(await page.locator('#project-tab-semantics').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('04 / SEMANTIC MODEL')
+    await page.locator('#project-tab-dashboard').click()
+    await page.clock.runFor(12000)
+    expect(await page.locator('#project-tab-dashboard').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('06 / DASHBOARD')
+  } finally {
+    await page.close()
+  }
+})
+
+test('analytics code walkthrough stays still for reduced motion', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  try {
+    await page.clock.install({ time: new Date('2026-09-14T12:00:00Z') })
+    await page.goto(baseURL)
+    await page.locator('#build').scrollIntoViewIfNeeded()
+    await page.clock.runFor(20000)
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+  } finally {
+    await page.close()
+  }
+})
+
 test('homepage hero fits the first screen and mission rewrites without shifting the post', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -466,7 +505,7 @@ test('mobile homepage keeps the shared navigation and all sections usable', asyn
     expect(await page.locator('[data-project-file]').count()).toBe(6)
     const tabList = page.getByRole('tablist', { name: 'Sales example files' })
     expect(await tabList.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
-    expect(await page.locator('#project-tab-semantics').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
     await page.locator('#project-tab-dashboard').click()
     await page.waitForFunction(() => document.querySelector('#project-code')?.textContent?.includes('kind: Dashboard'))
     expect(await page.locator('#project-file-path').textContent()).toBe('sales-project / dashboards / executive-sales.yaml')

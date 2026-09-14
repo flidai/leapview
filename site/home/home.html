@@ -67,21 +67,21 @@
         <div class="project-inner">
           <div class="project-heading">
             <h2 id="build-title">Analytics as code.</h2>
-            <p>Open a file to see how data becomes a governed dashboard.</p>
+            <p class="project-phase-copy"><span id="project-phase-label">01 / CONNECT</span><span id="project-phase-detail">Point LeapView at your data.</span></p>
           </div>
 
           <div class="project-explorer" id="project-explorer">
             <div class="project-tabs" role="tablist" aria-label="Sales example files">
-              <button type="button" id="project-tab-connection" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="connection" title="connections/olist.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">olist.yaml</span></button>
+              <button type="button" id="project-tab-connection" role="tab" aria-controls="project-file-panel" aria-selected="true" tabindex="0" data-project-file="connection" title="connections/olist.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">olist.yaml</span></button>
               <button type="button" id="project-tab-source" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="source" title="sources/olist.payments.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">olist.payments.yaml</span></button>
               <button type="button" id="project-tab-model" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="model" title="models/sales_orders.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">sales_orders.yaml</span></button>
-              <button type="button" id="project-tab-semantics" role="tab" aria-controls="project-file-panel" aria-selected="true" tabindex="0" data-project-file="semantics" title="semantic-models/sales.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">sales.yaml</span></button>
+              <button type="button" id="project-tab-semantics" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="semantics" title="semantic-models/sales.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">sales.yaml</span></button>
               <button type="button" id="project-tab-pipeline" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="pipeline" title="pipelines/sales-refresh.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">sales-refresh.yaml</span></button>
               <button type="button" id="project-tab-dashboard" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="dashboard" title="dashboards/executive-sales.yaml"><span class="project-yaml-icon" aria-hidden="true">Y</span><span class="project-tab-filename">executive-sales.yaml</span></button>
             </div>
-            <div class="project-editor" id="project-file-panel" role="tabpanel" aria-labelledby="project-tab-semantics" tabindex="0">
-              <div class="project-editor-breadcrumb"><span id="project-file-path">sales-project / semantic-models / sales.yaml</span><span class="project-editor-language">YAML</span></div>
-              <div class="project-code-scroll" id="project-code-scroll" tabindex="0" aria-label="Sales semantic model source code"><pre class="project-code" id="project-code">Loading sales.yaml…</pre></div>
+            <div class="project-editor" id="project-file-panel" role="tabpanel" aria-labelledby="project-tab-connection" tabindex="0">
+              <div class="project-editor-breadcrumb"><span id="project-file-path">sales-project / connections / olist.yaml</span><span class="project-editor-language">YAML</span></div>
+              <div class="project-code-scroll" id="project-code-scroll" tabindex="0" aria-label="connections/olist.yaml source code"><pre class="project-code" id="project-code">Loading olist.yaml…</pre></div>
             </div>
           </div>
         </div>

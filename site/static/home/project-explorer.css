@@ -19,7 +19,8 @@
 }
 .project-inner { width: min(100%, 1320px); margin: 0 auto; }
 .project-heading h2 { margin: 0; font-size: clamp(40px, 3.9vw, 54px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
-.project-heading > p:last-child { margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
+.project-phase-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 27px; margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
+.project-phase-copy > span:first-child { color: var(--accent); font: 750 12px/1.6 var(--fontStack-monospace); letter-spacing: .1em; white-space: nowrap; }
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }
 .project-tabs { display: flex; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--frame-bg) 82%, var(--bg)); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
@@ -40,6 +41,8 @@
 .project-code { width: max-content; min-width: 100%; margin: 0; padding: 15px 0 29px; color: var(--ink); font: 13px/1.8 var(--fontStack-monospace); tab-size: 2; }
 .project-code-row { display: flex; min-height: 22px; padding-right: 24px; white-space: pre; }
 .project-code-row:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.project-code-row.is-entering { animation: project-code-enter .4s both; animation-delay: calc(var(--enter-order) * 45ms); }
+@keyframes project-code-enter { from { opacity: 0; transform: translateX(9px); } to { opacity: 1; transform: translateX(0); } }
 .project-line-number { width: 58px; flex: none; padding-right: 17px; color: var(--muted); text-align: right; user-select: none; }
 .project-code-text { white-space: pre; }
 .project-syntax-key { color: var(--project-code-key); }
@@ -53,7 +56,8 @@
 @media (max-width: 650px) {
   .project-section { padding: 73px 18px 72px; }
   .project-heading h2 { font-size: clamp(34px, 9vw, 40px); }
-  .project-heading > p:last-child { max-width: 360px; margin-top: 12px; font-size: 13px; }
+  .project-phase-copy { max-width: 360px; min-height: 44px; margin-top: 12px; font-size: 13px; }
+  .project-phase-copy > span:first-child { font-size: 10px; }
   .project-explorer { margin-top: 35px; }
   .project-tabs button { flex-basis: 157px; min-height: 42px; padding-inline: 11px; }
   .project-tab-filename { font-size: 11px; }
@@ -61,6 +65,9 @@
   .project-code-scroll { height: 370px; }
   .project-code { font-size: 11px; }
   .project-line-number { width: 41px; padding-right: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-code-row.is-entering { animation: none; }
 }
 
 }
