@@ -20,28 +20,17 @@
 .project-heading > p:last-child { margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }
-.project-window-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; min-height: 42px; padding: 0 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 10px; font-weight: 750; letter-spacing: .1em; }
-.project-window-bar > span:last-child { justify-self: end; font-size: 9px; }
-.project-window-dots { display: flex; gap: 6px; }
-.project-window-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
-.project-window-dots i:first-child { background: var(--accent); }
-.project-workspace { display: grid; grid-template-columns: minmax(260px, 295px) minmax(0, 1fr); min-height: 610px; }
-.project-sidebar { min-width: 0; padding: 21px 14px 28px; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--frame-bg) 82%, var(--bg)); }
-.project-root { display: flex; align-items: center; gap: 8px; margin: 0 9px 13px; color: var(--ink); font: 750 12px/1.5 var(--fontStack-monospace); }
-.project-folder-icon { color: var(--accent); font-size: 14px; }
-.project-folder { margin-top: 7px; }
-.project-folder-label { display: flex; gap: 8px; align-items: center; padding: 0 8px 3px 23px; color: var(--muted); font: 12px/1.4 var(--fontStack-monospace); }
-.project-folder-label span { color: var(--accent); font-size: 10px; }
-.project-folder button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 5px 9px 5px 33px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted); font: 12px/1.35 var(--fontStack-monospace); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.project-folder button:hover { background: var(--glow); color: var(--ink); }
-.project-folder button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--accent) 36%, transparent); background: var(--glow); color: var(--ink); }
-.project-yaml-icon { display: inline-grid; place-items: center; width: 17px; height: 17px; flex: none; border: 1px solid var(--accent); border-radius: 2px; color: var(--accent); font: 750 10px/1 var(--fontStack-monospace); }
+.project-tabs { display: flex; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--frame-bg) 82%, var(--bg)); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+.project-tabs button { display: flex; flex: 1 0 180px; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; min-height: 65px; padding: 12px 15px 10px; border: 0; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.project-tabs button:last-child { border-right: 0; }
+.project-tabs button:hover { background: var(--glow); color: var(--ink); }
+.project-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); background: var(--bg); color: var(--ink); }
+.project-tabs button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--accent); outline-offset: -3px; }
+.project-tab-kind { color: var(--accent); font: 750 9px/1.2 var(--fontStack-monospace); letter-spacing: .08em; white-space: nowrap; }
+.project-tab-filename { max-width: 100%; overflow: hidden; font: 12px/1.2 var(--fontStack-monospace); text-overflow: ellipsis; white-space: nowrap; }
 
 .project-editor { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
-.project-editor-tab { display: flex; align-items: center; gap: 9px; align-self: flex-start; min-width: 0; min-height: 43px; padding: 0 19px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--accent); color: var(--ink); font: 12px/1 var(--fontStack-monospace); white-space: nowrap; }
-.project-editor-tab > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
-.project-editor-type { margin-left: 17px; color: var(--muted); font: 800 9px/1 var(--fontStack-monospace); letter-spacing: .12em; }
-.project-editor-intro { display: flex; justify-content: space-between; gap: 20px; min-height: 122px; padding: 18px 30px 20px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.project-editor-intro { display: flex; justify-content: space-between; gap: 20px; min-height: 122px; padding: 18px 30px 20px; border-bottom: 1px solid var(--border); }
 .project-file-step { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .15em; }
 .project-editor-intro h3 { margin: 7px 0 0; color: var(--ink); font-size: 20px; font-weight: 600; line-height: 1.2; letter-spacing: -.025em; }
 .project-editor-intro p { max-width: 660px; margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
@@ -67,26 +56,15 @@
 
 @media (max-width: 900px) {
   .project-section { padding: 85px 32px 85px; }
-  .project-workspace { grid-template-columns: minmax(210px, 240px) minmax(0, 1fr); }
-  .project-sidebar { padding-inline: 9px; }
-  .project-folder button { padding-left: 20px; }
-  .project-folder-label { padding-left: 11px; }
 }
 @media (max-width: 650px) {
   .project-section { padding: 73px 18px 72px; }
   .project-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .project-heading > p:last-child { max-width: 360px; margin-top: 12px; font-size: 13px; }
   .project-explorer { margin-top: 35px; }
-  .project-window-bar { grid-template-columns: 1fr auto; padding: 0 11px; font-size: 9px; }
-  .project-window-dots { display: none; }
-  .project-window-bar > span:last-child { font-size: 8px; }
-  .project-workspace { display: block; }
-  .project-sidebar { max-height: 225px; overflow: auto; padding: 12px 11px 15px; border-right: 0; border-bottom: 1px solid var(--border); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
-  .project-root { margin-bottom: 8px; font-size: 11px; }
-  .project-folder { margin-top: 3px; }
-  .project-folder-label { padding-bottom: 0; font-size: 10px; }
-  .project-folder button { min-height: 28px; font-size: 10px; }
-  .project-editor-tab { min-height: 36px; max-width: 100%; padding-inline: 13px; font-size: 10px; }
+  .project-tabs button { flex-basis: 165px; min-height: 61px; padding-inline: 11px; }
+  .project-tab-kind { font-size: 8px; }
+  .project-tab-filename { font-size: 11px; }
   .project-editor-intro { min-height: 120px; padding: 15px 14px; }
   .project-editor-intro h3 { font-size: 18px; }
   .project-editor-intro p { font-size: 11px; }

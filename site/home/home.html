@@ -71,23 +71,18 @@
           </div>
 
           <div class="project-explorer" id="project-explorer">
-            <div class="project-window-bar"><span class="project-window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span>LEAPVIEW / SALES PROJECT</span><span>6 SELECTED FILES</span></div>
-            <div class="project-workspace">
-              <nav class="project-sidebar" aria-label="Explore the sales project files">
-                <div class="project-root"><span class="project-folder-icon" aria-hidden="true">▾</span> dashboards/</div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> connections/</span><button type="button" data-project-file="connection" aria-pressed="false"><span class="project-yaml-icon" aria-hidden="true">Y</span> olist.yaml</button></div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> sources/</span><button type="button" data-project-file="source" aria-pressed="false"><span class="project-yaml-icon" aria-hidden="true">Y</span> olist.payments.yaml</button></div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> models/</span><button type="button" data-project-file="model" aria-pressed="false"><span class="project-yaml-icon" aria-hidden="true">Y</span> sales_orders.yaml</button></div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> semantic-models/</span><button type="button" data-project-file="semantics" aria-pressed="true"><span class="project-yaml-icon" aria-hidden="true">Y</span> sales.yaml</button></div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> pipelines/</span><button type="button" data-project-file="pipeline" aria-pressed="false"><span class="project-yaml-icon" aria-hidden="true">Y</span> sales-refresh.yaml</button></div>
-                <div class="project-folder"><span class="project-folder-label"><span aria-hidden="true">▸</span> dashboards/</span><button type="button" data-project-file="dashboard" aria-pressed="false"><span class="project-yaml-icon" aria-hidden="true">Y</span> executive-sales.yaml</button></div>
-              </nav>
-              <div class="project-editor">
-                <div class="project-editor-tab"><span class="project-yaml-icon" aria-hidden="true">Y</span><span id="project-tab-name">sales.yaml</span><span class="project-editor-type">YAML</span></div>
-                <div class="project-editor-intro"><div><span class="project-file-step" id="project-file-step">04 / DEFINE</span><h3 id="project-file-title">Shared metrics, one definition.</h3><p id="project-file-summary" role="status">The semantic model names datasets, relationships, dimensions, and shared metrics.</p></div><span class="project-line-count" id="project-line-count">70 LINES</span></div>
-                <div class="project-code-scroll" id="project-code-scroll" tabindex="0" aria-label="Sales semantic model source code"><pre class="project-code" id="project-code">Loading sales.yaml…</pre></div>
-                <div class="project-editor-footer"><span><i aria-hidden="true"></i> ACTUAL PROJECT FILE</span><a id="project-source-link" href="https://github.com/flidai/leapview/blob/main/dashboards/semantic-models/sales.yaml" target="_blank" rel="noopener noreferrer">VIEW SOURCE ↗</a></div>
-              </div>
+            <div class="project-tabs" role="tablist" aria-label="Sales example files">
+              <button type="button" id="project-tab-connection" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="connection"><span class="project-tab-kind">01 / CONNECTIONS</span><span class="project-tab-filename">olist.yaml</span></button>
+              <button type="button" id="project-tab-source" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="source"><span class="project-tab-kind">02 / SOURCES</span><span class="project-tab-filename">olist.payments.yaml</span></button>
+              <button type="button" id="project-tab-model" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="model"><span class="project-tab-kind">03 / MODELS</span><span class="project-tab-filename">sales_orders.yaml</span></button>
+              <button type="button" id="project-tab-semantics" role="tab" aria-controls="project-file-panel" aria-selected="true" tabindex="0" data-project-file="semantics"><span class="project-tab-kind">04 / SEMANTIC MODELS</span><span class="project-tab-filename">sales.yaml</span></button>
+              <button type="button" id="project-tab-pipeline" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="pipeline"><span class="project-tab-kind">05 / PIPELINES</span><span class="project-tab-filename">sales-refresh.yaml</span></button>
+              <button type="button" id="project-tab-dashboard" role="tab" aria-controls="project-file-panel" aria-selected="false" tabindex="-1" data-project-file="dashboard"><span class="project-tab-kind">06 / DASHBOARDS</span><span class="project-tab-filename">executive-sales.yaml</span></button>
+            </div>
+            <div class="project-editor" id="project-file-panel" role="tabpanel" aria-labelledby="project-tab-semantics" tabindex="0">
+              <div class="project-editor-intro"><div><span class="project-file-step" id="project-file-step">04 / DEFINE</span><h3 id="project-file-title">Shared metrics, one definition.</h3><p id="project-file-summary" role="status">The semantic model names datasets, relationships, dimensions, and shared metrics.</p></div><span class="project-line-count" id="project-line-count">70 LINES</span></div>
+              <div class="project-code-scroll" id="project-code-scroll" tabindex="0" aria-label="Sales semantic model source code"><pre class="project-code" id="project-code">Loading sales.yaml…</pre></div>
+              <div class="project-editor-footer"><span><i aria-hidden="true"></i> ACTUAL PROJECT FILE</span><a id="project-source-link" href="https://github.com/flidai/leapview/blob/main/dashboards/semantic-models/sales.yaml" target="_blank" rel="noopener noreferrer">VIEW SOURCE ↗</a></div>
             </div>
           </div>
           <p class="project-footnote">Selected files from LeapView’s sales example. <a href="https://github.com/flidai/leapview/tree/main/dashboards" target="_blank" rel="noopener noreferrer">Explore the full project ↗</a></p>

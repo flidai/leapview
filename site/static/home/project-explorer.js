@@ -26,11 +26,19 @@ const projectFiles = {
 };
 
 const explorer = document.querySelector('#project-explorer');
-const buttons = [...explorer.querySelectorAll('[data-project-file]')];
+const tabList = explorer.querySelector('.project-tabs');
+const tabs = [...tabList.querySelectorAll('[data-project-file]')];
+const panel = explorer.querySelector('#project-file-panel');
 const code = document.querySelector('#project-code');
 const codeScroll = document.querySelector('#project-code-scroll');
 const fileCache = new Map();
 let latestSelection = 0;
+
+function revealTab(tab) {
+  const listBounds = tabList.getBoundingClientRect();
+  const tabBounds = tab.getBoundingClientRect();
+  tabList.scrollLeft += (tabBounds.left + tabBounds.width / 2) - (listBounds.left + listBounds.width / 2);
+}
 
 function addToken(parent, className, value) {
   const span = document.createElement('span');
@@ -91,8 +99,14 @@ async function selectFile(key) {
   const file = projectFiles[key];
   if (!file) return;
   const selection = ++latestSelection;
-  buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.projectFile === key)));
-  document.querySelector('#project-tab-name').textContent = file.path.split('/').at(-1);
+  const selectedTab = tabs.find(tab => tab.dataset.projectFile === key);
+  tabs.forEach(tab => {
+    const selected = tab === selectedTab;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  });
+  panel.setAttribute('aria-labelledby', selectedTab.id);
+  revealTab(selectedTab);
   document.querySelector('#project-file-step').textContent = file.step;
   document.querySelector('#project-file-title').textContent = file.title;
   document.querySelector('#project-file-summary').textContent = file.summary;
@@ -119,14 +133,14 @@ async function selectFile(key) {
   }
 }
 
-buttons.forEach((button, index) => {
-  button.addEventListener('click', () => selectFile(button.dataset.projectFile));
-  button.addEventListener('keydown', event => {
-    const nextIndex = event.key === 'ArrowDown' ? index + 1 : event.key === 'ArrowUp' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : -1;
-    if (nextIndex === -1 && !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+tabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => selectFile(tab.dataset.projectFile));
+  tab.addEventListener('keydown', event => {
+    const nextIndex = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : -1;
+    if (nextIndex === -1 && !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
-    const next = buttons[(nextIndex + buttons.length) % buttons.length];
-    next.focus();
+    const next = tabs[(nextIndex + tabs.length) % tabs.length];
+    next.focus({ preventScroll: true });
     selectFile(next.dataset.projectFile);
   });
 });
