@@ -303,6 +303,14 @@ func siteHeader(isDocs, showcase bool) g.Node {
 			h.A(h.Href("/docs"), g.Text("Docs")),
 			g.If(showcase, h.A(h.Href("/showcase"), g.Text("Live demo"))),
 		))
+		actions = append(actions, h.Div(h.Class("site-social-links"),
+			h.A(h.Class("site-social-link"), h.Href("https://github.com/flidai/leapview"), g.Attr("aria-label", "GitHub"), h.Title("GitHub"), h.Target("_blank"), g.Attr("rel", "noopener noreferrer"),
+				h.Span(h.Class("site-github-mark"), g.Attr("aria-hidden", "true")),
+			),
+			h.A(h.Class("site-social-link"), h.Href("https://discord.gg/pcfV4zAeRV"), g.Attr("aria-label", "Discord"), h.Title("Discord"), h.Target("_blank"), g.Attr("rel", "noopener noreferrer"),
+				h.Span(h.Class("site-discord-mark"), g.Attr("aria-hidden", "true")),
+			),
+		))
 	}
 	actions = append(actions, g.El("lv-site-theme-toggle"))
 	if !isDocs {

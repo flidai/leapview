@@ -169,6 +169,48 @@ a {
   text-underline-offset: var(--base-size-4);
 }
 
+.site-social-links {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+}
+
+.site-social-link {
+  display: inline-grid;
+  width: var(--site-interactive-target-size);
+  height: var(--site-interactive-target-size);
+  flex: 0 0 auto;
+  place-items: center;
+  border: var(--lv-border-default);
+  border-radius: var(--lv-radius-default);
+  background: var(--lv-bg-control);
+  color: var(--lv-fg-muted);
+  text-decoration: none;
+}
+
+.site-social-link:hover,
+.site-social-link:focus-visible {
+  border-color: var(--lv-button-border-hover);
+  background: var(--lv-button-bg-hover);
+  color: var(--lv-fg-default);
+}
+
+.site-social-link:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-outline-offset);
+}
+
+.site-social-link .site-github-mark,
+.site-discord-mark {
+  width: var(--base-size-20);
+  height: var(--base-size-20);
+  background: currentColor;
+}
+
+.site-discord-mark {
+  mask: url("/static/discord-mark.svg") center / contain no-repeat;
+}
+
 lv-site-search:not(:defined) > .site-search-active-input {
   display: none;
 }

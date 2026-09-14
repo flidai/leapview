@@ -304,6 +304,8 @@ test('documentation header keeps only search and theme actions', async () => {
     await page.goto(baseURL)
     const siteActions = page.locator('.site-header .site-nav-actions')
     expect(await siteActions.getByRole('link', { name: 'Docs', exact: true }).count()).toBe(1)
+    expect(await siteActions.getByRole('link', { name: 'GitHub', exact: true }).getAttribute('href')).toBe('https://github.com/flidai/leapview')
+    expect(await siteActions.getByRole('link', { name: 'Discord', exact: true }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
     expect(await siteActions.getByRole('link', { name: 'Demo', exact: true }).count()).toBe(0)
     expect(await siteActions.getByRole('link', { name: 'Visuals', exact: true }).count()).toBe(0)
   } finally {
@@ -342,6 +344,8 @@ test('mobile homepage keeps the shared navigation and all sections usable', asyn
     expect(await button.getAttribute('aria-expanded')).toBe('true')
     expect(await menu.getByRole('link', { name: 'Docs' }).count()).toBe(1)
     expect(await menu.getByRole('link', { name: 'Visuals' }).count()).toBe(0)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'GitHub' }).isVisible()).toBe(true)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'Discord' }).isVisible()).toBe(true)
     expect(await page.locator('.orbit-node').count()).toBe(17)
     expect(await page.locator('[data-project-file]').count()).toBe(6)
     for (const width of [320, 390, 768]) {
