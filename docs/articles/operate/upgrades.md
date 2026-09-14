@@ -118,6 +118,30 @@ keys.
 
 This provides authoritative artifact admission resolution. It does not execute a release transition.
 
+The per-artifact migration capability authority closes the ownership gap
+between OCI admission and subsystem compatibility evaluation. A controlled
+maintenance publisher records one canonical `migration-capability/v1`
+document for each exact OCI admission digest, deployment-target identity, and
+subsystem owner. Goose records its owned schema and migration-graph
+capability; River/jobs records both River schema and product job-history
+capability; DuckLake records the artifact-owned catalog schema, runtime tuple,
+and migration graph; PhysicalPool records its target-bound compatibility
+tuple. Candidate catalog schema is therefore never copied from mutable current
+catalog state.
+
+Capability publication is append-only. An exact retry returns the existing
+record, while a different payload for the same artifact, target, and subsystem
+fails closed. The PostgreSQL foreign key requires a durable admitted OCI
+artifact, maintenance has INSERT-only publication access, and runtime has
+SELECT-only resolution access. Every read reparses the canonical bytes,
+recomputes the domain-separated digest, verifies the denormalized binding, and
+rechecks that the referenced artifact admission remains valid and unrevoked.
+The authority does not compose predecessor/candidate compatibility or execute
+migrations; future `migration-compatibility/v2` owner adapters must resolve two
+exact artifact capabilities and independently compare them.
+
+This provides authoritative per-artifact migration capability resolution. It does not execute a release transition.
+
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
 not infer cross-version safety from tuple equality. A binary policy also binds
