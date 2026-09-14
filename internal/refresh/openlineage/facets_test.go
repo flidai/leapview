@@ -252,7 +252,7 @@ func facetTestPipeline(t *testing.T) Pipeline {
 func facetTestSourcePublication(t *testing.T) ContractPublication {
 	t.Helper()
 	var authored projectcontracts.Source
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/orders.parquet","format":"parquet"},"schema":{"mode":"strict","fields":{"id":{"datatype":"String"},"order_id":{"datatype":"String"},"a":{"datatype":"String"},"z":{"datatype":"String"}}}}}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/orders.parquet","format":"parquet"},"schema":{"mode":"strict"},"fields":{"id":{"datatype":"String"},"order_id":{"datatype":"String"},"a":{"datatype":"String"},"z":{"datatype":"String"}}}}`), &authored); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := contractprojection.ProjectSource(authored, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})

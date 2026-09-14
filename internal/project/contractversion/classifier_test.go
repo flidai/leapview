@@ -8,21 +8,21 @@ import (
 	"testing"
 )
 
-func TestClassifyCompatibleAdditiveAndBehavioralChanges(t *testing.T) {
-	base := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
-	additive := sourceDocument("1.1.0", `"id":{"datatype":"String","nullable":false},"note":{"datatype":"String","nullable":true}`)
+func TestClassifyRequiredFieldAdditionAndBehavioralChanges(t *testing.T) {
+	base := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
+	additive := sourceDocument("1.1.0", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)
 	result, err := Classify(base, additive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Class != Compatible || result.Compatibility != CompatibilityAdditive || result.StructuralCompatibility != CompatibilityAdditive || result.SemanticCompatibility != CompatibilityAdditive || result.SecurityImpact != SecurityNone || result.RequiresMajor {
-		t.Fatalf("additive classification = %#v", result)
+	if result.Class != Breaking || result.Compatibility != CompatibilityBreaking || result.StructuralCompatibility != CompatibilityBreaking || result.SemanticCompatibility != CompatibilityAdditive || result.SecurityImpact != SecurityNone || !result.RequiresMajor {
+		t.Fatalf("required field addition classification = %#v", result)
 	}
-	if len(result.Changes) != 1 || result.Changes[0].Path != "contract.schema.fields.note" {
+	if len(result.Changes) != 1 || result.Changes[0].Path != "contract.fields.note" {
 		t.Fatalf("additive changes = %#v", result.Changes)
 	}
 
-	behavioral := sourceDocument("1.1.0", `"id":{"criticalDataElement":true,"datatype":"String","nullable":false}`)
+	behavioral := sourceDocument("1.1.0", `"id":{"criticalDataElement":true,"datatype":"String"}`)
 	result, err = Classify(base, behavioral)
 	if err != nil {
 		t.Fatal(err)
@@ -32,9 +32,21 @@ func TestClassifyCompatibleAdditiveAndBehavioralChanges(t *testing.T) {
 	}
 }
 
+func TestHistoricalV1SourceCanBeClassifiedAgainstSharedFieldLayout(t *testing.T) {
+	old := []byte(`{"apiVersion":"leapview.dev/v1","contract":{"schema":{"fields":{"id":{"datatype":"String","nullable":false}},"mode":"compatible"}},"kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.0.0"},"id":"source:orders","name":"orders"},"profile":"leapview.contract/v1"}`)
+	current := sourceDocument("2.0.0", `"id":{"datatype":"String"}`)
+	result, err := Classify(old, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RequiresMajor || result.Compatibility != CompatibilityBreaking {
+		t.Fatalf("historical transition = %#v", result)
+	}
+}
+
 func TestClassifyBreakingChange(t *testing.T) {
-	base := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
-	candidate := sourceDocument("2.0.0", `"id":{"datatype":"Integer","nullable":false}`)
+	base := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
+	candidate := sourceDocument("2.0.0", `"id":{"datatype":"Integer"}`)
 	result, err := Classify(base, candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -45,8 +57,8 @@ func TestClassifyBreakingChange(t *testing.T) {
 }
 
 func TestClassifyCurrentModelProjectionShape(t *testing.T) {
-	base := modelDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`, "")
-	candidate := modelDocument("2.0.0", `"id":{"datatype":"Integer","nullable":false}`, `[{"id":"id_present","severity":"warning","type":"non_null"}]`)
+	base := modelDocument("1.0.0", `"id":{"datatype":"String"}`, "")
+	candidate := modelDocument("2.0.0", `"id":{"datatype":"Integer"}`, `[{"field":"id","id":"id_present","severity":"warning","type":"non_null"}]`)
 	result, err := Classify(base, candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -187,8 +199,8 @@ func TestClassifySemanticNestedFieldsRetainLeafSemantics(t *testing.T) {
 }
 
 func TestClassifyDeterministicOrderingAndIdentity(t *testing.T) {
-	base := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
-	candidate := sourceDocument("2.0.0", `"id":{"datatype":"Integer","nullable":false},"note":{"datatype":"String","nullable":true}`)
+	base := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
+	candidate := sourceDocument("2.0.0", `"id":{"datatype":"Integer"},"note":{"datatype":"String"}`)
 	first, err := Classify(base, candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -200,34 +212,37 @@ func TestClassifyDeterministicOrderingAndIdentity(t *testing.T) {
 	if fmt.Sprintf("%#v", first) != fmt.Sprintf("%#v", second) {
 		t.Fatalf("classification is not deterministic: first=%#v second=%#v", first, second)
 	}
-	if len(first.Changes) != 2 || first.Changes[0].Path != "contract.schema.fields.id.datatype" || first.Changes[1].Path != "contract.schema.fields.note" {
+	if len(first.Changes) != 2 || first.Changes[0].Path != "contract.fields.id.datatype" || first.Changes[1].Path != "contract.fields.note" {
 		t.Fatalf("changes are not path sorted: %#v", first.Changes)
 	}
 
-	identity := sourceDocumentWithID("1.0.0", "source:customers", `"id":{"datatype":"String","nullable":false}`)
+	identity := sourceDocumentWithID("1.0.0", "source:customers", `"id":{"datatype":"String"}`)
 	if _, err := Classify(base, identity); !errors.Is(err, ErrIdentityMismatch) {
 		t.Fatalf("identity mismatch error = %v", err)
 	}
 }
 
 func TestValidateVersionTransitionAndReuse(t *testing.T) {
-	base := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
-	additive := sourceDocument("1.1.0", `"id":{"datatype":"String","nullable":false},"note":{"datatype":"String","nullable":true}`)
-	if _, err := ValidateVersionTransition(base, sourceDocument("1.0.1", `"id":{"datatype":"String","nullable":false},"note":{"datatype":"String","nullable":true}`)); !errors.Is(err, ErrVersionPolicy) {
+	base := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
+	additive := sourceDocument("1.1.0", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)
+	if _, err := ValidateVersionTransition(base, sourceDocument("1.0.1", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)); !errors.Is(err, ErrVersionPolicy) {
 		t.Fatalf("patch additive transition error = %v", err)
 	}
-	if _, err := ValidateVersionTransition(base, additive); err != nil {
-		t.Fatalf("minor additive transition error = %v", err)
+	if _, err := ValidateVersionTransition(base, additive); !errors.Is(err, ErrVersionPolicy) {
+		t.Fatalf("minor required field transition error = %v", err)
 	}
-	breaking := sourceDocument("1.1.0", `"id":{"datatype":"Integer","nullable":false}`)
+	if _, err := ValidateVersionTransition(base, sourceDocument("2.0.0", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)); err != nil {
+		t.Fatalf("major required field transition error = %v", err)
+	}
+	breaking := sourceDocument("1.1.0", `"id":{"datatype":"Integer"}`)
 	if _, err := ValidateVersionTransition(base, breaking); !errors.Is(err, ErrVersionPolicy) {
 		t.Fatalf("same-major breaking transition error = %v", err)
 	}
-	if _, err := ValidateVersionTransition(base, sourceDocument("2.0.0", `"id":{"datatype":"Integer","nullable":false}`)); err != nil {
+	if _, err := ValidateVersionTransition(base, sourceDocument("2.0.0", `"id":{"datatype":"Integer"}`)); err != nil {
 		t.Fatalf("major breaking transition error = %v", err)
 	}
 
-	if _, err := ValidateVersionTransition(base, additiveWithVersionAndFields("1.0.0+build.1", `"id":{"datatype":"String","nullable":false},"note":{"datatype":"String","nullable":true}`)); !errors.Is(err, ErrVersionReuseConflict) {
+	if _, err := ValidateVersionTransition(base, additiveWithVersionAndFields("1.0.0+build.1", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)); !errors.Is(err, ErrVersionReuseConflict) {
 		t.Fatalf("version reuse error = %v", err)
 	}
 	if baseline, err := SemverBaseline("1.2.3+build.4"); err != nil || baseline != "v1.2.3" {
@@ -236,7 +251,7 @@ func TestValidateVersionTransitionAndReuse(t *testing.T) {
 }
 
 func TestClassifyInitialPublication(t *testing.T) {
-	candidate := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false},"note":{"datatype":"String","nullable":true}`)
+	candidate := sourceDocument("1.0.0", `"id":{"datatype":"String"},"note":{"datatype":"String"}`)
 	result, err := ClassifyInitial(candidate)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +275,7 @@ func TestClassifyInitialMinimalSemanticModelDoesNotInventRemovals(t *testing.T) 
 }
 
 func TestClassifyRejectsNonCanonicalAndUnknownProjectionBytes(t *testing.T) {
-	valid := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
+	valid := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
 	for name, candidate := range map[string][]byte{
 		"leading whitespace": append([]byte(" "), valid...),
 		"unknown member":     []byte(strings.Replace(string(valid), `{"apiVersion":`, `{"unknown":true,"apiVersion":`, 1)),
@@ -275,7 +290,7 @@ func TestClassifyRejectsNonCanonicalAndUnknownProjectionBytes(t *testing.T) {
 
 func TestResultValidateRejectsForgedSecurityImpact(t *testing.T) {
 	result := aggregate([]Change{{
-		Path: "contract.schema.fields.note", Operation: OperationAdded,
+		Path: "contract.fields.note", Operation: OperationAdded,
 		Domain: DomainStructural, Class: SecuritySensitive,
 		Compatibility: CompatibilityAdditive, SecurityImpact: SecurityWidening,
 		Reason: "forged widening",
@@ -286,7 +301,7 @@ func TestResultValidateRejectsForgedSecurityImpact(t *testing.T) {
 }
 
 func TestClassifyRejectsMalformedAndUnsupportedInputs(t *testing.T) {
-	valid := sourceDocument("1.0.0", `"id":{"datatype":"String","nullable":false}`)
+	valid := sourceDocument("1.0.0", `"id":{"datatype":"String"}`)
 	for name, candidate := range map[string][]byte{
 		"empty":       nil,
 		"malformed":   []byte(`{"profile":`),
@@ -306,7 +321,7 @@ func sourceDocument(version, fields string) []byte {
 }
 
 func sourceDocumentWithID(version, id, fields string) []byte {
-	return []byte(fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","contract":{"schema":{"fields":{%s},"mode":"strict"}},"kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"%s"},"id":"%s","name":"orders"},"profile":"leapview.contract/v1"}`, fields, version, id))
+	return []byte(fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","contract":{"fields":{%s},"schema":{"mode":"compatible"}},"kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"%s"},"id":"%s","name":"orders"},"profile":"leapview.contract/v1"}`, fields, version, id))
 }
 
 func modelDocument(version, fields, checks string) []byte {
@@ -314,7 +329,7 @@ func modelDocument(version, fields, checks string) []byte {
 	if checks != "" {
 		checksPrefix = fmt.Sprintf(`"checks":%s,`, checks)
 	}
-	return []byte(fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","contract":{%s"definition":{"source":"source:orders","type":"direct"},"entities":{},"fields":{%s},"grain":{"entity":"order"}},"kind":"Model","metadata":{"contract":{"compatibility":"backward","version":"%s"},"id":"model:orders","name":"orders"},"profile":"leapview.contract/v1"}`, checksPrefix, fields, version))
+	return []byte(fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","contract":{%s"definition":{"source":"source:orders","type":"direct"},"entities":{},"fields":{%s},"grain":{"entity":"order"},"schema":{"mode":"compatible"}},"kind":"Model","metadata":{"contract":{"compatibility":"backward","version":"%s"},"id":"model:orders","name":"orders"},"profile":"leapview.contract/v1"}`, checksPrefix, fields, version))
 }
 
 func additiveWithVersionAndFields(version, fields string) []byte {

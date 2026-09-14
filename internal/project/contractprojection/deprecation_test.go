@@ -154,7 +154,7 @@ func projectDeprecationModel(t *testing.T, fields string) (Model, error) {
 func projectDeprecationSource(t *testing.T, version, fields string) (Source, error) {
 	t.Helper()
 	var input contracts.Source
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"` + version + `","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"` + version + `","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{` + fields + `}}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

@@ -27,19 +27,7 @@ func TestCurrentCrossLanguageFixtureMatchesSourceProjection(t *testing.T) {
 	}
 
 	var authored projectcontracts.Source
-	if err := json.Unmarshal([]byte(`{
-  "apiVersion":"leapview.dev/v1",
-  "kind":"Source",
-  "metadata":{"id":"source:orders","name":"orders"},
-  "spec":{
-    "connection":"connection:warehouse",
-    "location":{"type":"relation","name":"orders"},
-    "schema":{"mode":"strict","fields":{
-      "z_field":{"nullable":true,"datatype":"String"},
-      "a_field":{"datatype":"Integer"}
-    }}
-  }
-}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"relation","name":"orders"},"schema":{"mode":"strict"},"fields":{"z_field":{"datatype":"String"},"a_field":{"datatype":"Integer"}}}}`), &authored); err != nil {
 		t.Fatalf("decode authored source: %v", err)
 	}
 	projected, err := ProjectSource(authored, Contract{Version: "1.2.3", Compatibility: "backward"})

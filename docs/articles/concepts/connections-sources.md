@@ -70,15 +70,20 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      order_id:
-        datatype: String
-        description: Raw order identifier.
+  fields:
+    order_id:
+      datatype: String
+      description: Raw order identifier.
+  checks:
+    - id: order_id_present
+      type: non_null
+      field: order_id
+      severity: error
 ```
 
 The source identifies a typed path or relation location, format options, and declared schema. Use a name that reflects the governed dataset rather than a temporary filename. Models and project-resource permissions depend on that stable name.
 
-Field declarations document expected input shape and improve validation and discovery. They do not replace defensive transformations: Model SQL should still cast or reject malformed physical values where necessary.
+`fields` describe the input shape and assert an explicit datatype when supplied. `schema.mode: compatible` discovers extra columns; `strict` rejects them. `checks` test the input rows, including nulls, uniqueness, accepted values, row counts, relationships, and timestamp freshness. They use the same syntax on Sources and Models, but each resource validates its own dataset. Revision-based freshness is rejected until the connector can supply authoritative revision evidence. Field declarations do not transform data: Model SQL should still cast or reject malformed values where necessary.
 
 ## Project dependency and access
 

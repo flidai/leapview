@@ -62,7 +62,9 @@ func NewResourceUIDInventory(source projectartifact.SourceBundle) (ResourceUIDIn
 				return ResourceUIDInventory{}, fmt.Errorf("resource inventory %s: authored identity differs from graph", entry.AuthoredID)
 			}
 			if authored.Metadata.Contract != nil {
-				projection, err = contractprojection.ProjectSource(authored, contractprojection.Contract{})
+				references, referenceErr := contractprojection.NewReferenceContext(graph)
+				if referenceErr != nil { return ResourceUIDInventory{}, referenceErr }
+				projection, err = contractprojection.ProjectSource(authored, contractprojection.Contract{}, references)
 				entry.ContractVersion = authored.Metadata.Contract.Version
 			}
 		case projectgraph.KindModel:

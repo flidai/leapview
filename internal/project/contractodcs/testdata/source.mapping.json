@@ -58,8 +58,32 @@
       "compatibilityImpact": "Governed by the existing LeapView SemVer classifier."
     },
     {
+      "id": "dataset.freshness",
+      "sourceField": "contract.checks[type=freshness]",
+      "odcsTargetField": "slaProperties[]",
+      "transformation": "Emit deterministic freshness-warning and freshness-error SLA properties with amount, unit, and optional element.",
+      "limitations": "ODCS does not give the two LeapView thresholds distinct normative severity semantics.",
+      "compatibilityImpact": "Reported as degraded; threshold changes remain versioned metadata."
+    },
+    {
+      "id": "dataset.non-null",
+      "sourceField": "contract.checks[type=non_null]",
+      "odcsTargetField": "schema[].properties[].required",
+      "transformation": "Emit required=true for an enforced non_null dataset rule.",
+      "limitations": "ODCS cannot distinguish authored row-rule execution from physical constraints.",
+      "compatibilityImpact": "Rule changes remain governed by LeapView contract versioning."
+    },
+    {
+      "id": "dataset.quality",
+      "sourceField": "contract.checks[]",
+      "odcsTargetField": "schema[].{quality|properties[].quality|relationships}",
+      "transformation": "Map closed non-null, unique, accepted-values, relationship, and row-count checks to ODCS library metrics or relationships.",
+      "limitations": "Relationship shorthand must resolve within the exported object; external targets require unavailable contract authority and reject export. ODCS generic arguments do not fully standardize accepted-value or composite-unique execution; those mappings are reported degraded.",
+      "compatibilityImpact": "Unsupported or internally inconsistent checks reject export."
+    },
+    {
       "id": "field.authoritative-definitions",
-      "sourceField": "contract.{schema.fields|fields}.*.authoritativeDefinitions",
+      "sourceField": "contract.fields.*.authoritativeDefinitions",
       "odcsTargetField": "schema[].properties[].authoritativeDefinitions",
       "transformation": "Copy each normalized type and URL in canonical order.",
       "limitations": "Only the two LeapView-generated definition types are exported.",
@@ -67,7 +91,7 @@
     },
     {
       "id": "field.classification",
-      "sourceField": "contract.{schema.fields|fields}.*.classification",
+      "sourceField": "contract.fields.*.classification",
       "odcsTargetField": "schema[].properties[].classification",
       "transformation": "Copy the governed classification label.",
       "limitations": "Classification is descriptive in ODCS and does not create an access rule.",
@@ -75,7 +99,7 @@
     },
     {
       "id": "field.critical",
-      "sourceField": "contract.{schema.fields|fields}.*.criticalDataElement",
+      "sourceField": "contract.fields.*.criticalDataElement",
       "odcsTargetField": "schema[].properties[].criticalDataElement",
       "transformation": "Copy the boolean marker.",
       "limitations": "None.",
@@ -83,7 +107,7 @@
     },
     {
       "id": "field.logical-type",
-      "sourceField": "contract.{schema.fields|fields}.*.datatype",
+      "sourceField": "contract.fields.*.datatype",
       "odcsTargetField": "schema[].properties[].logicalType",
       "transformation": "Map the closed LeapView logical datatype vocabulary to ODCS 3.1 logicalType.",
       "limitations": "Decimal loses its exact-vs-approximate distinction; Opaque is rejected.",
@@ -91,19 +115,11 @@
     },
     {
       "id": "field.name",
-      "sourceField": "contract.{schema.fields|fields} map key",
+      "sourceField": "contract.fields map key",
       "odcsTargetField": "schema[].properties[].name",
       "transformation": "Emit identifier-keyed fields as a name-sorted ODCS property array.",
       "limitations": "ODCS array order is normalized lexically and is not semantic.",
       "compatibilityImpact": "Addition/removal/type compatibility remains governed by FAI-622."
-    },
-    {
-      "id": "field.nullability",
-      "sourceField": "contract.{schema.fields|fields}.*.nullable",
-      "odcsTargetField": "schema[].properties[].required",
-      "transformation": "Invert nullable when specified; omit required when nullability is unspecified.",
-      "limitations": "ODCS required means the value may not be null.",
-      "compatibilityImpact": "Nullability widening remains breaking under the LeapView classifier."
     },
     {
       "id": "schema.object",
@@ -112,14 +128,6 @@
       "transformation": "Emit one object named after the published Source or Model with logicalType object.",
       "limitations": "Physical names and target bindings are intentionally absent.",
       "compatibilityImpact": "The object follows the published resource identity and version."
-    },
-    {
-      "id": "source.freshness",
-      "sourceField": "contract.freshness.{warningAfter,errorAfter}",
-      "odcsTargetField": "slaProperties[]",
-      "transformation": "Emit deterministic freshness-warning and freshness-error SLA properties with amount, unit, and optional element.",
-      "limitations": "ODCS does not give the two LeapView thresholds distinct normative severity semantics.",
-      "compatibilityImpact": "Reported as degraded; threshold changes remain versioned metadata."
     }
   ]
 }

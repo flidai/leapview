@@ -12,9 +12,9 @@ spec:
     format: parquet
   schema:
     mode: strict
-    fields:
-      order_id: {datatype: String, nullable: true}
-      customer_id: {datatype: String, nullable: true}
-      order_date: {datatype: Date, nullable: true}
-      order_status: {datatype: String, nullable: true}
-      revenue: {datatype: Float, nullable: true}
+  fields:
+    order_id: {datatype: String}
+    customer_id: {datatype: String}
+    order_date: {datatype: Date}
+    order_status: {datatype: String}
+    revenue: {datatype: Float}

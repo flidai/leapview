@@ -19,6 +19,9 @@ import (
 // into a generated read view. The result intentionally is not a Projection;
 // only ProjectSource can produce a value accepted by canonicalization.
 func DecodeSourcePublication(data []byte) (SourceView, error) {
+	if legacyPublicationShape(data, "Source") {
+		return decodeLegacySource(data)
+	}
 	var value SourceView
 	if err := decodeCanonicalPublication(data, "Source", &value); err != nil {
 		return SourceView{}, err
@@ -29,6 +32,9 @@ func DecodeSourcePublication(data []byte) (SourceView, error) {
 // DecodeModelPublication strictly decodes canonical Model publication bytes
 // into a generated read view.
 func DecodeModelPublication(data []byte) (ModelView, error) {
+	if legacyPublicationShape(data, "Model") {
+		return decodeLegacyModel(data)
+	}
 	var value ModelView
 	if err := decodeCanonicalPublication(data, "Model", &value); err != nil {
 		return ModelView{}, err
@@ -158,44 +164,18 @@ func validateSourceView(value SourceView) error {
 	if err := validatePublicationMetadata(value.Metadata, "Source"); err != nil {
 		return err
 	}
-	if value.Contract.Schema.Mode != "inferred" && value.Contract.Schema.Mode != "compatible" && value.Contract.Schema.Mode != "strict" {
+	if value.Contract.Schema.Mode != "compatible" && value.Contract.Schema.Mode != "strict" {
 		return fmt.Errorf("decode Source publication: invalid schema mode %q", value.Contract.Schema.Mode)
 	}
-	if value.Contract.Schema.Fields != nil {
-		for name, field := range *value.Contract.Schema.Fields {
-			if !validProjectionIdentifier(name) {
-				return fmt.Errorf("decode Source publication: empty schema field name")
-			}
-			if err := validateProjectionField(field); err != nil {
-				return fmt.Errorf("decode Source publication field %q: %w", name, err)
-			}
+	for name, field := range value.Contract.Fields {
+		if !validProjectionIdentifier(name) {
+			return fmt.Errorf("decode Source publication: empty field name")
+		}
+		if err := validateModelProjectionField(field); err != nil {
+			return fmt.Errorf("decode Source publication field %q: %w", name, err)
 		}
 	}
-	if freshness := value.Contract.Freshness; freshness != nil {
-		if freshness.Basis != "field" && freshness.Basis != "revision" {
-			return fmt.Errorf("decode Source publication: invalid freshness basis %q", freshness.Basis)
-		}
-		if freshness.Basis == "field" && freshness.Field == nil {
-			return fmt.Errorf("decode Source publication: field freshness requires field")
-		}
-		if freshness.Basis == "revision" && freshness.Revision == nil {
-			return fmt.Errorf("decode Source publication: revision freshness requires revision")
-		}
-		if freshness.Field != nil && !validProjectionIdentifier(*freshness.Field) {
-			return fmt.Errorf("decode Source publication: invalid freshness field")
-		}
-		if freshness.WarningAfter != nil {
-			if err := validateProjectionDuration(*freshness.WarningAfter); err != nil {
-				return err
-			}
-		}
-		if freshness.ErrorAfter != nil {
-			if err := validateProjectionDuration(*freshness.ErrorAfter); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return validateDatasetProjectionChecks("Source", value.Contract.Checks)
 }
 
 func validateModelView(value ModelView) error {
@@ -222,6 +202,9 @@ func validateModelView(value ModelView) error {
 			return fmt.Errorf("decode Model publication: invalid sqlAst: %w", err)
 		}
 	}
+	if value.Contract.Schema.Mode != "compatible" && value.Contract.Schema.Mode != "strict" {
+		return fmt.Errorf("decode Model publication: invalid schema mode %q", value.Contract.Schema.Mode)
+	}
 	for name, field := range value.Contract.Fields {
 		if !validProjectionIdentifier(name) {
 			return fmt.Errorf("decode Model publication: empty field name")
@@ -230,34 +213,84 @@ func validateModelView(value ModelView) error {
 			return fmt.Errorf("decode Model publication field %q: %w", name, err)
 		}
 	}
-	if value.Contract.Checks != nil {
-		seenIDs := make(map[string]struct{}, len(*value.Contract.Checks))
-		for _, check := range *value.Contract.Checks {
+	return validateDatasetProjectionChecks("Model", value.Contract.Checks)
+}
+
+func validateDatasetProjectionChecks(kind string, checks *[]ModelCheck) error {
+	if checks != nil {
+		seenIDs := make(map[string]struct{}, len(*checks))
+		for _, check := range *checks {
 			if !validProjectionIdentifier(check.ID) {
-				return fmt.Errorf("decode Model publication: invalid check id %q", check.ID)
+				return fmt.Errorf("decode %s publication: invalid check id %q", kind, check.ID)
 			}
 			if _, exists := seenIDs[check.ID]; exists {
-				return fmt.Errorf("decode Model publication: duplicate check id %q", check.ID)
+				return fmt.Errorf("decode %s publication: duplicate check id %q", kind, check.ID)
 			}
 			seenIDs[check.ID] = struct{}{}
-			if check.Type != "non_null" && check.Type != "unique" && check.Type != "accepted_values" && check.Type != "relationship" && check.Type != "row_count" {
-				return fmt.Errorf("decode Model publication: invalid check type %q", check.Type)
+			if check.Type != "non_null" && check.Type != "unique" && check.Type != "accepted_values" && check.Type != "relationship" && check.Type != "row_count" && check.Type != "freshness" {
+				return fmt.Errorf("decode %s publication: invalid check type %q", kind, check.Type)
 			}
 			if check.Field != nil && !validProjectionIdentifier(*check.Field) {
-				return fmt.Errorf("decode Model publication: invalid check field")
+				return fmt.Errorf("decode %s publication: invalid check field", kind)
 			}
 			if check.To != nil && !validModelReference(*check.To) {
-				return fmt.Errorf("decode Model publication: invalid relationship check target")
+				return fmt.Errorf("decode %s publication: invalid relationship check target", kind)
 			}
 			if check.Fields != nil {
 				for _, field := range *check.Fields {
 					if !validProjectionIdentifier(field) {
-						return fmt.Errorf("decode Model publication: invalid check field list")
+						return fmt.Errorf("decode %s publication: invalid check field list", kind)
 					}
 				}
 			}
 			if check.Severity != nil && *check.Severity != "warning" && *check.Severity != "error" {
-				return fmt.Errorf("decode Model publication: invalid check severity %q", *check.Severity)
+				return fmt.Errorf("decode %s publication: invalid check severity %q", kind, *check.Severity)
+			}
+			switch check.Type {
+			case "non_null":
+				if check.Field == nil {
+					return fmt.Errorf("decode %s publication: non_null check requires field", kind)
+				}
+			case "unique":
+				if check.Fields == nil || len(*check.Fields) == 0 {
+					return fmt.Errorf("decode %s publication: unique check requires fields", kind)
+				}
+			case "accepted_values":
+				if check.Field == nil || check.Values == nil || len(*check.Values) == 0 {
+					return fmt.Errorf("decode %s publication: accepted_values check requires field and values", kind)
+				}
+			case "relationship":
+				if check.Field == nil || check.To == nil {
+					return fmt.Errorf("decode %s publication: relationship check requires field and target", kind)
+				}
+			case "row_count":
+				if check.Minimum == nil && check.Maximum == nil || check.Minimum != nil && *check.Minimum < 0 || check.Maximum != nil && *check.Maximum < 0 || check.Minimum != nil && check.Maximum != nil && *check.Minimum > *check.Maximum {
+					return fmt.Errorf("decode %s publication: invalid row_count bounds", kind)
+				}
+			}
+			if check.Type == "freshness" {
+				if check.Basis == nil || (*check.Basis != "field" && *check.Basis != "revision") || check.WarningAfter == nil && check.ErrorAfter == nil {
+					return fmt.Errorf("decode %s publication: invalid freshness check", kind)
+				}
+				if *check.Basis == "field" && (check.Field == nil || check.Revision != nil) || *check.Basis == "revision" && (check.Revision == nil || check.Field != nil) {
+					return fmt.Errorf("decode %s publication: incomplete freshness check", kind)
+				}
+				if check.WarningAfter != nil {
+					if err := validateProjectionDuration(*check.WarningAfter); err != nil {
+						return fmt.Errorf("decode %s publication: %w", kind, err)
+					}
+				}
+				if check.ErrorAfter != nil {
+					if err := validateProjectionDuration(*check.ErrorAfter); err != nil {
+						return fmt.Errorf("decode %s publication: %w", kind, err)
+					}
+				}
+				if *check.Basis == "revision" {
+					parsed, err := time.Parse(time.RFC3339Nano, *check.Revision)
+					if err != nil || parsed.Location() != time.UTC || parsed.Format(time.RFC3339Nano) != *check.Revision {
+						return fmt.Errorf("decode %s publication: invalid freshness revision", kind)
+					}
+				}
 			}
 		}
 	}
