@@ -203,7 +203,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/README.md \
       /usr/local/share/leapview/deployment/QUALIFICATION.md \
       /usr/local/share/leapview/deployment/qualification/* && \
-    mkdir -p /var/lib/leapview && \
+    mkdir -p /var/lib/leapview/home && \
     chown -R leapview:leapview /var/lib/leapview /app
 
 USER leapview:leapview
