@@ -1,10 +1,11 @@
 -- +goose Up
 SET LOCAL ROLE leapview_control_owner;
 
--- Per-artifact migration capabilities are maintenance-published inputs to the
--- migration compatibility owners. The OCI admission foreign key prevents a
--- capability from naming an artifact that was never admitted. Target and
--- subsystem identities are part of the canonical bytes and immutable key.
+-- Per-artifact migration capabilities are owner-signed, maintenance-published
+-- inputs to the migration compatibility owners. The OCI admission foreign key
+-- prevents a capability from naming an artifact that was never admitted.
+-- Target and subsystem identities are part of both canonical documents and
+-- the immutable key.
 CREATE TABLE IF NOT EXISTS release.migration_capability (
     artifact_admission_digest text NOT NULL,
     target_identity_digest text NOT NULL,
@@ -14,6 +15,9 @@ CREATE TABLE IF NOT EXISTS release.migration_capability (
     capability_version text NOT NULL,
     capability_digest text NOT NULL UNIQUE,
     capability_bytes bytea NOT NULL,
+    owner_evidence_version text NOT NULL,
+    owner_evidence_digest text NOT NULL UNIQUE,
+    owner_evidence_bytes bytea NOT NULL,
     published_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (artifact_admission_digest, target_identity_digest, subsystem),
     FOREIGN KEY (artifact_admission_digest)
@@ -23,6 +27,9 @@ CREATE TABLE IF NOT EXISTS release.migration_capability (
     CHECK (capability_version = 'migration-capability/v1'),
     CHECK (capability_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (octet_length(capability_bytes) BETWEEN 1 AND 65536),
+    CHECK (owner_evidence_version = 'migration-capability-owner-evidence/v1'),
+    CHECK (owner_evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (octet_length(owner_evidence_bytes) BETWEEN 1 AND 131072),
     CHECK (
         (subsystem = 'goose' AND owner_identity = 'leapview.postgres.goose'
             AND owner_contract_version = 'goose-owner-capability/v1')

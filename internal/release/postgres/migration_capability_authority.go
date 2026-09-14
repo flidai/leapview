@@ -19,33 +19,53 @@ var (
 	ErrMigrationCapabilityConflict       = errors.New("migration capability conflict")
 	ErrMigrationCapabilityDigestMismatch = errors.New("migration capability digest mismatch")
 	ErrMigrationCapabilityArtifact       = errors.New("migration capability artifact admission is invalid")
+	ErrMigrationCapabilityOwnerEvidence  = errors.New("migration capability owner evidence is invalid")
 )
 
-// PublishMigrationCapability appends one maintenance-owned capability. Exact
-// replays converge on the existing canonical record; no update path exists.
-func (r *Repository) PublishMigrationCapability(ctx context.Context, capability migrationcapability.Capability) (migrationcapability.Capability, error) {
-	if r == nil || r.db == nil {
+// MigrationCapabilityAuthority is the only production publication and runtime
+// resolution boundary. It binds publication to independently trusted owner
+// keys; Repository deliberately exposes no direct Capability write method.
+type MigrationCapabilityAuthority struct {
+	repository *Repository
+	registry   migrationcapability.OwnerRegistry
+}
+
+func NewMigrationCapabilityAuthority(repository *Repository, registry migrationcapability.OwnerRegistry) (*MigrationCapabilityAuthority, error) {
+	if repository == nil || repository.db == nil {
+		return nil, ErrMigrationCapabilityInvalid
+	}
+	frozenRegistry, err := registry.Frozen()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
+	}
+	return &MigrationCapabilityAuthority{repository: repository, registry: frozenRegistry}, nil
+}
+
+// Publish appends one authenticated subsystem-owner capability. Exact replays
+// converge on the existing canonical record; no update path exists.
+func (a *MigrationCapabilityAuthority) Publish(ctx context.Context, evidence migrationcapability.OwnerEvidence) (migrationcapability.Capability, error) {
+	if a == nil || a.repository == nil || a.repository.db == nil {
 		return migrationcapability.Capability{}, ErrMigrationCapabilityInvalid
 	}
-	b, ok := r.db.(beginner)
+	b, ok := a.repository.db.(beginner)
 	if !ok {
 		return migrationcapability.Capability{}, errors.New("release PostgreSQL database does not support transactions")
 	}
 	var published migrationcapability.Capability
 	err := pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
 		var err error
-		published, err = publishMigrationCapability(ctx, tx, capability)
+		published, err = publishMigrationCapability(ctx, tx, evidence, a.registry)
 		return err
 	})
 	return published, err
 }
 
-func publishMigrationCapability(ctx context.Context, tx pgx.Tx, capability migrationcapability.Capability) (migrationcapability.Capability, error) {
-	document, err := capability.CanonicalJSON()
+func publishMigrationCapability(ctx context.Context, tx pgx.Tx, evidence migrationcapability.OwnerEvidence, registry migrationcapability.OwnerRegistry) (migrationcapability.Capability, error) {
+	canonical, err := registry.Verify(evidence)
 	if err != nil {
-		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityInvalid, err)
+		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
 	}
-	canonical, err := migrationcapability.ParseCanonical(document)
+	document, err := canonical.CanonicalJSON()
 	if err != nil {
 		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityInvalid, err)
 	}
@@ -53,8 +73,16 @@ func publishMigrationCapability(ctx context.Context, tx pgx.Tx, capability migra
 	if err != nil {
 		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityInvalid, err)
 	}
+	evidenceDocument, err := evidence.CanonicalJSON()
+	if err != nil {
+		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
+	}
+	evidenceDigest, err := evidence.Digest()
+	if err != nil {
+		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
+	}
 	q := releasedb.New(tx)
-	if err := verifyCapabilityArtifact(ctx, tx, q, canonical.ArtifactAdmissionDigest); err != nil {
+	if err := verifyCapabilityArtifactLocked(ctx, q, canonical.ArtifactAdmissionDigest); err != nil {
 		return migrationcapability.Capability{}, err
 	}
 	inserted, err := q.InsertMigrationCapability(ctx, releasedb.InsertMigrationCapabilityParams{
@@ -66,6 +94,9 @@ func publishMigrationCapability(ctx context.Context, tx pgx.Tx, capability migra
 		CapabilityVersion:       canonical.Version,
 		CapabilityDigest:        digest,
 		CapabilityBytes:         document,
+		OwnerEvidenceVersion:    evidence.Version,
+		OwnerEvidenceDigest:     evidenceDigest,
+		OwnerEvidenceBytes:      evidenceDocument,
 	})
 	if err != nil {
 		return migrationcapability.Capability{}, mapMigrationCapabilityDatabaseError(err)
@@ -84,11 +115,11 @@ func publishMigrationCapability(ctx context.Context, tx pgx.Tx, capability migra
 	if err != nil {
 		return migrationcapability.Capability{}, err
 	}
-	stored, err := readMigrationCapabilityRow(row)
+	stored, err := readMigrationCapabilityRow(row, registry)
 	if err != nil {
 		return migrationcapability.Capability{}, err
 	}
-	if !bytes.Equal(row.CapabilityBytes, document) {
+	if !bytes.Equal(row.CapabilityBytes, document) || !bytes.Equal(row.OwnerEvidenceBytes, evidenceDocument) {
 		return migrationcapability.Capability{}, ErrMigrationCapabilityConflict
 	}
 	return stored, nil
@@ -97,14 +128,14 @@ func publishMigrationCapability(ctx context.Context, tx pgx.Tx, capability migra
 // ResolveMigrationCapability implements migrationcapability.Authority. It
 // performs exact content-addressed lookup and revalidates both canonical bytes
 // and the referenced OCI admission on every read.
-func (r *Repository) ResolveMigrationCapability(ctx context.Context, artifactAdmissionDigest, targetIdentityDigest string, subsystem migrationcapability.Subsystem) (migrationcapability.Capability, error) {
-	if r == nil || r.db == nil {
+func (a *MigrationCapabilityAuthority) ResolveMigrationCapability(ctx context.Context, artifactAdmissionDigest, targetIdentityDigest string, subsystem migrationcapability.Subsystem) (migrationcapability.Capability, error) {
+	if a == nil || a.repository == nil || a.repository.db == nil {
 		return migrationcapability.Capability{}, ErrMigrationCapabilityInvalid
 	}
 	if platformdigest.ValidateSHA256Identity(artifactAdmissionDigest) != nil || platformdigest.ValidateSHA256Identity(targetIdentityDigest) != nil || !validMigrationCapabilitySubsystem(subsystem) {
 		return migrationcapability.Capability{}, ErrMigrationCapabilityInvalid
 	}
-	q := releasedb.New(r.db)
+	q := releasedb.New(a.repository.db)
 	row, err := q.GetMigrationCapability(ctx, releasedb.GetMigrationCapabilityParams{
 		ArtifactAdmissionDigest: artifactAdmissionDigest,
 		TargetIdentityDigest:    targetIdentityDigest,
@@ -116,17 +147,17 @@ func (r *Repository) ResolveMigrationCapability(ctx context.Context, artifactAdm
 	if err != nil {
 		return migrationcapability.Capability{}, err
 	}
-	capability, err := readMigrationCapabilityRow(row)
+	capability, err := readMigrationCapabilityRow(row, a.registry)
 	if err != nil {
 		return migrationcapability.Capability{}, err
 	}
-	if err := verifyCapabilityArtifact(ctx, r.db, q, artifactAdmissionDigest); err != nil {
+	if err := verifyCapabilityArtifact(ctx, q, artifactAdmissionDigest); err != nil {
 		return migrationcapability.Capability{}, err
 	}
 	return capability, nil
 }
 
-func readMigrationCapabilityRow(row releasedb.ReleaseMigrationCapability) (migrationcapability.Capability, error) {
+func readMigrationCapabilityRow(row releasedb.ReleaseMigrationCapability, registry migrationcapability.OwnerRegistry) (migrationcapability.Capability, error) {
 	capability, err := migrationcapability.ParseCanonical(row.CapabilityBytes)
 	if err != nil {
 		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityInvalid, err)
@@ -141,10 +172,37 @@ func readMigrationCapabilityRow(row releasedb.ReleaseMigrationCapability) (migra
 		row.CapabilityDigest != digest {
 		return migrationcapability.Capability{}, ErrMigrationCapabilityDigestMismatch
 	}
+	evidence, err := migrationcapability.ParseOwnerEvidenceCanonical(row.OwnerEvidenceBytes)
+	if err != nil {
+		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
+	}
+	evidenceDigest, err := evidence.Digest()
+	if err != nil || row.OwnerEvidenceVersion != evidence.Version || row.OwnerEvidenceDigest != evidenceDigest {
+		return migrationcapability.Capability{}, ErrMigrationCapabilityDigestMismatch
+	}
+	verified, err := registry.Verify(evidence)
+	if err != nil {
+		return migrationcapability.Capability{}, fmt.Errorf("%w: %v", ErrMigrationCapabilityOwnerEvidence, err)
+	}
+	verifiedDocument, err := verified.CanonicalJSON()
+	if err != nil || !bytes.Equal(verifiedDocument, row.CapabilityBytes) {
+		return migrationcapability.Capability{}, ErrMigrationCapabilityDigestMismatch
+	}
 	return capability, nil
 }
 
-func verifyCapabilityArtifact(ctx context.Context, db DBTX, q *releasedb.Queries, admissionDigest string) error {
+func verifyCapabilityArtifactLocked(ctx context.Context, q *releasedb.Queries, admissionDigest string) error {
+	reference, err := q.LockOCIArtifactAdmissionByDigest(ctx, admissionDigest)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, ErrArtifactAdmissionNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	return verifyCapabilityArtifactReference(ctx, q, reference, admissionDigest)
+}
+
+func verifyCapabilityArtifact(ctx context.Context, q *releasedb.Queries, admissionDigest string) error {
 	reference, err := q.GetOCIArtifactReferenceByAdmissionDigest(ctx, admissionDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, ErrArtifactAdmissionNotFound)
@@ -152,11 +210,19 @@ func verifyCapabilityArtifact(ctx context.Context, db DBTX, q *releasedb.Queries
 	if err != nil {
 		return err
 	}
-	identity, err := New(db).ResolveArtifact(ctx, reference)
+	return verifyCapabilityArtifactReference(ctx, q, reference, admissionDigest)
+}
+
+func verifyCapabilityArtifactReference(ctx context.Context, q *releasedb.Queries, reference, admissionDigest string) error {
+	row, err := q.GetOCIArtifactAdmission(ctx, reference)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, err)
 	}
-	if identity.ArtifactAdmissionDigest != admissionDigest {
+	_, storedDigest, err := readArtifactAdmissionRow(row)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, err)
+	}
+	if storedDigest != admissionDigest {
 		return fmt.Errorf("%w: admission digest mismatch", ErrMigrationCapabilityArtifact)
 	}
 	return nil
@@ -187,4 +253,4 @@ func mapMigrationCapabilityDatabaseError(err error) error {
 	return err
 }
 
-var _ migrationcapability.Authority = (*Repository)(nil)
+var _ migrationcapability.Authority = (*MigrationCapabilityAuthority)(nil)

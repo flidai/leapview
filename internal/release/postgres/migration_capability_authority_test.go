@@ -1,6 +1,9 @@
 package postgres
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
 	"reflect"
 	"sync"
@@ -13,6 +16,7 @@ import (
 
 func TestMigrationCapabilityAuthorityPublishesExactArtifactCapabilities(t *testing.T) {
 	repository := New(testDB(t))
+	authority := migrationCapabilityAuthority(t, repository)
 	predecessor := artifactAdmission("predecessor", "a", "1")
 	candidate := artifactAdmission("candidate", "b", "2")
 	predecessorIdentity, err := repository.PublishArtifactAdmission(t.Context(), predecessor)
@@ -28,15 +32,15 @@ func TestMigrationCapabilityAuthorityPublishesExactArtifactCapabilities(t *testi
 	predecessorCapabilities := migrationCapabilities(t, predecessorIdentity.ArtifactAdmissionDigest, target, "15")
 	candidateCapabilities := migrationCapabilities(t, candidateIdentity.ArtifactAdmissionDigest, target, "16")
 	for _, capability := range predecessorCapabilities {
-		published, err := repository.PublishMigrationCapability(t.Context(), capability)
+		published, err := authority.Publish(t.Context(), signedMigrationCapability(t, capability))
 		if err != nil {
 			t.Fatalf("publish predecessor %s: %v", capability.Subsystem, err)
 		}
-		replayed, err := repository.PublishMigrationCapability(t.Context(), capability)
+		replayed, err := authority.Publish(t.Context(), signedMigrationCapability(t, capability))
 		if err != nil {
 			t.Fatalf("replay predecessor %s: %v", capability.Subsystem, err)
 		}
-		resolved, err := repository.ResolveMigrationCapability(t.Context(), capability.ArtifactAdmissionDigest, target, capability.Subsystem)
+		resolved, err := authority.ResolveMigrationCapability(t.Context(), capability.ArtifactAdmissionDigest, target, capability.Subsystem)
 		if err != nil {
 			t.Fatalf("resolve predecessor %s: %v", capability.Subsystem, err)
 		}
@@ -45,11 +49,11 @@ func TestMigrationCapabilityAuthorityPublishesExactArtifactCapabilities(t *testi
 		}
 	}
 
-	if _, err := repository.ResolveMigrationCapability(t.Context(), candidateIdentity.ArtifactAdmissionDigest, target, migrationcapability.SubsystemGoose); !errors.Is(err, ErrMigrationCapabilityNotFound) {
+	if _, err := authority.ResolveMigrationCapability(t.Context(), candidateIdentity.ArtifactAdmissionDigest, target, migrationcapability.SubsystemGoose); !errors.Is(err, ErrMigrationCapabilityNotFound) {
 		t.Fatalf("predecessor capability reused for candidate: %v", err)
 	}
 	for _, capability := range candidateCapabilities {
-		if _, err := repository.PublishMigrationCapability(t.Context(), capability); err != nil {
+		if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, capability)); err != nil {
 			t.Fatalf("publish candidate %s: %v", capability.Subsystem, err)
 		}
 	}
@@ -63,6 +67,7 @@ func TestMigrationCapabilityAuthorityPublishesExactArtifactCapabilities(t *testi
 func TestMigrationCapabilityAuthorityFailsClosed(t *testing.T) {
 	pool := testDB(t)
 	repository := New(pool)
+	authority := migrationCapabilityAuthority(t, repository)
 	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
 	if err != nil {
 		t.Fatal(err)
@@ -72,35 +77,35 @@ func TestMigrationCapabilityAuthorityFailsClosed(t *testing.T) {
 
 	unknownArtifact := capability
 	unknownArtifact.ArtifactAdmissionDigest = digest("9")
-	if _, err := repository.PublishMigrationCapability(t.Context(), unknownArtifact); !errors.Is(err, ErrMigrationCapabilityArtifact) {
+	if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, unknownArtifact)); !errors.Is(err, ErrMigrationCapabilityArtifact) {
 		t.Fatalf("unknown artifact error = %v", err)
 	}
-	wrongTarget := capability
+	wrongTarget := signedMigrationCapability(t, capability)
 	wrongTarget.TargetIdentityDigest = "prod-target"
-	if _, err := repository.PublishMigrationCapability(t.Context(), wrongTarget); !errors.Is(err, ErrMigrationCapabilityInvalid) {
+	if _, err := authority.Publish(t.Context(), wrongTarget); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
 		t.Fatalf("wrong target error = %v", err)
 	}
-	if _, err := repository.PublishMigrationCapability(t.Context(), capability); err != nil {
+	if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, capability)); err != nil {
 		t.Fatal(err)
 	}
 	conflicting := capability
 	conflicting.Goose = &migrationcapability.GooseCapability{
 		SchemaVersion: "goose/v17", RunnableSchemaVersions: []string{"goose/v16", "goose/v17"}, MigrationGraphDigest: digest("8"),
 	}
-	if _, err := repository.PublishMigrationCapability(t.Context(), conflicting); !errors.Is(err, ErrMigrationCapabilityConflict) {
+	if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, conflicting)); !errors.Is(err, ErrMigrationCapabilityConflict) {
 		t.Fatalf("conflicting publication error = %v", err)
 	}
-	if _, err := repository.ResolveMigrationCapability(t.Context(), identity.ArtifactAdmissionDigest, digest("c"), capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityNotFound) {
+	if _, err := authority.ResolveMigrationCapability(t.Context(), identity.ArtifactAdmissionDigest, digest("c"), capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityNotFound) {
 		t.Fatalf("wrong target lookup error = %v", err)
 	}
-	if _, err := repository.ResolveMigrationCapability(t.Context(), digest("c"), target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityNotFound) {
+	if _, err := authority.ResolveMigrationCapability(t.Context(), digest("c"), target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityNotFound) {
 		t.Fatalf("wrong artifact lookup error = %v", err)
 	}
 
 	if err := repository.RevokeArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1").Release.Image, "security decision revoked", time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ResolveMigrationCapability(t.Context(), identity.ArtifactAdmissionDigest, target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityArtifact) || !errors.Is(err, ErrArtifactAdmissionRevoked) {
+	if _, err := authority.ResolveMigrationCapability(t.Context(), identity.ArtifactAdmissionDigest, target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityArtifact) || !errors.Is(err, ErrArtifactAdmissionRevoked) {
 		t.Fatalf("revoked artifact capability error = %v", err)
 	}
 }
@@ -108,6 +113,7 @@ func TestMigrationCapabilityAuthorityFailsClosed(t *testing.T) {
 func TestMigrationCapabilityAuthorityRejectsCorruptStoredBytes(t *testing.T) {
 	pool := testDB(t)
 	repository := New(pool)
+	authority := migrationCapabilityAuthority(t, repository)
 	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
 	if err != nil {
 		t.Fatal(err)
@@ -115,30 +121,67 @@ func TestMigrationCapabilityAuthorityRejectsCorruptStoredBytes(t *testing.T) {
 	target := digest("b")
 	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, target, "16")[0]
 	originalDigest, _ := capability.Digest()
+	evidence := signedMigrationCapability(t, capability)
+	evidenceDigest, _ := evidence.Digest()
+	evidenceBytes, _ := evidence.CanonicalJSON()
 	mutated := capability
 	mutated.Goose = &migrationcapability.GooseCapability{SchemaVersion: "goose/v17", RunnableSchemaVersions: []string{"goose/v17"}, MigrationGraphDigest: digest("7")}
 	mutatedBytes, _ := mutated.CanonicalJSON()
 	if _, err := pool.Exec(t.Context(), `
 		INSERT INTO release.migration_capability
 		(artifact_admission_digest, target_identity_digest, subsystem, owner_identity,
-		 owner_contract_version, capability_version, capability_digest, capability_bytes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, capability.ArtifactAdmissionDigest, target, capability.Subsystem,
-		capability.Owner.Identity, capability.Owner.ContractVersion, capability.Version, originalDigest, mutatedBytes); err != nil {
+			 owner_contract_version, capability_version, capability_digest, capability_bytes,
+			 owner_evidence_version, owner_evidence_digest, owner_evidence_bytes)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, capability.ArtifactAdmissionDigest, target, capability.Subsystem,
+		capability.Owner.Identity, capability.Owner.ContractVersion, capability.Version, originalDigest, mutatedBytes,
+		evidence.Version, evidenceDigest, evidenceBytes); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.ResolveMigrationCapability(t.Context(), capability.ArtifactAdmissionDigest, target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityDigestMismatch) {
+	if _, err := authority.ResolveMigrationCapability(t.Context(), capability.ArtifactAdmissionDigest, target, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityDigestMismatch) {
 		t.Fatalf("corrupt read error = %v", err)
+	}
+}
+
+func TestMigrationCapabilityAuthorityRejectsCorruptStoredOwnerEvidence(t *testing.T) {
+	pool := testDB(t)
+	repository := New(pool)
+	authority := migrationCapabilityAuthority(t, repository)
+	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+	capabilityDigest, _ := capability.Digest()
+	capabilityBytes, _ := capability.CanonicalJSON()
+	evidence := signedMigrationCapability(t, capability)
+	evidence.Proof.Signature = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	evidenceDigest, _ := evidence.Digest()
+	evidenceBytes, _ := evidence.CanonicalJSON()
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO release.migration_capability
+		(artifact_admission_digest, target_identity_digest, subsystem, owner_identity,
+		 owner_contract_version, capability_version, capability_digest, capability_bytes,
+		 owner_evidence_version, owner_evidence_digest, owner_evidence_bytes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, capability.ArtifactAdmissionDigest, capability.TargetIdentityDigest, capability.Subsystem,
+		capability.Owner.Identity, capability.Owner.ContractVersion, capability.Version, capabilityDigest, capabilityBytes,
+		evidence.Version, evidenceDigest, evidenceBytes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.ResolveMigrationCapability(t.Context(), capability.ArtifactAdmissionDigest, capability.TargetIdentityDigest, capability.Subsystem); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("corrupt owner evidence error = %v", err)
 	}
 }
 
 func TestMigrationCapabilityAuthorityIsImmutableAndConcurrent(t *testing.T) {
 	pool := testDB(t)
 	repository := New(pool)
+	authority := migrationCapabilityAuthority(t, repository)
 	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+	evidence := signedMigrationCapability(t, capability)
 
 	var wait sync.WaitGroup
 	errorsSeen := make(chan error, 8)
@@ -146,7 +189,7 @@ func TestMigrationCapabilityAuthorityIsImmutableAndConcurrent(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			_, publishErr := repository.PublishMigrationCapability(t.Context(), capability)
+			_, publishErr := authority.Publish(t.Context(), evidence)
 			errorsSeen <- publishErr
 		}()
 	}
@@ -168,6 +211,158 @@ func TestMigrationCapabilityAuthorityIsImmutableAndConcurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMigrationCapabilityAuthorityRejectsUnauthenticatedOwnerEvidence(t *testing.T) {
+	repository := New(testDB(t))
+	authority := migrationCapabilityAuthority(t, repository)
+	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+	valid := signedMigrationCapability(t, capability)
+
+	unsigned := valid
+	unsigned.Proof.Signature = ""
+	if _, err := authority.Publish(t.Context(), unsigned); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("unsigned evidence error = %v", err)
+	}
+	wrongKey, err := migrationcapability.SignOwnerEvidence(capability, "qualification-key", ed25519.NewKeyFromSeed(bytes.Repeat([]byte{99}, ed25519.SeedSize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.Publish(t.Context(), wrongKey); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("untrusted owner proof error = %v", err)
+	}
+	wrongArtifact := valid
+	wrongArtifact.ArtifactAdmissionDigest = digest("c")
+	if _, err := authority.Publish(t.Context(), wrongArtifact); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("substituted artifact error = %v", err)
+	}
+	wrongTarget := valid
+	wrongTarget.TargetIdentityDigest = digest("d")
+	if _, err := authority.Publish(t.Context(), wrongTarget); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("substituted target error = %v", err)
+	}
+	wrongOwner := valid
+	wrongOwner.Owner.Identity = migrationcapability.DuckLakeOwnerIdentity
+	if _, err := authority.Publish(t.Context(), wrongOwner); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("substituted owner error = %v", err)
+	}
+}
+
+func TestMigrationCapabilityAuthorityFreezesTrustedOwnerKeys(t *testing.T) {
+	repository := New(testDB(t))
+	registry := migrationCapabilityOwnerRegistry()
+	authority, err := NewMigrationCapabilityAuthority(repository, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := repository.PublishArtifactAdmission(t.Context(), artifactAdmission("candidate", "a", "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+	attackerKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{99}, ed25519.SeedSize))
+	registry.Keys[0].PublicKey = base64.StdEncoding.EncodeToString(attackerKey.Public().(ed25519.PublicKey))
+	forged, err := migrationcapability.SignOwnerEvidence(capability, "qualification-key", attackerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.Publish(t.Context(), forged); !errors.Is(err, ErrMigrationCapabilityOwnerEvidence) {
+		t.Fatalf("publication with post-composition registry mutation error = %v", err)
+	}
+}
+
+func TestMigrationCapabilityPublicationIsFencedAgainstRevocation(t *testing.T) {
+	t.Run("publication wins before revocation", func(t *testing.T) {
+		pool := testDB(t)
+		repository := New(pool)
+		authority := migrationCapabilityAuthority(t, repository)
+		admission := artifactAdmission("candidate", "a", "1")
+		identity, err := repository.PublishArtifactAdmission(t.Context(), admission)
+		if err != nil {
+			t.Fatal(err)
+		}
+		capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+		evidence := signedMigrationCapability(t, capability)
+
+		publishTx, err := pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer publishTx.Rollback(t.Context())
+		if _, err := publishTx.Exec(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1 FOR UPDATE`, identity.ArtifactAdmissionDigest); err != nil {
+			t.Fatal(err)
+		}
+		revocationStarted := make(chan struct{})
+		revocationDone := make(chan error, 1)
+		go func() {
+			close(revocationStarted)
+			revocationDone <- repository.RevokeArtifactAdmission(t.Context(), admission.Release.Image, "security decision revoked", time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC))
+		}()
+		<-revocationStarted
+		if _, err := publishMigrationCapability(t.Context(), publishTx, evidence, migrationCapabilityOwnerRegistry()); err != nil {
+			t.Fatal(err)
+		}
+		if err := publishTx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-revocationDone; err != nil {
+			t.Fatal(err)
+		}
+		if _, err := authority.ResolveMigrationCapability(t.Context(), identity.ArtifactAdmissionDigest, capability.TargetIdentityDigest, capability.Subsystem); !errors.Is(err, ErrArtifactAdmissionRevoked) {
+			t.Fatalf("post-revocation resolution error = %v", err)
+		}
+		var count int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM release.migration_capability WHERE artifact_admission_digest=$1`, identity.ArtifactAdmissionDigest).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("immutable pre-revocation capability count = %d, error = %v", count, err)
+		}
+	})
+
+	t.Run("revocation wins before publication", func(t *testing.T) {
+		pool := testDB(t)
+		repository := New(pool)
+		authority := migrationCapabilityAuthority(t, repository)
+		admission := artifactAdmission("candidate", "c", "2")
+		identity, err := repository.PublishArtifactAdmission(t.Context(), admission)
+		if err != nil {
+			t.Fatal(err)
+		}
+		capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("d"), "16")[0]
+		evidence := signedMigrationCapability(t, capability)
+
+		revokeTx, err := pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer revokeTx.Rollback(t.Context())
+		if _, err := revokeTx.Exec(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1 FOR UPDATE`, identity.ArtifactAdmissionDigest); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := revokeTx.Exec(t.Context(), `INSERT INTO release.oci_artifact_admission_revocation (artifact_reference, admission_digest, revoked_at, reason) VALUES ($1,$2,$3,$4)`, admission.Release.Image, identity.ArtifactAdmissionDigest, time.Date(2026, 9, 14, 13, 5, 0, 0, time.UTC), "security decision revoked"); err != nil {
+			t.Fatal(err)
+		}
+		publicationStarted := make(chan struct{})
+		publicationDone := make(chan error, 1)
+		go func() {
+			close(publicationStarted)
+			_, publishErr := authority.Publish(t.Context(), evidence)
+			publicationDone <- publishErr
+		}()
+		<-publicationStarted
+		if err := revokeTx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-publicationDone; !errors.Is(err, ErrMigrationCapabilityArtifact) || !errors.Is(err, ErrArtifactAdmissionRevoked) {
+			t.Fatalf("publication after revocation error = %v", err)
+		}
+		var count int
+		if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM release.migration_capability WHERE artifact_admission_digest=$1`, identity.ArtifactAdmissionDigest).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("post-revocation capability count = %d, error = %v", count, err)
+		}
+	})
 }
 
 func migrationCapabilities(t *testing.T, artifactDigest, targetDigest, revision string) []migrationcapability.Capability {
@@ -211,4 +406,58 @@ func capabilityVersions(values ...string) []string {
 		return values[:1]
 	}
 	return values
+}
+
+func migrationCapabilityAuthority(t *testing.T, repository *Repository) *MigrationCapabilityAuthority {
+	t.Helper()
+	authority, err := NewMigrationCapabilityAuthority(repository, migrationCapabilityOwnerRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authority
+}
+
+func signedMigrationCapability(t *testing.T, capability migrationcapability.Capability) migrationcapability.OwnerEvidence {
+	t.Helper()
+	key, ok := migrationCapabilityOwnerKeys()[capability.Subsystem]
+	if !ok {
+		t.Fatalf("missing test owner key for %s", capability.Subsystem)
+	}
+	evidence, err := migrationcapability.SignOwnerEvidence(capability, "qualification-key", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evidence
+}
+
+func migrationCapabilityOwnerRegistry() migrationcapability.OwnerRegistry {
+	keys := migrationCapabilityOwnerKeys()
+	owners := map[migrationcapability.Subsystem]migrationcapability.Owner{
+		migrationcapability.SubsystemGoose:        {Identity: migrationcapability.GooseOwnerIdentity, ContractVersion: migrationcapability.GooseOwnerContractVersion},
+		migrationcapability.SubsystemRiverJobs:    {Identity: migrationcapability.RiverJobsOwnerIdentity, ContractVersion: migrationcapability.RiverJobsOwnerContractVersion},
+		migrationcapability.SubsystemDuckLake:     {Identity: migrationcapability.DuckLakeOwnerIdentity, ContractVersion: migrationcapability.DuckLakeOwnerContractVersion},
+		migrationcapability.SubsystemPhysicalPool: {Identity: migrationcapability.PhysicalPoolOwnerIdentity, ContractVersion: migrationcapability.PhysicalPoolContractVersion},
+	}
+	registry := migrationcapability.OwnerRegistry{Version: migrationcapability.OwnerRegistryVersion}
+	for _, subsystem := range []migrationcapability.Subsystem{
+		migrationcapability.SubsystemGoose,
+		migrationcapability.SubsystemRiverJobs,
+		migrationcapability.SubsystemDuckLake,
+		migrationcapability.SubsystemPhysicalPool,
+	} {
+		registry.Keys = append(registry.Keys, migrationcapability.OwnerKey{
+			Owner: owners[subsystem], KeyID: "qualification-key", Algorithm: migrationcapability.OwnerProofAlgorithm,
+			PublicKey: base64.StdEncoding.EncodeToString(keys[subsystem].Public().(ed25519.PublicKey)),
+		})
+	}
+	return registry
+}
+
+func migrationCapabilityOwnerKeys() map[migrationcapability.Subsystem]ed25519.PrivateKey {
+	return map[migrationcapability.Subsystem]ed25519.PrivateKey{
+		migrationcapability.SubsystemGoose:        ed25519.NewKeyFromSeed(bytes.Repeat([]byte{31}, ed25519.SeedSize)),
+		migrationcapability.SubsystemRiverJobs:    ed25519.NewKeyFromSeed(bytes.Repeat([]byte{32}, ed25519.SeedSize)),
+		migrationcapability.SubsystemDuckLake:     ed25519.NewKeyFromSeed(bytes.Repeat([]byte{33}, ed25519.SeedSize)),
+		migrationcapability.SubsystemPhysicalPool: ed25519.NewKeyFromSeed(bytes.Repeat([]byte{34}, ed25519.SeedSize)),
+	}
 }

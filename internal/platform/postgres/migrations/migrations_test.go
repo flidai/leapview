@@ -62,6 +62,8 @@ func TestMigrationCapabilityAuthorityMigrationIsImmutableAndRoleSeparated(t *tes
 		"PRIMARY KEY (artifact_admission_digest, target_identity_digest, subsystem)",
 		"REFERENCES release.oci_artifact_admission(admission_digest) ON DELETE RESTRICT",
 		"capability_version = 'migration-capability/v1'",
+		"owner_evidence_version = 'migration-capability-owner-evidence/v1'",
+		"owner_evidence_digest text NOT NULL UNIQUE",
 		"migration_capability_immutable",
 		"migration_capability_no_truncate",
 		"GRANT SELECT ON release.migration_capability TO leapview_control_runtime",
