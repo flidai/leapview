@@ -118,8 +118,35 @@ a {
   position: sticky;
   z-index: var(--zIndex-sticky);
   top: 0;
+  isolation: isolate;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  transition: border-color var(--site-motion-duration-short) var(--site-motion-easing);
+}
+
+.site-header::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: transparent;
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  content: "";
+  pointer-events: none;
+  transition:
+    background-color var(--site-motion-duration-short) var(--site-motion-easing),
+    -webkit-backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing),
+    backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing);
+}
+
+.site-header.is-scrolled {
   border-bottom: var(--lv-border-muted);
-  background: var(--lv-bg-panel);
+}
+
+.site-header.is-scrolled::before {
+  background: color-mix(in srgb, var(--lv-bg-page) 88%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .site-shell {

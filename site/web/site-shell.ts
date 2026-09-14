@@ -3,6 +3,14 @@ import { Menu, Monitor, Moon, Search, Sun, X } from 'lucide'
 import { DatastarLit } from '../../web/components/shared/datastar-lit'
 import { lucideIcon } from '../../web/components/shared/lucide-icons'
 
+const siteHeader = document.querySelector<HTMLElement>('.site-header')
+if (siteHeader) {
+  const updateHeaderBackdrop = () => siteHeader.classList.toggle('is-scrolled', window.scrollY > 8)
+  updateHeaderBackdrop()
+  window.addEventListener('scroll', updateHeaderBackdrop, { passive: true })
+  window.addEventListener('pageshow', updateHeaderBackdrop)
+}
+
 type ThemeMode = 'system' | 'light' | 'dark'
 
 const nextThemeMode: Record<ThemeMode, ThemeMode> = {

@@ -315,6 +315,34 @@ test('documentation header keeps only search and theme actions', async () => {
   }
 })
 
+test('site header gains a translucent backdrop on scroll', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const header = page.locator('.site-header')
+    expect(await header.evaluate((element) => element.classList.contains('is-scrolled'))).toBe(false)
+
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto'
+      window.scrollTo(0, 600)
+    })
+    await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
+    expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    const menu = page.locator('lv-site-mobile-menu')
+    await menu.getByRole('button').click()
+    expect(await menu.getByRole('link', { name: 'Docs' }).isVisible()).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.waitForFunction(() => !document.querySelector('.site-header')?.classList.contains('is-scrolled'))
+  } finally {
+    await page.close()
+  }
+})
+
 test('site theme control updates the homepage screenshot and colors', async () => {
   const page = await browser.newPage()
   try {
