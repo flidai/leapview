@@ -3,29 +3,5 @@
 .enterprise.openness {
   background: var(--bg);
 }
-.open-demo--host, .open-demo--model, .open-demo--standards { gap: 0; }
-.open-host-source { align-self: center; min-width: 176px; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 3px; background: var(--glow); color: var(--ink); text-align: center; font-weight: 750; }
-.open-host-source span { margin-left: 5px; color: var(--accent); }
-.open-host-connector { align-self: center; width: 1px; height: 15px; border-left: 1px dashed var(--accent); }
-.open-host-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-.open-host-targets span { padding: 7px 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); text-align: center; }
-
-.open-model-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-.open-model-inputs span { padding: 8px 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--muted); text-align: center; white-space: nowrap; }
-.open-model-lines { display: grid; grid-template-columns: 1fr 1fr; height: 17px; }
-.open-model-lines i { justify-self: center; height: 100%; border-left: 1px dashed var(--accent); }
-.open-model-core { display: flex; justify-content: space-between; padding: 9px 10px; border: 1px solid var(--accent); border-radius: 3px; background: var(--glow); color: var(--accent); font-weight: 750; }
-
-.open-demo--standards { justify-content: space-around; }
-.open-demo--standards div { display: grid; grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr); align-items: center; gap: 5px; padding: 6px 0; border-bottom: 1px solid var(--border); }
-.open-demo--standards div:last-child { border-bottom: 0; }
-.open-demo--standards span { color: var(--accent); font-weight: 750; }
-.open-demo--standards i { color: var(--muted); font-size: 16px; font-style: normal; text-align: center; }
-.open-demo--standards strong { color: var(--ink); font-weight: 550; text-align: right; }
-
-@media (max-width: 620px) {
-  .open-demo--host, .open-demo--model, .open-demo--standards { font-size: 9px; }
-  .open-host-source { min-width: 170px; }
-}
 
 }
