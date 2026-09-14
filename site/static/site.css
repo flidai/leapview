@@ -144,7 +144,11 @@ a {
 }
 
 .site-header.is-scrolled::before {
-  background: color-mix(in srgb, var(--lv-bg-page) 88%, transparent);
+  background-color: var(
+    --site-header-fill,
+    color-mix(in srgb, var(--lv-bg-page) 88%, transparent)
+  );
+  background-image: var(--site-header-edge, none);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }

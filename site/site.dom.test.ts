@@ -315,7 +315,7 @@ test('documentation header keeps only search and theme actions', async () => {
   }
 })
 
-test('site header gains a translucent backdrop on scroll', async () => {
+test('site header follows homepage section colors on scroll', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -329,6 +329,23 @@ test('site header gains a translucent backdrop on scroll', async () => {
     await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
     expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+
+    const sectionFills: string[] = []
+    for (const id of ['enterprise', 'openness']) {
+      const section = page.locator(`#${id}`)
+      const color = await section.evaluate((element) => getComputedStyle(element).backgroundColor)
+      await section.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 180))
+      await page.waitForFunction((expected) => document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(expected), color)
+      sectionFills.push(await header.evaluate((element) => element.style.getPropertyValue('--site-header-fill')))
+    }
+    expect(sectionFills[0]).not.toBe(sectionFills[1])
+
+    await page.evaluate(() => {
+      const section = document.querySelector('#openness')!
+      const header = document.querySelector<HTMLElement>('.site-header')!
+      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - header.offsetHeight / 2)
+    })
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backgroundImage.includes('linear-gradient'))
 
     await page.setViewportSize({ width: 390, height: 844 })
     const menu = page.locator('lv-site-mobile-menu')
@@ -351,12 +368,27 @@ test('site theme control updates the homepage screenshot and colors', async () =
     await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
     const toggle = page.locator('lv-site-theme-toggle button[data-theme-toggle]')
     await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto'
+      const section = document.querySelector('#enterprise')!
+      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY + 180)
+    })
+    await page.waitForFunction(() => {
+      const section = document.querySelector('#enterprise')!
+      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
+    })
+    const darkHeaderFill = await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
     await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-light.png')
     expect(await page.locator('.site-home').evaluate((element) => element.classList.contains('is-light'))).toBe(true)
+    await page.waitForFunction(() => {
+      const section = document.querySelector('#enterprise')!
+      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
+    })
+    expect(await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))).not.toBe(darkHeaderFill)
   } finally {
     await page.close()
   }
