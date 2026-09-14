@@ -230,7 +230,8 @@ test('dashboard agent drawer carries page context and explicit visual references
         expandLeft: expand.getBoundingClientRect().left,
         askActionRow: ask.assignedSlot?.parentElement?.className,
         kpiAskActionRow: kpiAsk.assignedSlot?.parentElement?.className,
-        tableAskActionRow: tableAsk.assignedSlot?.parentElement?.className,
+        tableAskActionRow: tableAsk.assignedSlot?.assignedSlot?.parentElement?.className,
+        tableActionCenters: [tableAsk, tableExpand, tableOptions].map(item => item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2),
         tableAskLeft: tableAsk.getBoundingClientRect().left,
         tableAskRight: tableAsk.getBoundingClientRect().right,
         tableExpandLeft: tableExpand.getBoundingClientRect().left,
@@ -258,6 +259,7 @@ test('dashboard agent drawer carries page context and explicit visual references
       chartAction: 'Expand chart',
       tableHasExpand: false,
     })
+    expect(Math.max(...visualActionsAtRest.tableActionCenters) - Math.min(...visualActionsAtRest.tableActionCenters)).toBeLessThanOrEqual(1)
     expect(visualActionsAtRest.tableAskRight).toBeLessThanOrEqual(visualActionsAtRest.tableExpandLeft)
     expect(visualActionsAtRest.tableExpandLeft - visualActionsAtRest.tableAskRight).toBeGreaterThanOrEqual(4)
     expect(visualActionsAtRest.tableExpandRight).toBeLessThanOrEqual(visualActionsAtRest.tableOptionsLeft)

@@ -386,7 +386,7 @@ test('chat list page renders searchable conversation history', async () => {
         activeConversationId: list?.activeConversationId,
         title: listRoot?.querySelector('h2')?.textContent?.trim(),
         searchPlaceholder: listRoot?.querySelector('.search')?.getAttribute('placeholder'),
-        newChatHref: listRoot?.querySelector('.new-chat-link')?.getAttribute('href'),
+        newChatHref: listRoot?.querySelector('a.new-chat-link')?.getAttribute('href'),
         headerOrder: Array.from(listRoot?.querySelector('.header')?.children ?? []).map((child: any) => child.className || child.tagName.toLowerCase()),
         metrics: (() => {
           const title = listRoot?.querySelector('h2') as HTMLElement
@@ -426,7 +426,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
-    expect(initial.headerOrder).toEqual(['h2', 'new-chat-link'])
+    expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
       searchHeight: 40,
@@ -507,14 +507,18 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       const list = element.shadowRoot.querySelector('lv-chat-list') as any
       await list.updateComplete
       const root = list.shadowRoot
+      let archivedOpened = false
+      list.addEventListener('lv-chat-settings-open', () => { archivedOpened = true })
+      root.querySelector<HTMLButtonElement>('button')?.click()
       return {
         title: root.querySelector('.empty-title')?.textContent?.trim(),
         detail: root.querySelector('.empty-detail')?.textContent?.trim(),
         hasSearch: Boolean(root.querySelector('.search')),
-        newChatDisabled: root.querySelector('.new-chat-link')?.hasAttribute('disabled'),
+        newChatDisabled: root.querySelector('button[disabled]')?.hasAttribute('disabled'),
+        archivedOpened,
       }
     })
-    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, archivedOpened: true })
   } finally {
     await page.close()
   }

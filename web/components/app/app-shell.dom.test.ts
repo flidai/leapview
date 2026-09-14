@@ -1270,10 +1270,15 @@ test('admin sidebar replaces global navigation and provides a back to app action
       return sidebar?.hasAttribute('data-admin') && Math.round(sidebar.getBoundingClientRect().width) === 248
     })
 
-    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+    const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
       const root = (sidebar.shadowRoot as ShadowRoot)!
+      const pendingIdentity = document.createElement('lv-sidebar') as any
+      pendingIdentity.config = { productName: 'LeapView', groups: [] }
+      document.body.append(pendingIdentity)
+      await pendingIdentity.updateComplete
       return {
+        pendingIdentity: pendingIdentity.shadowRoot.textContent.includes('Local user'),
         adminMode: sidebar.hasAttribute('data-admin'),
         width: Math.round(sidebar.getBoundingClientRect().width),
         links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
@@ -1356,6 +1361,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
     expect(state.hasNavPrimaryAction).toBe(false)
     expect(state.hasHistory).toBe(false)
     expect(state.hasThemeToggle).toBe(false)
+    expect(state.pendingIdentity).toBe(false)
     expect(state.currentUser).toEqual({
       title: 'Ada Lovelace', name: 'Ada Lovelace', initials: '',
       avatarSrc: '/profile/avatars/ada/avatar-digest', role: 'Platform admin',

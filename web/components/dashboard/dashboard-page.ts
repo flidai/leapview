@@ -317,7 +317,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
 
     .dashboard-favorite[aria-pressed='true'] {
-      color: var(--display-yellow-fgColor, var(--lv-fg-default));
+      color: var(--lv-fg-warning);
     }
 
     .dashboard-favorite[aria-pressed='true'] svg {

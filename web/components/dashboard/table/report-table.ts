@@ -247,7 +247,6 @@ export class ReportTable extends LitElement {
       z-index: calc(var(--zIndex-default) + 2);
       flex: 1 1 auto;
       min-width: 0;
-      padding-inline-end: var(--lv-table-agent-action-space, 0px);
     }
 
     h2 {

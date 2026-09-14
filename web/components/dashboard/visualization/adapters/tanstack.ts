@@ -11,6 +11,13 @@ export const adapter: RendererAdapter = {
     const { ReportTable } = await import('../../table/report-table')
     await customElements.whenDefined('lv-report-table')
     const table = new ReportTable() as ReportTableElement
+    // Forward the host's Ask action into the table's own toolbar so all
+    // controls share alignment and scale without positional offsets.
+    const agentAction = document.createElement('slot')
+    agentAction.name = 'agent-action'
+    agentAction.slot = 'agent-action'
+    agentAction.style.setProperty('--lv-visual-action-target', 'var(--lv-button-height, var(--control-medium-size))')
+    table.append(agentAction)
     container.replaceChildren(table)
     const handle = new TanStackHandle(container, table)
     handle.update(envelope)

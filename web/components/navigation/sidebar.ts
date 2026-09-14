@@ -1581,7 +1581,8 @@ class LeapViewSidebar extends LitElement {
   }
 
   private renderUserCard() {
-    const userName = this.config.userName?.trim() || 'Local user'
+    const userName = this.config.userName?.trim()
+    if (!userName) return html`<div class="user-card" aria-label="Loading account" aria-busy="true"><span class="user-name">Loading…</span></div>`
     const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
     const href = this.config.userSettingsHref || '/admin/profile'
     return html`
@@ -1595,7 +1596,7 @@ class LeapViewSidebar extends LitElement {
         <lv-user-avatar .name=${userName} .imageUrl=${userAvatarUrl ?? ''} aria-hidden="true"></lv-user-avatar>
         <span class="user-text">
           <strong class="user-name">${userName}</strong>
-          <span class="user-role">${this.config.userRole ?? 'Local user'}</span>
+          <span class="user-role">${this.config.userRole ?? ''}</span>
         </span>
         <span class="user-settings-icon" aria-hidden="true">${icon('settings')}</span>
       </a>
