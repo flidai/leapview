@@ -57,7 +57,6 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 .hero .eyebrow { width: fit-content; padding: 8px 11px; border: 1px solid var(--border); border-radius: 4px; background: color-mix(in srgb, var(--bg) 82%, transparent); font-size: 9px; letter-spacing: .13em; }
 .hero .eyebrow-symbol { font-size: 13px; }
 .hero .eyebrow-line { display: none; }
-.hero h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; letter-spacing: -.047em; }
 .hero-glow { background: linear-gradient(180deg, var(--bg) 1%, transparent 24%, transparent 76%, var(--bg) 100%); }
 .product-frame { border-color: color-mix(in srgb, var(--accent) 16%, var(--border)); border-radius: 19px 0 0 0; box-shadow: 0 28px 85px var(--frame-shadow); -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 55%, rgba(0,0,0,.94) 69%, rgba(0,0,0,.42) 88%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 55%, rgba(0,0,0,.94) 69%, rgba(0,0,0,.42) 88%, transparent 100%); }
 .product-frame::after { border-radius: inherit; }
