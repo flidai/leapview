@@ -118,6 +118,25 @@ keys.
 
 This provides authoritative artifact admission resolution. It does not execute a release transition.
 
+The cross-domain migration compatibility authority composes four read-only
+owner projections for one exact predecessor/candidate artifact pair and one
+deployment-target identity. Goose owns the control-schema comparison; River
+owns its operational schema while LeapView owns the River job-history
+contract; DuckLake owns catalog/runtime compatibility; and the physical-pool
+authority owns the full storage and object-naming tuple. Every owner response
+must repeat the same artifact and target bindings. The authority rejects
+missing evidence, unsupported owner-contract versions, unknown compatibility,
+stale identities, ownership mismatches, and disagreement between DuckLake and
+physical-pool tuples.
+
+The resulting `migration-compatibility/v1` document has stable field order and
+a domain-separated SHA-256 digest. An incompatible owner verdict remains an
+authoritative incompatible result for release policy evaluation; it is never
+silently changed to compatible. The authority is read-only and stores no
+caller projection, runs no migration, and acquires no execution fence.
+
+This provides authoritative migration compatibility resolution. It does not execute a release transition.
+
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
 not infer cross-version safety from tuple equality. A binary policy also binds
