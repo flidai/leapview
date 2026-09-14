@@ -42,9 +42,10 @@ class SiteThemeToggle extends LitElement {
       width: var(--site-interactive-target-size);
       height: var(--site-interactive-target-size);
       place-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control);
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
       color: var(--lv-fg-muted);
       cursor: pointer;
       font: inherit;
@@ -52,9 +53,14 @@ class SiteThemeToggle extends LitElement {
 
     button:hover,
     button:focus-visible {
-      border-color: var(--lv-button-border-hover);
       background: var(--lv-button-bg-hover);
       color: var(--lv-fg-default);
+    }
+
+    button span {
+      display: grid;
+      place-items: center;
+      line-height: 0;
     }
 
     button:focus-visible {
@@ -81,9 +87,9 @@ class SiteThemeToggle extends LitElement {
     const nextMode = nextThemeMode[this.themeMode]
     const label = `${themeLabels[this.themeMode]}. Switch to ${themeLabels[nextMode]}.`
     return html`<button type="button" data-theme-toggle data-theme-mode=${this.themeMode} aria-label=${label} title=${label} @click=${this.toggleTheme}>
-      <span data-theme-icon="system" ?hidden=${this.themeMode !== 'system'}>${lucideIcon(Monitor)}</span>
-      <span data-theme-icon="light" ?hidden=${this.themeMode !== 'light'}>${lucideIcon(Sun)}</span>
-      <span data-theme-icon="dark" ?hidden=${this.themeMode !== 'dark'}>${lucideIcon(Moon)}</span>
+      <span data-theme-icon="system" ?hidden=${this.themeMode !== 'system'}>${lucideIcon(Monitor, { size: 20 })}</span>
+      <span data-theme-icon="light" ?hidden=${this.themeMode !== 'light'}>${lucideIcon(Sun, { size: 20 })}</span>
+      <span data-theme-icon="dark" ?hidden=${this.themeMode !== 'dark'}>${lucideIcon(Moon, { size: 20 })}</span>
     </button>`
   }
 

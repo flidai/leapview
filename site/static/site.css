@@ -212,16 +212,15 @@ a {
   height: var(--site-interactive-target-size);
   flex: 0 0 auto;
   place-items: center;
-  border: var(--lv-border-default);
-  border-radius: var(--lv-radius-default);
-  background: var(--lv-bg-control);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
   color: var(--lv-fg-muted);
   text-decoration: none;
 }
 
 .site-social-link:hover,
 .site-social-link:focus-visible {
-  border-color: var(--lv-button-border-hover);
   background: var(--lv-button-bg-hover);
   color: var(--lv-fg-default);
 }
