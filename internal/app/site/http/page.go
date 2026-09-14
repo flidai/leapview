@@ -74,109 +74,25 @@ const siteDatastarScriptURL = "/static/vendor/datastar-1.0.2.js"
 const siteBrandName = brand.Name
 
 func sitePage(metadata sitePageMetadata) g.Node {
+	head := siteHead(metadata)
+	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "openness", "involved"} {
+		head = append(head, h.Link(h.Rel("stylesheet"), h.Href("/static/home/"+stylesheet+".css")))
+	}
+	head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-dark.png"), g.Attr("as", "image")))
+	for _, script := range []string{"home", "layers", "project-explorer", "orbit"} {
+		head = append(head, h.Script(h.Type("module"), h.Src("/static/home/"+script+".js")))
+	}
 	return pagestream.RenderPage(pagestream.PageSpec{
 		Title:             metadata.title,
 		HTMLAttrs:         siteHTMLAttrs(),
-		Head:              siteHead(metadata),
+		Head:              head,
 		MainAttrs:         []g.Node{h.Class("site-page")},
 		DatastarScriptURL: siteDatastarScriptURL,
 		UpdatesURL:        "/updates",
 		Body: []g.Node{
 			h.A(h.Class("skip-link"), h.Href("#main-content"), g.Text("Skip to content")),
 			siteHeader(false, metadata.showcase),
-			h.Section(h.ID("main-content"), h.Class("site-hero"),
-				g.El("lv-site-flow-background", h.Class("site-hero-background"), g.Attr("aria-hidden", "true")),
-				h.Div(h.Class("site-hero-layout"),
-					h.Div(h.Class("site-hero-content"),
-						h.P(h.Class("site-eyebrow"), g.Text("Open-source analytics as code")),
-						h.H1(g.Text("The agent-native BI platform.")),
-						h.P(h.Class("site-lede"), g.Text("Build dashboards as code, keep analytics in version control, and explore data with AI agents.")),
-						siteHomepageActions(),
-					),
-					g.El("figure", h.Class("site-product-frame"),
-						h.Div(h.Class("site-product-stage"),
-							h.Div(h.Class("site-product-dashboard"),
-								h.Img(
-									h.Class("site-product-screenshot site-product-screenshot-light"),
-									h.Src("/static/product-dashboard-light.png"),
-									h.Alt(siteBrandName+" Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table"),
-									g.Attr("width", "1440"),
-									g.Attr("height", "900"),
-									g.Attr("fetchpriority", "high"),
-								),
-								h.Img(
-									h.Class("site-product-screenshot site-product-screenshot-dark"),
-									h.Src("/static/product-dashboard-dark.png"),
-									h.Alt(siteBrandName+" Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table"),
-									g.Attr("width", "1440"),
-									g.Attr("height", "900"),
-								),
-							),
-						),
-					),
-				),
-				h.Div(h.Class("site-proof-strip"),
-					siteProofItem("blocks", "Open source", "Apache-2.0 licensed"),
-					siteProofItem("git-branch", "Version controlled", "Review every change"),
-					siteProofItem("dashboard", "Dashboards + agents", "Two native interfaces"),
-					siteProofItem("server", "Self-hosted", "Run it yourself"),
-				),
-			),
-			h.Div(h.Class("site-shell"),
-				h.Section(h.Class("site-interfaces-section"),
-					h.Div(h.Class("site-interfaces-heading"),
-						h.H2(g.Text("One model. Two ways to explore.")),
-						h.P(g.Text("Define metrics, relationships, and access once. Dashboards and agents inherit the same governed context.")),
-					),
-					h.Div(h.Class("site-interface-core"),
-						siteFeatureIcon("blocks"),
-						h.Div(
-							h.H3(g.Text("Version-controlled analytics")),
-							h.P(g.Text("Every answer starts from the same reviewed semantic definitions.")),
-						),
-						h.Ul(
-							h.Li(g.Text("Same metrics")),
-							h.Li(g.Text("Same permissions")),
-							h.Li(g.Text("Same data")),
-						),
-					),
-					h.Div(h.Class("site-interfaces-grid"),
-						siteInterfaceCard("dashboard", "Dashboards", "Repeatable views for teams, reviews, and recurring decisions.", []string{"Charts, KPIs, and tables", "Filters and drill-downs", "Reviewed metric definitions"}, "Explore dashboard guides", "/docs/guides/build"),
-						siteInterfaceCard("agent", "AI agents", "Open-ended investigation without creating a separate analytics surface.", []string{"Natural-language questions", "Visual, verifiable answers", "Permission-aware queries"}, "Explore agent integrations", "/docs/guides/integrate/agent"),
-					),
-				),
-				siteDesktopSection(desktopRelease),
-				h.Section(h.ID("product"), h.Class("site-workflow"),
-					h.Div(h.Class("site-section-intro"),
-						h.H2(g.Text("Ship analytics like software.")),
-						h.P(g.Text("Build in code. Review in Git. Deploy with confidence.")),
-					),
-					h.Div(h.Class("site-workflow-demo"),
-						siteWorkflowArtifact(),
-						h.Ol(h.Class("site-workflow-flow"), g.Attr("aria-label", "Analytics delivery workflow"),
-							siteWorkflowCard("blocks", "01", "Build in code", "Define governed models, metrics, and dashboards in YAML."),
-							siteWorkflowCard("git-branch", "02", "Review in Git", "Validate contracts and approve every change before release."),
-							siteWorkflowCard("server", "03", "Deploy with confidence", "Publish dashboards and agent context as one immutable generation."),
-						),
-					),
-				),
-				h.Section(h.Class("site-stack-section"),
-					h.Div(h.Class("site-stack-heading"),
-						h.H2(g.Text("Keep your data stack. Add "+siteBrandName+".")),
-						h.P(g.Text("Connect databases and object storage directly, or query open lakehouse formats where they already live.")),
-					),
-					h.Ol(h.Class("site-stack-flow"), g.Attr("aria-label", "How "+siteBrandName+" connects to your data stack"),
-						siteDataStackStage(),
-						siteStackProductNode(),
-					),
-				),
-				siteTrustSection(),
-				h.Section(h.Class("site-cta"),
-					h.H2(g.Text("Put your analytics in version control.")),
-					h.P(g.Text("Build your first dashboard and explore it with an AI agent.")),
-					siteHomepageActions(),
-				),
-			),
+			g.Raw(siteassets.Homepage()),
 			siteFooter(),
 		},
 	})
@@ -443,14 +359,12 @@ metadata:
   id: semantic-model:sales
   name: sales
 spec:
-  datasets:
-    orders:
-      model: orders
-      metrics:
-        revenue:
-          type: simple
-          agg: sum
-          field: revenue`
+  metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}`
 
 	return h.Article(h.Class("site-workflow-artifact"),
 		h.Div(h.Class("site-workflow-artifact-header"),

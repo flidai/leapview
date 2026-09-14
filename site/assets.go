@@ -14,6 +14,16 @@ import (
 //go:embed static
 var files embed.FS
 
+// homepage is trusted, authored markup for the public landing page. Keeping it
+// alongside the site assets lets the shared Go shell retain its own header and
+// footer while the visual sections remain easy to edit as HTML.
+//
+//go:embed home/home.html
+var homepage string
+
+// Homepage returns the authored landing-page sections.
+func Homepage() string { return homepage }
+
 // Static returns the embedded contents of site/static.
 func Static() fs.FS {
 	return sub("static")

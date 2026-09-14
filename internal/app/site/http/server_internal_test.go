@@ -612,7 +612,7 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 
 	body := readBody(t, response)
 	for _, want := range []string{
-		"<title>LeapView — agent-native BI and analytics as code</title>",
+		"<title>LeapView — open-source business intelligence</title>",
 		`data-color-mode="auto"`,
 		`/updates`,
 		`data-init="@get(&#39;/updates&#39;, {openWhenHidden: true})"`,
@@ -620,38 +620,27 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`<link rel="preload" href="/shared/files/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin="anonymous">`,
 		`/static/site.css`,
 		`/static/site-page.js`,
+		`/static/home/screenshot-hero.css`,
+		`/static/home/home.js`,
 		`<meta name="view-transition" content="same-origin">`,
-		`<lv-site-flow-background class="site-hero-background" aria-hidden="true"></lv-site-flow-background>`,
-		`<section id="main-content" class="site-hero">`,
-		`<div class="site-hero-layout">`,
-		`<figure class="site-product-frame"><div class="site-product-stage">`,
-		`<img class="site-product-screenshot site-product-screenshot-light" src="/static/product-dashboard-light.png"`,
-		`<img class="site-product-screenshot site-product-screenshot-dark" src="/static/product-dashboard-dark.png"`,
-		`<div class="site-proof-strip">`,
-		`<svg class="site-stack-edges site-stack-edges-desktop"`,
-		`<li class="site-stack-stage site-stack-node site-stack-product-node">`,
-		`<lv-brand-mark large="" aria-hidden="true"></lv-brand-mark>`,
-		`<lv-site-feature-icon name="dashboard" aria-hidden="true"></lv-site-feature-icon>`,
-		`<lv-site-feature-icon name="git-branch" aria-hidden="true"></lv-site-feature-icon>`,
-		`<section id="product" class="site-workflow">`,
-		`<article class="site-workflow-artifact">`,
-		`apiVersion: leapview.dev/v1`,
-		`<ol class="site-stack-flow" aria-label="How LeapView connects to your data stack">`,
-		`<section class="site-interfaces-section">`,
-		`One model. Two ways to explore.`,
-		`<article class="site-interface-card">`,
-		`<lv-site-feature-icon name="agent" aria-hidden="true"></lv-site-feature-icon>`,
-		`<a class="site-interface-link" href="/docs/guides/integrate/agent">Explore agent integrations</a>`,
-		`<span class="site-stack-integration-label">PostgreSQL</span>`,
-		`<section class="site-trust-section">`,
-		`Governed from question to answer.`,
-		`<section class="site-cta">`,
+		`<section id="main-content" class="hero"`,
+		`<lv-site-flow-background class="site-flow-field" draw-in aria-hidden="true"></lv-site-flow-background>`,
+		`From data to`,
+		`/static/product-dashboard-dark.png`,
+		`id="mission"`,
+		`id="layers"`,
+		`id="project-explorer"`,
+		`id="connections"`,
+		`id="enterprise"`,
+		`id="openness"`,
+		`id="get-involved"`,
+		`https://discord.gg/pcfV4zAeRV`,
 		`<footer class="site-footer" role="contentinfo">`,
 		`<header class="site-header">`,
 		`<lv-site-theme-toggle></lv-site-theme-toggle>`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("home page missing %q:\n%s", want, body)
+			t.Errorf("home page missing %q", want)
 		}
 	}
 	if strings.Contains(body, "site-capabilities-section") {
@@ -659,6 +648,9 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 	}
 	if strings.Contains(body, "site-agent-preview") || strings.Contains(body, "Why did revenue fall in October?") {
 		t.Error("home page still renders the fabricated agent preview")
+	}
+	if strings.Contains(body, `class="site-interfaces-section"`) || strings.Contains(body, `class="site-desktop-section"`) {
+		t.Error("home page still renders the previous sections")
 	}
 }
 

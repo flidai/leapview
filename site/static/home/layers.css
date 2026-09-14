@@ -1,0 +1,107 @@
+/* Homepage study, scoped to preserve the shared site shell. */
+@scope (.site-home) {
+.architecture {
+  position: relative;
+  overflow: hidden;
+  scroll-margin-top: 72px;
+  padding: 96px clamp(18px, 4vw, 64px) 105px;
+  border-top: 1px solid var(--border);
+  background: radial-gradient(ellipse 54% 42% at 50% 66%, rgba(31, 111, 235, .1), transparent 82%), var(--bg);
+  color: var(--ink);
+}
+:scope.is-light .architecture { background: radial-gradient(ellipse 54% 42% at 50% 66%, rgba(9, 105, 218, .065), transparent 82%), var(--bg); }
+.architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
+.architecture-heading { max-width: 850px; margin: 0 0 62px; }
+.architecture-heading h2 { margin: 0; font-size: clamp(46px, 4.6vw, 66px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
+.architecture-heading h2 em { color: var(--accent); font-style: normal; }
+.architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
+
+.architecture-board { position: relative; min-height: 620px; isolation: isolate; }
+.architecture-wires { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.architecture-wire path { fill: none; stroke: color-mix(in srgb, var(--border) 75%, var(--muted)); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke .25s, stroke-width .25s; }
+.architecture-wire circle { fill: var(--border); transition: fill .25s; }
+.architecture-wire.is-active path { stroke: var(--accent); stroke-width: 2; }
+.architecture-wire.is-active circle { fill: var(--accent); }
+
+.architecture-stack { position: absolute; z-index: 2; top: 0; left: 50%; width: 570px; aspect-ratio: 570 / 545; transform: translateX(-50%); }
+.layer-slab { position: absolute; left: 50%; display: block; width: 48.8%; aspect-ratio: 278 / 149; padding: 0; color: var(--ink); transform: translateX(-50%); --slab-top: #818a96; --slab-side: #4d5867; --slab-stroke: #a4b0c0; --slab-ink: #fff; }
+:scope.is-light .layer-slab { --slab-top: #dce4ef; --slab-side: #aebed1; --slab-stroke: #8197b2; --slab-ink: #26374b; }
+.slab-piece:hover, .slab-piece:focus-visible, .slab-piece.is-active { --slab-top: #7297c7; --slab-side: #375f91; --slab-stroke: #a0c8ff; --slab-ink: #fff; transform: translateY(-5px); filter: drop-shadow(0 10px 18px rgba(31, 111, 235, .15)); }
+:scope.is-light .slab-piece:hover, :scope.is-light .slab-piece:focus-visible, :scope.is-light .slab-piece.is-active { --slab-top: #c3dcf9; --slab-side: #85b0e2; --slab-stroke: #4c86c9; --slab-ink: #163b67; }
+.slab-piece:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.layer-slab--split { display: flex; gap: 2.1%; width: 100%; aspect-ratio: 570 / 149; }
+.layer-slab--split .slab-piece { flex: 1 1 0; min-width: 0; }
+.layer-slab[data-layer="interfaces"] { z-index: 4; top: 16.3%; }
+.layer-slab[data-layer="serving"] { z-index: 3; top: 32.2%; }
+.layer-slab[data-layer="compute"] { z-index: 2; top: 51.9%; }
+.layer-slab[data-layer="foundation"] { z-index: 1; top: 71.5%; }
+.slab-piece { position: relative; display: block; width: 100%; height: 100%; cursor: default; user-select: none; transition: transform .28s, filter .28s; }
+.slab-piece svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.slab-piece svg path { stroke: var(--slab-stroke); stroke-width: 2; stroke-linejoin: round; transition: fill .28s, stroke .28s; }
+.slab-body { fill: var(--slab-side); }
+.slab-top { fill: var(--slab-top); }
+.slab-face { position: absolute; top: 68%; color: var(--slab-ink); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: clamp(10px, 1.04vw, 15px); font-weight: 700; letter-spacing: .025em; line-height: 1; white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, .2); pointer-events: none; }
+.slab-face--left { left: 18%; transform: rotate(20deg) skewX(14deg) scaleY(.93); transform-origin: left center; }
+.slab-face--right { right: 16%; transform: rotate(-20deg) skewX(-14deg) scaleY(.93); transform-origin: right center; }
+
+.architecture-callout { position: absolute; z-index: 2; width: 24.5%; min-height: 135px; padding: 19px 20px; border: 1px solid var(--border); border-radius: 6px; background: var(--frame-bg); box-shadow: 0 14px 34px rgba(0, 0, 0, .08); transition: border-color .25s, background-color .25s, transform .25s; }
+.architecture-callout[data-detail="dashboards"] { top: 18px; left: 0; }
+.architecture-callout[data-detail="agents"] { top: 18px; right: 0; }
+.architecture-callout[data-layer="serving"] { top: 177px; right: 0; }
+.architecture-callout[data-layer="compute"] { top: 285px; left: 0; }
+.architecture-callout[data-detail="postgres"] { top: 440px; left: 0; }
+.architecture-callout[data-detail="ducklake"] { top: 440px; right: 0; }
+.architecture-callout.is-active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); background: color-mix(in srgb, var(--frame-bg) 92%, var(--accent)); transform: translateY(-3px); }
+.architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 750; letter-spacing: .09em; }
+.architecture-callout-kicker i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+.architecture-callout h3 { margin: 0; font-size: clamp(16px, 1.5vw, 20px); font-weight: 650; letter-spacing: -.035em; line-height: 1.2; }
+.architecture-callout > p:last-child:not(.architecture-callout-kicker) { margin: 11px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.architecture-callout-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.architecture-callout-tags span { padding: 6px 7px; border: 1px solid var(--border); border-radius: 3px; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; }
+
+@media (max-width: 1240px) {
+  .architecture { padding: 82px 24px 85px; }
+  .architecture-heading { margin-bottom: 30px; }
+  .architecture-board { display: grid; gap: 14px; min-height: 0; }
+  .architecture-wires { display: none; }
+  .architecture-stack { position: relative; top: auto; left: auto; width: min(100%, 570px); margin: 0 auto; transform: none; }
+  .architecture-callouts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; width: min(100%, 700px); margin: 0 auto; }
+  .architecture-callouts .architecture-callout { position: relative; inset: auto; width: auto; min-height: 143px; }
+}
+@media (max-width: 580px) {
+  .architecture { padding: 70px 17px 70px; }
+  .architecture-heading h2 { font-size: clamp(42px, 11vw, 58px); }
+  .architecture-heading > p:last-child { max-width: 350px; margin-top: 16px; font-size: 13px; }
+  .architecture-board { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .architecture-stack { grid-column: 1 / -1; grid-row: 2; margin: 10px auto 3px; }
+  .slab-face { font-size: clamp(8px, 2.2vw, 11px); letter-spacing: 0; }
+  .architecture-callouts { display: contents; }
+  .architecture-callouts .architecture-callout { min-height: 145px; padding: 13px 12px; }
+  .architecture-callout[data-detail="dashboards"] { grid-column: 1; grid-row: 1; }
+  .architecture-callout[data-detail="agents"] { grid-column: 2; grid-row: 1; }
+  .architecture-callout[data-layer="serving"] { grid-column: 1; grid-row: 3; }
+  .architecture-callout[data-layer="compute"] { grid-column: 2; grid-row: 3; }
+  .architecture-callout[data-detail="postgres"] { grid-column: 1; grid-row: 4; }
+  .architecture-callout[data-detail="ducklake"] { grid-column: 2; grid-row: 4; }
+  .architecture-callout-kicker { gap: 6px; margin-bottom: 10px; font-size: 8px; letter-spacing: .02em; }
+  .architecture-callout h3 { font-size: 16px; }
+  .architecture-callout > p:last-child:not(.architecture-callout-kicker) { margin-top: 8px; font-size: 11px; line-height: 1.42; }
+  .architecture-callout-tags { gap: 5px; margin-top: 10px; }
+  .architecture-callout-tags span { padding: 5px 6px; font-size: 8px; }
+}
+@media (max-width: 375px) {
+  .architecture-board { grid-template-columns: 1fr; }
+  .architecture-callout[data-detail="dashboards"] { grid-column: 1; grid-row: 1; }
+  .architecture-callout[data-detail="agents"] { grid-column: 1; grid-row: 2; }
+  .architecture-stack { grid-column: 1; grid-row: 3; }
+  .architecture-callout[data-layer="serving"] { grid-column: 1; grid-row: 4; }
+  .architecture-callout[data-layer="compute"] { grid-column: 1; grid-row: 5; }
+  .architecture-callout[data-detail="postgres"] { grid-column: 1; grid-row: 6; }
+  .architecture-callout[data-detail="ducklake"] { grid-column: 1; grid-row: 7; }
+  .architecture-callouts .architecture-callout { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .slab-piece, .slab-piece svg path, .architecture-callout, .architecture-wire path, .architecture-wire circle { transition: none; }
+}
+
+}

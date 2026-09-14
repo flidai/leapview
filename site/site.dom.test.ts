@@ -30,398 +30,116 @@ afterAll(async () => {
   }
 })
 
-test('site explains the product, its workflow, and where it fits in the data stack', async () => {
-  const page = await browser.newPage()
+test('homepage presents the new sections inside the shared site shell', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => Boolean(customElements.get('lv-site-flow-background')))
-    expect(await page.locator('lv-site-flow-background.site-hero-background').count()).toBe(1)
+    expect(await page.locator('.site-header').count()).toBe(1)
+    expect(await page.locator('.site-footer').count()).toBe(1)
+    expect(await page.locator('.landing-footer, .topbar').count()).toBe(0)
+    expect(await page.getByRole('heading', { level: 1, name: 'From data to the full picture.' }).isVisible()).toBe(true)
+    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'layers', 'enterprise', 'openness', 'get-involved']
+    expect(await page.locator('.site-home > section').evaluateAll((sections) => sections.map((section) => section.id))).toEqual(sectionOrder)
+    for (const id of sectionOrder) {
+      expect(await page.locator(`#${id}`).count()).toBe(1)
+    }
+    expect(await page.locator('.mission-kicker, .story-kicker, .project-kicker, .architecture-kicker, .enterprise-kicker, .openness-kicker, .involved-kicker').count()).toBe(0)
+    expect(await page.getByRole('heading', { level: 2, name: 'Analytics as code.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'Every answer has a foundation.' }).count()).toBe(1)
+    expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
+    const screenshot = page.locator('#product-image')
     await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
+      const image = document.querySelector<HTMLImageElement>('#product-image')
+      return image?.complete && image.naturalWidth === 1440
     })
-    const flowBackground = page.locator('lv-site-flow-background')
-    const firstFlowFrame = await flowBackground.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    await page.waitForTimeout(100)
-    const secondFlowFrame = await flowBackground.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    expect(secondFlowFrame).not.toBe(firstFlowFrame)
-    const header = page.locator('.site-header')
-    expect(await header.isVisible()).toBe(true)
-    expect(await header.getAttribute('aria-hidden')).toBeNull()
-    expect(await header.evaluate((element) => getComputedStyle(element).position)).toBe('sticky')
-    const hero = await page.locator('.site-hero').evaluate((element) => ({
-      height: element.getBoundingClientRect().height,
-      width: element.getBoundingClientRect().width,
-      viewportHeight: window.innerHeight,
-      viewportWidth: window.innerWidth,
-    }))
-    const flowFrame = await flowBackground.evaluate((element) => {
-      const bounds = element.getBoundingClientRect()
-      return { height: bounds.height, top: bounds.top }
-    })
-    expect(hero.width).toBe(hero.viewportWidth)
-    expect(hero.height).toBeGreaterThan(hero.viewportHeight * 0.65)
-    expect(flowFrame.top).toBeCloseTo(await page.locator('.site-hero').evaluate((element) => element.getBoundingClientRect().top), 1)
-    expect(flowFrame.height).toBeLessThanOrEqual(992)
-    expect(flowFrame.height).toBeLessThan(hero.height)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'The agent-native BI platform.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    expect(await page.locator('.site-hero').getByText('Build dashboards as code, keep analytics in version control, and explore data with AI agents.').count()).toBe(1)
-    const githubLinks = page.getByRole('link', { name: 'View on GitHub' })
-    expect(await githubLinks.count()).toBe(2)
-    expect(await githubLinks.first().getAttribute('href')).toBe('https://github.com/flidai/leapview')
-    expect(await githubLinks.locator('.site-github-mark').count()).toBe(2)
-    expect(
-      await githubLinks
-        .first()
-        .locator('.site-github-mark')
-        .evaluate((element) => getComputedStyle(element).maskImage),
-    ).toContain('/static/vendor/github-mark.svg')
-    const productScreenshots = page.locator('img.site-product-screenshot')
-    expect(await productScreenshots.count()).toBe(2)
-    const lightProductScreenshot = page.locator('img.site-product-screenshot-light')
-    const darkProductScreenshot = page.locator('img.site-product-screenshot-dark')
-    expect(await lightProductScreenshot.getAttribute('alt')).toBe('LeapView Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table')
-    expect(await darkProductScreenshot.getAttribute('alt')).toBe('LeapView Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table')
-    await page.waitForFunction(() => {
-      const images = Array.from(document.querySelectorAll<HTMLImageElement>('img.site-product-screenshot'))
-      return images.length === 2 && images.every((image) => image.complete && image.naturalWidth > 0)
-    })
-    expect(await lightProductScreenshot.isVisible()).toBe(true)
-    expect(await darkProductScreenshot.isVisible()).toBe(false)
-    expect(await page.locator('.site-product-caption').count()).toBe(0)
-    expect(await page.locator('.site-agent-preview').count()).toBe(0)
-    const productFrameCenter = await page.locator('.site-product-frame').evaluate((element) => {
-      const rect = element.getBoundingClientRect()
-      return { frame: rect.left + rect.width / 2, viewport: window.innerWidth / 2 }
-    })
-    expect(Math.abs(productFrameCenter.frame - productFrameCenter.viewport)).toBeLessThanOrEqual(1)
-    expect(await page.locator('.site-proof-strip .site-proof-item').count()).toBe(4)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'Ship analytics like software.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    const workflow = page.getByRole('list', {
-      name: 'Analytics delivery workflow',
-    })
-    expect(await page.locator('.site-workflow-artifact').count()).toBe(1)
-    expect(await page.locator('.site-workflow-artifact pre code').count()).toBe(1)
-    expect(await workflow.locator('.site-workflow-card').count()).toBe(3)
-    expect(await workflow.getByRole('heading', { name: 'Build in code' }).count()).toBe(1)
-    expect(await workflow.getByRole('heading', { name: 'Review in Git' }).count()).toBe(1)
-    expect(await workflow.getByRole('heading', { name: 'Deploy with confidence' }).count()).toBe(1)
-    expect(await workflow.locator('lv-site-feature-icon').evaluateAll((icons) => icons.map((icon) => icon.getAttribute('name')))).toEqual([
-      'blocks',
-      'git-branch',
-      'server',
-    ])
-    expect(await page.getByText('apiVersion: leapview.dev/v1', { exact: false }).count()).toBe(1)
-    expect(await page.getByText('agg: sum', { exact: false }).count()).toBe(1)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'Keep your data stack. Add LeapView.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    expect(
-      await page.locator('.site-stack-section').evaluate((element) => {
-        const style = getComputedStyle(element)
-        return {
-          background: style.backgroundColor,
-          borderWidth: style.borderWidth,
-          borderRadius: style.borderRadius,
-          boxShadow: style.boxShadow,
-          padding: style.padding,
-        }
-      }),
-    ).toEqual({
-      background: 'rgba(0, 0, 0, 0)',
-      borderWidth: '0px',
-      borderRadius: '0px',
-      boxShadow: 'none',
-      padding: '0px',
-    })
-    const stackFlow = page.getByRole('list', {
-      name: 'How LeapView connects to your data stack',
-    })
-    expect(await stackFlow.locator('.site-stack-stage').count()).toBe(2)
-    expect(await stackFlow.getByRole('heading', { name: 'LeapView' }).count()).toBe(1)
-    const compatibilityGroups = stackFlow.locator('.site-stack-group')
-    expect(await compatibilityGroups.count()).toBe(3)
-    expect(await stackFlow.locator('.site-stack-edges-desktop .site-stack-edge').count()).toBe(4)
-    expect(await stackFlow.locator('.site-stack-edges-mobile .site-stack-edge').count()).toBe(1)
-    const desktopFlowMarkers = stackFlow.locator('.site-stack-edges-desktop .site-stack-flow-marker')
-    expect(await desktopFlowMarkers.count()).toBe(3)
-    expect(
-      await desktopFlowMarkers.evaluateAll((markers) =>
-        markers.map((marker) => {
-          const style = getComputedStyle(marker)
-          return {
-            path: marker.getAttribute('data-flow-path'),
-            duration: style.animationDuration,
-            iterationCount: style.animationIterationCount,
-          }
-        }),
-      ),
-    ).toEqual([
-      { path: 'M0 50 C44 50 42 150 66 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-      { path: 'M0 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-      { path: 'M0 250 C44 250 42 150 66 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-    ])
-    const initialFlowOffsets = await desktopFlowMarkers.evaluateAll((markers) =>
-      markers.map((marker) => getComputedStyle(marker).strokeDashoffset),
-    )
-    await page.waitForTimeout(300)
-    const advancedFlowOffsets = await desktopFlowMarkers.evaluateAll((markers) =>
-      markers.map((marker) => getComputedStyle(marker).strokeDashoffset),
-    )
-    expect(
-      advancedFlowOffsets.every((offset, index) => offset !== initialFlowOffsets[index]),
-    ).toBe(true)
-    const mobileFlowMarkers = stackFlow.locator('.site-stack-edges-mobile .site-stack-flow-marker')
-    expect(await mobileFlowMarkers.count()).toBe(1)
-    expect(await mobileFlowMarkers.getAttribute('data-flow-path')).toBe('M50 0 V96')
-    const productNode = stackFlow.locator('.site-stack-product-node')
-    expect(await productNode.count()).toBe(1)
-    expect(await productNode.locator('lv-brand-mark[large]').count()).toBe(1)
-    const clientInterfaces = productNode.getByRole('list', { name: 'LeapView interfaces' })
-    expect(await clientInterfaces.locator('.site-stack-client-interface').count()).toBe(4)
-    for (const [label, icon] of [
-      ['Web app', 'square-mouse-pointer'],
-      ['CLI', 'terminal'],
-      ['REST API', 'code-xml'],
-    ]) {
-      const clientInterface = clientInterfaces.locator(`.site-stack-client-interface[aria-label="${label}"]`)
-      expect(await clientInterface.count()).toBe(1)
-      expect(await clientInterface.getAttribute('tabindex')).toBe('0')
-      expect(await clientInterface.getAttribute('data-label')).toBe(label)
-      expect(await clientInterface.locator(`lv-site-feature-icon[name="${icon}"][plain]`).count()).toBe(1)
-      expect(await clientInterface.getByText(label, { exact: true }).count()).toBe(1)
-      expect(await clientInterface.evaluate((element) => element.childNodes.length)).toBe(2)
-    }
-    const mcpInterface = clientInterfaces.locator('.site-stack-client-interface[aria-label="MCP"]')
-    expect(await mcpInterface.locator('.site-stack-mcp-mark[aria-hidden="true"] > svg').count()).toBe(1)
-    expect(await mcpInterface.locator('lv-site-feature-icon').count()).toBe(0)
-    expect(await mcpInterface.getByText('MCP', { exact: true }).count()).toBe(1)
-    expect(await mcpInterface.evaluate((element) => element.childNodes.length)).toBe(2)
-    expect(await productNode.getByText('Planned', { exact: true }).count()).toBe(0)
-    expect(await productNode.getByText('Coming soon', { exact: true }).count()).toBe(0)
-    expect(
-      await productNode.evaluate((element) => {
-        const sourceNode = element.parentElement?.querySelector('.site-stack-group')
-        if (!sourceNode) return null
-        const sourceStyle = getComputedStyle(sourceNode)
-        const productStyle = getComputedStyle(element)
-        return {
-          backgroundMatches: sourceStyle.backgroundColor === productStyle.backgroundColor,
-          borderMatches: sourceStyle.borderColor === productStyle.borderColor,
-        }
-      }),
-    ).toEqual({ backgroundMatches: true, borderMatches: true })
-    expect(await stackFlow.getByRole('heading', { name: 'Databases' }).count()).toBe(1)
-    expect(await stackFlow.getByRole('heading', { name: 'Object storage' }).count()).toBe(1)
-    expect(await stackFlow.getByRole('heading', { name: 'Formats', exact: true }).count()).toBe(1)
-    for (const integration of [
-      'PostgreSQL',
-      'MySQL',
-      'SQLite',
-      'Amazon S3',
-      'Azure Blob',
-      'Google Cloud Storage',
-      'Cloudflare R2',
-      'Hetzner Object Storage',
-      'CSV',
-      'JSON',
-      'Parquet',
-      'Excel',
-      'Vortex',
-      'Delta Lake',
-      'Apache Iceberg',
-      'Lance',
-      'DuckLake',
-    ]) {
-      expect(await stackFlow.locator(`.site-stack-integration[aria-label="${integration}"]`).count()).toBe(1)
-    }
-    const integrationLogos = stackFlow.locator('.site-stack-group .site-stack-integration')
-    expect(await integrationLogos.count()).toBe(17)
-    expect(await stackFlow.locator('.site-stack-group .site-stack-integration-label').count()).toBe(17)
-    expect(await stackFlow.locator('.site-stack-integration[aria-label="Text"]').count()).toBe(0)
-    expect(await stackFlow.locator('.site-stack-integration[aria-label="Binary files"]').count()).toBe(0)
-    const postgresqlLogo = stackFlow.locator('.site-stack-integration[aria-label="PostgreSQL"]')
-    expect(await postgresqlLogo.count()).toBe(1)
-    expect(await postgresqlLogo.getAttribute('tabindex')).toBe('0')
-    const postgresqlMark = postgresqlLogo.locator('.site-stack-logo')
-    expect(await postgresqlMark.count()).toBe(1)
-    expect(await postgresqlMark.evaluate((element) => element.tagName)).toBe('SPAN')
-    expect(await postgresqlMark.locator('svg').count()).toBe(1)
-    expect(await postgresqlLogo.getByText('PostgreSQL', { exact: true }).count()).toBe(1)
-    const postgresqlMarkFill = await postgresqlMark.evaluate((element) =>
-      getComputedStyle(element.querySelector('svg path')!).fill,
-    )
-    expect(postgresqlMarkFill).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
-    const icebergMark = stackFlow.locator('.site-stack-integration[aria-label="Apache Iceberg"] .site-stack-logo')
-    const icebergFills = await icebergMark.evaluate((element) =>
-      Array.from(new Set(Array.from(element.querySelectorAll('path'), (path) => getComputedStyle(path).fill))),
-    )
-    expect(icebergFills).toHaveLength(3)
-    expect(icebergFills).toContain(postgresqlMarkFill)
-    expect(await stackFlow.locator('.site-stack-platforms').count()).toBe(0)
-    expect(await stackFlow.getByText('Databricks', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Microsoft Fabric', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Snowflake', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Apps', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.locator('.site-stack-connection-label').count()).toBe(0)
-    expect(await page.getByRole('link', { name: 'View all supported connections' }).count()).toBe(0)
-    const interfaces = page.locator('.site-interfaces-section')
-    expect(await interfaces.getByRole('heading', { name: 'One model. Two ways to explore.' }).count()).toBe(1)
-    expect(await interfaces.locator('.site-interface-card').count()).toBe(2)
-    expect(await interfaces.getByRole('heading', { name: 'Dashboards', exact: true }).count()).toBe(1)
-    expect(await interfaces.getByRole('heading', { name: 'AI agents', exact: true }).count()).toBe(1)
-    expect(await interfaces.getByRole('link', { name: 'Explore agent integrations' }).getAttribute('href')).toBe('/docs/guides/integrate/agent')
-    expect(await interfaces.locator('.site-interface-core').count()).toBe(1)
-    for (const redundantEyebrow of [
-      'One governed analytics layer',
-      'LeapView Desktop',
-      'Analytics as code',
-      'Works with your stack',
-      'Governed by default',
-      'Open-source BI',
-    ]) {
-      expect(await page.getByText(redundantEyebrow, { exact: true }).count()).toBe(0)
-    }
-    const trust = page.locator('.site-trust-section')
-    expect(await trust.getByRole('heading', { name: 'Governed from question to answer.' }).count()).toBe(1)
-    expect(await trust.locator('.site-trust-card').count()).toBe(3)
-    expect(await page.locator('.site-capabilities-section, .site-capabilities, .site-capability').count()).toBe(0)
-    expect(await page.locator('.site-shell').evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
-      'site-interfaces-section',
-      'site-desktop-section',
-      'site-workflow',
-      'site-stack-section',
-      'site-trust-section',
-      'site-cta',
-    ])
-    expect(await page.getByRole('contentinfo').count()).toBe(1)
-    expect(await page.locator('.site-product-proof, lv-site-chart-demo').count()).toBe(0)
-    expect(await page.getByRole('heading', { name: 'One model. Two ways to explore.' }).count()).toBe(1)
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 64)
-    })
-    expect(await header.isVisible()).toBe(true)
-    expect(await header.evaluate((element) => Math.round(element.getBoundingClientRect().top))).toBe(0)
+    expect(await page.locator('.orbit-node').count()).toBe(17)
+    await page.locator('#connections').scrollIntoViewIfNeeded()
+    await page.waitForFunction(() => document.querySelector('#orbit-stage')?.classList.contains('is-in-view'))
+    expect(await page.locator('.orbit-rotor').first().evaluate((element) => getComputedStyle(element).animationPlayState)).toBe('running')
+    await page.locator('[data-project-file="connection"]').click()
+    await page.waitForFunction(() => document.querySelector('#project-code')?.textContent?.includes('kind:'))
+    expect(await page.locator('#project-tab-name').textContent()).toBe('olist.yaml')
+    expect(await page.getByRole('link', { name: /Join the community/ }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
   } finally {
     await page.close()
   }
-}, 30_000)
+})
 
-test('homepage flow background renders from design tokens and respects reduced motion', async () => {
-  const context = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 1280, height: 800 } })
-  const page = await context.newPage()
+test('homepage hero fits the first screen and mission rewrites without shifting the post', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
-    })
-    const firstFrame = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const canvas = host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      if (!canvas) throw new Error('flow canvas is missing')
-      const style = getComputedStyle(host)
-      const rootStyle = getComputedStyle(document.documentElement)
-      const context = canvas.getContext('2d')
-      if (!context) throw new Error('flow canvas context is missing')
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-      const activeRows = new Set<number>()
-      let activeSamples = 0
-      let sampleCount = 0
-      let leftY = 0
-      let leftSamples = 0
-      let rightY = 0
-      let rightSamples = 0
-      for (let y = 0; y < canvas.height; y += 4) {
-        for (let x = 0; x < canvas.width; x += 4) {
-          sampleCount++
-          if (pixels[(y * canvas.width + x) * 4 + 3]! <= 2) continue
-          activeRows.add(y)
-          activeSamples++
-          if (x < canvas.width * 0.2) {
-            leftY += y
-            leftSamples++
-          }
-          if (x > canvas.width * 0.8) {
-            rightY += y
-            rightSamples++
-          }
-        }
-      }
-      return {
-        image: canvas.toDataURL(),
-        lineStart: style.getPropertyValue('--site-flow-line-start').trim(),
-        lineEnd: style.getPropertyValue('--site-flow-line-end').trim(),
-        data1: rootStyle.getPropertyValue('--lv-data-1').trim(),
-        data7: rootStyle.getPropertyValue('--lv-data-7').trim(),
-        activeRowRatio: activeRows.size / Math.ceil(canvas.height / 4),
-        activeSampleRatio: activeSamples / sampleCount,
-        directionalDelta: Math.abs(leftY / leftSamples - rightY / rightSamples) / canvas.height,
-      }
-    })
-    await page.waitForTimeout(150)
-    const secondFrame = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const canvas = host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      if (!canvas) throw new Error('flow canvas is missing')
-      return canvas.toDataURL()
-    })
-    expect(firstFrame.image).toBe(secondFrame)
-    expect(firstFrame.lineStart).toBe(firstFrame.data1)
-    expect(firstFrame.lineEnd).toBe(firstFrame.data7)
-    expect(firstFrame.activeRowRatio).toBeGreaterThan(0.65)
-    expect(firstFrame.activeSampleRatio).toBeGreaterThan(0.04)
-    expect(firstFrame.directionalDelta).toBeGreaterThan(0.32)
-    expect(await page.locator('.site-stack-flow-marker').count()).toBe(4)
-    expect(
-      await page.locator('.site-stack-flow-marker').evaluateAll((markers) =>
-        markers.every((marker) => getComputedStyle(marker).display === 'none'),
-      ),
-    ).toBe(true)
+    const desktop = await page.evaluate(() => ({
+      heroBottom: document.querySelector('.hero')!.getBoundingClientRect().bottom,
+      titleTop: document.querySelector('.hero h1')!.getBoundingClientRect().top,
+      screenshotTop: document.querySelector('.product-frame')!.getBoundingClientRect().top,
+      missionWidth: document.querySelector('.mission-inner')!.getBoundingClientRect().width,
+      missionFont: getComputedStyle(document.querySelector('.mission-copy')!).fontFamily,
+    }))
+    expect(desktop.heroBottom).toBeGreaterThan(1000)
+    expect(desktop.heroBottom).toBeLessThan(1110)
+    expect(desktop.titleTop).toBeGreaterThan(175)
+    expect(desktop.titleTop).toBeLessThan(215)
+    expect(desktop.screenshotTop).toBeGreaterThan(390)
+    expect(desktop.screenshotTop).toBeLessThan(450)
+    expect(desktop.missionWidth).toBeLessThanOrEqual(680)
+    expect(desktop.missionFont).toContain('monospace')
+
+    await page.locator('#mission').scrollIntoViewIfNeeded()
+    await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'data', undefined, { timeout: 8000 })
+    expect(await page.locator('#mission-title').getAttribute('aria-label')).toBe('Your business intelligence should belong to your business.')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'business intelligence')
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(baseURL)
+    const mobile = await page.evaluate(() => ({
+      heroBottom: document.querySelector('.hero')!.getBoundingClientRect().bottom,
+      titleTop: document.querySelector('.hero h1')!.getBoundingClientRect().top,
+      screenshotTop: document.querySelector('.product-frame')!.getBoundingClientRect().top,
+    }))
+    expect(mobile.heroBottom).toBeLessThanOrEqual(900)
+    expect(mobile.titleTop).toBeGreaterThan(120)
+    expect(mobile.titleTop).toBeLessThan(165)
+    expect(mobile.screenshotTop).toBeGreaterThan(480)
+    expect(mobile.screenshotTop).toBeLessThan(530)
   } finally {
-    await context.close()
+    await page.close()
   }
 })
 
-test('homepage flow background stays centered and bounded on ultra-wide screens', async () => {
+test('homepage flow field draws in and respects reduced motion', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(customElements.get('lv-site-flow-background')))
+    const flow = page.locator('lv-site-flow-background.site-flow-field[draw-in]')
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('lv-site-flow-background')?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
+      return Boolean(canvas && canvas.width > 0)
+    })
+    const first = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
+    await page.waitForTimeout(120)
+    const second = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
+    expect(second).not.toBe(first)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await flow.evaluate((host) => host.getBoundingClientRect().height)).toBeLessThanOrEqual(992)
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage flow field remains bounded on ultra-wide screens', async () => {
   const page = await browser.newPage({ viewport: { width: 2560, height: 1000 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
-    })
     const geometry = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const bounds = host.getBoundingClientRect()
-      return {
-        center: bounds.left + bounds.width / 2,
-        viewportCenter: window.innerWidth / 2,
-        width: bounds.width,
-      }
+      const rect = host.getBoundingClientRect()
+      return { width: rect.width, left: rect.left, height: rect.height }
     })
     expect(geometry.width).toBeLessThanOrEqual(1920)
-    expect(Math.abs(geometry.center - geometry.viewportCenter)).toBeLessThanOrEqual(1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(Math.abs(geometry.left - (2560 - geometry.width) / 2)).toBeLessThan(2)
+    expect(geometry.height).toBeLessThanOrEqual(992)
   } finally {
     await page.close()
   }
@@ -507,152 +225,17 @@ test('desktop download page presents the same manifest-backed early preview', as
   }
 })
 
-test('homepage offers the attested unsigned desktop preview for all platforms', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+test('homepage keeps the existing desktop navigation', async () => {
+  const page = await browser.newPage()
   try {
-    const releaseResponse = await page.request.get(`${baseURL}/desktop-release.json`)
-    const releaseManifest = await releaseResponse.json() as {
-      release: {
-        evidenceUrl: string
-        artifacts: Array<{
-          platform: string
-          architecture: string
-          downloadUrl: string
-        }>
-      }
-    }
-    const artifactURL = (platform: string, architecture: string) => {
-      const artifact = releaseManifest.release.artifacts.find(
-        (candidate) => candidate.platform === platform && candidate.architecture === architecture,
-      )
-      expect(artifact).toBeDefined()
-      return artifact!.downloadUrl
-    }
     await page.goto(baseURL)
-    const section = page.locator('.site-desktop-section')
-    expect(await section.getByRole('heading', { level: 2, name: 'Take LeapView to your desktop.' }).isVisible()).toBe(true)
-    expect(await section.getByText('Unsigned alpha', { exact: true }).count()).toBe(0)
-    expect(await section.locator('.site-desktop-release-meta, .site-desktop-badge').count()).toBe(0)
-    expect(await section.locator('.site-desktop-preview-note').count()).toBe(0)
-    const previewLabel = section.locator('.site-desktop-preview-label')
-    expect(await previewLabel.textContent()).toBe('Early preview')
-    expect(
-      await section.locator('.site-desktop-title-row').evaluate((element) => {
-        const heading = element.querySelector('h2')?.getBoundingClientRect()
-        const label = element.querySelector('.site-desktop-preview-label')?.getBoundingClientRect()
-        return Boolean(heading && label && Math.abs((heading.top + heading.bottom) / 2 - (label.top + label.bottom) / 2) < 1)
-      }),
-    ).toBe(true)
-    expect(
-      await previewLabel.evaluate((element) => {
-        const probe = document.createElement('span')
-        probe.style.color = 'var(--lv-fg-warning)'
-        document.body.append(probe)
-        const warning = getComputedStyle(probe).color
-        probe.remove()
-        const style = getComputedStyle(element)
-        return {
-          borderMatchesWarning: style.borderColor === warning,
-          colorMatchesWarning: style.color === warning,
-        }
-      }),
-    ).toEqual({
-      borderMatchesWarning: true,
-      colorMatchesWarning: true,
-    })
-    const desktopSubtitle = section.locator('.site-desktop-heading > p')
-    expect(await desktopSubtitle.textContent()).toBe(
-      'Open deployed dashboards in a dedicated, hardened app with the same server-side identity, access, and data controls. Installers are not yet code-signed, so macOS and Windows may show a publisher warning. Verify release evidence',
-    )
-    expect(
-      await section.evaluate((element) => {
-        const style = getComputedStyle(element)
-        return {
-          backgroundColor: style.backgroundColor,
-          borderTopWidth: style.borderTopWidth,
-          borderRadius: style.borderRadius,
-          boxShadow: style.boxShadow,
-          overflow: style.overflow,
-          padding: style.padding,
-        }
-      }),
-    ).toEqual({
-      backgroundColor: 'rgba(0, 0, 0, 0)',
-      borderTopWidth: '0px',
-      borderRadius: '0px',
-      boxShadow: 'none',
-      overflow: 'visible',
-      padding: '0px',
-    })
-    expect(await section.evaluate((element) => getComputedStyle(element).gap)).toBe('48px')
-    const downloadCluster = section.locator(':scope > .site-desktop-download-cluster')
-    expect(await downloadCluster.count()).toBe(1)
-    expect(
-      await downloadCluster.evaluate((element) =>
-        Array.from(element.children, (child) => child.className),
-      ),
-    ).toEqual([
-      'site-desktop-stage',
-      'site-desktop-platforms',
-    ])
-    expect(await downloadCluster.evaluate((element) => getComputedStyle(element).gap)).toBe('16px')
-
-    const screenshot = section.locator('img.site-desktop-screenshot')
-    expect(await screenshot.getAttribute('src')).toBe('/static/product-desktop.png')
-    expect(await screenshot.getAttribute('alt')).toBe('LeapView Desktop connection screen for opening a deployed LeapView instance')
-    const wallpaper = section.locator('img.site-desktop-wallpaper')
-    expect(await wallpaper.getAttribute('src')).toBe('/static/desktop-wallpaper.webp')
-    expect(await wallpaper.getAttribute('alt')).toBe('')
-    await page.waitForFunction(() => {
-      const image = document.querySelector<HTMLImageElement>('img.site-desktop-screenshot')
-      const wallpaper = document.querySelector<HTMLImageElement>('img.site-desktop-wallpaper')
-      return Boolean(
-        image?.complete && image.naturalWidth === 1440 && image.naturalHeight === 900
-        && wallpaper?.complete && wallpaper.naturalWidth === 1440 && wallpaper.naturalHeight === 900,
-      )
-    })
-
-    const cards = section.locator('.site-desktop-platform')
-    expect(await cards.count()).toBe(3)
-    for (const [platform, label, href] of [
-      ['macos', 'Download for macOS', artifactURL('darwin', 'arm64')],
-      ['windows', 'Download for Windows', artifactURL('win32', 'x64')],
-      ['linux', 'Download for Linux', artifactURL('linux', 'x64')],
-    ] as const) {
-      const card = section.locator(`.site-desktop-platform[data-desktop-platform="${platform}"]`)
-      expect(await card.count()).toBe(1)
-      const icon = card.locator('img.site-desktop-os-icon')
-      expect(await icon.getAttribute('src')).toBe(`/static/os-${platform === 'macos' ? 'apple' : platform}.svg`)
-      expect(await icon.getAttribute('alt')).toBe('')
-      const link = card.getByRole('link', { name: label })
-      expect(await link.getAttribute('href')).toBe(href)
-      expect(await link.getAttribute('rel')).toBe('noreferrer')
-    }
-    expect(
-      await section.getByRole('link', { name: 'Download for Intel Mac' }).getAttribute('href'),
-    ).toBe(artifactURL('darwin', 'x64'))
-    expect(await desktopSubtitle.getByRole('link', { name: 'Verify release evidence' }).getAttribute('href')).toBe(
-      releaseManifest.release.evidenceUrl,
-    )
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.reload()
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth),
-    ).toBe(true)
-    expect(
-      await page.locator('.site-desktop-platforms').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length),
-    ).toBe(1)
-    expect(
-      await page.locator('.site-desktop-platform > .site-button').evaluateAll((links) =>
-        links.every((link) => link.getBoundingClientRect().height >= 44),
-      ),
-    ).toBe(true)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'Desktop' }).getAttribute('href')).toBe('/download')
   } finally {
     await page.close()
   }
 })
 
-test('site loads Inter and uses a readable marketing and documentation type scale', async () => {
+test('site loads Inter and keeps readable homepage and documentation type', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -661,22 +244,10 @@ test('site loads Inter and uses a readable marketing and documentation type scal
       return document.fonts.check('400 16px "Inter Variable"')
     })
     expect(fontLoaded).toBe(true)
-
-    const marketingType = await page.evaluate(() => {
-      const heading = getComputedStyle(document.querySelector<HTMLElement>('.site-hero h1')!)
-      const button = getComputedStyle(document.querySelector<HTMLElement>('.site-button')!)
-      return {
-        headingTracking: Number.parseFloat(heading.letterSpacing),
-        buttonSize: Number.parseFloat(button.fontSize),
-      }
-    })
-    expect(marketingType.headingTracking).toBeLessThan(0)
-    expect(marketingType.buttonSize).toBeGreaterThanOrEqual(14)
-
+    const heading = await page.locator('.site-home .hero h1').evaluate((element) => getComputedStyle(element))
+    expect(Number.parseFloat(heading.letterSpacing)).toBeLessThan(0)
     await page.goto(`${baseURL}/docs/introduction`)
-    expect(
-      await page.locator('.site-docs-article').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
-    ).toBeGreaterThanOrEqual(16)
+    expect(await page.locator('.site-docs-article').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16)
   } finally {
     await page.close()
   }
@@ -716,102 +287,42 @@ test('documentation header keeps only search and theme actions', async () => {
   }
 })
 
-test('site supports system, light, and dark color modes', async () => {
+test('site theme control updates the homepage screenshot and colors', async () => {
   const page = await browser.newPage()
   try {
-    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'system'))
+    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
     await page.goto(baseURL)
-    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
-
     await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 64)
-    })
-    const toggle = page.locator('lv-site-theme-toggle').locator('button[data-theme-toggle]')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('system')
-    expect(await page.locator('lv-site-theme-toggle').evaluate((element) => element.shadowRoot?.querySelectorAll('svg[data-lucide="icon"]').length)).toBe(3)
+    const toggle = page.locator('lv-site-theme-toggle button[data-theme-toggle]')
+    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+    await toggle.click()
+    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
     await toggle.click()
     await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('light')
-    expect(await page.locator('img.site-product-screenshot-light').isVisible()).toBe(true)
-    expect(await page.locator('img.site-product-screenshot-dark').isVisible()).toBe(false)
-    const integrationLogo = page.locator('.site-stack-logo[aria-hidden="true"]')
-    expect(await integrationLogo.count()).toBe(17)
-    const lightLogoColors = await integrationLogo.evaluateAll((logos) =>
-      logos.map((logo) => getComputedStyle(logo.querySelector('svg path')!).fill),
-    )
-    const lightLogoColor = lightLogoColors[0]
-    expect(lightLogoColor).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
-
-    await toggle.click()
-    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'dark')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('dark')
-    expect(await page.locator('html').evaluate((element) => getComputedStyle(element).colorScheme)).toBe('dark')
-    expect(await page.locator('img.site-product-screenshot-light').isVisible()).toBe(false)
-    expect(await page.locator('img.site-product-screenshot-dark').isVisible()).toBe(true)
-    const darkLogoColors = await integrationLogo.evaluateAll((logos) =>
-      logos.map((logo) => getComputedStyle(logo.querySelector('svg path')!).fill),
-    )
-    const darkLogoColor = darkLogoColors[0]
-    expect(darkLogoColor).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
-    expect(darkLogoColor).not.toBe(lightLogoColor)
+    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-light.png')
+    expect(await page.locator('.site-home').evaluate((element) => element.classList.contains('is-light'))).toBe(true)
   } finally {
     await page.close()
   }
 })
 
-test('mobile landing page keeps the product story compact and ordered', async () => {
-  const context = await browser.newContext({
-    hasTouch: true,
-    viewport: { width: 320, height: 900 },
-  })
+test('mobile homepage keeps the shared navigation and all sections usable', async () => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 320, height: 900 } })
   const page = await context.newPage()
   try {
     await page.goto(baseURL)
-
-    expect(await page.locator('.site-nav-links').evaluate((element) => getComputedStyle(element).display)).toBe('none')
-    const headerHeight = await page.locator('.site-header').evaluate((element) => element.getBoundingClientRect().height)
-    expect(headerHeight).toBeLessThanOrEqual(45)
     const menu = page.locator('lv-site-mobile-menu')
-    const menuButton = menu.locator('button')
-    expect(await menuButton.count()).toBe(1)
-    expect(await menuButton.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
-
-    expect(await page.locator('.site-interfaces-grid').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.getByRole('list', { name: 'Analytics delivery workflow' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.locator('.site-stack-section').evaluate((element) => getComputedStyle(element).padding)).toBe('0px')
-    expect(await menuButton.getAttribute('aria-expanded')).toBe('false')
-
-    await menuButton.click()
-    expect(await menuButton.getAttribute('aria-expanded')).toBe('true')
-    const docsLink = menu.getByRole('link', { name: 'Docs' })
-    expect(await docsLink.count()).toBe(1)
-    expect(await docsLink.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
-
-    const proofHeights = await page.locator('.site-proof-strip .site-proof-item').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height))
-    expect(proofHeights).toHaveLength(4)
-    expect(Math.max(...proofHeights)).toBeLessThan(180)
-
-    expect(await page.getByRole('list', { name: 'How LeapView connects to your data stack' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    const screenshot = page.locator('img.site-product-screenshot-light')
-    expect(await screenshot.evaluate((element) => element.getBoundingClientRect().width <= element.parentElement!.getBoundingClientRect().width)).toBe(true)
-    expect(await page.locator('lv-site-flow-background').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(800)
-
-    await page.setViewportSize({ width: 533, height: 900 })
-    const mobileHeroTitleSize = await page.locator('.site-hero h1').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
-    expect(mobileHeroTitleSize).toBeLessThanOrEqual(40)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-
-    await page.setViewportSize({ width: 768, height: 900 })
-    expect(await page.getByRole('list', { name: 'How LeapView connects to your data stack' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.locator('.site-interfaces-grid').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2)
-    expect(await page.getByRole('list', { name: 'Analytics delivery workflow' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    const button = menu.locator('button')
+    expect(await button.count()).toBe(1)
+    await button.click()
+    expect(await button.getAttribute('aria-expanded')).toBe('true')
+    expect(await menu.getByRole('link', { name: 'Docs' }).count()).toBe(1)
+    expect(await page.locator('.orbit-node').count()).toBe(17)
+    expect(await page.locator('[data-project-file]').count()).toBe(6)
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 900 })
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    }
   } finally {
     await context.close()
   }

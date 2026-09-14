@@ -1,0 +1,76 @@
+/* An editorial mission note inside the site-owned homepage. */
+@scope (.site-home) {
+  .mission {
+    position: relative;
+    padding: 88px 24px 92px;
+    border-block: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 82%, #0d3359);
+    scroll-margin-top: 72px;
+  }
+
+  :scope.is-light .mission {
+    background: color-mix(in srgb, var(--bg) 94%, #cfe5ff);
+  }
+
+  .mission-inner {
+    width: min(100%, 680px);
+    margin: 0 auto;
+  }
+
+  .mission h2 {
+    min-height: 2.4em;
+    margin: 0 0 29px;
+    color: var(--ink);
+    font: 650 clamp(28px, 3vw, 36px)/1.2 Inter, var(--fontStack-system), sans-serif;
+    letter-spacing: -.045em;
+    text-wrap: pretty;
+  }
+
+  .mission h2 em {
+    color: var(--accent);
+    font-style: normal;
+  }
+
+  .mission-cursor {
+    display: inline-block;
+    width: 2px;
+    height: .9em;
+    margin-left: 4px;
+    background: currentColor;
+    vertical-align: -.1em;
+    animation: mission-caret 1s step-end infinite;
+  }
+
+  @keyframes mission-caret { 50% { opacity: 0; } }
+
+  .mission-copy {
+    color: color-mix(in srgb, var(--ink) 88%, var(--muted));
+    font: 15px/1.66 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .005em;
+  }
+
+  .mission-copy p { margin: 0; }
+  .mission-copy p + p { margin-top: 23px; }
+
+  .mission-copy a {
+    color: inherit;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 4px;
+    white-space: nowrap;
+  }
+
+  .mission-copy a:hover { color: var(--accent); }
+  .mission-copy a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+  @media (max-width: 620px) {
+    .mission { padding: 68px 22px 74px; }
+    .mission h2 { min-height: 4.1em; margin-bottom: 24px; font-size: clamp(26px, 7.2vw, 31px); line-height: 1.17; }
+    .mission-copy { font-size: 13px; line-height: 1.65; }
+    .mission-copy p + p { margin-top: 20px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mission-cursor { animation: none; }
+  }
+}
