@@ -128,6 +128,9 @@ func TestProtocolBypassStillRunsGeneratedCommandBoundary(t *testing.T) {
 	}
 	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
 		Store: idempotency.NewMemoryStore(), CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		AuthoritativeScope: func(*http.Request) (apiprotocol.AuthoritativeScope, error) {
+			return apiprotocol.AuthoritativeScope{TargetID: "target", ProjectID: "project", Environment: "test", GenerationID: "generation"}, nil
+		},
 		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
 		BearerToken:              func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
 	})

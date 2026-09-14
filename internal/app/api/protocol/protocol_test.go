@@ -31,7 +31,14 @@ func withSQLiteProtocolConfig(t *testing.T, config Config) Config {
 	t.Cleanup(func() { _ = store.Close() })
 	config.Store = apiidempotencysqlite.NewStore(store.SQLDB())
 	config.CursorSigning = cursorsigning.NewEphemeralInitializer()
+	if config.AuthoritativeScope == nil {
+		config.AuthoritativeScope = testAuthoritativeScope
+	}
 	return config
+}
+
+func testAuthoritativeScope(*http.Request) (AuthoritativeScope, error) {
+	return AuthoritativeScope{TargetID: "target:test", ProjectID: "project:test", Environment: "test", GenerationID: "generation:test"}, nil
 }
 
 func TestBuildConstructsProtocolPersistence(t *testing.T) {
@@ -48,6 +55,7 @@ func TestMiddlewareBypassesDurableIdempotencyForConfiguredCommand(t *testing.T) 
 	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
 	protocol, err := Build(t.Context(), Config{
 		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		AuthoritativeScope:       testAuthoritativeScope,
 		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
 		BearerToken:              func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
 	})
@@ -80,7 +88,8 @@ func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T)
 	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
 	protocol, err := Build(t.Context(), Config{
 		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
-		BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+		AuthoritativeScope: testAuthoritativeScope,
+		BearerToken:        func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +222,7 @@ func TestAdversarialDurableIdempotencyDatabaseExcludesOneTimeCredential(t *testi
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
+	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +264,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), AuthoritativeScope: testAuthoritativeScope, BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -522,6 +531,7 @@ func TestExpiredPendingWaiterReclaimsAllowlistedCandidateSource(t *testing.T) {
 func TestBuildRejectsReclaimAllowlistWithoutCapability(t *testing.T) {
 	_, err := Build(t.Context(), Config{
 		Store: &fakeIdempotencyStore{}, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		AuthoritativeScope:        testAuthoritativeScope,
 		ReclaimExpiredIdempotency: map[string]struct{}{"retainProjectCandidateSource": {}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "reclaim allowlist requires") {
@@ -532,6 +542,7 @@ func TestBuildRejectsReclaimAllowlistWithoutCapability(t *testing.T) {
 func TestBuildRejectsUnknownReclaimOperation(t *testing.T) {
 	_, err := Build(t.Context(), Config{
 		Store: newReclaimingIdempotencyStore(), CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		AuthoritativeScope:        testAuthoritativeScope,
 		ReclaimExpiredIdempotency: map[string]struct{}{"typoCandidateSource": {}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "invalid operation") {
@@ -721,8 +732,9 @@ func (s *fakeIdempotencyStore) MarkIndeterminate(context.Context, string, string
 func testLeaseProtocol(store idempotencyStore, lease, renewEvery time.Duration) *Protocol {
 	return &Protocol{
 		config: Config{
-			BearerToken:   func(*http.Request) string { return "credential" },
-			AcceptsBearer: func(*http.Request) bool { return true },
+			BearerToken:        func(*http.Request) string { return "credential" },
+			AcceptsBearer:      func(*http.Request) bool { return true },
+			AuthoritativeScope: testAuthoritativeScope,
 		},
 		store: store, lease: lease, renewEvery: renewEvery,
 	}

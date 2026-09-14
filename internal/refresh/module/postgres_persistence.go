@@ -339,7 +339,7 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	if p == nil || p.repository == nil || p.operations == nil {
 		return refreshrun.RunRecord{}, nil, false, errors.New("refresh PostgreSQL run persistence is unavailable")
 	}
-	op, err := p.operations.Get(ctx, refreshOperationScope(identity.ProjectID.String(), identity.Environment), key)
+	op, legacy, err := p.lookupRefreshOperationForRollout(ctx, identity, key)
 	if errors.Is(err, refreshpostgres.ErrNotFound) {
 		return refreshrun.RunRecord{}, nil, false, nil
 	}
@@ -353,7 +353,7 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	if !ok {
 		// An in-flight or malformed terminal operation is not a replayable
 		// admission. Let the final reserve classify the durable disposition.
-		if op.State != "completed" {
+		if op.State != "completed" && !legacy {
 			return refreshrun.RunRecord{}, nil, false, nil
 		}
 		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
@@ -362,7 +362,7 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	if err != nil {
 		return refreshrun.RunRecord{}, nil, false, err
 	}
-	if root.OperationID != op.OperationID || root.PipelineID != pipelineID.String() {
+	if root.OperationID != op.OperationID || root.PipelineID != pipelineID.String() || (legacy && root.GenerationID != identity.GenerationID) {
 		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
 	}
 	children, err := p.repository.ListChildRuns(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, runID, refreshpostgres.MaxPageSize)
@@ -384,10 +384,31 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	return rootRecord, childRecords, true, nil
 }
 
-func refreshOperationScope(projectID, environment string) string {
+func (p *postgresRunPersistence) lookupRefreshOperationForRollout(ctx context.Context, identity projectgraph.ServingIdentity, key string) (refreshoperation.Record, bool, error) {
+	op, err := p.operations.Get(ctx, refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), key)
+	if err == nil {
+		return op, false, nil
+	}
+	if !errors.Is(err, refreshpostgres.ErrNotFound) {
+		return refreshoperation.Record{}, false, err
+	}
+	op, err = p.operations.Get(ctx, legacyRefreshOperationScope(identity.ProjectID.String(), identity.Environment), key)
+	if err != nil {
+		return refreshoperation.Record{}, false, err
+	}
+	return op, true, nil
+}
+
+func refreshOperationScope(projectID, environment, generationID string) string {
 	// Platform operation scopes are bounded to 255 bytes while authored
-	// project/environment identities may each approach their own maxima. Hash
-	// the canonical pair to preserve separation without truncation collisions.
+	// Project/environment/generation identities may each approach their own
+	// maxima. Hash the canonical tuple to preserve separation without
+	// truncation collisions.
+	digest := sha256.Sum256([]byte(projectID + "\x00" + environment + "\x00" + generationID))
+	return "refresh:" + hex.EncodeToString(digest[:])
+}
+
+func legacyRefreshOperationScope(projectID, environment string) string {
 	digest := sha256.Sum256([]byte(projectID + "\x00" + environment))
 	return "refresh:" + hex.EncodeToString(digest[:])
 }
@@ -574,14 +595,14 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 		}
 		createErr = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
 			acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
-				Scope: refreshOperationScope(root.ProjectID, root.Environment), OperationType: "refresh_pipeline",
+				Scope: refreshOperationScope(root.ProjectID, root.Environment, root.GenerationID), OperationType: "refresh_pipeline",
 				IdempotencyKey: tree.IdempotencyKey, RequestDigest: tree.RequestDigest, OwnerID: root.PrincipalID,
 				Lease: 2 * time.Minute, Retention: 24 * time.Hour,
 			})
 			if acquireErr != nil {
 				return acquireErr
 			}
-			if acquired.Operation.Scope != refreshOperationScope(root.ProjectID, root.Environment) || acquired.Operation.OperationType != "refresh_pipeline" || acquired.Operation.IdempotencyKey != tree.IdempotencyKey || acquired.Operation.RequestDigest != tree.RequestDigest {
+			if acquired.Operation.Scope != refreshOperationScope(root.ProjectID, root.Environment, root.GenerationID) || acquired.Operation.OperationType != "refresh_pipeline" || acquired.Operation.IdempotencyKey != tree.IdempotencyKey || acquired.Operation.RequestDigest != tree.RequestDigest {
 				return refreshpostgres.ErrConflict
 			}
 			if acquired.Status == refreshoperation.Replay || acquired.Replay {
@@ -1085,18 +1106,43 @@ func (p *postgresRunPersistence) CancelRunWithAuditKeyed(ctx context.Context, id
 		return refreshrun.RunRecord{}, false, err
 	}
 	scope := refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID}
+	existing, legacy, lookupErr := p.lookupRefreshOperationForRollout(ctx, identity, idempotencyKey)
+	if lookupErr != nil && !errors.Is(lookupErr, refreshpostgres.ErrNotFound) {
+		return refreshrun.RunRecord{}, false, lookupErr
+	}
+	if lookupErr == nil && legacy {
+		if existing.OperationType != "refresh_pipeline_cancel" || existing.RequestDigest != requestDigest {
+			return refreshrun.RunRecord{}, false, refreshpostgres.ErrConflict
+		}
+		evidenceRunID, evidenceStatus, ok := operationCancelOutcome(existing)
+		if !ok || evidenceRunID != runID || evidenceStatus != refreshrun.RunStatusCancelled {
+			return refreshrun.RunRecord{}, false, refreshpostgres.ErrConflict
+		}
+		replay, replayErr := p.repository.GetRun(ctx, scope, runID)
+		if replayErr != nil {
+			if errors.Is(replayErr, refreshpostgres.ErrNotFound) {
+				return refreshrun.RunRecord{}, false, refreshpostgres.ErrConflict
+			}
+			return refreshrun.RunRecord{}, false, replayErr
+		}
+		if replay.GenerationID != identity.GenerationID || replay.Status != evidenceStatus {
+			return refreshrun.RunRecord{}, false, refreshpostgres.ErrConflict
+		}
+		row, convertErr := fromPostgresRun(replay)
+		return row, true, convertErr
+	}
 	var cancelled refreshpostgres.Run
 	replayed := false
 	err = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
 		acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
-			Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "refresh_pipeline_cancel",
+			Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), OperationType: "refresh_pipeline_cancel",
 			IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actorID,
 			Lease: 2 * time.Minute, Retention: 24 * time.Hour,
 		})
 		if acquireErr != nil {
 			return acquireErr
 		}
-		if acquired.Operation.Scope != refreshOperationScope(identity.ProjectID.String(), identity.Environment) || acquired.Operation.OperationType != "refresh_pipeline_cancel" || acquired.Operation.IdempotencyKey != idempotencyKey || acquired.Operation.RequestDigest != requestDigest {
+		if acquired.Operation.Scope != refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID) || acquired.Operation.OperationType != "refresh_pipeline_cancel" || acquired.Operation.IdempotencyKey != idempotencyKey || acquired.Operation.RequestDigest != requestDigest {
 			return refreshpostgres.ErrConflict
 		}
 		if acquired.Status == refreshoperation.Replay || acquired.Replay {
