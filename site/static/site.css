@@ -178,6 +178,18 @@ a {
   text-decoration: none;
 }
 
+@keyframes site-brand-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .site-brand:is(:hover, :focus-visible) lv-brand-mark {
+    animation: site-brand-spin 800ms ease-in-out both;
+  }
+}
+
 .site-nav-links,
 .site-nav-actions,
 .site-actions {
