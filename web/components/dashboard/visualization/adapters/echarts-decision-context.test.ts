@@ -550,3 +550,32 @@ test('growing a compact chart clears merged legend sizing and preserves selectio
     expect(Math.abs(bounds.x + bounds.width / 2 - 450)).toBeLessThanOrEqual(1)
   } finally { chart.dispose() }
 })
+
+for (const position of ['left', 'right'] as const) {
+  test(`responsive charts preserve the ${position} scrolling legend`, () => {
+    const envelope = cartesianFixture() as any
+    envelope.spec.series = { dataset: 'primary', field: 'series' }
+    envelope.spec.datasets[0].fields.push({ id: 'series', role: 'dimension', dataType: 'string', nullable: false, label: 'Series' })
+    Object.assign(envelope.spec.presentation, { legend: position, dataZoom: false })
+    envelope.dataState.datasets[0].columns = ['label', 'series', 'value']
+    envelope.dataState.datasets[0].rows = ['First', 'Second', 'Third', 'Fourth', 'Fifth'].map(name => ['Jan', name, 1])
+    const source = echartsOption(envelope) as Record<string, any>
+    expect(source.legend).toMatchObject({ type: 'scroll', orient: 'vertical', [position]: 0, bottom: 8 })
+    for (const [width, height] of [[390, 360], [700, 200], [900, 500]]) {
+      const patch = responsiveEChartsPatch(source, width, height)
+      expect(patch.legend).toEqual(source.legend)
+      const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height })
+      try {
+        chart.setOption({ ...source, ...patch })
+        chart.renderToSVGString()
+        const model = (chart as any).getModel().getComponent('legend')
+        const view = (chart as any).getViewOfComponentModel(model)
+        const bounds = view._backgroundEl.getBoundingRect().clone()
+        bounds.applyTransform(view._backgroundEl.getComputedTransform())
+        expect(view._getPageInfo(model).pageCount).toBe(1)
+        expect(bounds.height).toBeGreaterThan(100)
+        expect(position === 'left' ? bounds.x : width - bounds.x - bounds.width).toBeCloseTo(0)
+      } finally { chart.dispose() }
+    }
+  })
+}
