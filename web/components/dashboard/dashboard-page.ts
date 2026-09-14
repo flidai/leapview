@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
 import type {
   AgentContextSignal,
@@ -388,6 +389,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
+      .route > .main { isolation: isolate; }
+
       .route > .header {
         grid-column: 1;
         grid-row: 1;
@@ -409,7 +412,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
+      @media (max-width: 480px) {
+        :host(:not([presentation='embed'])) .header { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
+        :host(:not([presentation='embed'])) .dashboard-heading { width: 100%; }
+        :host(:not([presentation='embed'])) .breadcrumb-dashboard .breadcrumb-label { white-space: normal; }
+        :host(:not([presentation='embed'])) .actions { justify-self: end; }
+      }
+
       :host(:not([presentation='embed'])) .actions {
+        margin-inline-start: auto;
         gap: var(--base-size-4);
       }
 
@@ -1112,7 +1123,12 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private renderCanvasComponent(component: DashboardComponentSignal) {
     const filterVisual = component.kind === 'slicer'
-    const visualType = component.visual ? this.visuals[component.visual]?.spec.kind ?? '' : ''
+    const visual = component.visual ? this.visuals[component.visual] : undefined
+    const visualType = visual?.spec.kind ?? ''
+    const rowCount = visual?.dataState.kind === 'inline' ? visual.dataState.datasets[0]?.rows.length
+      : visual?.dataState.kind === 'windowed' ? visual.dataState.availableRows : undefined
+    const mobileTableHeight = ['table', 'matrix', 'pivot'].includes(visualType) && rowCount !== undefined
+      ? `${Math.min(400, 180 + Math.max(1, rowCount) * 38)}px` : undefined
 		const currentPage = this.renderSnapshot?.page ?? this.page
 		const askReference = currentPage ? this.agentReference(component, currentPage) : undefined
 		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.kind === askReference.reference.kind
@@ -1122,6 +1138,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
                 data-canvas-visual
                 data-component-kind=${component.kind}
                 data-visual-type=${visualType}
+                style=${styleMap({ '--lv-mobile-table-height': mobileTableHeight })}
                 data-slicer-style=${component.kind === 'slicer' ? component.presentation?.style ?? '' : nothing}
 		data-visual-id=${component.visual || nothing}
         ?data-canvas-filter-visual=${filterVisual}

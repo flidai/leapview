@@ -456,3 +456,97 @@ function cartesianFixture(): VisualizationEnvelope {
     selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }
+
+test('reference line labels use readable theme colors without an automatic text outline', () => {
+  const envelope = cartesianFixture() as any
+  envelope.spec.referenceLines = [{ id: 'floor', axis: 'primary_y', value: { kind: 'number', value: 5140000 }, label: 'Minimum cash: $5.14M', tone: 'danger' }]
+  for (const theme of ['light', 'dark'] as const) {
+    const context = { ...defaultRendererContext, theme, colors: { ...defaultRendererContext.colors, foreground: theme === 'dark' ? '#f0f6fc' : '#1f2328', surface: theme === 'dark' ? '#151b23' : '#ffffff' } }
+    const option = echartsOption(envelope, context) as any
+    expect(option.series[0].markLine.label).toMatchObject({ color: context.colors.foreground, backgroundColor: context.colors.surface, textBorderWidth: 0, textShadowBlur: 0 })
+    expect(option.series[0].markLine.data[0]).toMatchObject({ yAxis: 5140000, lineStyle: { color: context.colors.danger } })
+  }
+})
+
+test('compact chart legends page long series labels and restore desktop layout', () => {
+  const option = { grid: { bottom: 30 }, legend: { bottom: 0, textStyle: { color: '#aaa' }, data: ['Monthly revenue', 'Budget revenue', 'Forecast revenue'] } }
+  expect(responsiveEChartsPatch(option, 366, 320).legend).toMatchObject({ type: 'scroll', left: 'center', width: 350, pageIconColor: '#aaa' })
+  expect(responsiveEChartsPatch(option, 900, 500).legend).toMatchObject({ ...option.legend, type: 'scroll', width: 'auto', height: 'auto' })
+})
+
+test('outside horizontal bar labels stay visible when only negative values remain', () => {
+  const envelope = cartesianFixture() as any
+  envelope.spec.mark = 'bar'
+  Object.assign(envelope.spec.presentation, { orientation: 'horizontal', labelPosition: 'outside', dataZoom: false, stacking: 'normal' })
+  envelope.spec.datasets[0].fields[1].label = 'Increases'
+  envelope.spec.datasets[0].fields.push({ ...envelope.spec.datasets[0].fields[1], id: 'negative', label: 'Decreases' })
+  envelope.spec.y.push({ dataset: 'primary', field: 'negative' })
+  envelope.dataState.datasets[0].columns.push('negative')
+  envelope.dataState.datasets[0].rows = [['Revenue', null, -6082954.05], ['Operations', null, -106276.91], ['Cost savings', 5503353.36, null]]
+  for (const width of [358, 600]) {
+    const source = echartsOption(envelope) as Record<string, any>
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height: 360 })
+    try {
+      chart.setOption({ ...source, ...responsiveEChartsPatch(source, width, 360) })
+      for (const negativeOnly of [false, true]) {
+        if (negativeOnly) chart.dispatchAction({ type: 'legendUnSelect', name: 'Increases' })
+        chart.renderToSVGString()
+        const labels = chart.getZr().storage.getDisplayList()
+          .filter((bar: any) => bar.type === 'rect' && typeof bar.getTextContent?.()?.style?.text === 'string')
+          .map((bar: any) => bar.getTextContent())
+        expect(labels.length).toBeGreaterThanOrEqual(2)
+        for (const label of labels) {
+          const bounds = globalTextBounds(label)
+          expect(bounds.x, label.style.text).toBeGreaterThanOrEqual(0)
+          expect(bounds.x + bounds.width, `${width} ${negativeOnly} ${label.style.text}`).toBeLessThanOrEqual(width)
+        }
+      }
+    } finally { chart.dispose() }
+  }
+})
+
+test('compact bottom legends center both fitting and paginated content', () => {
+  const names = ['Base collections', 'Base supplier payments', 'Base net cash flow']
+  const source = { grid: { bottom: 40 }, legend: { bottom: 0 }, xAxis: { type: 'category', data: ['W01'] }, yAxis: {}, series: names.map(name => ({ type: 'bar', name, data: [1] })) }
+  for (const width of [700, 320]) {
+    const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width, height: 200 })
+    try {
+      chart.setOption({ ...source, ...responsiveEChartsPatch(source, width, 200) } as any)
+      chart.renderToSVGString()
+      const model = (chart as any).getModel().getComponent('legend')
+      const view = (chart as any).getViewOfComponentModel(model)
+      // The background measures the visible scroll viewport, excluding clipped items.
+      const bounds = view._backgroundEl.getBoundingRect().clone()
+      bounds.applyTransform(view._backgroundEl.getComputedTransform())
+      expect(Math.abs(bounds.x + bounds.width / 2 - width / 2)).toBeLessThanOrEqual(1)
+      expect(bounds.x).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+      if (width === 320) expect(view._getPageInfo(model).pageCount).toBeGreaterThan(1)
+      else expect(view._getPageInfo(model).pageCount).toBe(1)
+    } finally { chart.dispose() }
+  }
+})
+
+
+test('growing a compact chart clears merged legend sizing and preserves selection', () => {
+  const names = ['Base collections', 'Base supplier payments', 'Base net cash flow']
+  const source = { grid: { bottom: 40 }, legend: { bottom: 0 }, xAxis: { type: 'category', data: ['W01'] }, yAxis: {}, series: names.map(name => ({ type: 'bar', name, data: [1] })) }
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 200 })
+  try {
+    chart.setOption({ ...source, ...responsiveEChartsPatch(source, 320, 200) } as any)
+    chart.dispatchAction({ type: 'legendUnSelect', name: names[1] })
+    chart.resize({ width: 900, height: 500 })
+    chart.setOption(responsiveEChartsPatch(source, 900, 500))
+    chart.renderToSVGString()
+    const legend = (chart.getOption() as any).legend[0]
+    expect(legend.type).toBe('scroll')
+    expect(legend.width).toBe('auto')
+    expect(legend.selected[names[1]]).toBe(false)
+    const model = (chart as any).getModel().getComponent('legend')
+    const view = (chart as any).getViewOfComponentModel(model)
+    const bounds = view._backgroundEl.getBoundingRect().clone()
+    bounds.applyTransform(view._backgroundEl.getComputedTransform())
+    expect(bounds.width).toBeGreaterThan(320)
+    expect(Math.abs(bounds.x + bounds.width / 2 - 450)).toBeLessThanOrEqual(1)
+  } finally { chart.dispose() }
+})

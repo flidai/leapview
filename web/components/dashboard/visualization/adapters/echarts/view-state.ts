@@ -33,7 +33,7 @@ export function responsiveEChartsPatch(option: Record<string, any>, width: numbe
     }
   })
   const patch: Record<string, any> = { grid: Array.isArray(option.grid) ? grid : grid[0] }
-  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend) : option.legend
+  if (option.legend !== undefined) patch.legend = compact ? compactLegend(option.legend, width) : desktopLegend(option.legend)
   if (option.dataZoom !== undefined) patch.dataZoom = compact
     ? compactDataZoom(option.dataZoom, bottomLegend, option.visualMap !== undefined)
     : stripDataZoomNavigation(option.dataZoom)
@@ -62,12 +62,31 @@ function hasSliderDataZoom(value: unknown): boolean {
   return value.some((entry) => entry && typeof entry === 'object' && !Array.isArray(entry) && (entry as Record<string, unknown>).type === 'slider')
 }
 
-function compactLegend(value: unknown): unknown {
+function desktopLegend(value: unknown): unknown {
   const legends = Array.isArray(value) ? value : [value]
   const result = legends.map((entry) => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
     const legend = entry as Record<string, unknown>
-    return legend.bottom === undefined ? legend : { ...legend, bottom: 0 }
+    // Clear compact sizing, retaining the scroll component and its selection state.
+    return legend.bottom === undefined ? legend : {
+      type: 'scroll', left: 'center', right: 'auto', width: 'auto', height: 'auto', ...legend,
+    }
+  })
+  return Array.isArray(value) ? result : result[0]
+}
+
+function compactLegend(value: unknown, width: number): unknown {
+  const legends = Array.isArray(value) ? value : [value]
+  const result = legends.map((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry
+    const legend = entry as Record<string, unknown>
+    return legend.bottom === undefined ? legend : {
+      ...legend,
+      type: 'scroll', bottom: 0, left: 'center', right: 'auto',
+      width: Math.max(0, width - 16), height: 24,
+      pageIconColor: (legend.textStyle as Record<string, unknown> | undefined)?.color,
+      pageTextStyle: legend.textStyle,
+    }
   })
   return Array.isArray(value) ? result : result[0]
 }
