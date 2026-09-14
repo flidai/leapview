@@ -4,6 +4,7 @@
   --project-code-key: #9ccaff;
   --project-code-value: #d2a8ff;
   --project-code-sql: #7ee4ba;
+  --project-code-comment: #7fb278;
   position: relative;
   padding: 105px clamp(20px, 5vw, 78px) 100px;
   border-top: 1px solid var(--border);
@@ -14,6 +15,7 @@
   --project-code-key: #0550ae;
   --project-code-value: #8250df;
   --project-code-sql: #1a7f37;
+  --project-code-comment: #27803c;
 }
 .project-inner { width: min(100%, 1320px); margin: 0 auto; }
 .project-heading h2 { margin: 0; font-size: clamp(40px, 3.9vw, 54px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
@@ -21,19 +23,18 @@
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }
 .project-tabs { display: flex; min-width: 0; overflow-x: auto; overscroll-behavior-inline: contain; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--frame-bg) 82%, var(--bg)); scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
-.project-tabs button { display: flex; flex: 1 0 180px; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; min-height: 65px; padding: 12px 15px 10px; border: 0; border-right: 1px solid var(--border); border-bottom: 2px solid transparent; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
+.project-tabs button { display: flex; flex: 1 0 170px; align-items: center; gap: 9px; min-width: 0; min-height: 42px; padding: 0 13px; border: 0; border-right: 1px solid var(--border); border-top: 2px solid transparent; background: transparent; color: var(--muted); text-align: left; cursor: pointer; }
 .project-tabs button:last-child { border-right: 0; }
 .project-tabs button:hover { background: var(--glow); color: var(--ink); }
-.project-tabs button[aria-selected="true"] { border-bottom-color: var(--accent); background: var(--bg); color: var(--ink); }
+.project-tabs button[aria-selected="true"] { border-top-color: var(--accent); background: var(--bg); color: var(--ink); }
 .project-tabs button:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--accent); outline-offset: -3px; }
-.project-tab-kind { color: var(--accent); font: 750 9px/1.2 var(--fontStack-monospace); letter-spacing: .08em; white-space: nowrap; }
-.project-tab-filename { max-width: 100%; overflow: hidden; font: 12px/1.2 var(--fontStack-monospace); text-overflow: ellipsis; white-space: nowrap; }
+.project-yaml-icon { display: inline-grid; place-items: center; width: 16px; height: 18px; flex: none; border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent); border-radius: 2px; color: var(--accent); font: 750 10px/1 var(--fontStack-monospace); }
+.project-tab-filename { min-width: 0; overflow: hidden; font: 12px/1.2 var(--fontStack-monospace); text-overflow: ellipsis; white-space: nowrap; }
 
 .project-editor { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
-.project-editor-intro { display: flex; justify-content: space-between; gap: 20px; min-height: 122px; padding: 18px 30px 20px; border-bottom: 1px solid var(--border); }
-.project-file-step { color: var(--accent); font-size: 9px; font-weight: 800; letter-spacing: .15em; }
-.project-editor-intro h3 { margin: 7px 0 0; color: var(--ink); font-size: 20px; font-weight: 600; line-height: 1.2; letter-spacing: -.025em; }
-.project-editor-intro p { max-width: 660px; margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.project-editor-breadcrumb { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; padding: 0 20px; color: var(--muted); font: 11px/1.2 var(--fontStack-monospace); }
+.project-editor-breadcrumb > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-editor-language { flex: none; color: var(--accent); font-size: 9px; font-weight: 750; letter-spacing: .08em; }
 .project-line-count { flex: none; padding-top: 3px; color: var(--muted); font: 750 9px/1.5 var(--fontStack-monospace); letter-spacing: .06em; }
 .project-code-scroll { height: 402px; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
 .project-code-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
@@ -45,9 +46,10 @@
 .project-syntax-key { color: var(--project-code-key); }
 .project-syntax-value { color: var(--project-code-value); }
 .project-syntax-sql { color: var(--project-code-sql); }
-.project-syntax-comment { color: var(--muted); font-style: italic; }
+.project-syntax-comment { color: var(--project-code-comment); }
 .project-editor-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 43px; padding: 0 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .13em; }
 .project-editor-footer i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 11px var(--glow); }
+.project-editor-footer .project-line-count { margin-left: auto; padding-top: 0; }
 .project-editor-footer a { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .project-editor-footer a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .project-footnote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; margin: 18px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -62,12 +64,9 @@
   .project-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .project-heading > p:last-child { max-width: 360px; margin-top: 12px; font-size: 13px; }
   .project-explorer { margin-top: 35px; }
-  .project-tabs button { flex-basis: 165px; min-height: 61px; padding-inline: 11px; }
-  .project-tab-kind { font-size: 8px; }
+  .project-tabs button { flex-basis: 157px; min-height: 42px; padding-inline: 11px; }
   .project-tab-filename { font-size: 11px; }
-  .project-editor-intro { min-height: 120px; padding: 15px 14px; }
-  .project-editor-intro h3 { font-size: 18px; }
-  .project-editor-intro p { font-size: 11px; }
+  .project-editor-breadcrumb { min-height: 32px; padding-inline: 12px; font-size: 10px; }
   .project-line-count { font-size: 8px; white-space: nowrap; }
   .project-code-scroll { height: 370px; }
   .project-code { font-size: 11px; }

@@ -74,8 +74,17 @@ function renderLine(line, container) {
   container.textContent = line;
 }
 
-function renderSource(source) {
-  const lines = source.trimEnd().split('\n');
+function renderSource(source, file) {
+  const comments = [`# ${file.step}`, `# ${file.title}`];
+  let comment = '#';
+  for (const word of file.summary.split(' ')) {
+    if (`${comment} ${word}`.length > 42 && comment !== '#') {
+      comments.push(comment);
+      comment = '#';
+    }
+    comment += ` ${word}`;
+  }
+  const lines = [...comments, comment, '', ...source.trimEnd().split('\n')];
   const fragment = document.createDocumentFragment();
   lines.forEach((line, index) => {
     const row = document.createElement('span');
@@ -107,14 +116,12 @@ async function selectFile(key) {
   });
   panel.setAttribute('aria-labelledby', selectedTab.id);
   revealTab(selectedTab);
-  document.querySelector('#project-file-step').textContent = file.step;
-  document.querySelector('#project-file-title').textContent = file.title;
-  document.querySelector('#project-file-summary').textContent = file.summary;
+  document.querySelector('#project-file-path').textContent = `sales-project / ${file.path.replace('/', ' / ')}`;
   document.querySelector('#project-source-link').href = `https://github.com/flidai/leapview/blob/main/dashboards/${file.path}`;
   codeScroll.setAttribute('aria-label', `${file.path} source code`);
 
   if (fileCache.has(key)) {
-    renderSource(fileCache.get(key));
+    renderSource(fileCache.get(key), file);
     return;
   }
   code.textContent = 'Loading file…';
@@ -124,11 +131,10 @@ async function selectFile(key) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const source = await response.text();
     fileCache.set(key, source);
-    if (selection === latestSelection) renderSource(source);
+    if (selection === latestSelection) renderSource(source, file);
   } catch {
     if (selection === latestSelection) {
       code.textContent = 'Could not load this file. View the source on GitHub instead.';
-      document.querySelector('#project-file-summary').textContent = 'This local preview file could not be loaded.';
     }
   }
 }
