@@ -118,6 +118,72 @@ keys.
 
 This provides authoritative artifact admission resolution. It does not execute a release transition.
 
+### Immutable migration compatibility owner evidence
+
+`migration-compatibility/v2` is the immutable handoff contract between the
+Goose, River/jobs, DuckLake, and PhysicalPool owners and the release-transition
+preflight. Each owner produces a separate canonical evidence envelope after it
+has independently resolved the same exact transition binding:
+
+- the predecessor OCI admission digest;
+- the candidate OCI admission digest; and
+- the digest of the deployment-target identity.
+
+The aggregate contract derives its binding from the Goose envelope and
+requires byte-for-byte agreement from the other three owners. It does not
+accept a separate caller binding. Each envelope also includes the fixed owner
+identity, supported owner-contract version, explicit compatibility verdict,
+the owner's version state, and a domain-separated SHA-256 digest. DuckLake and
+PhysicalPool must report identical predecessor and candidate physical-pool
+tuples. Missing, stale, ambiguous, or conflicting owner evidence fails closed.
+
+Canonical JSON follows the declared struct field order and contains no omitted
+or optional fields. Owner digests use
+`leapview/migration-compatibility/v2/owner/<owner-identity>\n`; the complete
+document digest uses `leapview/migration-compatibility/v2\n`. The checked-in
+canonical-byte and digest vector freezes this representation. Version 2 is a
+new contract and never reinterprets `migration-compatibility/v1` evidence.
+
+Parsing verifies canonical encoding, internal binding consistency, and digest
+integrity. Those checks do not establish provenance by themselves. Production
+composition must obtain each envelope directly from its concrete subsystem
+owner, which must resolve the artifact admissions and deployment target from
+authoritative state before creating the envelope. Caller-created projections
+must not cross that boundary.
+
+This provides authoritative migration compatibility evidence binding. It does not execute a release transition.
+
+### Concrete migration compatibility owners
+
+The PostgreSQL-era owner adapters produce the four
+`migration-compatibility/v2` envelopes from subsystem-owned state. Their
+production input is a set of lookup selectors only: exact predecessor and
+candidate OCI references, a deployment-target ID, and a physical-pool ID.
+There is no input field for an admission digest, target digest, compatibility
+verdict, version projection, or owner envelope.
+
+Each adapter independently resolves both immutable OCI admissions from the
+release authority and the exact target revision from the deployment authority.
+It then reads its own compatibility state:
+
+- Goose compares the installed control-schema revision with the migration set
+  embedded in the running candidate;
+- River/jobs compares River's installed ledger and the Goose-owned job-history
+  fence with their embedded candidate revisions;
+- DuckLake reads the current catalog tuple and catalog schema, then resolves
+  the candidate extension from the reviewed extension supply; and
+- PhysicalPool verifies the current and candidate tuples against exact,
+  immutable pool admissions for the target's isolation boundary.
+
+The artifact admissions and target revision are resolved again after the
+subsystem read. A changed or revoked authority record, missing admission,
+unadmitted candidate tuple, target mismatch, partial migration ledger, or
+unsupported owner state prevents the adapter from emitting an envelope.
+Compatibility differences remain explicit and fail the aggregate transition
+closed; the adapters do not infer or execute a migration.
+
+This provides authoritative migration compatibility resolution. It does not execute a release transition.
+
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
 not infer cross-version safety from tuple equality. A binary policy also binds
