@@ -45,7 +45,7 @@ class SiteThemeToggle extends LitElement {
       padding: 0;
       border: 0;
       border-radius: 50%;
-      background: transparent;
+      background: var(--lv-bg-control);
       color: var(--lv-fg-muted);
       cursor: pointer;
       font: inherit;
