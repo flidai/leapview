@@ -106,6 +106,29 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
   } finally {
     await page.close()
   }
+}, 10_000)
+
+test('homepage hero ends at the screenshot on wide screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } })
+  try {
+    await page.goto(baseURL)
+    for (const [width, height] of [[1920, 1080], [2560, 1440]]) {
+      await page.setViewportSize({ width, height })
+      const wide = await page.evaluate(() => {
+        const hero = document.querySelector('.hero')!.getBoundingClientRect()
+        const copy = document.querySelector('.hero-copy')!.getBoundingClientRect()
+        const screenshot = document.querySelector('.product-frame')!.getBoundingClientRect()
+        return { heroBottom: hero.bottom, screenshotBottom: screenshot.bottom, screenshotLeft: screenshot.left, screenshotRight: screenshot.right, copyLeft: copy.left }
+      })
+      expect(wide.heroBottom - wide.screenshotBottom).toBeLessThan(3)
+      expect(wide.heroBottom).toBeLessThan(1100)
+      expect(wide.screenshotRight).toBeLessThan(width - 20)
+      expect(wide.screenshotLeft - wide.copyLeft).toBeGreaterThan(400)
+      expect(wide.screenshotLeft - wide.copyLeft).toBeLessThan(430)
+    }
+  } finally {
+    await page.close()
+  }
 })
 
 test('homepage flow field draws in and respects reduced motion', async () => {

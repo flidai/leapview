@@ -101,22 +101,21 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 .hero-glow { background: linear-gradient(to bottom, transparent 68%, var(--bg)); }
 @media (max-width: 900px) { .site-flow-field { height: min(100%, 800px); } }
 
-/* Match Mintlify's first-screen proportions without scaling away the product. */
+/* Keep the section's edge at the screenshot instead of stretching to tall viewports. */
+.hero { min-height: 0; }
+
+/* Center the editorial layout and product proof together on wide screens. */
 @media (min-width: 1101px) {
-  .hero-inner { padding-top: 96px; padding-bottom: 0; }
+  .hero-inner { width: min(100%, 1440px); max-width: 1440px; padding-top: 96px; padding-bottom: 0; }
   .product-stage {
-    width: min(71.2vw, 1025px);
+    width: min(73.3vw, 1055px);
     margin-top: -72px;
-    margin-right: calc(-1 * clamp(130px, 11.75vw, 220px));
+    margin-right: calc(-1 * clamp(130px, 13.82vw, 199px));
   }
 }
 
-@media (min-width: 1101px) and (max-width: 1299px) {
-  .product-stage { margin-right: calc(-1 * clamp(130px, 11.75vw, 220px)); }
-}
-
 @media (min-width: 801px) and (max-width: 1100px) {
-  .hero-inner { padding-top: 100px; padding-bottom: 30px; }
+  .hero-inner { padding-top: 100px; padding-bottom: 0; }
   .product-stage { width: min(85vw, 850px); margin-top: 35px; }
 }
 
