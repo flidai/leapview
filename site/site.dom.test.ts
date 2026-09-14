@@ -90,6 +90,13 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
 
     await page.locator('#mission').scrollIntoViewIfNeeded()
     await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'data', undefined, { timeout: 8000 })
+    const cursorOffset = await page.evaluate(() => {
+      const subject = document.querySelector('.mission-subject')!.getBoundingClientRect()
+      const cursor = document.querySelector('.mission-cursor')!.getBoundingClientRect()
+      return cursor.left - subject.right
+    })
+    expect(cursorOffset).toBeGreaterThanOrEqual(0)
+    expect(cursorOffset).toBeLessThan(8)
     expect(await page.locator('#mission-title').getAttribute('aria-label')).toBe('Your business intelligence should belong to your business.')
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'business intelligence')
