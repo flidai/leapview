@@ -7,7 +7,7 @@
   position: relative;
   padding: 105px clamp(20px, 5vw, 78px) 100px;
   border-top: 1px solid var(--border);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   scroll-margin-top: 72px;
 }
 :scope.is-light .project-section {
