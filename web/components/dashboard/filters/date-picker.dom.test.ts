@@ -496,3 +496,33 @@ test('narrow filter cards retain full labels and compact slicers keep both date 
     expect(result).toEqual({ emptyClearCount: 0, titleFits: true, boundsVisible: true, activeClearCount: 1 })
   } finally { await page.close() }
 })
+
+
+test('auto-height range slicers settle without resizing between stacked and inline layouts', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 1000 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-slicer'))
+    await page.evaluate(async () => {
+      const slicer = document.createElement('lv-slicer') as any
+      slicer.style.width = '366px'
+      slicer.autoHeight = true
+      slicer.definition = { id: 'period', label: 'Reporting period', valueKind: 'date', predicates: [{ kind: 'range', operators: [] }], options: { kind: 'none', limit: 0, values: [] } }
+      slicer.binding = { key: 'period', readerEditable: true, default: { kind: 'unfiltered' } }
+      slicer.presentation = { style: 'date_range', search: false, selectAll: false, showCounts: false, showSummary: false, compact: false }
+      document.body.append(slicer)
+      await slicer.updateComplete
+    })
+    await page.waitForTimeout(100)
+    const heights: number[] = []
+    for (let index = 0; index < 8; index++) {
+      heights.push(await page.locator('lv-slicer').evaluate(element => element.getBoundingClientRect().height))
+      await page.waitForTimeout(30)
+    }
+    expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(1)
+    expect(Math.max(...heights)).toBeLessThan(120)
+    expect(await page.getByRole('button', { name: /^(Start|End) date/ }).count()).toBe(2)
+  } finally {
+    await page.close()
+  }
+})

@@ -157,3 +157,33 @@ SELECT predecessor_artifact_digest, candidate_artifact_digest,
        policy_version, policy_digest, policy_json::text, published_at
 FROM release.release_transition_policy
 WHERE predecessor_artifact_digest = $1 AND candidate_artifact_digest = $2;
+
+-- OCI artifact admission authority. Publication and revocation are append-only;
+-- runtime resolution loads canonical evidence and any independent revocation.
+
+-- name: InsertOCIArtifactAdmission :execrows
+INSERT INTO release.oci_artifact_admission
+    (artifact_reference, repository_identity, oci_digest, admission_version,
+     admission_digest, admission_bytes, admitted_at)
+VALUES (sqlc.arg(artifact_reference), sqlc.arg(repository_identity), sqlc.arg(oci_digest),
+        sqlc.arg(admission_version), sqlc.arg(admission_digest),
+        sqlc.arg(admission_bytes), sqlc.arg(admitted_at))
+ON CONFLICT DO NOTHING;
+
+-- name: GetOCIArtifactAdmission :one
+SELECT a.artifact_reference, a.repository_identity, a.oci_digest,
+       a.admission_version, a.admission_digest, a.admission_bytes,
+       a.admitted_at, a.published_at,
+       r.admission_digest AS revoked_admission_digest,
+       r.revoked_at, r.reason AS revocation_reason
+FROM release.oci_artifact_admission a
+LEFT JOIN release.oci_artifact_admission_revocation r
+  ON r.artifact_reference = a.artifact_reference
+WHERE a.artifact_reference = $1;
+
+-- name: InsertOCIArtifactAdmissionRevocation :execrows
+INSERT INTO release.oci_artifact_admission_revocation
+    (artifact_reference, admission_digest, revoked_at, reason)
+VALUES (sqlc.arg(artifact_reference), sqlc.arg(admission_digest),
+        sqlc.arg(revoked_at), sqlc.arg(reason))
+ON CONFLICT (artifact_reference) DO NOTHING;

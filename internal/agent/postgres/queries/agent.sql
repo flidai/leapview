@@ -74,8 +74,9 @@ RETURNING id, principal_id, title, status, metadata_json::text, transcript_json:
           transcript_revision, created_at, updated_at, archived_at;
 
 -- name: UpdatePendingConversationMetadata :execrows
+-- Undo bookkeeping is not conversation activity; preserve history ordering.
 UPDATE agent.conversations
-SET metadata_json = sqlc.arg(metadata_json)::jsonb, updated_at = clock_timestamp()
+SET metadata_json = sqlc.arg(metadata_json)::jsonb
 WHERE id = sqlc.arg(conversation_id) AND principal_id = sqlc.arg(principal_id)
   AND status IN ('active', 'archived')
   AND COALESCE(metadata_json #>> '{_leapview_chat,deletedAt}', '') = '';
