@@ -7,10 +7,10 @@ metadata:
   description: Planning-scenario dimension used by the cash forecast facts.
 spec:
   fields:
-    scenario: {datatype: String, label: Scenario}
-    scenario_group: {datatype: String, label: View}
-    collection_factor: {datatype: Decimal, label: Collection factor}
-    payment_factor: {datatype: Decimal, label: Payment factor}
+    - {name: scenario, datatype: String, label: Scenario}
+    - {name: scenario_group, datatype: String, label: View}
+    - {name: collection_factor, datatype: Decimal, label: Collection factor}
+    - {name: payment_factor, datatype: Decimal, label: Payment factor}
   definition:
     type: sql
     sql: |
@@ -32,7 +32,7 @@ spec:
       FROM scenarios
       INNER JOIN source_anchor ON true
   entities:
-    cash_scenario:
+    - name: cash_scenario
       type: primary
       fields: [scenario]
   grain:

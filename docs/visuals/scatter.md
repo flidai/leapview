@@ -12,7 +12,7 @@ Place delivery time on X and order revenue on Y. Status supplies a categorical l
 
 ```yaml visual-example=delivery_scatter
 visuals:
-  delivery_scatter:
+  - id: delivery_scatter
     title: Delivery time vs order revenue
     type: scatter
     query:
@@ -62,7 +62,7 @@ Add delivery duration and review score as the two quantitative axes, with catego
 
 ```yaml visual-example=delivery_scatter_status
 visuals:
-  delivery_scatter_status:
+  - id: delivery_scatter_status
     title: Review, revenue, and delivery bubble chart
     type: scatter
     query:
@@ -104,7 +104,7 @@ Time is a first-class X channel rather than a category label. This deliberately 
 
 ```yaml visual-example=delivery_scatter_labeled
 visuals:
-  delivery_scatter_labeled:
+  - id: delivery_scatter_labeled
     title: Labeled revenue by purchase time
     type: scatter
     query:

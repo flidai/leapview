@@ -318,7 +318,7 @@ spec:
   semanticModel: sales
   filters: []
   visuals:
-    revenue:
+    - id: revenue
       type: bar
       title: Revenue
       query:

@@ -1127,6 +1127,7 @@ type DatasetCheckUniqueVariant struct {
 }
 
 type DatasetField struct {
+	Name                     string                     `json:"name" yaml:"name"`
 	Datatype                 *string                    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
 	Label                    *string                    `json:"label,omitempty" yaml:"label,omitempty"`
 	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
@@ -1153,6 +1154,7 @@ type DeltaReaderOptions struct {
 }
 
 type DerivedSemanticMetric struct {
+	Name                 string     `json:"name" yaml:"name"`
 	Type                 string     `json:"type" yaml:"type"`
 	Expression           string     `json:"expression" yaml:"expression"`
 	Label                *string    `json:"label,omitempty" yaml:"label,omitempty"`
@@ -1317,6 +1319,7 @@ type LessThanSemanticFilter struct {
 }
 
 type LocalSemanticDimension struct {
+	Name                 string                 `json:"name" yaml:"name"`
 	Field                *string                `json:"field,omitempty" yaml:"field,omitempty"`
 	Label                *string                `json:"label,omitempty" yaml:"label,omitempty"`
 	Description          *string                `json:"description,omitempty" yaml:"description,omitempty"`
@@ -1511,6 +1514,7 @@ type ModelDefinitionBase struct {
 }
 
 type ModelEntity struct {
+	Name        string     `json:"name" yaml:"name"`
 	Type        string     `json:"type" yaml:"type"`
 	Fields      []string   `json:"fields" yaml:"fields"`
 	Description *string    `json:"description,omitempty" yaml:"description,omitempty"`
@@ -1533,6 +1537,11 @@ type ModelSpec struct {
 type MySQLConnection struct {
 	ConnectionSpecBase
 	Type string `json:"type" yaml:"type"`
+}
+
+type NamedSemanticFilter struct {
+	Name       string         `json:"name" yaml:"name"`
+	Definition SemanticFilter `json:"definition" yaml:"definition"`
 }
 
 type NamedSemanticRelationshipEndpoint struct {
@@ -2069,6 +2078,7 @@ type R2Connection struct {
 }
 
 type RatioSemanticMetric struct {
+	Name                 string     `json:"name" yaml:"name"`
 	Type                 string     `json:"type" yaml:"type"`
 	Numerator            string     `json:"numerator" yaml:"numerator"`
 	Denominator          string     `json:"denominator" yaml:"denominator"`
@@ -2162,6 +2172,7 @@ type SemanticAccessFilter struct {
 }
 
 type SemanticAccessGrant struct {
+	Name          string                `json:"name" yaml:"name"`
 	UserAttribute string                `json:"userAttribute" yaml:"userAttribute"`
 	AllowedValues SemanticAllowedValues `json:"allowedValues" yaml:"allowedValues"`
 }
@@ -2216,6 +2227,7 @@ func (value *SemanticAllowedValues) UnmarshalJSON(data []byte) error {
 }
 
 type SemanticDataset struct {
+	Name                 string                             `json:"name" yaml:"name"`
 	Model                string                             `json:"model" yaml:"model"`
 	DefaultTimeDimension *string                            `json:"defaultTimeDimension,omitempty" yaml:"defaultTimeDimension,omitempty"`
 	DisplayName          *string                            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
@@ -2228,6 +2240,7 @@ type SemanticDataset struct {
 }
 
 type SemanticDimension struct {
+	Name                 string                              `json:"name" yaml:"name"`
 	Label                *string                             `json:"label,omitempty" yaml:"label,omitempty"`
 	Description          *string                             `json:"description,omitempty" yaml:"description,omitempty"`
 	AiContext            *AIContext                          `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
@@ -2238,8 +2251,9 @@ type SemanticDimension struct {
 }
 
 type SemanticDimensionBinding struct {
-	Field string    `json:"field" yaml:"field"`
-	Path  *[]string `json:"path,omitempty" yaml:"path,omitempty"`
+	Dataset string    `json:"dataset" yaml:"dataset"`
+	Field   string    `json:"field" yaml:"field"`
+	Path    *[]string `json:"path,omitempty" yaml:"path,omitempty"`
 }
 
 type SemanticFilterVariant interface {
@@ -2868,6 +2882,9 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["expression"]; !ok {
 			return fmt.Errorf("decode SemanticMetric variant %q: required property expression is missing", tag.Value)
 		}
+		if _, ok := fields["name"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property name is missing", tag.Value)
+		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode SemanticMetric variant %q: required property type is missing", tag.Value)
 		}
@@ -2879,6 +2896,9 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 	case "ratio":
 		if _, ok := fields["denominator"]; !ok {
 			return fmt.Errorf("decode SemanticMetric variant %q: required property denominator is missing", tag.Value)
+		}
+		if _, ok := fields["name"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property name is missing", tag.Value)
 		}
 		if _, ok := fields["numerator"]; !ok {
 			return fmt.Errorf("decode SemanticMetric variant %q: required property numerator is missing", tag.Value)
@@ -2997,6 +3017,7 @@ type SemanticModelSpec struct {
 }
 
 type SemanticRelationship struct {
+	Name        string                       `json:"name" yaml:"name"`
 	From        SemanticRelationshipEndpoint `json:"from" yaml:"from"`
 	To          SemanticRelationshipEndpoint `json:"to" yaml:"to"`
 	Description *string                      `json:"description,omitempty" yaml:"description,omitempty"`
@@ -3116,6 +3137,7 @@ type SemanticTimeSemantics struct {
 }
 
 type SimpleSemanticMetric struct {
+	Name                 string     `json:"name" yaml:"name"`
 	Type                 string     `json:"type" yaml:"type"`
 	Agg                  string     `json:"agg" yaml:"agg"`
 	Field                *string    `json:"field,omitempty" yaml:"field,omitempty"`

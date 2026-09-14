@@ -6,24 +6,24 @@ metadata:
   displayName: Governed Sales
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders
       defaultTimeDimension: purchase_date
       metrics:
-        order_count:
+        - name: order_count
           type: simple
           empty: zero
           label: Orders
           agg: count_distinct
           field: order_id
-        revenue:
+        - name: revenue
           type: simple
           empty: zero
           label: Revenue
           format: currency
           agg: sum
       dimensions:
-        purchase_date:
+        - name: purchase_date
           datatype: Date
           time:
             nativeGrain: day
@@ -32,14 +32,14 @@ spec:
               - week
               - month
             calendar: iso8601
-        state:
+        - name: state
           datatype: String
-        category:
+        - name: category
           datatype: String
-        status:
+        - name: status
           datatype: String
   metrics:
-    aov:
+    - name: aov
       type: ratio
       numerator: revenue
       denominator: order_count

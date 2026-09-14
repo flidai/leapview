@@ -170,6 +170,9 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	if err := checkResourceNode(filename, root); err != nil {
 		return nil, err
 	}
+	if err := checkNamedListIdentities(kind, filename, root); err != nil {
+		return nil, err
+	}
 	if err := checkJSONNumbers(filename, content, root); err != nil {
 		return nil, err
 	}

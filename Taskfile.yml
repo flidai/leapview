@@ -21,7 +21,7 @@ tasks:
       - task: generate
       - task: build
       - task: bootstrap:movielens
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
+      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
   dev:cfo:
     desc: Start the managed LeapView dev server with the CFO finance demo

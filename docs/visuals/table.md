@@ -6,7 +6,7 @@ Use a table when readers need exact record-level values, sorting, and a virtuali
 
 ```yaml visual-example=orders_table
 visuals:
-  orders_table:
+  - id: orders_table
     type: table
     title: Orders
     query:
@@ -34,7 +34,7 @@ field-rule `source` may use any field carried by the delivered row.
 
 ```yaml visual-example=orders_table_conditional
 visuals:
-  orders_table_conditional:
+  - id: orders_table_conditional
     type: table
     title: Orders with governed formatting
     query:

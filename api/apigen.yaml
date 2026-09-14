@@ -108,6 +108,8 @@ targets:
     ir_out: gen/dashboard-ir.json
     go_models_out: ../internal/dashboard/document/models.gen.go
     go_models_package: document
+    go_field_overrides:
+      DashboardSpec.visuals: map[string]DashboardVisual
     ts_out: ../web/generated/dashboard/index.ts
     json_schema_out: ../schemas/json/dashboard-document.schema.json
     contract_imports:
@@ -146,6 +148,19 @@ targets:
     ir_out: gen/data-resources-ir.json
     go_models_out: ../internal/project/contracts/models.gen.go
     go_models_package: contracts
+    go_field_overrides:
+      SourceSpec.fields: '*map[string]DatasetField'
+      ModelSpec.entities: map[string]ModelEntity
+      ModelSpec.fields: '*map[string]DatasetField'
+      SemanticDataset.dimensions: '*map[string]LocalSemanticDimension'
+      SemanticDataset.metrics: '*map[string]SimpleSemanticMetric'
+      SemanticDimension.bindings: map[string]SemanticDimensionBinding
+      SemanticModelSpec.datasets: map[string]SemanticDataset
+      SemanticModelSpec.accessGrants: '*map[string]SemanticAccessGrant'
+      SemanticModelSpec.relationships: '*map[string]SemanticRelationship'
+      SemanticModelSpec.dimensions: '*map[string]SemanticDimension'
+      SemanticModelSpec.filters: '*map[string]SemanticFilter'
+      SemanticModelSpec.metrics: '*map[string]SemanticMetric'
     ts_out: ../web/generated/data-resources/index.ts
     json_schema_out: ../internal/project/contracts/gen/data-resources.schema.json
   - name: desktop-discovery-contracts

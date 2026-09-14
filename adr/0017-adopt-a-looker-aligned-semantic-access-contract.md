@@ -2,6 +2,8 @@
 
 Status: accepted
 
+Authoring collection syntax amended by [ADR-0024](0024-use-named-lists-for-authored-definitions.md).
+
 Decision date: 2026-09-01
 
 Implementation: active for the qualified supported profile
@@ -151,29 +153,29 @@ metadata:
   name: sales
 spec:
   accessGrants:
-    canViewSales:
+    - name: canViewSales
       userAttribute: department
       allowedValues: [sales, finance]
-    canViewPII:
+    - name: canViewPII
       userAttribute: piiAccess
       allowedValues: [full]
   datasets:
-    orders:
+    - name: orders
       model: orders
       requiredAccessGrants: [canViewSales]
       accessFilters:
         - field: region
           userAttribute: allowedRegions
   dimensions:
-    region:
+    - name: region
       datatype: String
       bindings:
-        orders:
+        - dataset: orders
           field: orders.region
-    customerEmail:
+    - name: customerEmail
       datatype: String
       bindings:
-        orders:
+        - dataset: orders
           field: orders.customer_email
       requiredAccessGrants: [canViewPII]
 ```

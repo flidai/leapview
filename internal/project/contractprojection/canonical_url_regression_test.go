@@ -53,7 +53,7 @@ func TestCanonicalURLPreservesIPv6ZoneEscapeDepth(t *testing.T) {
 
 func TestIPv6ZoneEscapeDepthSurvivesSourcePublication(t *testing.T) {
 	var source projectcontracts.Source
-	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:zones","name":"zones"},"spec":{"connection":"warehouse","location":{"type":"path","path":"zones.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{"zone":{"datatype":"String","authoritativeDefinitions":[{"type":"businessDefinition","url":"https://[fe80::1%25eth0]/a"},{"type":"businessDefinition","url":"https://[fe80::1%2525eth0]/a"}]}}}}`
+	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:zones","name":"zones"},"spec":{"connection":"warehouse","location":{"type":"path","path":"zones.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"zone","datatype":"String","authoritativeDefinitions":[{"type":"businessDefinition","url":"https://[fe80::1%25eth0]/a"},{"type":"businessDefinition","url":"https://[fe80::1%2525eth0]/a"}]}]}}`
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
 	}

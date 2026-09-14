@@ -18,7 +18,7 @@ Map two dimensions to source and target nodes and one metric to link width, reve
 
 ```yaml visual-example=status_delivery_flow
 visuals:
-  status_delivery_flow:
+  - id: status_delivery_flow
     title: Status to delivery speed
     description: Shows flow from order status to delivery-speed bucket.
     type: sankey
@@ -55,7 +55,7 @@ Replace the source and target dimensions to inspect category-to-status flow with
 
 ```yaml visual-example=category_status_flow
 visuals:
-  category_status_flow:
+  - id: category_status_flow
     title: Category to status flow
     type: sankey
     query:
@@ -81,7 +81,7 @@ Increase `presentation.nodeGap` when labels or links feel crowded, and tune `cur
 
 ```yaml visual-example=category_status_flow_spacious
 visuals:
-  category_status_flow_spacious:
+  - id: category_status_flow_spacious
     title: Spacious category to status flow
     type: sankey
     presentation:

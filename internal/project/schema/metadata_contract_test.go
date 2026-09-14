@@ -21,7 +21,7 @@ spec:
   schema:
     mode: strict
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       tags: [identifier]
       criticalDataElement: true
@@ -48,10 +48,10 @@ metadata:
 spec:
   definition: {type: direct, source: source:orders}
   entities:
-    order: {type: primary, fields: [order_id]}
+    - {name: order, type: primary, fields: [order_id]}
   grain: {entity: order}
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       tags: [identifier]
       criticalDataElement: true
@@ -222,8 +222,10 @@ metadata:
   id: semantic-model:sales
   name: sales
 spec:
-  datasets: {orders: {model: orders}}
-  metrics: {}
+  datasets:
+  - name: orders
+    model: orders
+  metrics: []
 `
 	for _, tc := range []struct {
 		name string

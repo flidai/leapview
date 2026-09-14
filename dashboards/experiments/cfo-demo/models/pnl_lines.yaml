@@ -7,8 +7,8 @@ metadata:
   description: Ordered chart-of-accounts dimension used by the P&L facts.
 spec:
   fields:
-    line_order: {datatype: Integer, label: Line}
-    pnl_line: {datatype: String, label: P&L line}
+    - {name: line_order, datatype: Integer, label: Line}
+    - {name: pnl_line, datatype: String, label: P&L line}
   definition:
     type: sql
     sql: |
@@ -31,7 +31,7 @@ spec:
       FROM lines
       INNER JOIN source_anchor ON true
   entities:
-    pnl_line:
+    - name: pnl_line
       type: primary
       fields: [line_order]
   grain:

@@ -14,7 +14,7 @@ Use a naturally bounded score with an explicit target, so the position and dista
 
 ```yaml visual-example=review_gauge
 visuals:
-  review_gauge:
+  - id: review_gauge
     title: Average customer review
     type: gauge
     presentation:
@@ -37,7 +37,7 @@ Large count domains remain supported when the operating range and target are gen
 
 ```yaml visual-example=total_orders_gauge
 visuals:
-  total_orders_gauge:
+  - id: total_orders_gauge
     title: Total orders gauge
     type: gauge
     presentation:
@@ -61,7 +61,7 @@ Add ordered `thresholds` to give score ranges semantic tones;
 
 ```yaml visual-example=review_gauge_thresholds
 visuals:
-  review_gauge_thresholds:
+  - id: review_gauge_thresholds
     title: Review gauge with thresholds
     type: gauge
     presentation:

@@ -58,33 +58,76 @@ spec: {type: managed}
 `,
 				"sources/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Source
-metadata: {id: source:raw_orders, name: raw_orders}
+metadata:
+  id: source:raw_orders
+  name: raw_orders
 spec:
   connection: local
-  location: {type: path, path: orders.csv, format: csv, options: {header: true}}
-  schema: {mode: strict}
-  fields: {order_id: {datatype: String}, state: {datatype: String}, note: {datatype: String}}
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+    options:
+      header: true
+  schema:
+    mode: strict
+  fields:
+  - name: order_id
+    datatype: String
+  - name: state
+    datatype: String
+  - name: note
+    datatype: String
   checks:
-    - {id: source_ids_unique, type: unique, fields: [order_id], severity: error}
-    - {id: source_state_valid, type: accepted_values, field: state, values: [valid], severity: error}
+  - id: source_ids_unique
+    type: unique
+    fields:
+    - order_id
+    severity: error
+  - id: source_state_valid
+    type: accepted_values
+    field: state
+    values:
+    - valid
+    severity: error
 `,
 				"models/orders.yaml": fmt.Sprintf(`apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata:
+  id: model:orders
+  name: orders
 spec:
-  definition: {type: sql, sql: "%s"}
-  schema: {mode: strict}
-  fields: {order_id: {datatype: String}}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
+  definition:
+    type: sql
+    sql: "%s"
+  schema:
+    mode: strict
+  fields:
+  - name: order_id
+    datatype: String
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
   checks:
-    - {id: output_ids_unique, type: unique, fields: [order_id], severity: error}
+  - id: output_ids_unique
+    type: unique
+    fields:
+    - order_id
+    severity: error
 `, test.sql),
 				"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: orders}}
+  datasets:
+  - name: orders
+    model: orders
 `,
 				"orders.csv": test.csv,
 			}

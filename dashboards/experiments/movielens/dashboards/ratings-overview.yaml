@@ -52,7 +52,7 @@ spec:
     - notContains
     urlParameter: title
   visuals:
-    rating_count:
+    - id: rating_count
       type: kpi
       query:
         type: aggregate
@@ -63,7 +63,7 @@ spec:
         type: kpi
         note: Rating events
         tone: ink
-    average_rating:
+    - id: average_rating
       type: kpi
       query:
         type: aggregate
@@ -74,7 +74,7 @@ spec:
         type: kpi
         note: Mean rating
         tone: warning
-    active_users:
+    - id: active_users
       type: kpi
       query:
         type: aggregate
@@ -85,7 +85,7 @@ spec:
         type: kpi
         note: Distinct users
         tone: success
-    rated_movies:
+    - id: rated_movies
       type: kpi
       query:
         type: aggregate
@@ -96,7 +96,7 @@ spec:
         type: kpi
         note: Distinct movies
         tone: danger
-    tags_per_rating:
+    - id: tags_per_rating
       type: kpi
       query:
         type: aggregate
@@ -107,7 +107,7 @@ spec:
         type: kpi
         note: Independently aggregated tags / ratings
         tone: success
-    activity_by_month:
+    - id: activity_by_month
       type: combo
       query:
         type: aggregate
@@ -125,7 +125,7 @@ spec:
       title: Ratings and tags by activity month
       presentation:
         type: cartesian
-    tags_per_rating_by_decade:
+    - id: tags_per_rating_by_decade
       type: bar
       query:
         type: aggregate
@@ -140,7 +140,7 @@ spec:
       title: Tags per rating by release decade
       presentation:
         type: cartesian
-    ratings_by_month:
+    - id: ratings_by_month
       type: area
       query:
         type: aggregate
@@ -157,7 +157,7 @@ spec:
       title: Ratings by month
       presentation:
         type: cartesian
-    rating_distribution:
+    - id: rating_distribution
       type: bar
       query:
         type: aggregate
@@ -171,7 +171,7 @@ spec:
       title: Rating distribution
       presentation:
         type: cartesian
-    top_movies:
+    - id: top_movies
       type: bar
       query:
         type: aggregate
@@ -186,7 +186,7 @@ spec:
       title: Most rated movies
       presentation:
         type: cartesian
-    average_by_decade:
+    - id: average_by_decade
       type: bar
       query:
         type: aggregate
@@ -201,7 +201,7 @@ spec:
       title: Average rating by release decade
       presentation:
         type: cartesian
-    movie_table:
+    - id: movie_table
       type: table
       query:
         type: records
