@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/flidai/leapview/internal/release"
 )
 
 // recordingCommitter wraps the real DuckLake committer so this test observes
@@ -112,6 +115,33 @@ func TestProjectRuntimeSourceObservationsDeepCopyNullable(t *testing.T) {
 	second := runtime.SourceObservations()
 	if second[0].Schema[0].Nullable == nil || !*second[0].Schema[0].Nullable {
 		t.Fatalf("source observation nullable identity was aliased: %#v", second)
+	}
+}
+
+func TestProjectRuntimeSourceChecksUseLivePreparedRelation(t *testing.T) {
+	ctx, _, runtime := openObservationWriterRuntime(t)
+	source := runtime.materializationModel.Sources["orders"]
+	source.Checks = []semanticmodel.ModelCheck{{ID: "order_id_present", Type: "non_null", Field: "order_id", Severity: "error"}}
+	runtime.materializationModel.Sources["orders"] = source
+	ctx = analyticsmaterialize.WithObservationBudget(ctx, analyticsmaterialize.ObservationBudget{MaxQueries: 32, MaxRows: 1000, MaxMillis: 5000})
+	ctx = analyticsmaterialize.WithSourceCheckEvaluator(ctx, func(ctx context.Context, id, relation string, checks []semanticmodel.ModelCheck, refs map[string]string, budget analyticsmaterialize.ObservationBudget, query func(context.Context, semanticquery.Plan) (semanticquery.Rows, error)) ([]analyticsmaterialize.SourceCheckEvidence, error) {
+		if id != "orders" || relation == "" || len(checks) != 1 {
+			t.Fatalf("prepared source check context id=%q relation=%q checks=%#v", id, relation, checks)
+		}
+		results, err := gates.EvaluateSourceChecks(ctx, id, relation, checks, refs, gates.Bounds{MaxQueries: budget.MaxQueries, MaxRows: budget.MaxRows, MaxMillis: budget.MaxMillis}, query)
+		converted := make([]analyticsmaterialize.SourceCheckEvidence, len(results))
+		for index, check := range results {
+			converted[index] = analyticsmaterialize.SourceCheckEvidence{Identity: check.Identity, Kind: check.Kind, ResourceID: check.ResourceID, Outcome: string(check.Outcome), Severity: check.Severity, ObservedRows: check.ObservedRows, Queries: check.Queries, ObservationDigest: check.ObservationDigest}
+		}
+		return converted, err
+	})
+	if err := runtime.RefreshProjectTablesWithObservationWriter(ctx, []string{"sales_orders"}, func(_ context.Context, observations []analyticsmaterialize.SourceObservation) error {
+		if len(observations) != 1 || len(observations[0].CheckEvidence) != 1 || observations[0].CheckEvidence[0].Outcome != string(release.GateSuccess) || observations[0].ObservationQueries < 2 {
+			t.Fatalf("source check evidence = %#v", observations)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

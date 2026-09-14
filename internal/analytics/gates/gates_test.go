@@ -66,6 +66,48 @@ func TestEvaluateWarningAndBlocking(t *testing.T) {
 	}
 }
 
+func TestSourceCheckPreflightPreservesWarningBlockingAndTimeout(t *testing.T) {
+	check := semanticmodel.ModelCheck{ID: "id_present", Type: "non_null", Field: "id", Severity: "warning"}
+	results, err := EvaluateSourceChecks(context.Background(), "source-1", `"source"."orders"`, []semanticmodel.ModelCheck{check}, nil, Bounds{}, rowsQuery(semanticquery.Rows{{"value": int64(1)}}))
+	if err != nil || len(results) != 1 || results[0].Outcome != release.GateWarning {
+		t.Fatalf("source warning evidence=%#v err=%v", results, err)
+	}
+	input := baseInput(rowsQuery(nil))
+	source := observedSource()
+	source.ObservationQueries = 1
+	source.ObservationRows = 1
+	input.PreflightQueries = 1
+	input.PreflightRows = 1
+	source.Source.Checks = []semanticmodel.ModelCheck{check}
+	source.PreflightChecks = results
+	input.Sources = []SourceInput{source}
+	evidence, err := Evaluate(context.Background(), input)
+	if err != nil || evidence.Outcome != release.GateWarning {
+		t.Fatalf("source warning qualification=%#v err=%v", evidence, err)
+	}
+
+	check.Severity = "error"
+	results, err = EvaluateSourceChecks(context.Background(), "source-1", `"source"."orders"`, []semanticmodel.ModelCheck{check}, nil, Bounds{}, rowsQuery(semanticquery.Rows{{"value": int64(1)}}))
+	if err != nil || len(results) != 1 || results[0].Outcome != release.GateBlocking {
+		t.Fatalf("source blocking evidence=%#v err=%v", results, err)
+	}
+	source.Source.Checks = []semanticmodel.ModelCheck{check}
+	source.PreflightChecks = results
+	input.Sources = []SourceInput{source}
+	evidence, err = Evaluate(context.Background(), input)
+	var evaluationErr *EvaluationError
+	if !errors.As(err, &evaluationErr) || evidence.Outcome != release.GateBlocking {
+		t.Fatalf("source blocking qualification=%#v err=%v", evidence, err)
+	}
+
+	results, err = EvaluateSourceChecks(context.Background(), "source-1", `"source"."orders"`, []semanticmodel.ModelCheck{check}, nil, Bounds{}, func(context.Context, semanticquery.Plan) (semanticquery.Rows, error) {
+		return nil, context.DeadlineExceeded
+	})
+	if err != nil || len(results) != 1 || results[0].Outcome != release.GateTimeout {
+		t.Fatalf("source timeout evidence=%#v err=%v", results, err)
+	}
+}
+
 func TestEvaluateRevisionFreshnessWarningBlockingAndUnavailable(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	observedAt := now.Add(-2 * time.Minute)
@@ -149,6 +191,30 @@ func TestEvaluateDedupeImpliedAndExplicitChecks(t *testing.T) {
 	}
 }
 
+func TestDistinctAuthoredCheckIDsRetainDistinctEvidence(t *testing.T) {
+	checks := []semanticmodel.ModelCheck{
+		{ID: "first", Type: "non_null", Field: "id", Severity: "warning"},
+		{ID: "second", Type: "non_null", Field: "id", Severity: "warning"},
+	}
+	canonical := canonicalChecks(checks)
+	if len(canonical) != 2 || canonical[0].ID == canonical[1].ID || checkIdentity("orders", canonical[0]) == checkIdentity("orders", canonical[1]) {
+		t.Fatalf("distinct rule identities were lost: %#v", canonical)
+	}
+	canonical = canonicalChecks(append(checks, semanticmodel.ModelCheck{Type: "non_null", Field: "id", Severity: "error"}))
+	if len(canonical) != 2 || canonical[0].Severity != "error" || canonical[1].Severity != "error" {
+		t.Fatalf("implied invariant failed to strengthen authored rules: %#v", canonical)
+	}
+}
+
+func TestCanonicalChecksDoNotMutateAuthoredValues(t *testing.T) {
+	values := []string{"z", "a"}
+	checks := []semanticmodel.ModelCheck{{ID: "states", Type: "accepted_values", Field: "state", Values: values}}
+	canonical := canonicalChecks(checks)
+	if len(canonical) != 1 || canonical[0].Values[0] != "a" || values[0] != "z" || checks[0].Values[0] != "z" {
+		t.Fatalf("canonicalization mutated authored values: authored=%v canonical=%#v", values, canonical)
+	}
+}
+
 func TestCheckIdentityIsStablePrintableAndUnambiguous(t *testing.T) {
 	minimum := int64(1)
 	base := semanticmodel.ModelCheck{
@@ -176,6 +242,11 @@ func TestCheckIdentityIsStablePrintableAndUnambiguous(t *testing.T) {
 	separate.Fields = []string{"a", "b"}
 	if checkIdentity("model-1", commaJoined) == checkIdentity("model-1", separate) {
 		t.Fatal("structurally distinct field lists produced the same identity")
+	}
+	renamed := base
+	renamed.ID = "new_rule_id"
+	if checkIdentity("model-1", renamed) == identity {
+		t.Fatal("changing an authored rule ID retained the same evidence identity")
 	}
 }
 

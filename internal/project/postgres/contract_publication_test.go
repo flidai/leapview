@@ -22,9 +22,9 @@ func publicationSource(t *testing.T, version string, optional bool) contractproj
 	t.Helper()
 	fields := `"id":{"datatype":"Integer"}`
 	if optional {
-		fields += `,"name":{"datatype":"String","nullable":true}`
+		fields = `"id":{"datatype":"Integer","criticalDataElement":true}`
 	}
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"compatible"},"fields":{` + fields + `}}}`
 	var source projectcontracts.Source
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestContractPublicationReplaysHistoricalDeprecationContext(t *testing.T) {
 	ctx := t.Context()
 
 	var source projectcontracts.Source
-	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:historical-orders","name":"historical_orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}}}}}`
+	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:historical-orders","name":"historical_orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}}}}`
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
 	}

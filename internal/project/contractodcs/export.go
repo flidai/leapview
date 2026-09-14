@@ -55,12 +55,22 @@ func Export(publication contractpublication.ContractPublication) (Result, error)
 	var mappingErr error
 	switch envelope.Kind {
 	case "Source":
+		if contractprojection.IsHistoricalV1Publication(publication.CanonicalBytes, envelope.Kind) {
+			reports.loss(LossEntry{Kind: LossUnsupported, SourceField: "contract.schema.fields", Reason: "Historical v1 nullable declarations cannot be converted into ADR-0023 row checks without changing their meaning.", CompatibilityImpact: "Export this historical publication through its original v1 adapter; the shared-field mapping is unavailable."})
+			mappingErr = ErrUnsupportedMapping
+			break
+		}
 		projection, err := contractprojection.DecodeSourcePublication(publication.CanonicalBytes)
 		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Source projection: %v", ErrInvalidPublication, err)
 		}
 		mappingErr = mapSource(projection, &document, reports)
 	case "Model":
+		if contractprojection.IsHistoricalV1Publication(publication.CanonicalBytes, envelope.Kind) {
+			reports.loss(LossEntry{Kind: LossUnsupported, SourceField: "contract.fields", Reason: "Historical v1 nullable declarations cannot be converted into ADR-0023 row checks without changing their meaning.", CompatibilityImpact: "Export this historical publication through its original v1 adapter; the shared-field mapping is unavailable."})
+			mappingErr = ErrUnsupportedMapping
+			break
+		}
 		projection, err := contractprojection.DecodeModelPublication(publication.CanonicalBytes)
 		if err != nil {
 			return Result{}, fmt.Errorf("%w: decode Model projection: %v", ErrInvalidPublication, err)
@@ -127,44 +137,60 @@ func mapSource(projection contractprojection.SourceView, document *Document, rep
 		CompatibilityImpact: "Schema-mode round-trip conformance is unavailable.",
 	})
 	object := SchemaObject{Name: projection.Metadata.Name, LogicalType: "object"}
-	if projection.Contract.Schema.Fields != nil {
-		properties, err := mapFields(*projection.Contract.Schema.Fields, "contract.schema.fields", reports)
-		if err != nil {
+	properties, err := mapFields(projection.Contract.Fields, "contract.fields", reports)
+	if err != nil {
+		return err
+	}
+	object.Properties = properties
+	propertyIndex := map[string]*SchemaProperty{}
+	for index := range object.Properties {
+		propertyIndex[object.Properties[index].Name] = &object.Properties[index]
+	}
+	if projection.Contract.Checks != nil {
+		if err := mapChecks(*projection.Contract.Checks, projection.Metadata.ID, &object, propertyIndex, reports); err != nil {
 			return err
 		}
-		object.Properties = properties
 	}
 	document.Schema = []SchemaObject{object}
-	if projection.Contract.Freshness != nil {
-		reports.mapped("source.freshness")
-		freshness := projection.Contract.Freshness
+	if projection.Contract.Checks != nil {
+		mapFreshnessChecks(*projection.Contract.Checks, projection.Metadata.Name, document, reports)
+	}
+	return nil
+}
+
+func mapFreshnessChecks(checks []contractprojection.ModelCheck, datasetName string, document *Document, reports *reportBuilder) {
+	for _, check := range checks {
+		if check.Type != "freshness" {
+			continue
+		}
+		reports.mapped("dataset.freshness")
 		for _, threshold := range []struct {
 			id    string
 			value *contractprojection.Duration
 		}{
-			{id: "freshness-warning", value: freshness.WarningAfter},
-			{id: "freshness-error", value: freshness.ErrorAfter},
+			{id: check.ID + "-warning", value: check.WarningAfter},
+			{id: check.ID + "-error", value: check.ErrorAfter},
 		} {
 			if threshold.value == nil {
 				continue
 			}
 			entry := SLAProperty{ID: threshold.id, Property: "freshness", Value: threshold.value.Amount, Unit: threshold.value.Unit}
-			if freshness.Field != nil {
-				entry.Element = projection.Metadata.Name + "." + *freshness.Field
+			if check.Field != nil {
+				entry.Element = datasetName + "." + *check.Field
 			}
 			document.SLAProperties = append(document.SLAProperties, entry)
 		}
 		reports.loss(LossEntry{
-			Kind: LossDegraded, SourceField: "contract.freshness", ODCSTargetField: "slaProperties[]",
+			Kind: LossDegraded, SourceField: "contract.checks." + check.ID, ODCSTargetField: "slaProperties[]",
 			Reason:              "ODCS represents both LeapView warning and error thresholds as generic freshness SLA entries without normative severity.",
 			CompatibilityImpact: "Threshold values remain visible, but freshness round-trip conformance is unavailable.",
 		})
 	}
-	return nil
 }
 
 func mapModel(projection contractprojection.ModelView, document *Document, reports *reportBuilder) error {
 	reports.mapped("schema.object")
+	reports.loss(LossEntry{Kind: LossDropped, SourceField: "contract.schema.mode", Reason: "ODCS 3.1 has no equivalent for LeapView declared-versus-inferred schema mode.", CompatibilityImpact: "Schema-mode round-trip conformance is unavailable."})
 	reports.loss(LossEntry{
 		Kind: LossDropped, SourceField: "contract.definition", Reason: "Executable SQL AST and direct source bindings are never exported to ODCS.",
 		CompatibilityImpact: "Transformation execution and dependency round-trip conformance are unavailable.",
@@ -191,6 +217,9 @@ func mapModel(projection contractprojection.ModelView, document *Document, repor
 		}
 	}
 	document.Schema = []SchemaObject{object}
+	if projection.Contract.Checks != nil {
+		mapFreshnessChecks(*projection.Contract.Checks, projection.Metadata.Name, document, reports)
+	}
 	return nil
 }
 
@@ -224,11 +253,6 @@ func mapFields(fields map[string]contractprojection.Field, sourcePrefix string, 
 					CompatibilityImpact: "Document conformance is preserved, but numeric round-trip conformance is unavailable.",
 				})
 			}
-		}
-		if field.Nullable != nil {
-			required := !*field.Nullable
-			property.Required = &required
-			reports.mapped("field.nullability")
 		}
 		if field.Classification != nil {
 			property.Classification = *field.Classification
@@ -340,8 +364,11 @@ func mapEntities(projection contractprojection.ModelView, object *SchemaObject, 
 }
 
 func mapChecks(checks []contractprojection.ModelCheck, authoredID string, object *SchemaObject, propertyIndex map[string]*SchemaProperty, reports *reportBuilder) error {
-	reports.mapped("model.quality")
+	reports.mapped("dataset.quality")
 	for _, check := range checks {
+		if check.Type == "freshness" {
+			continue
+		}
 		quality := Quality{ID: check.ID, Name: check.ID, Type: "library", Severity: stringValue(check.Severity)}
 		switch check.Type {
 		case "non_null":
@@ -349,6 +376,9 @@ func mapChecks(checks []contractprojection.ModelCheck, authoredID string, object
 			if property == nil {
 				return unsupportedCheck(check, reports)
 			}
+			required := true
+			property.Required = &required
+			reports.mapped("dataset.non-null")
 			quality.Metric, quality.MustBe = "nullValues", int64(0)
 			property.Quality = append(property.Quality, quality)
 		case "unique":

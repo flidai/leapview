@@ -161,7 +161,7 @@ type retainedSourceBlob struct {
 func retainedUpgradePublicationInput(t *testing.T) contractpublication.ContractPublicationInput {
 	t.Helper()
 	var source projectcontracts.Source
-	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"id":{"datatype":"Integer"}}}}}`
+	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{"id":{"datatype":"Integer"}}}}`
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
 	}

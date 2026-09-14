@@ -108,6 +108,10 @@ func nativeQualificationInputs(
 			return nil, nil, fmt.Errorf("%w: clone source %q: %v", ErrNativeQualificationInvalid, id, err)
 		}
 		observation := sourceObservations[id]
+		preflightChecks := make([]release.GateCheckEvidence, len(observation.CheckEvidence))
+		for index, check := range observation.CheckEvidence {
+			preflightChecks[index] = release.GateCheckEvidence{Identity: check.Identity, Kind: check.Kind, ResourceID: check.ResourceID, Origin: "source", Outcome: release.GateOutcome(check.Outcome), Severity: check.Severity, ObservedRows: check.ObservedRows, Queries: check.Queries, ObservationDigest: check.ObservationDigest}
+		}
 		sources = append(sources, gates.SourceInput{
 			ID:                 id,
 			Source:             source,
@@ -121,6 +125,7 @@ func nativeQualificationInputs(
 			ObservationQueries: observation.ObservationQueries,
 			ObservationRows:    observation.ObservationRows,
 			ObservationMillis:  observation.ObservationMillis,
+			PreflightChecks:    preflightChecks,
 		})
 	}
 

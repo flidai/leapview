@@ -45,16 +45,18 @@ spec:
     options:
       header: true
   schema:
-    mode: inferred
-  freshness:
-    basis: field
-    field: updated_at
-    warningAfter:
-      amount: 1
-      unit: hour
-    errorAfter:
-      amount: 2
-      unit: hour
+    mode: compatible
+  checks:
+    - id: recent_orders
+      type: freshness
+      basis: field
+      field: updated_at
+      warningAfter:
+        amount: 1
+        unit: hour
+      errorAfter:
+        amount: 2
+        unit: hour
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", sourceYAML, &source); err != nil {
@@ -325,7 +327,7 @@ func TestGeneratedGoPathVariantRejectsWrongTaggedOptions(t *testing.T) {
 	}
 }
 
-func TestGeneratedResourceBoundaryRejectsInferredSchemaFields(t *testing.T) {
+func TestGeneratedResourceBoundaryRejectsLegacySchemaFields(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: Source
 metadata:
@@ -345,7 +347,58 @@ spec:
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
-		t.Fatal("inferred schema accepted fields")
+		t.Fatal("legacy schema fields accepted")
+	}
+}
+
+func TestGeneratedResourceBoundaryRejectsBothLegacyNullableValues(t *testing.T) {
+	for _, nullable := range []string{"true", "false"} {
+		t.Run("source_"+nullable, func(t *testing.T) {
+			content := []byte(`apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:orders
+  name: orders
+spec:
+  connection: files
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+  fields:
+    id:
+      datatype: Integer
+      nullable: ` + nullable + "\n")
+			var source contracts.Source
+			if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
+				t.Fatal("Source accepted removed field nullable declaration")
+			}
+		})
+		t.Run("model_"+nullable, func(t *testing.T) {
+			content := []byte(`apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+spec:
+  definition:
+    type: direct
+    source: orders
+  entities:
+    order:
+      type: primary
+      fields: [id]
+  grain:
+    entity: order
+  fields:
+    id:
+      datatype: Integer
+      nullable: ` + nullable + "\n")
+			var model contracts.Model
+			if err := configschema.DecodeResource(configschema.KindModel, "model.yaml", content, &model); err == nil {
+				t.Fatal("Model accepted removed field nullable declaration")
+			}
+		})
 	}
 }
 
@@ -361,9 +414,11 @@ spec:
     type: path
     path: orders.csv
     format: csv
-  freshness:
-    basis: field
-    field: updated_at
+  checks:
+    - id: recent_orders
+      type: freshness
+      basis: field
+      field: updated_at
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {

@@ -122,6 +122,7 @@ func snapshotSources(values map[string]Source) (map[string]Source, error) {
 			return nil, fmt.Errorf("source %q effective path location: %w", name, err)
 		}
 		value.Freshness = cloneSourceFreshness(value.Freshness)
+		value.Checks = snapshotModelChecks(value.Checks)
 		value.Schema.Columns = snapshotColumnSchemas(value.Schema.Columns)
 		clone[name] = value
 	}
@@ -232,6 +233,7 @@ func snapshotModelChecks(values []ModelCheck) []ModelCheck {
 		clone[index].Fields = append([]string(nil), value.Fields...)
 		clone[index].Values = append([]string(nil), value.Values...)
 		clone[index].Tags = append([]string(nil), value.Tags...)
+		clone[index].Freshness = cloneSourceFreshness(value.Freshness)
 		if value.Minimum != nil {
 			minimum := *value.Minimum
 			clone[index].Minimum = &minimum
