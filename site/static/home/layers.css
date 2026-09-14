@@ -13,7 +13,6 @@
 .architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
 .architecture-heading { max-width: 850px; margin: 0 0 62px; }
 .architecture-heading h2 { margin: 0; font-size: clamp(46px, 4.6vw, 66px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
-.architecture-heading h2 em { color: var(--accent); font-style: normal; }
 .architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
 
 .architecture-board { position: relative; min-height: 620px; isolation: isolate; }

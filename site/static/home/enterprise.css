@@ -9,7 +9,6 @@
 
 .enterprise-inner { width: min(100%, 1300px); margin: 0 auto; }
 .enterprise-heading h2 { margin: 0; font-size: clamp(50px, 5.5vw, 77px); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; }
-.enterprise-heading h2 em { color: var(--accent); font-style: normal; }
 .enterprise-heading > p:last-child { max-width: 690px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
 .enterprise-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(26px, 3vw, 52px); margin-top: 68px; }

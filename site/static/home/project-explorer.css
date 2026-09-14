@@ -18,7 +18,6 @@
 }
 .project-inner { width: min(100%, 1320px); margin: 0 auto; }
 .project-heading h2 { margin: 0; font-size: clamp(58px, 6vw, 85px); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; }
-.project-heading h2 em { color: var(--accent); font-style: normal; }
 .project-heading > p:last-child { margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
 .project-explorer { min-width: 0; margin-top: 54px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--frame-bg); box-shadow: 0 30px 85px rgba(0, 0, 0, .16); }

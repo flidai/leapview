@@ -9,7 +9,6 @@
 
 .involved-inner { width: min(100%, 1300px); margin: 0 auto; }
 .involved h2 { margin: 0; font-size: clamp(47px, 5.5vw, 77px); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; text-wrap: balance; }
-.involved h2 em { color: var(--accent); font-style: normal; }
 .involved-intro { margin: 22px 0 0; color: var(--muted); font: 19px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
 
 .involved-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 62px; }

@@ -13,7 +13,6 @@
 .orbit-center{position:absolute;z-index:3;top:48%;left:50%;width:min(560px,calc(100% - 32px));padding:16px;transform:translate(-50%,-50%);text-align:center}
 .orbit-center:before{content:'';position:absolute;z-index:-1;inset:-25px -55px;background:radial-gradient(ellipse,var(--bg) 12%,var(--bg) 32%,transparent 72%);opacity:.97;pointer-events:none}
 .orbit-center h2{margin:0;font-size:clamp(52px,5.3vw,75px);font-weight:600;line-height:1.04;letter-spacing:-.055em}
-.orbit-center h2 em{font-style:normal;color:var(--accent)}
 .orbit-cta{display:inline-flex;align-items:center;gap:24px;margin-top:31px;padding:11px 0;border-bottom:1px solid var(--accent);color:var(--accent);font-size:12px;font-weight:750;text-decoration:none;transition:gap .2s}
 .orbit-cta:hover{gap:31px}
 .orbit-cta span{font-size:19px;font-weight:400}

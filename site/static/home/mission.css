@@ -26,11 +26,6 @@
     text-wrap: pretty;
   }
 
-  .mission h2 em {
-    color: var(--accent);
-    font-style: normal;
-  }
-
   .mission-cursor {
     display: inline-block;
     width: 2px;

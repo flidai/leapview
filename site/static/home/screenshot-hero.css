@@ -96,6 +96,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 
 /* The original site's flow field, bounded and faded behind the prototype's copy. */
 .hero, :scope.is-light .hero { background: var(--bg); }
+.hero .eyebrow { color: var(--muted); }
 .site-flow-field { position: absolute; z-index: -1; top: 0; left: 50%; display: block; width: 100%; max-width: 1920px; height: min(100%, 992px); opacity: .62; pointer-events: none; transform: translateX(-50%); contain: strict; }
 .hero-glow { background: linear-gradient(to bottom, transparent 68%, var(--bg)); }
 @media (max-width: 900px) { .site-flow-field { height: min(100%, 800px); } }
