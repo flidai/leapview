@@ -141,6 +141,45 @@ test('homepage hero ends at the screenshot on wide screens', async () => {
   }
 })
 
+test('homepage preview stays large and horizontally explorable on small screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [390, 768, 1023]) {
+      await page.setViewportSize({ width, height: 900 })
+      const layout = await page.evaluate(() => {
+        const hero = document.querySelector('.hero')!.getBoundingClientRect()
+        const frame = document.querySelector('.product-frame')!.getBoundingClientRect()
+        const scroller = document.querySelector<HTMLElement>('#image-scroller')!
+        return {
+          heroBottom: hero.bottom,
+          frameBottom: frame.bottom,
+          frameRight: frame.right,
+          scrollerWidth: scroller.clientWidth,
+          scrollWidth: scroller.scrollWidth,
+          pageWidth: document.documentElement.scrollWidth,
+        }
+      })
+      expect(Math.abs(layout.heroBottom - layout.frameBottom)).toBeLessThan(3)
+      expect(layout.frameRight).toBeGreaterThan(width + 100)
+      expect(layout.scrollWidth).toBeGreaterThan(layout.scrollerWidth)
+      expect(layout.pageWidth).toBe(width)
+    }
+    const boundary: { left: number; bottom: number }[] = []
+    for (const width of [1100, 1101]) {
+      await page.setViewportSize({ width, height: 900 })
+      boundary.push(await page.locator('.product-frame').evaluate((frame) => {
+        const rect = frame.getBoundingClientRect()
+        return { left: rect.left, bottom: rect.bottom }
+      }))
+    }
+    expect(Math.abs(boundary[1].left - boundary[0].left)).toBeLessThan(10)
+    expect(Math.abs(boundary[1].bottom - boundary[0].bottom)).toBeLessThan(10)
+  } finally {
+    await page.close()
+  }
+})
+
 test('homepage flow field draws in and respects reduced motion', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
