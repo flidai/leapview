@@ -713,7 +713,11 @@ func siteFooter() g.Node {
 				{label: "Issues", href: "https://github.com/flidai/leapview/issues"},
 			}),
 		),
-		h.Div(h.Class("site-footer-bottom"), h.P(g.Text(siteBrandName+" — open-source analytics as code."))),
+		h.Div(h.Class("site-footer-bottom"), h.P(
+			g.Text("A project by the "),
+			h.A(h.Href("https://flid.ai/"), g.Text("Flid AI")),
+			g.Text(" team"),
+		)),
 	)
 }
 

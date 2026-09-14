@@ -36,6 +36,8 @@ test('homepage presents the new sections inside the shared site shell', async ()
     await page.goto(baseURL)
     expect(await page.locator('.site-header').count()).toBe(1)
     expect(await page.locator('.site-footer').count()).toBe(1)
+    expect((await page.locator('.site-footer-bottom').textContent())?.trim()).toBe('A project by the Flid AI team')
+    expect(await page.locator('.site-footer-bottom').getByRole('link', { name: 'Flid AI' }).getAttribute('href')).toBe('https://flid.ai/')
     expect(await page.locator('.landing-footer, .topbar').count()).toBe(0)
     expect(await page.getByRole('heading', { level: 1, name: 'From data to the full picture.' }).isVisible()).toBe(true)
     const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'layers', 'enterprise', 'openness', 'get-involved']

@@ -2442,6 +2442,15 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding-top: var(--base-size-20);
 }
 
+.site-footer-bottom a {
+  text-underline-offset: var(--base-size-4);
+}
+
+.site-footer-bottom a:hover,
+.site-footer-bottom a:focus-visible {
+  color: var(--lv-fg-accent);
+}
+
 /* DuckDB keeps the documentation tree docked through 901px. */
 @media (max-width: 56.25rem) {
   .site-docs-layout {
