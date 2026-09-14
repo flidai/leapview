@@ -1,6 +1,6 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
-:scope{font-family:Inter,var(--fontStack-system),system-ui,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
+:scope{font-family:var(--fontStack-system);font-synthesis:none;-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
 *{box-sizing:border-box}:scope{--bg:#0d1117;--ink:#f0f6fc;--muted:#9198a1;--accent:#4493f8;--button:#1f6feb;--accent-ink:#fff;--border:#3d444d;--header-bg:rgba(13,17,23,.88);--frame-bg:#151b23;--frame-border:#3d444d;--frame-shadow:rgba(0,0,0,.46);--glow:rgba(31,111,235,.22);--grid-line:rgba(68,147,248,.045);min-width:320px;margin:0;background:var(--bg);color:var(--ink);transition:background-color .45s,color .45s}:scope.is-light{--bg:#fff;--ink:#1f2328;--muted:#59636e;--accent:#0969da;--button:#0969da;--accent-ink:#fff;--border:#d1d9e0;--header-bg:rgba(255,255,255,.9);--frame-bg:#fff;--frame-border:#d1d9e0;--frame-shadow:rgba(31,35,40,.17);--glow:rgba(9,105,218,.16);--grid-line:rgba(9,105,218,.055)}
 a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-visible,.image-scroller:focus-visible{outline:2px solid var(--accent);outline-offset:4px}::selection{background:var(--accent);color:var(--accent-ink)}
 .skip-link{position:fixed;z-index:50;top:-80px;left:16px;padding:10px 14px;background:#fff;color:#1f2328}.skip-link:focus{top:12px}

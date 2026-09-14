@@ -77,6 +77,7 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
       screenshotTop: document.querySelector('.product-frame')!.getBoundingClientRect().top,
       missionWidth: document.querySelector('.mission-inner')!.getBoundingClientRect().width,
       missionFont: getComputedStyle(document.querySelector('.mission-copy')!).fontFamily,
+      siteFont: getComputedStyle(document.querySelector('.site-header')!).fontFamily,
     }))
     expect(desktop.heroBottom).toBeGreaterThan(1000)
     expect(desktop.heroBottom).toBeLessThan(1110)
@@ -85,7 +86,7 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
     expect(desktop.screenshotTop).toBeGreaterThan(390)
     expect(desktop.screenshotTop).toBeLessThan(450)
     expect(desktop.missionWidth).toBeLessThanOrEqual(680)
-    expect(desktop.missionFont).toContain('monospace')
+    expect(desktop.missionFont).toBe(desktop.siteFont)
 
     await page.locator('#mission').scrollIntoViewIfNeeded()
     await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'data', undefined, { timeout: 8000 })

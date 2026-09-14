@@ -38,7 +38,7 @@
 .slab-piece svg path { stroke: var(--slab-stroke); stroke-width: 2; stroke-linejoin: round; transition: fill .28s, stroke .28s; }
 .slab-body { fill: var(--slab-side); }
 .slab-top { fill: var(--slab-top); }
-.slab-face { position: absolute; top: 68%; color: var(--slab-ink); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: clamp(10px, 1.04vw, 15px); font-weight: 700; letter-spacing: .025em; line-height: 1; white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, .2); pointer-events: none; }
+.slab-face { position: absolute; top: 68%; color: var(--slab-ink); font-family: var(--fontStack-system); font-size: clamp(10px, 1.04vw, 15px); font-weight: 700; letter-spacing: .025em; line-height: 1; white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, .2); pointer-events: none; }
 .slab-face--left { left: 18%; transform: rotate(20deg) skewX(14deg) scaleY(.93); transform-origin: left center; }
 .slab-face--right { right: 16%; transform: rotate(-20deg) skewX(-14deg) scaleY(.93); transform-origin: right center; }
 
@@ -50,7 +50,7 @@
 .architecture-callout[data-detail="postgres"] { top: 440px; left: 0; }
 .architecture-callout[data-detail="ducklake"] { top: 440px; right: 0; }
 .architecture-callout.is-active { border-color: color-mix(in srgb, var(--accent) 65%, var(--border)); background: color-mix(in srgb, var(--frame-bg) 92%, var(--accent)); transform: translateY(-3px); }
-.architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; font-weight: 750; letter-spacing: .09em; }
+.architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; color: var(--accent); font-family: var(--fontStack-system); font-size: 10px; font-weight: 750; letter-spacing: .09em; }
 .architecture-callout-kicker i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
 .architecture-callout h3 { margin: 0; font-size: clamp(16px, 1.5vw, 20px); font-weight: 650; letter-spacing: -.035em; line-height: 1.2; }
 .architecture-callout > p:last-child:not(.architecture-callout-kicker) { margin: 11px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
