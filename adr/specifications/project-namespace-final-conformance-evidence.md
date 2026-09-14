@@ -1,10 +1,10 @@
 # ADR-0018 final conformance evidence reconciliation
 
-Status: reconciled against merged behavior; ADR closure remains pending on five partial evidence inventories
+Status: reconciled against merged behavior; ADR closure remains pending on three partial evidence inventories
 
-Evidence snapshot: 2026-09-13
+Evidence snapshot: 2026-09-14
 
-Repository baseline: `ef87272c377c630279d2e38ea14e1d0f8b323d80`
+Repository baseline: `92ff6cdb51d51d3e03eeb21adcd1cdac047c9b8f`
 
 Governing decision:
 [ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md)
@@ -43,7 +43,7 @@ The evidence states are:
 | FAI-675 | [PR #549](https://github.com/flidai/leapview/pull/549), head `fbe7ffb37`, merged as `372039da7`; required CI and Security gates passed | Merged. Closed-graph and unsupported-foreign-reference evidence is available on main. |
 | FAI-677 | [PR #587](https://github.com/flidai/leapview/pull/587) aligns the maintained architecture and public integration, security, operations, and recovery documentation | ISO-03's documentation mismatch is resolved: clients cannot enumerate or switch Projects, and Project scope comes from the server-bound authority. |
 | FAI-678 | [PR #581](https://github.com/flidai/leapview/pull/581), head `e1c56b830`, merged as `f4ad4a032`; exact merge-queue CI and Security passed | Merged. dbt and independent multi-Source adoption evidence is available on main. |
-| FAI-679 | [PR #587](https://github.com/flidai/leapview/pull/587) contains this reconciliation inventory and the maintained-documentation audit | The five non-exhaustive requirement inventories remain open. Protected CI and Security results, including CodeQL path classification and selected SAST, are the merge evidence for this documentation-only reconciliation. |
+| FAI-679 | [PR #587](https://github.com/flidai/leapview/pull/587) contains this reconciliation inventory and the maintained-documentation audit | Three non-exhaustive API requirement inventories remain open. Protected CI and Security results, including CodeQL path classification and selected SAST, are the merge evidence for this documentation-only reconciliation. |
 
 ## Requirement evidence map
 
@@ -63,7 +63,7 @@ The evidence states are:
 | BND-03 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Portable deterministic bundle and checkout-independent digest tests | — (Main) |
 | BND-04 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Exact persisted-plan, stale-target, rehashed-plan, and lock-order admission tests | — (Main) |
 | BND-05 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Rootless graph, missing endpoint, global ID uniqueness, cycle, and deterministic-byte tests | — (Main) |
-| BND-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; delivery and lifecycle support in [#512](https://github.com/flidai/leapview/pull/512) and [#542](https://github.com/flidai/leapview/pull/542) | [Serving-state](../../internal/servingstate/sqlite/repository_test.go), [query](../../internal/analytics/duckdb/project_identity_test.go), [cache](../../internal/analytics/cache/project_boundary_test.go), and delivery/ResourceUID qualification cover the principal collision boundaries | Complete one maintained inventory across plan, candidate, generation, serving, query, cache, lineage, audit, managed-data, and physical-root evidence, especially retention and cleanup (Partial) |
+| BND-06 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; delivery and lifecycle support in [#512](https://github.com/flidai/leapview/pull/512) and [#542](https://github.com/flidai/leapview/pull/542) | The maintained [BND-06 boundary matrix](project-namespace-bnd06-boundary-matrix.md) maps all ten named boundaries to authority, constraints, and tests. Real PostgreSQL/DuckLake and managed-blob GC qualifications prove cross-Project cleanup safety. | — (Implemented) |
 | BND-07 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399` | Same bundle planned independently for multiple environment targets without copied target state | — (Main) |
 | RID-01 | FAI-666 | [#495](https://github.com/flidai/leapview/pull/495) / `5d766dc4f` | Duplicate authored ID across kinds rejected before graph construction | — (Main) |
 | RID-02 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | PostgreSQL first-activation allocation and sealed-inventory admission qualification | — (Main) |
@@ -137,9 +137,9 @@ ResourceUID, dbt, or recovery behavior changed.
 - Unique requirement identifiers: **54**.
 - Requirements without an accountable owner: **0**.
 - Requirements with more than one accountable owner: **0**.
-- Requirements with maintained implementation evidence: **50**.
-- Requirements with partial evidence: **4** (`BND-06`, `API-01`, `API-02`,
-  and `API-05`).
+- Requirements with maintained implementation evidence: **51**.
+- Requirements with partial evidence: **3** (`API-01`, `API-02`, and
+  `API-05`).
 - Requirements resolved by the documentation-only reconciliation: **1**
   (`ISO-03`).
 - Requirements with an unaddressed gap: **0**.
@@ -150,8 +150,8 @@ ResourceUID, dbt, or recovery behavior changed.
 
 ADR-0018 must remain `pending` until all of the following are true:
 
-1. Maintained evidence for `BND-06`, `API-01`, `API-02`, and `API-05`
-   remains non-exhaustive. The rows above identify the proven slices
+1. Maintained evidence for `API-01`, `API-02`, and `API-05` remains
+   non-exhaustive. The rows above identify the proven slices
    and the exact inventory still required; no row is upgraded by inference.
 FAI-670, FAI-671, FAI-675, and FAI-678 are no longer implementation merge
 blockers. Their merged evidence replaces the stale provisional and gap claims
