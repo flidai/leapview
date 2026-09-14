@@ -106,7 +106,7 @@ func TestPlanModelTableCompilesCSVSQLModelToInlineRelations(t *testing.T) {
 	}
 	for _, want := range []string{
 		"CREATE OR REPLACE TABLE model.orders AS",
-		"FROM (SELECT customer_id, order_id FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')) o",
+		"FROM (SELECT customer_id, order_id, status FROM read_csv('/managed/revision/orders.csv', delim = ',', escape = '\"', header = false, quote = '\"')) o",
 		"JOIN (SELECT order_id, payment_value FROM read_csv('/managed/revision/payments.csv', delim = ',', escape = '\"', header = false, quote = '\"')) p",
 	} {
 		if !strings.Contains(plan.SQL, want) {

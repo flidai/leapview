@@ -16,7 +16,7 @@ func TestExclusionManifestIsCompleteAndQueryAble(t *testing.T) {
 		path string
 	}{
 		{"Source", "spec.connection"},
-		{"Source", "spec.schema.fields.customer_id.description"},
+		{"Source", "spec.fields.customer_id.description"},
 		{"Model", "spec.fields.amount.aiContext.instructions"},
 		{"SemanticModel", "spec.filters.active.all.0.aiContext.instructions"},
 		{"SemanticModel", "spec.metrics.revenue.hidden"},
@@ -29,7 +29,7 @@ func TestExclusionManifestIsCompleteAndQueryAble(t *testing.T) {
 		kind string
 		path string
 	}{
-		{"Source", "spec.schema.fields.customer_id.datatype"},
+		{"Source", "spec.fields.customer_id.datatype"},
 		{"Model", "spec.grain.entity"},
 		{"SemanticModel", "spec.datasets.orders.requiredAccessGrants"},
 	} {

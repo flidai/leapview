@@ -25,7 +25,7 @@ describe('leapview.contract/v1 cross-language corpus', () => {
 
     expect(canonical).toBe(expected)
     expect(`sha256:${createHash('sha256').update(canonical).digest('hex')}`).toBe(
-      'sha256:c922a716464ecf5fe5dd0f022ad067c0d095b3ec6387e525d5e30a071c230205',
+      'sha256:189d28a81cae3e9106b934672cbd75d41a0729a929651f7b2e3f5849256bacd8',
     )
   })
 

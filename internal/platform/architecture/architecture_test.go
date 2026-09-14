@@ -2548,8 +2548,8 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
 		"CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags=\"$BUILD_LDFLAGS\" -o /out/leapviewctl ./cmd/leapviewctl",
-		"FROM debian:bookworm-slim@sha256:",
-		"USER leapview",
+		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:",
+		"USER leapview:leapview",
 		"WORKDIR /app",
 		"COPY --from=web /src/static ./static",
 		"COPY --from=sourcegen /src/.data/map-assets ./.data/map-assets",
@@ -3170,6 +3170,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"qualify-production-image:",
 		"name: Qualify production image",
 		"needs: build-production-image",
+		"if: ${{ always() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
 		"task image:qualify:production IMAGE=\"${immutable_image}\"",
 	} {

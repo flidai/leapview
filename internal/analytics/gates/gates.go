@@ -74,6 +74,7 @@ type SourceInput struct {
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64
+	PreflightChecks    []release.GateCheckEvidence
 }
 
 type ModelInput struct {
@@ -137,6 +138,38 @@ type budget struct {
 	RowsExceeded    bool
 }
 
+// EvaluateSourceChecks runs the shared typed rules against a relation captured
+// by the source preparer while its session remains live. The relation and query
+// capability are runtime-owned; neither comes from authored check content.
+func EvaluateSourceChecks(ctx context.Context, sourceID, relation string, checks []semanticmodel.ModelCheck, refs map[string]string, bounds Bounds, query Query) ([]release.GateCheckEvidence, error) {
+	if sourceID == "" || relation == "" || query == nil {
+		return nil, ErrGateUnavailable
+	}
+	bounds = bounds.normalized()
+	ctx, cancel := context.WithTimeout(ctx, durationFromMillis(bounds.MaxMillis))
+	defer cancel()
+	state := &budget{Bounds: bounds, Query: query, Started: time.Now()}
+	checks = canonicalChecks(checks)
+	results := make([]release.GateCheckEvidence, 0, len(checks))
+	for index, check := range checks {
+		result, err := evaluateCheck(ctx, state, time.Now().UTC(), sourceID, relation, check, refs)
+		result.Origin = "source"
+		results = append(results, result)
+		// A failed rule still has valid evidence. Continue so every authored
+		// source check has a result; only missing or bounded observations stop
+		// the preflight.
+		if err != nil && result.Outcome != release.GateBlocking {
+			for _, remaining := range checks[index+1:] {
+				unavailable := unavailableModelCheck(sourceID, remaining, checkIdentity(sourceID, remaining))
+				unavailable.Origin = "source"
+				results = append(results, unavailable)
+			}
+			return results, nil
+		}
+	}
+	return results, nil
+}
+
 func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 	bounds := input.Bounds.normalized()
 	if strings.TrimSpace(input.CandidateID) == "" || strings.TrimSpace(input.SourceDigest) == "" || strings.TrimSpace(input.BindingGeneration) == "" || strings.TrimSpace(input.RuntimeVersion) == "" || strings.TrimSpace(input.DuckDBVersion) == "" || input.Query == nil {
@@ -181,6 +214,9 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 			return release.GateEvidence{}, fmt.Errorf("%w: source %q observations cannot be negative", ErrGateUnavailable, source.ID)
 		}
 		seenSourceIDs[source.ID] = struct{}{}
+		if err := validatePreflightChecks(source); err != nil {
+			return finishFailure(evidence, state, gateError(source.ID+":checks", release.GateUnavailable, ErrGateUnavailable, err))
+		}
 		result, err := evaluateSource(ctx, input.Now, state, source)
 		if err != nil {
 			if evaluation, ok := err.(*EvaluationError); ok {
@@ -192,6 +228,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 			}
 		}
 		evidence.Sources = append(evidence.Sources, result)
+		evidence.Checks = append(evidence.Checks, source.PreflightChecks...)
 		if err != nil {
 			return finishFailure(evidence, state, err)
 		}
@@ -209,7 +246,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 		}
 		seenModelIDs[model.ID] = struct{}{}
 	}
-	modelRefs := make(map[string]semanticmodel.Table, len(models))
+	modelRefs := make(map[string]string, len(models))
 	duplicateModelRefs := make(map[string]struct{})
 	for _, model := range models {
 		name := strings.TrimSpace(model.Model.ModelName)
@@ -224,7 +261,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 		if _, duplicate := duplicateModelRefs[name]; duplicate {
 			continue
 		}
-		modelRefs[name] = model.Model
+		modelRefs[name] = modelRelation(model.Model, input.RelationNamespace)
 	}
 	for _, model := range models {
 		checks := impliedChecks(model.Model)
@@ -245,7 +282,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 			}
 		}
 		for _, check := range checks {
-			result, err := evaluateCheck(ctx, state, model.ID, model.Model, check, modelRefs, input.RelationNamespace)
+			result, err := evaluateCheck(ctx, state, input.Now, model.ID, modelRelation(model.Model, input.RelationNamespace), check, modelRefs)
 			evidence.Checks = append(evidence.Checks, result)
 			if err != nil {
 				return finishFailure(evidence, state, err)
@@ -255,10 +292,32 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 	return finish(evidence, state)
 }
 
+func validatePreflightChecks(source SourceInput) error {
+	if len(source.PreflightChecks) != len(canonicalChecks(source.Source.Checks)) {
+		return fmt.Errorf("source %q check evidence count does not match authored checks", source.ID)
+	}
+	expected := map[string]semanticmodel.ModelCheck{}
+	for _, check := range canonicalChecks(source.Source.Checks) {
+		expected[checkIdentity(source.ID, check)] = check
+	}
+	seen := map[string]struct{}{}
+	for _, result := range source.PreflightChecks {
+		check, ok := expected[result.Identity]
+		if !ok || result.ResourceID != source.ID || result.Origin != "source" || result.Kind != check.Type || result.Severity != severity(check.Severity) {
+			return fmt.Errorf("source %q check evidence does not match authored rule", source.ID)
+		}
+		if _, duplicate := seen[result.Identity]; duplicate {
+			return fmt.Errorf("source %q has duplicate check evidence", source.ID)
+		}
+		seen[result.Identity] = struct{}{}
+	}
+	return nil
+}
+
 func unavailableModelCheck(modelID string, check semanticmodel.ModelCheck, identity string) release.GateCheckEvidence {
 	kind := check.Type
 	switch kind {
-	case "non_null", "unique", "accepted_values", "relationship", "row_count":
+	case "non_null", "unique", "accepted_values", "relationship", "row_count", "freshness":
 	default:
 		kind = "row_count"
 	}
@@ -536,7 +595,7 @@ func evaluateFreshness(ctx context.Context, now time.Time, state *budget, source
 	}{Observed: observed.UTC(), AgeMillis: age.Milliseconds(), Revision: source.Revision}), nil
 }
 
-func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck, modelRefs map[string]semanticmodel.Table, relationNamespace string) (result release.GateCheckEvidence, retErr error) {
+func evaluateCheck(ctx context.Context, state *budget, now time.Time, modelID, relation string, check semanticmodel.ModelCheck, modelRefs map[string]string) (result release.GateCheckEvidence, retErr error) {
 	identity := checkIdentity(modelID, check)
 	result = release.GateCheckEvidence{Identity: identity, Kind: check.Type, ResourceID: modelID, Severity: severity(check.Severity)}
 	queriesBefore := state.Queries
@@ -546,10 +605,25 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			result.Outcome = outcomeOf(retErr)
 		}
 	}()
-	relation := modelRelation(table, relationNamespace)
 	var rows semanticquery.Rows
 	var err error
 	switch check.Type {
+	case "freshness":
+		if check.Freshness == nil || check.Freshness.Basis != "field" || !validField(check.Freshness.Field) {
+			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
+		}
+		rows, err = runPlan(ctx, state, "value", fmt.Sprintf("SELECT MAX(%s) AS value FROM %s", quoteIdent(check.Freshness.Field), relation), nil)
+		if err != nil {
+			break
+		}
+		observed, ok := gateTimestamp(firstValue(rows, "value"))
+		if !ok {
+			return result, gateError(identity, release.GateEmpty, nil, nil)
+		}
+		freshnessSource := SourceInput{ID: modelID, Source: semanticmodel.Source{Freshness: check.Freshness}, FreshnessObserved: observed}
+		outcome, _, observationDigest, freshnessErr := evaluateFreshness(ctx, now, state, freshnessSource)
+		result.Outcome, result.ObservedRows, result.ObservationDigest = outcome, 1, observationDigest
+		return result, freshnessErr
 	case "non_null":
 		if !validField(check.Field) {
 			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
@@ -590,7 +664,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 		if !validField(toField) {
 			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
 		}
-		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), modelRelation(target, relationNamespace), quoteIdent(toField), quoteIdent(check.Field))
+		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), target, quoteIdent(toField), quoteIdent(check.Field))
 		rows, err = runQualified(ctx, state, relation+" AS child", "1", where, nil)
 	case "row_count":
 		limit := check.Maximum
@@ -655,6 +729,20 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 	}
 	result.Outcome = release.GateSuccess
 	return result, nil
+}
+
+func gateTimestamp(value any) (time.Time, bool) {
+	switch value := value.(type) {
+	case time.Time:
+		return value.UTC(), !value.IsZero()
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05", "2006-01-02"} {
+			if parsed, err := time.Parse(layout, value); err == nil {
+				return parsed.UTC(), true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 func checkError(identity string, outcome release.GateOutcome) error {
@@ -792,15 +880,27 @@ func canonicalChecks(values []semanticmodel.ModelCheck) []semanticmodel.ModelChe
 	items := make([]item, 0, len(values))
 	for _, check := range values {
 		check.Fields = canonicalFields(check.Fields)
+		check.Values = append([]string(nil), check.Values...)
 		sort.Strings(check.Values)
-		key := checkIdentity("", check)
+		semanticCheck := check
+		semanticCheck.ID = ""
+		key := checkIdentity("", semanticCheck)
 		found := false
 		for i := range items {
-			if items[i].key == key {
-				if severity(items[i].check.Severity) == "warning" && severity(check.Severity) == "error" {
-					items[i].check.Severity = "error"
-				}
-				found = true
+			if items[i].key != key {
+				continue
+			}
+			if check.ID != "" && items[i].check.ID != "" && items[i].check.ID != check.ID {
+				continue
+			}
+			if check.ID != "" && items[i].check.ID == "" {
+				items[i].check.ID = check.ID
+			}
+			if severity(items[i].check.Severity) == "warning" && severity(check.Severity) == "error" {
+				items[i].check.Severity = "error"
+			}
+			found = true
+			if check.ID != "" {
 				break
 			}
 		}
@@ -808,7 +908,12 @@ func canonicalChecks(values []semanticmodel.ModelCheck) []semanticmodel.ModelChe
 			items = append(items, item{check: check, key: key})
 		}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].key != items[j].key {
+			return items[i].key < items[j].key
+		}
+		return items[i].check.ID < items[j].check.ID
+	})
 	result := make([]semanticmodel.ModelCheck, len(items))
 	for i, value := range items {
 		result[i] = value.check
@@ -822,6 +927,7 @@ func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
 	sort.Strings(values)
 	identity := digest(struct {
 		ModelID string   `json:"modelId"`
+		ID      string   `json:"id"`
 		Type    string   `json:"type"`
 		Field   string   `json:"field"`
 		Fields  []string `json:"fields"`
@@ -830,7 +936,7 @@ func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
 		Minimum *int64   `json:"minimum"`
 		Maximum *int64   `json:"maximum"`
 	}{
-		ModelID: modelID, Type: check.Type, Field: check.Field, Fields: fields,
+		ModelID: modelID, ID: check.ID, Type: check.Type, Field: check.Field, Fields: fields,
 		To: check.To, Values: values, Minimum: check.Minimum, Maximum: check.Maximum,
 	})
 	return "check:" + strings.TrimPrefix(identity, "sha256:")
@@ -955,6 +1061,7 @@ type sourceDigestInput struct {
 	Fields       map[string]semanticmodel.SourceField
 	Effective    any
 	Freshness    *semanticmodel.SourceFreshnessSpec
+	Checks       []semanticmodel.ModelCheck
 }
 
 func sourceDigestInputFrom(id string, source semanticmodel.Source) sourceDigestInput {
@@ -962,7 +1069,7 @@ func sourceDigestInputFrom(id string, source semanticmodel.Source) sourceDigestI
 		ID: id, Connection: source.Connection, Object: source.Object, Path: source.Path, Format: source.Format,
 		LocationType: source.LocationType, Catalog: source.Catalog, Schema: source.SchemaName, Relation: source.RelationName,
 		SchemaMode: source.SchemaMode, Fields: source.Fields, Effective: source.EffectivePathLocation,
-		Freshness: source.Freshness,
+		Freshness: source.Freshness, Checks: source.Checks,
 	}
 }
 func durationOf(value semanticmodel.FreshnessDurationSpec) time.Duration {

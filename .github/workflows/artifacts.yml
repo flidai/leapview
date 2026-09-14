@@ -147,7 +147,7 @@ jobs:
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
-    if: needs.build-production-image.result == 'success'
+    if: ${{ always() && needs.build-production-image.result == 'success' }}
     runs-on: ubuntu-24.04
     # The release gate now includes the policy-driven performance and repeated
     # native-refresh phase. Its bounded phase budgets total 115 minutes before

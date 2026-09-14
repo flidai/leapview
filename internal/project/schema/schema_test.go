@@ -628,18 +628,7 @@ func TestGeneratedPerKindSchemaPreservesAPIGenRootStructure(t *testing.T) {
 	}
 }
 
-func TestSourceFreshnessOverlayIsContextOnly(t *testing.T) {
-	for _, forbidden := range []string{"basis", "field", "revision", "close"} {
-		if strings.Contains(strings.ToLower(sourceFreshnessConstraint), forbidden) {
-			t.Fatalf("freshness overlay contains structural vocabulary %q: %s", forbidden, sourceFreshnessConstraint)
-		}
-	}
-	if !strings.Contains(sourceFreshnessConstraint, "warningAfter!") || !strings.Contains(sourceFreshnessConstraint, "errorAfter!") {
-		t.Fatalf("freshness overlay does not express threshold disjunction: %s", sourceFreshnessConstraint)
-	}
-}
-
-func TestSourceFreshnessDiagnosticPointsToContextualField(t *testing.T) {
+func TestDatasetFreshnessDiagnosticPointsToCheck(t *testing.T) {
 	err := ValidateBytes(KindSource, "source.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Source
@@ -647,9 +636,11 @@ metadata: {id: source:orders, name: orders}
 spec:
   connection: files
   location: {type: path, path: orders.csv, format: csv}
-  freshness:
-    basis: field
-    field: updated_at
+  checks:
+    - id: updated_at_fresh
+      type: freshness
+      basis: field
+      field: updated_at
 `))
 	if err == nil {
 		t.Fatal("source freshness without thresholds was accepted")
@@ -659,8 +650,8 @@ spec:
 		t.Fatalf("diagnostics = %#v, want one contextual freshness diagnostic", diagnostics)
 	}
 	diagnostic := diagnostics[0]
-	if diagnostic.FieldPath != "spec.freshness" || diagnostic.Line == 0 || diagnostic.Column == 0 {
-		t.Fatalf("diagnostic = %#v, want spec.freshness with source position", diagnostic)
+	if diagnostic.FieldPath != "spec.checks" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.checks with source position", diagnostic)
 	}
 }
 

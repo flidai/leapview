@@ -218,6 +218,7 @@ type Source struct {
 	// beside the source so candidate qualification can evaluate the authored
 	// expectation without re-decoding a project document.
 	Freshness *SourceFreshnessSpec `yaml:"-" json:"freshness,omitempty"`
+	Checks []ModelCheck `yaml:"-" json:"checks,omitempty"`
 }
 
 // PathLocationHasOptions checks typed option presence without lowering the
@@ -297,6 +298,7 @@ type Table struct {
 	// schema. A non-nil empty map means the author omitted fields. Nil is
 	// reserved for legacy/runtime tables whose Columns are already resolved.
 	AuthoredFields      map[string]ModelFieldDeclaration `yaml:"-" json:"authoredFields"`
+	SchemaMode          string                           `yaml:"-" json:"schemaMode,omitempty"`
 	Columns             map[string]ModelColumn           `yaml:"columns"`
 	Entities            map[string]EntityDefinition      `yaml:"entities"`
 	GrainEntity         string                           `yaml:"grain_entity"`
@@ -333,6 +335,7 @@ type ModelCheck struct {
 	Severity    string
 	Description string
 	Tags        []string
+	Freshness *SourceFreshnessSpec
 }
 
 // FreshnessDurationSpec is intentionally scalar and portable. The generated

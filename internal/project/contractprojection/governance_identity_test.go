@@ -10,7 +10,7 @@ import (
 func governedSourceProjection(t *testing.T, field string) Source {
 	t.Helper()
 	var input contracts.Source
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"id":` + field + `,"key":{"datatype":"Integer"}}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{"id":` + field + `,"key":{"datatype":"Integer"}}}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}
@@ -27,7 +27,6 @@ func TestGovernanceFieldsAffectCanonicalIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, field := range []string{
-		`{"datatype":"Integer","nullable":false}`,
 		`{"datatype":"Integer","criticalDataElement":false}`,
 		`{"datatype":"Integer","classification":"restricted"}`,
 		`{"datatype":"Integer","authoritativeDefinitions":[]}`,

@@ -7,4 +7,4 @@ metadata:
 spec:
   connection: docs
   location: {type: path, path: market_ohlc.csv, format: csv, options: {header: true}}
-  schema: {mode: inferred}
+  schema: {mode: compatible}

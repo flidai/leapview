@@ -71,11 +71,11 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      order_id: {datatype: String, description: Stable order identifier.}
-      customer_id: {datatype: String, description: Customer identifier.}
-      purchased_at: {datatype: String, description: Source purchase timestamp.}
-      amount: {datatype: Decimal, description: Source order amount.}
+  fields:
+    order_id: {datatype: String, description: Stable order identifier.}
+    customer_id: {datatype: String, description: Customer identifier.}
+    purchased_at: {datatype: String, description: Source purchase timestamp.}
+    amount: {datatype: Decimal, description: Source order amount.}
 ```
 
 The source name is logical identity; `path` is a physical detail that can evolve. Declare the source fields expected by downstream transformations. Model SQL should still cast defensively when physical CSV values can be malformed.
