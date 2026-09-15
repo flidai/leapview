@@ -1153,10 +1153,7 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
           dashboard.removeEventListener('lv-visualization-window-request', onRequest)
           resolve(detail)
         }
-        const timeout = window.setTimeout(() => {
-          dashboard.removeEventListener('lv-visualization-window-request', onRequest)
-          reject(new Error('scrolled window request was not emitted'))
-        }, 1_000)
+        const timeout = window.setTimeout(() => reject(new Error('scrolled window request was not emitted')), 1_000)
         dashboard.addEventListener('lv-visualization-window-request', onRequest)
       })
       scrollport.scrollTop = 100 * 28
