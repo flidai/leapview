@@ -529,6 +529,11 @@ export const projectBaseStyles = css`
     gap: 0;
   }
 
+  .semantic-model-overview {
+    box-sizing: border-box;
+    width: min(100%, var(--lv-page-content-max-width));
+  }
+
   .semantic-overview-panels {
     display: grid;
     min-width: 0;
@@ -546,9 +551,6 @@ export const projectBaseStyles = css`
     min-width: 0;
     align-content: start;
     gap: var(--base-size-12);
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
     padding: var(--base-size-16);
   }
 

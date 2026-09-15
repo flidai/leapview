@@ -40,7 +40,6 @@ export const projectOverviewStyles = css`
   .semantic-overview-recent-runs {
     display: grid;
     gap: var(--base-size-12);
-    border-top: var(--lv-border-muted);
     padding-top: var(--base-size-16);
   }
 
@@ -125,7 +124,6 @@ export const projectOverviewStyles = css`
   .semantic-model-summary {
     display: grid;
     gap: var(--base-size-12);
-    border-top: var(--lv-border-muted);
     padding-top: var(--base-size-16);
   }
 
@@ -170,9 +168,6 @@ export const projectOverviewStyles = css`
     display: grid;
     min-width: 0;
     gap: var(--base-size-8);
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
     color: var(--lv-fg-default);
     padding: var(--base-size-12);
     text-decoration: none;
@@ -199,7 +194,6 @@ export const projectOverviewStyles = css`
     min-width: 0;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--base-size-12);
-    border-top: var(--lv-border-muted);
     padding-top: var(--base-size-16);
   }
 
@@ -212,9 +206,6 @@ export const projectOverviewStyles = css`
     min-width: 0;
     align-content: start;
     gap: var(--base-size-8);
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
     padding: var(--base-size-16);
   }
 

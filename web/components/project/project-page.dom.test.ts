@@ -159,8 +159,10 @@ test('semantic model overview separates summary metadata from model inspection',
       element.style.setProperty('--lv-border-muted', '1px solid currentColor')
       element.style.setProperty('--lv-border-default', '1px solid currentColor')
       element.style.setProperty('--lv-chrome-rule-gutter', '44px')
+      element.style.setProperty('--lv-page-content-max-width', '72rem')
       const root = element.shadowRoot! as ShadowRoot
       const details = root.querySelector('#details') as HTMLElement
+      const overview = details.querySelector('.semantic-model-overview') as HTMLElement
       return {
         graphCount: details.querySelectorAll('lv-semantic-model-graph').length,
         panelHeadings: Array.from(details.querySelectorAll('.semantic-overview-panel h2')).map((node) => node.textContent?.trim()),
@@ -187,9 +189,18 @@ test('semantic model overview separates summary metadata from model inspection',
         openModelLinks: details.querySelectorAll('.semantic-model-summary-heading > a').length,
         typeLabels: Array.from(details.querySelectorAll('dt')).filter((node) => node.textContent?.trim() === 'Type').length,
         contentRules: {
-          afterOverview: getComputedStyle(details.querySelector('.semantic-model-overview') as HTMLElement).borderBottomWidth,
+          afterOverview: getComputedStyle(overview).borderBottomWidth,
           beforeContents: getComputedStyle(details.querySelector('.semantic-model-summary') as HTMLElement).borderTopWidth,
           beforeImpact: getComputedStyle(details.querySelector('.semantic-overview-impact-grid') as HTMLElement).borderTopWidth,
+        },
+        overviewLayout: {
+          width: overview.getBoundingClientRect().width,
+          availableWidth: details.getBoundingClientRect().width,
+          left: overview.getBoundingClientRect().left,
+          availableLeft: details.getBoundingClientRect().left,
+          panelBorders: Array.from(details.querySelectorAll<HTMLElement>('.semantic-overview-panel')).map((node) => getComputedStyle(node).borderTopWidth),
+          summaryBorders: Array.from(details.querySelectorAll<HTMLElement>('.semantic-summary-card')).map((node) => getComputedStyle(node).borderTopWidth),
+          impactBorders: Array.from(details.querySelectorAll<HTMLElement>('.semantic-overview-impact')).map((node) => getComputedStyle(node).borderTopWidth),
         },
         chromeRuleExtensions: {
           breadcrumb: getComputedStyle(root.querySelector('.breadcrumb-header') as HTMLElement, '::before').width,
@@ -220,7 +231,13 @@ test('semantic model overview separates summary metadata from model inspection',
     ])
     expect(state.openModelLinks).toBe(0)
     expect(state.typeLabels).toBe(0)
-    expect(state.contentRules).toEqual({ afterOverview: '0px', beforeContents: '1px', beforeImpact: '1px' })
+    expect(state.contentRules).toEqual({ afterOverview: '0px', beforeContents: '0px', beforeImpact: '0px' })
+    expect(state.overviewLayout.width).toBe(1152)
+    expect(state.overviewLayout.width).toBeLessThan(state.overviewLayout.availableWidth)
+    expect(state.overviewLayout.left).toBe(state.overviewLayout.availableLeft)
+    expect(state.overviewLayout.panelBorders).toEqual(['0px', '0px'])
+    expect(state.overviewLayout.summaryBorders).toEqual(['0px', '0px', '0px', '0px'])
+    expect(state.overviewLayout.impactBorders).toEqual(['0px', '0px'])
     expect(state.chromeRuleExtensions).toEqual({ breadcrumb: '44px', tabs: '44px' })
     expect(state.impactHeadings).toEqual(['Upstream', 'Downstream impact'])
     expect(state.upstreamFacts).toEqual(['2 governed datasets', '1 refresh pipeline'])
