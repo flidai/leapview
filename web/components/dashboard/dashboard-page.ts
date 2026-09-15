@@ -733,8 +733,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private get visuals(): Record<string, VisualizationEnvelope> {
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard' })
     return this.visualizationDecoder.decodeAll(
       this.signal<Record<string, DashboardVisualizationSignal>>('visuals', {}),
+      runtime.servingStateId ?? '',
     )
   }
 
