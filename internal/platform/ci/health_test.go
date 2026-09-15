@@ -74,8 +74,8 @@ func TestAnalyzeHealth(t *testing.T) {
 			t.Errorf("alerts %v do not contain %q", got.Alerts, alert)
 		}
 	}
-	if got.Selection["docs"].Selected != 5 {
-		t.Fatalf("docs selected count = %d, want 5", got.Selection["docs"].Selected)
+	if got.Selection["docs"].Selected != 2 {
+		t.Fatalf("docs selected count = %d, want 2", got.Selection["docs"].Selected)
 	}
 }
 
@@ -197,5 +197,65 @@ func TestMatrixSkipIsNotProofOfCompleteSelection(t *testing.T) {
 	report := AnalyzeHealth([]HealthRun{{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: map[string]string{"frontend-tests/core": "success", "frontend-tests/site": "skipped"}}})
 	if report.Runs[0].SelectionConfidence != "incomplete" || report.Jobs["frontend-tests/site"].Skipped != 1 || report.Jobs["frontend-tests/site"].Executed != 0 {
 		t.Fatalf("skipped shard accepted: %+v", report)
+	}
+}
+
+func TestExhaustiveWorkflowRegistryDoesNotRequireAPlan(t *testing.T) {
+	t.Parallel()
+
+	results := map[string]string{}
+	for _, job := range ExpectedHealthJobs("merge-validation.yml") {
+		results[job] = "success"
+	}
+	report := AnalyzeHealth([]HealthRun{{
+		Workflow: "merge-validation.yml", Event: "merge_group", Conclusion: "success",
+		DurationSeconds: 600, QueueSeconds: 3, Results: results,
+	}})
+	run := report.Runs[0]
+	if report.Incomplete != 0 || report.UnknownSelection != 0 {
+		t.Fatalf("exhaustive workflow treated as missing planner evidence: %+v", report)
+	}
+	if run.ExpectedSource != "workflow_registry" || run.SelectionConfidence != "verified" || len(run.Problems) != 0 {
+		t.Fatalf("workflow registry was not accepted as complete evidence: %+v", run)
+	}
+}
+
+func TestPlanningMetricsOnlyUsePullRequestPlans(t *testing.T) {
+	t.Parallel()
+
+	jobs := Jobs{Docs: true}
+	plan := Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}
+	full := FullJobs()
+	fullPlan := Plan{Version: PlanVersion, Nominal: full, Effective: full}
+	results := healthSuccessfulResults(jobs)
+	report := AnalyzeHealth([]HealthRun{
+		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 100, QueueSeconds: 1, Plan: plan, Results: results},
+		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: fullPlan, Results: healthSuccessfulResults(full)},
+		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 120, QueueSeconds: 1, Plan: plan, Results: results},
+	})
+	if report.PlannedRuns != 1 || report.UnknownSelection != 0 || report.Selection["docs"].Selected != 1 {
+		t.Fatalf("manual full run polluted PR selection metrics: %+v", report)
+	}
+	if report.FullPR.Count != 1 || report.Runs[1].Category != "full_pr" {
+		t.Fatalf("manual full validation was not classified: %+v", report.Runs)
+	}
+	if report.Unknown.Count != 1 || report.Runs[2].Category != "unknown" {
+		t.Fatalf("manual selective validation was classified as full: %+v", report.Runs)
+	}
+}
+
+func TestFailedExpectedJobIsCompleteFailureEvidence(t *testing.T) {
+	t.Parallel()
+
+	jobs := Jobs{Docs: true}
+	results := healthSuccessfulResults(jobs)
+	results["docs"] = "failure"
+	report := AnalyzeHealth([]HealthRun{{
+		Workflow: "ci.yml", Event: "pull_request", Conclusion: "failure",
+		DurationSeconds: 100, QueueSeconds: 1,
+		Plan: Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}, Results: results,
+	}})
+	if report.Incomplete != 0 || report.Failures != 1 || report.Runs[0].SelectionConfidence != "verified" {
+		t.Fatalf("known failure mislabeled as incomplete evidence: %+v", report)
 	}
 }
