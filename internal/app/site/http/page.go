@@ -362,7 +362,6 @@ func siteDocsLayout(document *siteDocument, content ...g.Node) g.Node {
 					siteDocsArticleHeader(document),
 					g.Group(content),
 				),
-				g.El("lv-site-article-toc"),
 			),
 		),
 	)

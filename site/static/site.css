@@ -494,30 +494,12 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-reading-layout {
   display: grid;
-  width: 100%;
-  grid-template-columns:
-    minmax(0, 1fr)
-    minmax(
-      var(--base-size-128),
-      calc(var(--base-size-128) + var(--base-size-64))
-    );
-  gap: var(--base-size-32);
-}
-
-/* DuckDB keeps the article outline through 1201px and removes it at 1200px. */
-@media (max-width: 75rem) {
-  .site-docs-reading-layout {
-    width: min(
-      100%,
-      calc(var(--site-article-width) + var(--base-size-64) + var(--base-size-16))
-    );
-    grid-template-columns: minmax(0, 1fr);
-    margin: 0 auto;
-  }
-
-  .site-docs-reading-layout > lv-site-article-toc {
-    display: none;
-  }
+  width: min(
+    100%,
+    calc(var(--site-article-width) + var(--base-size-128))
+  );
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 auto;
 }
 
 .site-docs-layout {

@@ -1593,7 +1593,7 @@ test('documentation navigation uses compact rows and Overview labels', async () 
   }
 })
 
-test('documentation reading columns stay centered and readable at every layout tier', async () => {
+test('documentation reading column stays centered and readable at every layout tier', async () => {
   const page = await browser.newPage({
     viewport: { width: 1600, height: 900 },
   })
@@ -1606,22 +1606,18 @@ test('documentation reading columns stay centered and readable at every layout t
         const shell = reading.querySelector('.site-guide-shell') as HTMLElement
         const article = reading.querySelector('.site-docs-article') as HTMLElement
         const paragraph = article.querySelector('p') as HTMLElement
-        const outline = reading.querySelector('lv-site-article-toc') as HTMLElement
         const contentRect = content.getBoundingClientRect()
         const contentStyle = getComputedStyle(content)
         const readingRect = reading.getBoundingClientRect()
         const articleRect = article.getBoundingClientRect()
         const paragraphRect = paragraph.getBoundingClientRect()
         const shellRect = shell.getBoundingClientRect()
-        const outlineRect = outline.getBoundingClientRect()
         const sectionHeading = article.querySelector('h2') as HTMLElement
         const precedingBlock = sectionHeading.previousElementSibling as HTMLElement
         return {
           articleLeftSpace: articleRect.left - shellRect.left,
           articleRightSpace: shellRect.right - articleRect.right,
           articleWidth: articleRect.width,
-          outlineVisible: getComputedStyle(outline).display !== 'none',
-          outlineRightSpace: contentRect.right - Number.parseFloat(contentStyle.paddingRight) - outlineRect.right,
           paragraphWidth: paragraphRect.width,
           readingLeftSpace: readingRect.left - (contentRect.left + Number.parseFloat(contentStyle.paddingLeft)),
           readingRightSpace: contentRect.right - Number.parseFloat(contentStyle.paddingRight) - readingRect.right,
@@ -1631,52 +1627,44 @@ test('documentation reading columns stay centered and readable at every layout t
       })
 
     const wide = await measure()
-    expect(wide.outlineVisible).toBe(true)
-    expect(Math.abs(wide.outlineRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(wide.readingLeftSpace - wide.readingRightSpace)).toBeLessThanOrEqual(1)
-    expect(wide.articleWidth).toBeGreaterThanOrEqual(620)
-    expect(wide.articleWidth).toBeLessThanOrEqual(680)
+    expect(wide.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(wide.articleWidth).toBeLessThanOrEqual(800)
     expect(Math.abs(wide.paragraphWidth - wide.articleWidth)).toBeLessThanOrEqual(1)
     expect(wide.sectionGap).toBeGreaterThanOrEqual(40)
     expect(wide.sectionGap).toBeLessThanOrEqual(60)
 
     await page.setViewportSize({ width: 1201, height: 900 })
-    const withOutline = await measure()
-    expect(withOutline.outlineVisible).toBe(true)
-    expect(Math.abs(withOutline.outlineRightSpace)).toBeLessThanOrEqual(1)
-    expect(Math.abs(withOutline.readingLeftSpace - withOutline.readingRightSpace)).toBeLessThanOrEqual(1)
-    expect(withOutline.articleWidth).toBeGreaterThan(600)
-    expect(withOutline.articleWidth).toBeLessThan(800)
-    expect(Math.abs(withOutline.paragraphWidth - withOutline.articleWidth)).toBeLessThanOrEqual(1)
+    const midwide = await measure()
+    expect(Math.abs(midwide.articleLeftSpace - midwide.articleRightSpace)).toBeLessThanOrEqual(1)
+    expect(Math.abs(midwide.readingLeftSpace - midwide.readingRightSpace)).toBeLessThanOrEqual(1)
+    expect(midwide.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(midwide.articleWidth).toBeLessThanOrEqual(800)
+    expect(Math.abs(midwide.paragraphWidth - midwide.articleWidth)).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 1200, height: 900 })
     const desktop = await measure()
-    expect(desktop.outlineVisible).toBe(false)
     expect(Math.abs(desktop.articleLeftSpace - desktop.articleRightSpace)).toBeLessThanOrEqual(1)
-    expect(desktop.articleWidth).toBeGreaterThanOrEqual(700)
-    expect(desktop.articleWidth).toBeLessThanOrEqual(760)
+    expect(desktop.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(desktop.articleWidth).toBeLessThanOrEqual(800)
     expect(Math.abs(desktop.paragraphWidth - desktop.articleWidth)).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 1025, height: 900 })
     const docked = await measure()
-    expect(docked.outlineVisible).toBe(false)
     expect(docked.articleWidth).toBeGreaterThanOrEqual(700)
 
     await page.setViewportSize({ width: 1024, height: 900 })
     const drawer = await measure()
-    expect(drawer.outlineVisible).toBe(false)
-    expect(drawer.articleWidth).toBeGreaterThanOrEqual(700)
+    expect(drawer.articleWidth).toBeGreaterThanOrEqual(740)
 
     await page.setViewportSize({ width: 768, height: 900 })
     const tablet = await measure()
-    expect(tablet.outlineVisible).toBe(false)
     expect(Math.abs(tablet.articleLeftSpace - tablet.articleRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(tablet.articleWidth - tablet.shellWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(tablet.paragraphWidth - tablet.articleWidth)).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 390, height: 844 })
     const mobile = await measure()
-    expect(mobile.outlineVisible).toBe(false)
     expect(Math.abs(mobile.articleLeftSpace - mobile.articleRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.articleWidth - mobile.shellWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.paragraphWidth - mobile.articleWidth)).toBeLessThanOrEqual(1)
@@ -1737,7 +1725,8 @@ test('documentation CSS keeps site tokens available and fragment targets below t
     expect(Math.abs(runtimeStyles.articleWidth - runtimeStyles.shellWidth)).toBeLessThanOrEqual(1)
     expect(runtimeStyles.articleWidth).toBeLessThanOrEqual(1024)
 
-    await page.getByRole('navigation', { name: 'In this article' }).getByRole('link', { name: 'What you will learn' }).click()
+    expect(await page.locator('lv-site-article-toc').count()).toBe(0)
+    await page.goto(`${baseURL}/docs/getting-started#what-you-will-learn`)
     await page.waitForFunction(() => location.hash === '#what-you-will-learn')
     const anchorPosition = await page.locator('#what-you-will-learn').evaluate((heading) => ({
       headingTop: heading.getBoundingClientRect().top,
@@ -2042,193 +2031,27 @@ test('documentation navigation preserves sidebar context within the current tab'
   }
 })
 
-test('documentation outlines match the compact DuckDB article navigation treatment', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
+test('generated documentation headings remain linkable without an article rail', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
-    await page.goto(`${baseURL}/docs/guides/build/models`)
-    const toc = page.locator('lv-site-article-toc')
-    expect(await toc.locator('a[data-level="2"]').count()).toBeGreaterThanOrEqual(2)
-    expect(await toc.locator('a[data-level="3"]').count()).toBeGreaterThanOrEqual(2)
-    const tocTreatment = await toc.evaluate((element) => {
-      const root = element.shadowRoot?.querySelector<HTMLElement>('ul#toc')
-      const nested = root?.querySelector<HTMLElement>(':scope > li > ul')
-      const heading = element.shadowRoot?.querySelector<HTMLElement>('nav > h2')
-      const major = root?.querySelector<HTMLElement>(':scope > li > a[data-level="2"]')
-      const subsection = nested?.querySelector<HTMLElement>(':scope > li > a[data-level="3"]')
-      const active = root?.querySelector<HTMLElement>('a.active')
-      const inactive = root?.querySelector<HTMLElement>('a:not(.active)')
-      const headingStyle = heading ? getComputedStyle(heading) : null
-      const rootStyle = root ? getComputedStyle(root) : null
-      const nestedStyle = nested ? getComputedStyle(nested) : null
-      const majorStyle = major ? getComputedStyle(major) : null
-      const subsectionStyle = subsection ? getComputedStyle(subsection) : null
-      const activeStyle = active ? getComputedStyle(active) : null
-      const inactiveStyle = inactive ? getComputedStyle(inactive) : null
-      return {
-        activeColor: activeStyle?.color,
-        activeWeight: activeStyle?.fontWeight,
-        headingFontSize: Number.parseFloat(headingStyle?.fontSize ?? '0'),
-        headingLetterSpacing: Number.parseFloat(headingStyle?.letterSpacing ?? '0'),
-        headingLineHeight: Number.parseFloat(headingStyle?.lineHeight ?? '0'),
-        headingMarginLeft: Number.parseFloat(headingStyle?.marginLeft ?? '0'),
-        headingTransform: headingStyle?.textTransform,
-        hostOverflow: getComputedStyle(element).overflow,
-        hostPosition: getComputedStyle(element).position,
-        inactiveColor: inactiveStyle?.color,
-        inactiveWeight: inactiveStyle?.fontWeight,
-        majorBorderRadius: Number.parseFloat(majorStyle?.borderRadius ?? '0'),
-        majorFontSize: Number.parseFloat(majorStyle?.fontSize ?? '0'),
-        majorLineHeight: Number.parseFloat(majorStyle?.lineHeight ?? '0'),
-        majorPaddingBlock: Number.parseFloat(majorStyle?.paddingTop ?? '0'),
-        majorPaddingInline: Number.parseFloat(majorStyle?.paddingLeft ?? '0'),
-        nestedBorderLeftWidth: nestedStyle?.borderLeftWidth,
-        nestedIndent: nested && root ? nested.getBoundingClientRect().left - root.getBoundingClientRect().left : 0,
-        rootListStyle: rootStyle?.listStyleType,
-        rootMarginTop: Number.parseFloat(rootStyle?.marginTop ?? '0'),
-        subsectionFontSize: Number.parseFloat(subsectionStyle?.fontSize ?? '0'),
-        subsectionOffset: subsection && major ? subsection.getBoundingClientRect().left - major.getBoundingClientRect().left : 0,
-      }
-    })
-    expect(tocTreatment.hostPosition).toBe('sticky')
-    expect(tocTreatment.hostOverflow).toBe('auto')
-    expect(tocTreatment.headingFontSize).toBe(12)
-    expect(tocTreatment.headingLineHeight / tocTreatment.headingFontSize).toBeCloseTo(1.2, 2)
-    expect(tocTreatment.headingLetterSpacing).toBeCloseTo(0.36, 2)
-    expect(tocTreatment.headingMarginLeft).toBe(12)
-    expect(tocTreatment.headingTransform).toBe('uppercase')
-    expect(tocTreatment.rootListStyle).toBe('none')
-    expect(tocTreatment.rootMarginTop).toBe(15)
-    expect(tocTreatment.majorFontSize).toBe(12)
-    expect(tocTreatment.subsectionFontSize).toBe(12)
-    expect(tocTreatment.majorLineHeight).toBe(12)
-    expect(tocTreatment.majorPaddingBlock).toBe(6)
-    expect(tocTreatment.majorPaddingInline).toBe(12)
-    expect(tocTreatment.majorBorderRadius).toBeGreaterThan(1000)
-    expect(tocTreatment.nestedBorderLeftWidth).toBe('1px')
-    expect(tocTreatment.nestedIndent).toBe(15)
-    expect(tocTreatment.subsectionOffset).toBe(16)
-    expect(tocTreatment.activeColor).not.toBe(tocTreatment.inactiveColor)
-    expect(tocTreatment.activeWeight).toBe(tocTreatment.inactiveWeight)
-
-    const articleHierarchy = await page.locator('.site-docs-article').evaluate((article) => {
-      const generatedHeadings = ['h4', 'h5', 'h6'].map((tagName) => {
-        const heading = document.createElement(tagName)
-        heading.textContent = tagName
-        article.append(heading)
-        return heading
-      })
-      const sizes = {
-        h2: Number.parseFloat(getComputedStyle(article.querySelector('h2') as Element).fontSize),
-        h3: Number.parseFloat(getComputedStyle(article.querySelector('h3') as Element).fontSize),
-        h4: Number.parseFloat(getComputedStyle(generatedHeadings[0]).fontSize),
-        h5: Number.parseFloat(getComputedStyle(generatedHeadings[1]).fontSize),
-        h6: Number.parseFloat(getComputedStyle(generatedHeadings[2]).fontSize),
-      }
-      generatedHeadings.forEach((heading) => heading.remove())
-      return sizes
-    })
-    expect(articleHierarchy.h2).toBe(28)
-    expect(articleHierarchy.h3).toBe(24)
-    expect(articleHierarchy.h4).toBe(18)
-    expect(articleHierarchy.h5).toBe(16)
-    expect(articleHierarchy.h6).toBe(14)
+    for (const { route, heading } of [
+      { route: '/docs/cli/semantic-models#dataset', heading: 'h3#dataset' },
+      { route: '/docs/api/access#list-principals', heading: 'h3#list-principals' },
+    ]) {
+      await page.goto(`${baseURL}${route}`)
+      expect(await page.locator('lv-site-article-toc').count()).toBe(0)
+      const target = page.locator(heading)
+      expect(await target.count()).toBe(1)
+      const position = await target.evaluate((element) => ({
+        headingTop: element.getBoundingClientRect().top,
+        headerBottom: document.querySelector('.site-header')?.getBoundingClientRect().bottom ?? 0,
+      }))
+      expect(position.headingTop).toBeGreaterThan(position.headerBottom)
+    }
   } finally {
     await page.close()
   }
 })
-
-test('generated CLI outlines keep subcommands and omit repeated details and footer metadata', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
-  try {
-    await page.goto(`${baseURL}/docs/cli/semantic-models`)
-    const article = page.locator('.site-docs-article')
-    const toc = page.locator('lv-site-article-toc')
-    await page.waitForFunction(() => Boolean(document.querySelector('lv-site-article-toc')?.shadowRoot?.querySelector('a')))
-
-    expect(await article.locator('h3#dataset').count()).toBe(1)
-    expect(await article.locator('h3#dataset ~ h4').first().textContent()).toBe('Usage')
-    expect(await article.locator('.site-docs-page-meta h2').textContent()).toBe('About this page')
-
-    const visibleOutlineLabels = await toc.evaluate((element) =>
-      Array.from(element.shadowRoot?.querySelectorAll<HTMLAnchorElement>('a') ?? [])
-        .filter((link) => link.getClientRects().length > 0)
-        .map((link) => link.textContent?.trim() ?? ''),
-    )
-    expect(visibleOutlineLabels.filter((label) => label === 'Usage')).toHaveLength(1)
-    expect(visibleOutlineLabels.filter((label) => label === 'Options')).toHaveLength(0)
-    expect(visibleOutlineLabels).toContain('Subcommands')
-    expect(visibleOutlineLabels).toContain('dataset')
-    expect(visibleOutlineLabels).toContain('datasets')
-    expect(visibleOutlineLabels).toContain('describe')
-    expect(visibleOutlineLabels).not.toContain('Behavior')
-    expect(visibleOutlineLabels).not.toContain('Inherited options')
-    expect(visibleOutlineLabels).not.toContain('About this page')
-    expect(await toc.getByRole('link', { name: 'About this page', exact: true }).count()).toBe(0)
-  } finally {
-    await page.close()
-  }
-})
-
-test('generated API outlines keep operations and omit repeated operation details', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
-  try {
-    await page.goto(`${baseURL}/docs/api/access`)
-    const article = page.locator('.site-docs-article')
-    const toc = page.locator('lv-site-article-toc')
-    await page.waitForFunction(() => Boolean(document.querySelector('lv-site-article-toc')?.shadowRoot?.querySelector('a')))
-
-    expect(await article.locator('h2#operations').count()).toBe(1)
-    const listPrincipals = article.locator('h3#list-principals')
-    expect(await listPrincipals.textContent()).toBe('List principals')
-    expect(await listPrincipals.locator('xpath=following-sibling::h4[1]').textContent()).toBe('Parameters')
-
-    const visibleOutlineLabels = await toc.evaluate((element) =>
-      Array.from(element.shadowRoot?.querySelectorAll<HTMLAnchorElement>('a') ?? [])
-        .filter((link) => link.getClientRects().length > 0)
-        .map((link) => link.textContent?.trim() ?? ''),
-    )
-    expect(visibleOutlineLabels[0]).toBe('Operations')
-    expect(visibleOutlineLabels).toContain('List principals')
-    expect(visibleOutlineLabels).toContain('Create a local principal')
-    expect(visibleOutlineLabels).not.toContain('Parameters')
-    expect(visibleOutlineLabels).not.toContain('Request body')
-    expect(visibleOutlineLabels).not.toContain('Responses')
-
-    const listProjectRoles = article.locator('h3#list-project-roles')
-    const listProjectRolesDetail = listProjectRoles.locator('xpath=following-sibling::h4[1]')
-    await listProjectRolesDetail.evaluate((heading) => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo({ top: heading.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.2 })
-    })
-    await page.waitForFunction(() => {
-      const toc = document.querySelector<HTMLElement>('lv-site-article-toc')
-      const active = toc?.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && (toc?.scrollTop ?? 0) > 0
-    })
-    const activeOutline = await toc.evaluate((element) => {
-      const active = element.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      if (!active) throw new Error('active article outline link is missing')
-      const hostRect = element.getBoundingClientRect()
-      const activeRect = active.getBoundingClientRect()
-      return {
-        label: active.textContent?.trim(),
-        scrollTop: element.scrollTop,
-        visible: activeRect.top >= hostRect.top && activeRect.bottom <= hostRect.bottom,
-      }
-    })
-    expect(activeOutline.label).toBe('List project roles')
-    expect(activeOutline.scrollTop).toBeGreaterThan(0)
-    expect(activeOutline.visible).toBe(true)
-  } finally {
-    await page.close()
-  }
-}, 10_000)
 
 test('visual showcase renders every supported visual type', async () => {
   const page = await browser.newPage()

@@ -12,7 +12,6 @@ import { visualExampleHighlightLines } from './visual-example-highlights'
 import type { VisualPayload } from './site-types'
 import './site-shell'
 import './site-docs-navigation'
-import './site-article'
 import './site-responsive-reference'
 import './site-visual-showcase'
 
