@@ -93,9 +93,9 @@ identity from PostgreSQL. The PostgreSQL recovery-frontier adapter accepts only
 a published set whose exact passed validation attempt, result digest, evidence
 envelope, frontier digest, and target binding all agree. Missing, ambiguous,
 mutable, stale, or mismatched owner results fail before evaluation. The
-qualification supplies isolated owner adapters; production composition still
-requires deployed OCI-admission, release-policy, target, and migration
-projection authorities and must not replace them with caller values.
+application-level production composition supplies the concrete OCI-admission,
+release-policy, target, migration-capability, and RecoverySet authorities; it
+does not accept caller-provided projections.
 
 The resolver then calls the existing pure evaluator and returns its canonical
 evidence bytes and domain-separated digest; it does not define another evidence
@@ -242,6 +242,34 @@ unsupported owner state prevents the adapter from emitting an envelope.
 Compatibility differences remain explicit and fail the aggregate transition
 closed; the adapters do not infer or execute a migration.
 This provides authoritative migration compatibility resolution. It does not execute a release transition.
+
+### Authoritative production preflight composition
+
+The production preflight entrypoint accepts only exact predecessor and
+candidate OCI references, a deployment-target ID, and a published RecoverySet
+frontier reference. Its constructor requires the concrete PostgreSQL release,
+deployment-target, migration-capability, and RecoverySet repositories. It has
+no interface or request field for caller-created artifact, release-policy,
+migration-compatibility, subsystem-capability, target, or frontier
+projections.
+
+For each request, the release authority resolves both unrevoked OCI admissions
+and their exact pair policy. The deployment authority resolves the exact
+target revision. The migration authority then obtains all four independently
+bound `migration-compatibility/v2` owner envelopes from authenticated
+per-artifact capabilities and validates their canonical aggregate. Finally,
+the RecoverySet authority resolves the exact published, passed, target-bound
+frontier in one read-only snapshot. Only after those owner checks does the
+existing evaluator produce its unchanged canonical transition-preflight
+evidence.
+
+The v2 admission bindings are verified before the existing preflight artifact
+identity digests are derived. The historical caller-constructible
+`migration-compatibility/v1` projection is not accepted, wrapped, or
+reinterpreted by this path. PhysicalPool incompatibility remains fail-closed
+when mapped into the existing persistent-domain decision model.
+
+Preflight evidence does not execute a release transition.
 
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does
