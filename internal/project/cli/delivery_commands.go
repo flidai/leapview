@@ -88,6 +88,7 @@ type DeliveryPlanResult struct {
 	GovernanceDigest        string                     `json:"governanceDigest"`
 	EvidenceDigest          string                     `json:"evidenceDigest"`
 	Status                  string                     `json:"status"`
+	ExpiresAt               string                     `json:"expiresAt"`
 	BaseGenerationID        string                     `json:"baseGenerationId,omitempty"`
 	BaseTargetRevision      int64                      `json:"baseTargetRevision"`
 	Evidence                DeliveryPlanEvidenceResult `json:"evidence"`

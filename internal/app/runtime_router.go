@@ -56,7 +56,6 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
 
 type QueryMetrics = dashboardmodule.Metrics
@@ -986,39 +985,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		connectionAdministration = administration
-		if !runtimeConfig.Production && runtime.profileApplications != nil && runtimeConfig.LocalCheckoutID != "" && runtimeConfig.LocalRuntimeID != "" && runtimeConfig.DevelopmentProfileName != "" {
-			resolver, err := runtime.analyticsModule.DevelopmentProfileCredentialResolver()
-			if err != nil {
-				return fmt.Errorf("build development profile credential resolver: %w", err)
-			}
-			profileService, err := connectionbinding.NewProfileApplicationService(connectionbinding.ProfileApplicationServiceConfig{
-				Store: runtime.profileApplications, Bindings: administration, Resolver: resolver,
-				NewBindingID: func() (connectionbinding.BindingID, error) {
-					return connectionbinding.ParseBindingID("binding:" + uuid.NewString())
-				},
-				Now: time.Now,
-			})
-			if err != nil {
-				return fmt.Errorf("build development profile application service: %w", err)
-			}
-			developmentProfileAPI = analyticsmodule.DevelopmentProfileApplicationAPIConfig{
-				Service: profileService, Store: runtime.profileApplications, Enabled: true,
-				CheckoutID: runtimeConfig.LocalCheckoutID, RuntimeID: runtimeConfig.LocalRuntimeID,
-				ProfileName: runtimeConfig.DevelopmentProfileName, GraphDigest: runtimeConfig.DevelopmentGraphDigest,
-				ProfileDigest: runtimeConfig.DevelopmentProfileDigest, Environment: runtimeConfig.DefaultEnvironment,
-				TargetID: storage.instanceID, ResolveProjectID: runtime.resolveProjectID,
-				CurrentPrincipal: func(r *http.Request) (string, bool) {
-					principal, ok := routes.accessModule.CurrentPrincipal(r)
-					return principal.ID, ok
-				},
-				Audit: func(ctx context.Context, principalID, projectID, action, metadata string) error {
-					record := accessAuditRecorder(routes.accessModule)
-					if record == nil {
-						return errors.New("development profile audit authority is unavailable")
-					}
-					return record(ctx, access.AuditEventInput{ProjectID: projectID, PrincipalID: principalID, Action: action, ResourceKind: "project", ResourceID: projectID, Capability: access.CapabilityResourceManage, Status: "succeeded", MetadataJSON: metadata})
-				},
-			}
+		developmentProfileAPI, err = buildDevelopmentProfileAPI(
+			routes.accessModule,
+			runtime.analyticsModule,
+			runtime.profileApplications,
+			runtime.resolveProjectID,
+			storage.instanceID,
+			runtimeConfig,
+			administration)
+		if err != nil {
+			return err
 		}
 	}
 	if routes.projectBrowser != nil {

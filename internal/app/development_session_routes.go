@@ -27,7 +27,6 @@ func mountDevelopmentSessionRoutes(r chi.Router, session *developmentsessionmodu
 		guard = func(next http.HandlerFunc) http.HandlerFunc { return next }
 	}
 	sessionBase := "/api/v1/projects/{project}/targets/{target}/development-session"
-	r.Get(sessionBase+"/events", guard(session.Events))
 	base := sessionBase + "/candidate/preview"
 	r.Get(base, guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidatePreview(session, candidates, w, request)

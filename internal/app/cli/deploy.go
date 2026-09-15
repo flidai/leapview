@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -34,6 +35,7 @@ type projectDeployOperations struct {
 	// command defaults to the filesystem capture below. It is deliberately
 	// invoked before the first source-retention or delivery request.
 	sourceCapture func(context.Context, string, string, string) (projectdevloop.Snapshot, error)
+	now           func() time.Time
 }
 
 type deploymentTargetIdentityReader interface {
@@ -233,7 +235,7 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 		descriptor.TargetID, descriptor.SourceDigest = plan.TargetID, plan.SourceDigest
 		descriptor.SourceAttestationDigest, descriptor.ProvenanceDigest = plan.SourceAttestationDigest, plan.ProvenanceDigest
 		descriptor.PlanID, descriptor.PlanDigest = plan.PlanID, plan.PlanDigest
-		descriptor.PlanStatus, descriptor.PlanEvidence = plan.Status, plan.Evidence
+		descriptor.PlanStatus, descriptor.PlanExpiresAt, descriptor.PlanEvidence = plan.Status, plan.ExpiresAt, plan.Evidence
 		descriptor.GovernanceDigest = plan.GovernanceDigest
 		descriptor.BaseGenerationID, descriptor.BaseTargetRevision = plan.BaseGenerationID, plan.BaseTargetRevision
 		descriptor.ExecutionDigest, descriptor.EvidenceDigest = plan.ExecutionDigest, plan.EvidenceDigest
@@ -248,7 +250,12 @@ func (operations projectDeployOperations) deployWithOperation(ctx context.Contex
 			}
 		}
 	} else {
-		plan = projectcli.DeliveryPlanResult{PlanID: descriptor.PlanID, ProjectID: descriptor.ProjectID, TargetID: descriptor.TargetID, Environment: descriptor.Environment, SourceDigest: descriptor.SourceDigest, SourceAttestationDigest: descriptor.SourceAttestationDigest, ProvenanceDigest: descriptor.ProvenanceDigest, PlanDigest: descriptor.PlanDigest, Status: descriptor.PlanStatus, Evidence: descriptor.PlanEvidence, GovernanceDigest: descriptor.GovernanceDigest, BaseGenerationID: descriptor.BaseGenerationID, BaseTargetRevision: descriptor.BaseTargetRevision, ExecutionDigest: descriptor.ExecutionDigest, EvidenceDigest: descriptor.EvidenceDigest}
+		plan = projectcli.DeliveryPlanResult{PlanID: descriptor.PlanID, ProjectID: descriptor.ProjectID, TargetID: descriptor.TargetID, Environment: descriptor.Environment, SourceDigest: descriptor.SourceDigest, SourceAttestationDigest: descriptor.SourceAttestationDigest, ProvenanceDigest: descriptor.ProvenanceDigest, PlanDigest: descriptor.PlanDigest, Status: descriptor.PlanStatus, ExpiresAt: descriptor.PlanExpiresAt, Evidence: descriptor.PlanEvidence, GovernanceDigest: descriptor.GovernanceDigest, BaseGenerationID: descriptor.BaseGenerationID, BaseTargetRevision: descriptor.BaseTargetRevision, ExecutionDigest: descriptor.ExecutionDigest, EvidenceDigest: descriptor.EvidenceDigest}
+	}
+	if descriptor.CandidateID == "" {
+		if planErr := validateDeploymentPlanForBuild(plan, operations.currentTime()); planErr != nil {
+			return operations.markErrorAndReport(descriptor, projectcli.DeploymentOperationFailure, "start an explicit new operation to obtain and review a fresh plan", planErr, out, options.Format)
+		}
 	}
 	if descriptor.PublicationID == "" {
 		if descriptor.CandidateID != "" || plan.PlanID == descriptor.PlanID && strings.TrimSpace(options.Intent) == "resume" {
@@ -414,6 +421,27 @@ func confirmDeploymentPlan(options projectcli.DeployOptions, descriptor projectc
 	}
 	if provided != expected {
 		return fmt.Errorf("exact plan confirmation is required; expected retained plan digest %s", expected)
+	}
+	return nil
+}
+
+func (operations projectDeployOperations) currentTime() time.Time {
+	if operations.now != nil {
+		return operations.now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func validateDeploymentPlanForBuild(plan projectcli.DeliveryPlanResult, now time.Time) error {
+	if strings.TrimSpace(plan.Status) != "planned" {
+		return &projectcli.DeliveryError{Operation: "build", Kind: "conflict", Code: "DELIVERY_PLAN_EXPIRED", Status: http.StatusConflict, Detail: "the retained delivery plan is not active; create and review a fresh plan"}
+	}
+	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(plan.ExpiresAt))
+	if err != nil || expiresAt.IsZero() {
+		return &projectcli.DeliveryError{Operation: "build", Kind: "conflict", Code: "DELIVERY_PLAN_EXPIRY_UNVERIFIABLE", Status: http.StatusConflict, Detail: "the retained delivery plan has no verifiable expiry; create and review a fresh plan"}
+	}
+	if !now.Before(expiresAt) {
+		return &projectcli.DeliveryError{Operation: "build", Kind: "conflict", Code: "DELIVERY_PLAN_EXPIRED", Status: http.StatusConflict, Detail: "the retained delivery plan has expired; create and review a fresh plan"}
 	}
 	return nil
 }

@@ -52,7 +52,7 @@ func TestAuthenticatedSessionPointerAndExactHandoff(t *testing.T) {
 	if got.CandidateID != "candidate_1" || got.PreviewURL != previewURL || got.SessionID != key.ID() {
 		t.Fatalf("handoff = %#v", got)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview", nil)
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/candidate/redirect", nil)
 	response = httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusTemporaryRedirect || response.Header().Get("Location") != previewURL {
@@ -80,7 +80,7 @@ func TestStablePreviewFailsClosedAndMarksExpiredCandidate(t *testing.T) {
 	handler.Mount(router)
 	expired = true
 	response := httptest.NewRecorder()
-	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview", nil))
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/projects/project_1/targets/target_1/development-session/candidate/redirect", nil))
 	if response.Code != http.StatusGone {
 		t.Fatalf("expired preview status = %d, body=%s", response.Code, response.Body.String())
 	}

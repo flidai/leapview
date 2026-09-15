@@ -65,7 +65,7 @@ func (h *Handler) Mount(r chi.Router) {
 	r.Route("/api/v1/projects/{project}/targets/{target}/development-session", func(session chi.Router) {
 		session.Get("/", h.resolve)
 		session.Get("/candidate", h.candidate)
-		session.Get("/candidate/preview", h.preview)
+		session.Get("/candidate/redirect", h.preview)
 		session.Get("/events", h.events)
 		session.Put("/", h.update)
 		session.Patch("/", h.update)
@@ -349,13 +349,6 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 			return // reconnect resolves the newest revision after a CAS
 		}
 	}
-}
-
-// Events is exported for the browser-authenticated stable route. The API
-// mount also exposes the same endpoint to bearer clients; both paths share the
-// exact owner/session and replay semantics.
-func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
-	h.events(w, r)
 }
 
 func writeSessionEvent(w http.ResponseWriter, record developmentsession.Record) {

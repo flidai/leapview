@@ -271,7 +271,7 @@ func deliveryPlanResult(value deploymentgen.DeliveryPlanPreviewResponse) project
 		SchemaVersion: 1, PlanID: value.Id, ProjectID: value.ProjectId, TargetID: value.TargetId,
 		Environment: value.Environment, Operation: string(value.Operation), SourceDigest: value.SourceDigest, SourceAttestationDigest: value.SourceAttestationDigest,
 		PlanDigest: value.PlanDigest, ExecutionDigest: value.ExecutionDigest, ProvenanceDigest: value.ProvenanceDigest,
-		GovernanceDigest: value.GovernanceDigest, EvidenceDigest: value.EvidenceDigest, Status: string(value.Status), Evidence: evidence,
+		GovernanceDigest: value.GovernanceDigest, EvidenceDigest: value.EvidenceDigest, Status: string(value.Status), ExpiresAt: value.ExpiresAt, Evidence: evidence,
 		BaseGenerationID: optionalString(value.BaseGenerationId), BaseTargetRevision: value.BaseTargetRevision,
 	}
 }

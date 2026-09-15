@@ -96,6 +96,7 @@ type DeploymentOperationResult struct {
 	PlanID                    string                     `json:"planId,omitempty"`
 	PlanDigest                string                     `json:"planDigest,omitempty"`
 	PlanStatus                string                     `json:"planStatus,omitempty"`
+	PlanExpiresAt             string                     `json:"planExpiresAt,omitempty"`
 	PlanEvidence              DeliveryPlanEvidenceResult `json:"planEvidence,omitempty"`
 	GovernanceDigest          string                     `json:"governanceDigest,omitempty"`
 	BaseGenerationID          string                     `json:"baseGenerationId,omitempty"`

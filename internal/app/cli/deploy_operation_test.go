@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
@@ -27,7 +28,7 @@ func TestDeployOperationPersistsBeforeLostPublicationAcknowledgementAndResumesEx
 	sourceDigest := snapshot.Digest
 	store := projectcli.NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json"))
 	planEvidence := projectcli.DeliveryPlanEvidenceResult{Digest: provenanceDigest, ImpactStatement: "one dashboard changes", PhysicalWorkStatement: "one qualification step"}
-	planner := &operationPlanRecorder{result: projectcli.DeliveryPlanResult{PlanID: "plan-1", ProjectID: "project-1", TargetID: "target-1", Environment: "prod", SourceDigest: sourceDigest, SourceAttestationDigest: provenanceDigest, ProvenanceDigest: provenanceDigest, PlanDigest: provenanceDigest, Status: "planned", Evidence: planEvidence}}
+	planner := &operationPlanRecorder{result: projectcli.DeliveryPlanResult{PlanID: "plan-1", ProjectID: "project-1", TargetID: "target-1", Environment: "prod", SourceDigest: sourceDigest, SourceAttestationDigest: provenanceDigest, ProvenanceDigest: provenanceDigest, PlanDigest: provenanceDigest, Status: "planned", ExpiresAt: "2099-01-01T00:00:00Z", Evidence: planEvidence}}
 	builder := &operationBuildRecorder{result: projectcli.DeliveryBuildResult{BuildID: "build-1", PlanID: "plan-1", CandidateID: "candidate-1", CandidateRevision: 7, SealID: "seal-1", PlanDigest: provenanceDigest}}
 	publisher := &operationPublishRecorder{err: errors.New("connection reset after request")}
 	operations := projectDeployOperations{client: operationTestClient{}, planner: planner, builder: builder, publisher: publisher, operations: store, sourceCapture: func(context.Context, string, string, string) (projectdevloop.Snapshot, error) {
@@ -85,7 +86,7 @@ func TestDeployOperationRequiresExactPlanReviewBeforeExpensiveWork(t *testing.T)
 	planner := &operationPlanRecorder{result: projectcli.DeliveryPlanResult{
 		PlanID: "plan-review", ProjectID: "project-1", TargetID: "target-1", Environment: "prod",
 		SourceDigest: snapshot.Digest, SourceAttestationDigest: planDigest, ProvenanceDigest: planDigest,
-		PlanDigest: planDigest, Status: "planned", GovernanceDigest: planDigest,
+		PlanDigest: planDigest, Status: "planned", ExpiresAt: "2099-01-01T00:00:00Z", GovernanceDigest: planDigest,
 		Evidence: projectcli.DeliveryPlanEvidenceResult{Digest: planDigest, ImpactStatement: "one dashboard changes", PhysicalWorkStatement: "qualification required"},
 	}}
 	builder := &operationBuildRecorder{result: projectcli.DeliveryBuildResult{BuildID: "build-review", PlanID: "plan-review", CandidateID: "candidate-review", CandidateRevision: 3, SealID: "seal-review", PlanDigest: planDigest}}
@@ -118,6 +119,80 @@ func TestDeployOperationRequiresExactPlanReviewBeforeExpensiveWork(t *testing.T)
 	}
 	if builder.calls != 0 || publisher.calls != 0 || !strings.Contains(resumeOutput.String(), "plan-review operation review-gate") || !strings.Contains(resumeOutput.String(), "qualification required") {
 		t.Fatalf("retained review was not rendered before expensive work: build=%d publish=%d output=%q", builder.calls, publisher.calls, resumeOutput.String())
+	}
+}
+
+func TestDeployOperationRejectsStalePlanBeforeBuild(t *testing.T) {
+	const digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	for _, test := range []struct {
+		name, status, expiresAt, code string
+	}{
+		{name: "target reports expired", status: "expired", expiresAt: "2099-01-01T00:00:00Z", code: "DELIVERY_PLAN_EXPIRED"},
+		{name: "retained expiry elapsed", status: "planned", expiresAt: "2000-01-01T00:00:00Z", code: "DELIVERY_PLAN_EXPIRED"},
+		{name: "expiry missing", status: "planned", code: "DELIVERY_PLAN_EXPIRY_UNVERIFIABLE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := operationTestSnapshot("project-1", "candidate-sync:stale-plan")
+			store := projectcli.NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json"))
+			planner := &operationPlanRecorder{result: projectcli.DeliveryPlanResult{
+				PlanID: "plan-stale", ProjectID: "project-1", TargetID: "target-1", Environment: "prod",
+				SourceDigest: snapshot.Digest, SourceAttestationDigest: digest, ProvenanceDigest: digest,
+				PlanDigest: digest, Status: test.status, ExpiresAt: test.expiresAt,
+			}}
+			builder := &operationBuildRecorder{}
+			publisher := &operationPublishRecorder{}
+			operations := projectDeployOperations{client: operationTestClient{}, planner: planner, builder: builder, publisher: publisher, operations: store, sourceCapture: func(context.Context, string, string, string) (projectdevloop.Snapshot, error) {
+				return snapshot, nil
+			}}
+			var output strings.Builder
+			err := operations.Deploy(t.Context(), projectcli.DeployOptions{SourceRoot: t.TempDir(), Credentials: cliapi.Credentials{Target: "https://target.example", ProjectID: "project-1"}, Environment: "prod", Intent: "new", OperationHandle: "stale-plan", ConfirmPlan: digest, Format: "json"}, &output)
+			if err == nil || !strings.Contains(output.String(), test.code) {
+				t.Fatalf("stale plan error=%v output=%q", err, output.String())
+			}
+			if builder.calls != 0 || publisher.calls != 0 {
+				t.Fatalf("stale plan performed expensive work: build=%d publish=%d", builder.calls, publisher.calls)
+			}
+			retained, loadErr := store.Load("stale-plan")
+			if loadErr != nil {
+				t.Fatal(loadErr)
+			}
+			if retained.Outcome != projectcli.DeploymentOperationFailure || retained.FailureCode != test.code {
+				t.Fatalf("retained stale outcome = %#v", retained)
+			}
+		})
+	}
+}
+
+func TestDeployOperationResumeRejectsPlanThatExpiredAfterReview(t *testing.T) {
+	const digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	expiresAt := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
+	snapshot := operationTestSnapshot("project-1", "candidate-sync:expiring-plan")
+	store := projectcli.NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json"))
+	planner := &operationPlanRecorder{result: projectcli.DeliveryPlanResult{
+		PlanID: "plan-expiring", ProjectID: "project-1", TargetID: "target-1", Environment: "prod",
+		SourceDigest: snapshot.Digest, SourceAttestationDigest: digest, ProvenanceDigest: digest,
+		PlanDigest: digest, Status: "planned", ExpiresAt: expiresAt.Format(time.RFC3339),
+	}}
+	builder := &operationBuildRecorder{}
+	operations := projectDeployOperations{client: operationTestClient{}, planner: planner, builder: builder, publisher: &operationPublishRecorder{}, operations: store, now: func() time.Time {
+		return expiresAt.Add(-time.Minute)
+	}, sourceCapture: func(context.Context, string, string, string) (projectdevloop.Snapshot, error) {
+		return snapshot, nil
+	}}
+	credentials := cliapi.Credentials{Target: "https://target.example", ProjectID: "project-1"}
+	var initial strings.Builder
+	err := operations.Deploy(t.Context(), projectcli.DeployOptions{SourceRoot: t.TempDir(), Credentials: credentials, Environment: "prod", Intent: "new", OperationHandle: "expiring-plan", Format: "json"}, &initial)
+	if err == nil || !strings.Contains(err.Error(), "pending_approval") {
+		t.Fatalf("initial review gate error=%v output=%q", err, initial.String())
+	}
+	operations.now = func() time.Time { return expiresAt }
+	var resumed strings.Builder
+	err = operations.Deploy(t.Context(), projectcli.DeployOptions{Credentials: credentials, Environment: "prod", Intent: "resume", OperationHandle: "expiring-plan", ConfirmPlan: digest, Format: "json"}, &resumed)
+	if err == nil || !strings.Contains(resumed.String(), "DELIVERY_PLAN_EXPIRED") {
+		t.Fatalf("expired resume error=%v output=%q", err, resumed.String())
+	}
+	if planner.calls != 1 || builder.calls != 0 {
+		t.Fatalf("expired resume replanned or built: planner=%d builder=%d", planner.calls, builder.calls)
 	}
 }
 
@@ -181,7 +256,7 @@ func TestDeployOperationReconcilesPendingAndCommittedPublicationOutcomes(t *test
 func TestDeployOperationReplansFromRetainedSourceAfterLostPlanAcknowledgement(t *testing.T) {
 	const provenanceDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	snapshot := operationTestSnapshot("project-1", "candidate-sync:release-plan-lost")
-	planner := &operationPlanRecorder{err: errors.New("connection reset after plan"), result: projectcli.DeliveryPlanResult{PlanID: "plan-1", ProjectID: "project-1", TargetID: "target-1", Environment: "prod", SourceDigest: snapshot.Digest, SourceAttestationDigest: provenanceDigest, ProvenanceDigest: provenanceDigest, PlanDigest: provenanceDigest}}
+	planner := &operationPlanRecorder{err: errors.New("connection reset after plan"), result: projectcli.DeliveryPlanResult{PlanID: "plan-1", ProjectID: "project-1", TargetID: "target-1", Environment: "prod", SourceDigest: snapshot.Digest, SourceAttestationDigest: provenanceDigest, ProvenanceDigest: provenanceDigest, PlanDigest: provenanceDigest, Status: "planned", ExpiresAt: "2099-01-01T00:00:00Z"}}
 	builder := &operationBuildRecorder{result: projectcli.DeliveryBuildResult{BuildID: "build-1", PlanID: "plan-1", CandidateID: "candidate-1", CandidateRevision: 7, SealID: "seal-1", PlanDigest: provenanceDigest}}
 	publisher := &operationPublishRecorder{result: projectcli.PublishResult{PublicationID: "publication-1", GenerationID: "generation-1", CandidateID: "candidate-1", PlanID: "plan-1", PlanDigest: provenanceDigest, Status: "committed"}}
 	store := projectcli.NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json"))

@@ -1,6 +1,4 @@
-// Package developmentprofile validates the local analytics connection-profile
-// contract. It resolves human-readable names against an already compiled graph
-// and emits target-binding inputs; it never applies bindings or reads secrets.
+// Package developmentprofile validates profiles without reading or applying secrets.
 package developmentprofile
 
 import (
@@ -206,21 +204,6 @@ func Load(options LoadOptions) (Selected, error) {
 		return Selected{}, err
 	}
 	return selected, nil
-}
-
-func selectedProfileDigest(selected Selected) (string, error) {
-	connections := make([]connectionadmin.DevelopmentProfileDigestConnection, len(selected.Connections))
-	for index, connection := range selected.Connections {
-		connections[index] = connectionadmin.DevelopmentProfileDigestConnection{
-			ConnectionID: connection.ID, ConnectorKind: connection.ConnectorKind, Endpoint: connection.Endpoint,
-			CredentialVariable: connection.Credentials.EnvironmentVariable, Unauthenticated: connection.Credentials.None,
-		}
-	}
-	digest, err := connectionadmin.DevelopmentProfileDigest(selected.ProfileName, connections)
-	if err != nil {
-		return "", errors.New("encode selected development profile identity")
-	}
-	return digest, nil
 }
 
 func resolveSelection(options LoadOptions) (string, string, bool, error) {
