@@ -1869,6 +1869,7 @@ model LoginPageSignal {
   `localAuth`: boolean;
   `mustChangePassword`: boolean;
   `providerLabel`: string;
+  `providerUrl`: string;
   `ssoAuth`: boolean;
   `title`: string;
 }

@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -284,7 +283,12 @@ func (a *Auth) Begin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, a.oidcStateCookie(state, nonce))
-	http.Redirect(w, r, client.AuthCodeURL(state, nonce), http.StatusFound)
+	authorizationURL, err := oidcAuthorizationURL(client.AuthCodeURL(state, nonce), r.URL.Query().Get("prompt") == "select_account")
+	if err != nil {
+		http.Error(w, "identity provider unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	http.Redirect(w, r, authorizationURL, http.StatusFound)
 }
 
 func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
@@ -339,18 +343,10 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(a.SessionCookieName()); err == nil {
-		principal, _ := a.sessions.PrincipalForToken(r.Context(), cookie.Value)
-		if err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
-			mutationErr := txRepo.DeleteSession(r.Context(), cookie.Value)
-			return authAuditInput(r, "session.revoked", principal.ID, "session", "", "", "success", nil), mutationErr
-		}); err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-		recordAccessAudit(r, a.repo, "sign_out", principal.ID, "principal", principal.ID, "", "success", nil)
+	if err := a.revokeCurrentBrowserSession(w, r); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
-	http.SetCookie(w, a.expiredSessionCookie())
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -799,11 +795,11 @@ func (a *Auth) oidcStateCookie(state, nonce string) *http.Cookie {
 }
 
 func authenticationReturnTarget(r *http.Request) string {
-	if r == nil || r.Method != http.MethodGet || r.URL == nil || !isAuthenticationReturnPath(r.URL.Path) {
+	if r == nil || r.Method != http.MethodGet || r.URL == nil {
 		return ""
 	}
-	target := r.URL.RequestURI()
-	if len(target) == 0 || len(target) > maxAuthReturnTargetBytes {
+	target, err := validatedAuthenticationReturnTarget(r.URL.RequestURI())
+	if err != nil {
 		return ""
 	}
 	return target
@@ -871,12 +867,7 @@ func (a *Auth) decodeAuthReturn(value string, now time.Time) (string, error) {
 	if err != nil {
 		return "", errors.New("invalid authentication return cookie encoding")
 	}
-	target := string(raw)
-	parsed, err := url.Parse(target)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || !isAuthenticationReturnPath(parsed.Path) || len(target) > maxAuthReturnTargetBytes {
-		return "", errors.New("invalid authentication return target")
-	}
-	return target, nil
+	return validatedAuthenticationReturnTarget(string(raw))
 }
 
 func isAuthenticationReturnPath(path string) bool {

@@ -15,6 +15,7 @@ type LoginPageOptions struct {
 	SSOAuth            bool
 	MustChangePassword bool
 	ProviderLabel      string
+	SelectAccount      bool
 	CSRFToken          string
 	Presentation       webpage.Presentation
 	Assets             staticasset.Resolver
@@ -37,7 +38,7 @@ func LoginPage(options ...LoginPageOptions) g.Node {
 	return webpage.Render(webpage.Layout{Presentation: opts.Presentation, Assets: opts.Assets}, webpage.Spec{
 		Title: opts.Presentation.ProductName + " Login", CSRFToken: opts.CSRFToken,
 		Scripts:    []string{"/static/login-page.js", "/static/login-background-loader.js"},
-		UpdatesURL: loginUpdatesURL(opts.ErrorCode),
+		UpdatesURL: loginUpdatesURL(opts.ErrorCode, opts.SelectAccount),
 		Content:    g.El("lv-login-page", g.Attr("background-module-src", opts.Assets.URL("/static/topology-background.js"))),
 	})
 }
@@ -48,7 +49,8 @@ func LoginBootstrapSignalsForOptions(options LoginPageOptions) map[string]any {
 		"page": LoginPageSignal{
 			BackgroundModuleSrc: opts.Assets.URL("/static/topology-background.js"),
 			Kind:                "login", LocalAuth: opts.LocalAuth, MustChangePassword: opts.MustChangePassword,
-			ProviderLabel: opts.ProviderLabel, SSOAuth: opts.SSOAuth, Title: opts.Presentation.ProductName,
+			ProviderLabel: opts.ProviderLabel, ProviderURL: loginProviderURL(opts.SelectAccount),
+			SSOAuth: opts.SSOAuth, Title: opts.Presentation.ProductName,
 		},
 		"status": StatusSignal{Error: opts.Error},
 	}
@@ -74,12 +76,22 @@ func normalizedLoginOptions(options []LoginPageOptions) LoginPageOptions {
 	return opts
 }
 
-func loginUpdatesURL(errorCode string) string {
+func loginUpdatesURL(errorCode string, selectAccount bool) string {
 	values := url.Values{}
 	values.Set("route", "login")
 	switch strings.TrimSpace(errorCode) {
 	case "invalid_credentials", "session_expired", "forbidden":
 		values.Set("error", strings.TrimSpace(errorCode))
 	}
+	if selectAccount {
+		values.Set("switch", "1")
+	}
 	return "/updates?" + values.Encode()
+}
+
+func loginProviderURL(selectAccount bool) string {
+	if selectAccount {
+		return "/auth/azureadv2?prompt=select_account"
+	}
+	return "/auth/azureadv2"
 }

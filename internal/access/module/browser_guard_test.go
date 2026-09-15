@@ -60,6 +60,24 @@ func TestLoginErrorCodeRejectsUnknownValues(t *testing.T) {
 	}
 }
 
+func TestLoginAccountSelectionRequiresSwitchRecovery(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want bool
+	}{
+		{path: "/login?error=forbidden&switch=1", want: true},
+		{path: "/updates?route=login&error=forbidden&switch=1", want: true},
+		{path: "/login?error=forbidden"},
+		{path: "/login?switch=1"},
+		{path: "/login?error=forbidden&switch=true"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		if got := loginAccountSelectionRequested(request); got != test.want {
+			t.Fatalf("loginAccountSelectionRequested(%q) = %t, want %t", test.path, got, test.want)
+		}
+	}
+}
+
 func (r browserGuardRepository) ListGroupIDsForPrincipal(context.Context, string) ([]string, error) {
 	return append([]string(nil), r.groups...), r.groupErr
 }
@@ -201,7 +219,7 @@ func TestRequirePlatformAdminRejectsNonAdmin(t *testing.T) {
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Return to Insights") {
+	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Sign in with a different account") {
 		t.Fatalf("forbidden administration recovery body = %q", body)
 	}
 }
