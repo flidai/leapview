@@ -12,7 +12,7 @@ Select multiple `query.metrics` to render related values against the same catego
 
 ```yaml visual-example=revenue_orders_combo
 visuals:
-  revenue_orders_combo:
+  - id: revenue_orders_combo
     title: Revenue and orders by month
     description: Compares monthly revenue and order volume together.
     type: combo
@@ -54,7 +54,7 @@ independent value axes.
 
 ```yaml visual-example=review_delivery_combo
 visuals:
-  review_delivery_combo:
+  - id: review_delivery_combo
     title: Review and delivery by status
     type: combo
     presentation:
@@ -93,7 +93,7 @@ declare each line or column mark explicitly.
 
 ```yaml visual-example=revenue_orders_dual_axis_combo
 visuals:
-  revenue_orders_dual_axis_combo:
+  - id: revenue_orders_dual_axis_combo
     title: Revenue and orders dual-axis combo
     type: combo
     presentation:

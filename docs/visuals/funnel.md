@@ -14,7 +14,7 @@ Use actual sequential stages whose population narrows through one process. Numer
 
 ```yaml visual-example=checkout_funnel
 visuals:
-  checkout_funnel:
+  - id: checkout_funnel
     title: Checkout conversion
     description: Shows progression from product visits to completed orders.
     type: funnel
@@ -48,7 +48,7 @@ Replace status with delivery buckets to reuse the funnel for an ordered operatio
 
 ```yaml visual-example=delivery_funnel
 visuals:
-  delivery_funnel:
+  - id: delivery_funnel
     title: Delivery speed funnel
     type: funnel
     query:
@@ -72,7 +72,7 @@ Set `presentation.align: left` to anchor the stages, keep labels visible, and us
 
 ```yaml visual-example=status_funnel_left
 visuals:
-  status_funnel_left:
+  - id: status_funnel_left
     title: Left aligned status funnel
     type: funnel
     presentation:

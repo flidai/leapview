@@ -7,28 +7,28 @@ metadata:
   description: Order-grain sales table with revenue, category, status, and customer.
 spec:
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       label: Order ID
-    customer_id:
+    - name: customer_id
       datatype: String
       label: Customer ID
-    purchase_month:
+    - name: purchase_month
       datatype: String
       label: Purchase month
-    purchase_date:
+    - name: purchase_date
       datatype: Date
       label: Purchase date
-    purchase_timestamp:
+    - name: purchase_timestamp
       datatype: DateTime
       label: Purchase timestamp
-    status:
+    - name: status
       datatype: String
       label: Status
-    category:
+    - name: category
       datatype: String
       label: Category
-    revenue:
+    - name: revenue
       datatype: Decimal
       label: Revenue
   definition:
@@ -61,11 +61,11 @@ spec:
       LEFT JOIN revenue ON revenue.order_id = o.order_id
       LEFT JOIN category ON category.order_id = o.order_id
   entities:
-    order:
+    - name: order
       type: primary
       fields:
       - order_id
-    customer:
+    - name: customer
       type: foreign
       fields:
       - customer_id

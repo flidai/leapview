@@ -12,7 +12,7 @@ Use one categorical dimension and one metric to size rectangular areas, making d
 
 ```yaml visual-example=category_treemap
 visuals:
-  category_treemap:
+  - id: category_treemap
     title: Category revenue treemap
     type: treemap
     query:
@@ -37,7 +37,7 @@ Replace the dimension and metric to compare revenue by state without changing th
 
 ```yaml visual-example=state_treemap
 visuals:
-  state_treemap:
+  - id: state_treemap
     title: State revenue treemap
     type: treemap
     query:
@@ -62,7 +62,7 @@ Enable `breadcrumb` and `roam` when readers should navigate into dense or nested
 
 ```yaml visual-example=category_treemap_roam
 visuals:
-  category_treemap_roam:
+  - id: category_treemap_roam
     title: Navigable category and status treemap
     type: treemap
     presentation:

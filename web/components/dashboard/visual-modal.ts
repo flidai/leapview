@@ -62,7 +62,7 @@ export class VisualModal extends LitElement {
       display: grid;
       width: min(1120px, 100%);
       max-height: min(760px, calc(100vh - 56px));
-      min-height: 420px;
+      min-height: min(420px, calc(100vh - 56px));
       grid-template-rows: auto minmax(0, 1fr);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-panel);

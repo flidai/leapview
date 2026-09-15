@@ -34,6 +34,7 @@ import (
 	projectui "github.com/flidai/leapview/internal/project/ui"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
@@ -65,6 +66,10 @@ type AssetRefreshStateReader interface {
 	AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 	ModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 	SemanticModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
+}
+
+type RunMonitorReader interface {
+	MonitorRuns(context.Context, projectgraph.ResourceID, string, refreshrun.MonitorFilter) (refreshrun.MonitorPage, error)
 }
 
 // ModelPhysicalMetadata is the credential-free DuckLake table rollup shown on
@@ -161,6 +166,9 @@ type BrowserHandler struct {
 	AssetVersions            AssetVersionsReader
 	ActiveServingState       ActiveServingStateReader
 	RefreshState             AssetRefreshStateReader
+	RunMonitor               RunMonitorReader
+	PipelineChanges          *pagestream.Broker
+	PipelineChangesStreamID  string
 	PhysicalCatalog          PhysicalCatalogReader
 	SourceSchemas            SourceSchemaReader
 	ProjectDefinitionReader  ProjectDefinitionReader
@@ -250,6 +258,7 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
 	r.Post("/dashboards/{asset}/appearance", wrapMutation(h.DashboardAppearanceCommand))
 	r.Get("/pipelines", wrap(h.Pipelines))
+	r.Get("/runs", wrap(h.Runs))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))
 	r.Get("/connections", wrap(h.Connections))
@@ -592,6 +601,18 @@ func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if r.URL.Query().Get("view") == "runs" {
+		stdhttp.Redirect(w, r, "/runs", stdhttp.StatusFound)
+		return
+	}
+	h.pipelinePage(w, r, "pipelines")
+}
+
+func (h *BrowserHandler) Runs(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	h.pipelinePage(w, r, "runs")
+}
+
+func (h *BrowserHandler) pipelinePage(w stdhttp.ResponseWriter, r *stdhttp.Request, view string) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindPipeline}) {
 		return
 	}
@@ -604,7 +625,7 @@ func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)))
+	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, view, "", h.layout(r)))
 }
 
 // pipelineMutationAllowed is used while building every pipeline projection,
@@ -712,8 +733,23 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
 	}
+	// Subscribe before the bootstrap read, so a concurrent committed run
+	// transition remains queued for the first stream update.
+	route := uitransport.Route(r)
+	livePipeline := livePipelineRoute(route, r.URL.Query().Get("asset"))
+	var wake <-chan pagestream.SignalPatch
+	if livePipeline && h.PipelineChanges != nil && h.PipelineChangesStreamID != "" {
+		var unsubscribe func()
+		var err error
+		wake, unsubscribe, err = h.PipelineChanges.Subscribe(h.PipelineChangesStreamID)
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return
+		}
+		defer unsubscribe()
+	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
-	switch uitransport.Route(r) {
+	switch route {
 	case "catalog":
 		catalog, options, err := h.dashboardCatalogPage(r, r.URL.Query().Get("q"))
 		if err != nil {
@@ -759,7 +795,48 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 	}
+	if livePipeline && wake != nil {
+		uitransport.PatchAndWatch(w, r, pagestream.SignalPatch(patch), wake, func() (pagestream.SignalPatch, error) {
+			return h.livePipelinePage(r)
+		})
+		return
+	}
 	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
+}
+
+func livePipelineRoute(route, assetID string) bool {
+	if route == "pipelines" {
+		return true
+	}
+	if route != "asset" && route != "data" {
+		return false
+	}
+	return strings.HasPrefix(assetID, "pipeline:") || strings.HasPrefix(assetID, "refresh_pipeline:")
+}
+
+func (h *BrowserHandler) livePipelinePage(r *stdhttp.Request) (pagestream.SignalPatch, error) {
+	projectID, assets, edges, err := h.loadAssets(r)
+	if err != nil {
+		return nil, err
+	}
+	if uitransport.Route(r) == "pipelines" {
+		state, err := h.pipelineMonitorState(r, projectID, assets)
+		if err != nil {
+			return nil, err
+		}
+		return pagestream.SignalPatch(projectui.PipelinesPagePatch(state, r.URL.Query().Get("view"))), nil
+	}
+	assetID := strings.TrimSpace(r.URL.Query().Get("asset"))
+	section := strings.TrimSpace(r.URL.Query().Get("section"))
+	projection, err := h.assetPageState(r, projectID, assets, edges, assetID, section)
+	if err != nil {
+		return nil, err
+	}
+	if projection.Asset.Type != string(projectview.AssetTypeRefreshPipeline) && projection.Asset.Type != "pipeline" {
+		return nil, fmt.Errorf("asset %q is not a refresh pipeline", assetID)
+	}
+	bootstrap := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
+	return pagestream.SignalPatch{"page": bootstrap["page"]}, nil
 }
 
 func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
@@ -870,7 +947,8 @@ func requestedAssetSection(r *stdhttp.Request) string {
 
 func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView, section string) (projectui.AssetVersionsState, error) {
 	state := projectui.AssetVersionsState{CurrentContentHash: asset.ContentHash}
-	if h == nil || h.AssetVersions == nil || (section != "versions" && strings.TrimSpace(asset.ContentHash) != "") {
+	overview := section == "details"
+	if h == nil || h.AssetVersions == nil || (section != "versions" && !overview && strings.TrimSpace(asset.ContentHash) != "") {
 		return state, nil
 	}
 	versions, err := h.AssetVersions.AssetVersions(ctx, projectID, h.Environment, projectgraph.ResourceID(asset.ID))
@@ -893,7 +971,7 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != "pipeline" && asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
@@ -1155,7 +1233,7 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 		}
 		payload = projectview.DashboardAssetPayload(resource)
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		resource, ok := definition.RefreshPipelines[asset.ID]
 		if !ok {
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
@@ -1166,6 +1244,9 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 	}
 	if configuration := definition.AuthoredResourceSources[asset.ID]; configuration != "" {
 		payload["Configuration"] = configuration
+	}
+	if len(payload) == 0 && (asset.Type == string(projectview.AssetTypeRefreshPipeline) || asset.Type == "pipeline") {
+		return asset, nil
 	}
 	return mergeProjectAssetPayload(asset, payload)
 }
@@ -1595,7 +1676,7 @@ func catalogKindForAssetType(typ string) (projectgraph.Kind, bool) {
 		return projectgraph.KindSemanticModel, true
 	case string(projectview.AssetTypeDashboard):
 		return projectgraph.KindDashboard, true
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		return projectgraph.KindPipeline, true
 	default:
 		return "", false

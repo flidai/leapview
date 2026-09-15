@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
@@ -28,6 +29,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	"github.com/flidai/leapview/internal/release"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -108,6 +110,10 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 }
 
 func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
+	return recoveryFinalizeFixtureForTestMode(t, false)
+}
+
+func recoveryFinalizeFixtureForTestMode(t *testing.T, legacyAuthorizationPolicy bool) recoveryFinalizeFixture {
 	db, delivery, ducklake := recoveryFinalizeDB(t)
 	base := validNativeSealAssemblerInput(t)
 	// Project-free bundles have no project namespace node, but lineage still
@@ -133,6 +139,56 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	base.Artifacts.Compiler.Manifest = portableArtifact.Manifest()
 	base.Artifacts.Compiler.Plan = projectcompiler.BundlePlan{Deterministic: true}
 	base.Artifacts.Artifact.ProjectDigest = portableArtifact.Digest()
+	policyScope := access.AuthorizationPolicyScope{TargetID: base.Plan.TargetID, ProjectID: base.Plan.ProjectID.String(), Environment: string(base.Plan.Environment)}
+	policyRepository, err := accesspostgres.NewAuthorizationPolicyRepository(db, policyScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := policyRepository.AuthorizationPolicy(t.Context(), policyScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDocument := projectmanifest.AccessPolicy{RoleBindings: map[string]projectmanifest.RoleBinding{}}
+	for _, binding := range policy.RoleBindings {
+		policyDocument.RoleBindings[binding.ID] = projectmanifest.RoleBinding{ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: projectmanifest.Subject{Kind: string(binding.Subject.Kind), PrincipalID: binding.Subject.ID}}
+	}
+	policyJSON, err := json.Marshal(policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: base.Plan.ProjectID, Environment: base.Plan.Environment, GenerationID: release.CandidatePolicyGenerationID}, graph, policyDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationDigest, err := policySnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Artifacts.AuthorizationPolicyRevision = policy.Revision
+	base.Artifacts.AuthorizationPolicyDigest = policy.Digest
+	base.Artifacts.AuthorizationFingerprint = authorizationDigest
+	base.Artifacts.Generation.AccessPolicyJSON = string(policyJSON)
+	base.Plan.Governance.PolicyRevision = policy.Revision
+	base.Plan.Governance.PolicyDigest = policy.Digest
+	base.Plan.Governance.AuthorizationDigest = authorizationDigest
+	if legacyAuthorizationPolicy {
+		legacyDocument := projectmanifest.AccessPolicy{}
+		legacySnapshot, legacyErr := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: base.Plan.ProjectID, Environment: base.Plan.Environment, GenerationID: release.CandidatePolicyGenerationID}, graph, legacyDocument)
+		if legacyErr != nil {
+			t.Fatal(legacyErr)
+		}
+		legacyFingerprint, legacyErr := legacySnapshot.Digest()
+		if legacyErr != nil {
+			t.Fatal(legacyErr)
+		}
+		base.Artifacts.AuthorizationPolicyRevision = 0
+		base.Artifacts.AuthorizationPolicyDigest = ""
+		base.Artifacts.AuthorizationFingerprint = legacyFingerprint
+		base.Artifacts.Generation.AccessPolicyJSON = "{}"
+		base.Plan.Governance.PolicyRevision = 0
+		base.Plan.Governance.PolicyDigest = legacyFingerprint
+		base.Plan.Governance.AuthorizationDigest = legacyFingerprint
+	}
 	base.Plan.ServingArtifactDigest = base.Artifacts.Generation.ArtifactDigest
 	base.Plan.Digest = ""
 	normalizedPlan, err := deploymentdomain.NewDeliveryPlan(base.Plan)
@@ -368,6 +424,22 @@ func TestCompleteRecoveredNativeBuildPostgresSuccessAndExactReplay(t *testing.T)
 	}
 	if bindings != 1 || seals != 1 || generations != 1 || bundles != 1 || events != 1 || audits != 1 {
 		t.Fatalf("durable consequences = %d/%d/%d/%d/%d/%d", bindings, seals, generations, bundles, events, audits)
+	}
+}
+
+func TestCompleteRecoveredNativeBuildPostgresAcceptsPre017PolicyEvidence(t *testing.T) {
+	f := recoveryFinalizeFixtureForTestMode(t, true)
+	f.Input.Physical.Seal.CatalogVersion = "ducklake:v1"
+	if _, err := f.Coordinator.completeRecoveredNativeBuild(t.Context(), f.Input); err != nil {
+		t.Fatalf("pre-017 recovery finalization: %v", err)
+	}
+	var revision *int64
+	var digest *string
+	if err := f.DB.QueryRow(t.Context(), `SELECT authorization_policy_revision,authorization_policy_digest FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, f.Input.SealID).Scan(&revision, &digest); err != nil {
+		t.Fatal(err)
+	}
+	if revision != nil || digest != nil {
+		t.Fatalf("pre-017 seal policy identity = %v/%v, want NULL/NULL", revision, digest)
 	}
 }
 

@@ -154,7 +154,7 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
 		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.ConcurrentEventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
 	}
 	if strings.TrimSpace(action.Label) != "" && strings.TrimSpace(action.Href) != "" && routes.BasePath == "" {
 		componentAttrs = append(componentAttrs,
@@ -243,7 +243,7 @@ func PublicPage(options PublicPageOptions, catalog dashboard.Catalog, report das
 			g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
 			g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 			g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.ConcurrentEventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
 		),
 	})
 }

@@ -7,23 +7,23 @@ metadata:
   description: Robust centroids derived from Olist geolocation observations after rejecting coordinates outside Brazil.
 spec:
   fields:
-    zip_prefix:
+    - name: zip_prefix
       datatype: String
       label: ZIP prefix
       description: Stable five-digit Brazilian ZIP-code prefix.
-    city:
+    - name: city
       datatype: String
       label: City
       description: Deterministic city label associated with the ZIP prefix.
-    state:
+    - name: state
       datatype: String
       label: State
       description: Brazilian state abbreviation associated with the ZIP prefix.
-    latitude:
+    - name: latitude
       datatype: Float
       label: Latitude
       description: Median latitude across valid observations for the ZIP prefix.
-    longitude:
+    - name: longitude
       datatype: Float
       label: Longitude
       description: Median longitude across valid observations for the ZIP prefix.
@@ -48,7 +48,7 @@ spec:
       FROM normalized
       GROUP BY zip_prefix
   entities:
-    zip_prefix:
+    - name: zip_prefix
       type: primary
       fields:
       - zip_prefix

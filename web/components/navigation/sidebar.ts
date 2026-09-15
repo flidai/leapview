@@ -521,7 +521,6 @@ class LeapViewSidebar extends LitElement {
     .mobile-menu-button,
     .mobile-close-button,
     .mobile-product-search,
-    .mobile-backdrop,
     .mobile-drawer-header,
     .mobile-area-switcher,
     .mobile-footer {
@@ -579,7 +578,7 @@ class LeapViewSidebar extends LitElement {
     .nav-group-label {
       overflow: hidden;
       margin: var(--base-size-4) var(--control-xsmall-paddingInline-normal) var(--base-size-2);
-      color: var(--fgColor-disabled);
+      color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
@@ -955,21 +954,6 @@ class LeapViewSidebar extends LitElement {
         display: none;
       }
 
-      .mobile-backdrop {
-        position: fixed;
-        z-index: var(--z-index-report-sidebar);
-        inset: 0;
-        display: block;
-        border: 0;
-        background: var(--lv-modal-backdrop);
-        cursor: pointer;
-        touch-action: none;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity var(--motion-transition-stateChange), visibility var(--motion-transition-stateChange);
-        visibility: hidden;
-      }
-
       nav {
         position: fixed;
         z-index: var(--z-index-sidebar);
@@ -979,14 +963,13 @@ class LeapViewSidebar extends LitElement {
         box-sizing: border-box;
         display: flex;
         flex-direction: column;
-        width: min(20rem, calc(100vw - var(--base-size-32)));
+        width: 100vw;
+        height: 100svh;
         min-height: 100svh;
         overflow-y: auto;
         overscroll-behavior: contain;
         border: 0;
-        border-right: var(--lv-border-default);
         background: var(--lv-sidebar-bg);
-        box-shadow: var(--lv-shadow-floating);
         padding: var(--base-size-12);
         pointer-events: none;
         transform: translateX(-100%);
@@ -1003,19 +986,22 @@ class LeapViewSidebar extends LitElement {
         visibility: visible;
       }
 
-      aside[data-mobile-open] .mobile-backdrop {
-        opacity: 1;
-        pointer-events: auto;
-        visibility: visible;
-      }
-
       .mobile-drawer-header {
         display: flex;
+        min-width: 0;
         align-items: center;
-        justify-content: space-between;
+        gap: var(--base-size-8);
         margin-bottom: var(--base-size-8);
         border-bottom: var(--lv-border-muted);
         padding-bottom: var(--base-size-8);
+      }
+
+      .mobile-drawer-header .mobile-drawer-title {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
 			.area-switcher,
@@ -1043,6 +1029,35 @@ class LeapViewSidebar extends LitElement {
       .area-label,
       :host([data-collapsed]) .area-label {
         display: block;
+      }
+
+      .mobile-drawer-header .mobile-area-switcher,
+      :host([data-collapsed]) .mobile-drawer-header .mobile-area-switcher {
+        display: grid;
+        flex: 0 0 auto;
+        width: auto;
+        grid-template-columns: repeat(2, var(--base-size-28));
+        gap: 0;
+        margin: 0;
+        border-radius: var(--lv-radius-default);
+        background: var(--lv-bg-panel-muted, var(--control-bgColor-hover));
+        padding: 1px;
+      }
+
+      .mobile-drawer-header .area-item,
+      :host([data-collapsed]) .mobile-drawer-header .area-item {
+        display: grid;
+        width: var(--base-size-28);
+        height: var(--base-size-28);
+        min-height: var(--base-size-28);
+        grid-template-columns: 1fr;
+        place-items: center;
+        padding: 0;
+      }
+
+      .mobile-drawer-header .area-label,
+      :host([data-collapsed]) .mobile-drawer-header .area-label {
+        display: none;
       }
 
       .mobile-drawer-title {
@@ -1333,10 +1348,11 @@ class LeapViewSidebar extends LitElement {
           </button>
         </div>
 
-        <div class="mobile-backdrop" aria-hidden="true" @click=${() => this.closeMobileNavigation(true)}></div>
-
         <nav id="mobile-navigation" aria-label="Primary" aria-hidden=${String(mobileNavigationClosed)} ?inert=${mobileNavigationClosed}>
           <div class="mobile-drawer-header">
+            <button class="mobile-close-button" type="button" aria-label="Close navigation" title="Close navigation" @click=${() => this.closeMobileNavigation(true)}>
+              ${icon('close')}
+            </button>
             ${this.config.admin && this.config.primaryAction ? html`
               <a
                 class="mobile-drawer-title nav-item brand-back sidebar-control-back"
@@ -1348,11 +1364,8 @@ class LeapViewSidebar extends LitElement {
                 <span class="brand-back-text sidebar-control-back-label">${this.config.primaryAction.label}</span>
               </a>
             ` : html`<strong class="mobile-drawer-title">${productName}</strong>`}
-            <button class="mobile-close-button" type="button" aria-label="Close navigation" title="Close navigation" @click=${() => this.closeMobileNavigation(true)}>
-              ${icon('close')}
-            </button>
+            ${this.config.admin ? null : this.renderAreaSwitcher(true)}
           </div>
-          ${this.config.admin ? null : this.renderAreaSwitcher(true)}
           ${this.config.admin ? this.renderSearch(true) : html`
             <button class="mobile-product-search" type="button" aria-haspopup="dialog" @click=${this.openProductSearch}>
               <span aria-hidden="true">${icon('search')}</span>
@@ -1371,7 +1384,7 @@ class LeapViewSidebar extends LitElement {
           ` : null}
           ${groups.length > 0 ? groups.map((group) => html`
             <section class="nav-group" aria-label=${group.label}>
-              ${this.config.admin ? html`<strong class="nav-group-label">${group.label}</strong>` : null}
+              ${this.config.admin || this.config.groups.length > 1 ? html`<strong class="nav-group-label">${group.label}</strong>` : null}
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
           `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
@@ -1531,7 +1544,6 @@ class LeapViewSidebar extends LitElement {
   }
 
   private openProductSearch = (): void => {
-    this.closeMobileNavigation()
     this.dispatchEvent(new CustomEvent('product-search-open', { bubbles: true, composed: true }))
   }
 

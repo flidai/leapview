@@ -101,6 +101,120 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
   }
 })
 
+for (const emptyResponse of [false, true]) test(`windowed table reconciles cached rows after a delayed ${emptyResponse ? 'empty' : 'populated'} jump response`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any, emptyResponse: boolean) => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...(base.blocks.a.rows[0] ?? {}), order_id: `bounce-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      const emptyBlock = (start: number, requestSeq: number) => ({ ...block(start, requestSeq), rows: [] })
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = { ...base, availableRows: 1000, rowCap: 10000, chunkSize: 100, cardinality: { kind: 'exact', value: 1000 }, blocks: { a: block(0), b: block(100), c: block(200) }, loadingBlock: '' }
+      await table.updateComplete
+      const viewport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => { requests.push(event.detail); event.stopImmediatePropagation() }, { capture: true })
+      const waitForRequest = async (start: number, after = -1) => {
+        const deadline = Date.now() + 2000
+        while (!requests.some(r => r.start === start && r.requestSeq > after)) {
+          if (Date.now() > deadline) throw new Error(`No request for row ${start}`)
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        return requests.find(r => r.start === start && r.requestSeq > after)
+      }
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      viewport.scrollTop = 500 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      const jump = await waitForRequest(500)
+      viewport.scrollTop = 0
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+      const jumpBlock = emptyResponse ? emptyBlock : block
+      table.table = { ...table.table, blocks: { a: jumpBlock(400, jump.requestSeq), b: jumpBlock(500, jump.requestSeq), c: jumpBlock(600, jump.requestSeq) }, loadingBlock: '' }
+      await table.updateComplete
+      const followUp = await waitForRequest(0, jump.requestSeq)
+      table.table = { ...table.table, blocks: { a: emptyBlock(0, followUp.requestSeq), b: block(100, followUp.requestSeq), c: block(200, followUp.requestSeq) }, loadingBlock: '' }
+      await table.updateComplete
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      return { jump, followUp, requests, requestCount: requests.length, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+    }, emptyResponse)
+    expect(result.jump).toEqual(expect.objectContaining({ blockID: 'all', start: 500, limit: 100 }))
+    expect(result.followUp).toEqual(expect.objectContaining({ blockID: 'all', start: 0, limit: 100 }))
+    expect(result.requests.filter((r: any) => r.requestSeq >= result.jump.requestSeq).map((r: any) => [r.blockID, r.start])).toEqual([['all', 500], ['all', 0]])
+    expect(result.skeletons).toBeGreaterThan(0)
+  } finally { await page.close() }
+})
+
+test('windowed table only shows loading for missing visible rows', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const tableHost = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((host: any) => host.envelope?.visualID === 'orders') as any
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `synthetic-${start + offset}` }))
+      const block = (start: number, present = true) => ({ ...base.blocks.a, start, requestSeq: 0, resetVersion: base.resetVersion, rows: present ? rows(start) : [] })
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = {
+        ...base,
+        availableRows: 500,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 500 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+      }
+      await table.updateComplete
+      const viewport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const requests: unknown[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      const snapshot = () => ({
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+        visibleLoading: table.visibleLoading,
+        loadingBar: (table.shadowRoot as ShadowRoot).querySelector('.loading') !== null,
+        footer: (table.shadowRoot as ShadowRoot).querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
+      })
+      viewport.scrollTop = 200 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      const prefetch = snapshot()
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = { ...table.table, blocks: { a: block(0), b: block(100), c: block(200, false) }, loadingBlock: '' }
+      await table.updateComplete
+      viewport.scrollTop = 200 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      return { prefetch, missing: snapshot(), requests }
+    })
+    expect(result.requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ blockID: 'a', start: 300, limit: 100 }),
+      expect.objectContaining({ blockID: 'all', start: 200, limit: 100 }),
+    ]))
+    expect(result.prefetch).toEqual({ skeletons: 0, visibleLoading: false, loadingBar: false, footer: expect.not.stringContaining('loading') })
+    expect(result.missing.skeletons).toBeGreaterThan(0)
+    expect(result.missing.visibleLoading).toBe(true)
+    expect(result.missing.loadingBar).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('empty table distinguishes completed results from waiting and keeps its message visible', async () => {
   const page = await browser.newPage()
   try {

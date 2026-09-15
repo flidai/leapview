@@ -48,7 +48,7 @@ spec:
     - notContains
     urlParameter: category
   visuals:
-    revenue_kpi:
+    - id: revenue_kpi
       type: kpi
       query:
         type: aggregate
@@ -59,7 +59,7 @@ spec:
         type: kpi
         note: Payment value
         tone: success
-    aov_kpi:
+    - id: aov_kpi
       type: kpi
       query:
         type: aggregate
@@ -70,7 +70,7 @@ spec:
         type: kpi
         note: Revenue per order
         tone: warning
-    total_orders:
+    - id: total_orders
       type: kpi
       query:
         type: aggregate
@@ -81,7 +81,7 @@ spec:
         type: kpi
         note: Filtered order count
         tone: ink
-    revenue_by_month:
+    - id: revenue_by_month
       type: area
       query:
         type: aggregate
@@ -98,7 +98,7 @@ spec:
       title: Revenue by month
       presentation:
         type: cartesian
-    category_revenue:
+    - id: category_revenue
       type: bar
       query:
         type: aggregate
@@ -113,7 +113,7 @@ spec:
       title: Top categories by revenue
       presentation:
         type: cartesian
-    orders_table:
+    - id: orders_table
       type: table
       query:
         type: records

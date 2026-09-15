@@ -54,13 +54,17 @@ type Progress struct {
 type ProgressPublisher func(Progress)
 
 type Result struct {
-	Target         Target
-	Envelope       visualizationir.VisualizationEnvelope
-	Metadata       bool
-	Err            error
-	Duration       time.Duration
-	Queries        int
-	StageTimingsMs map[string]float64
+	Target   Target
+	Envelope visualizationir.VisualizationEnvelope
+	Metadata bool
+	// MetadataPending tells the stream coordinator that the primary frame may
+	// be followed by a metadata frame for the same target. Windowed exact
+	// cardinality uses this while its separate COUNT query is in flight.
+	MetadataPending bool
+	Err             error
+	Duration        time.Duration
+	Queries         int
+	StageTimingsMs  map[string]float64
 }
 
 type Publisher func(Result) bool

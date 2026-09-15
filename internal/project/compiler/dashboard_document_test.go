@@ -21,19 +21,25 @@ func TestLoadDashboardDocumentForSourceRootExpandsIncludes(t *testing.T) {
 	dashboardPath := filepath.Join(dashboardDir, "sales.yaml")
 	dashboard := `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales}
+metadata:
+  id: dashboard:sales
+  name: sales
 spec:
   semanticModel: sales
   filters: []
-  includes: {visuals: [visuals.yaml], pages: [pages.yaml]}
-  visuals: {}
+  includes:
+    visuals:
+    - visuals.yaml
+    pages:
+    - pages.yaml
+  visuals: []
   pages: []
 `
 	if err := os.WriteFile(dashboardPath, []byte(dashboard), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dashboardDir, "visuals.yaml"), []byte(`visuals:
-  revenue:
+  - id: revenue
     type: bar
     query: {type: aggregate, dimensions: [], metrics: [revenue]}
     presentation: {type: cartesian}

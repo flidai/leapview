@@ -6,13 +6,13 @@ metadata:
   displayName: Service teams
 spec:
   fields:
-    division:
+    - name: division
       datatype: String
       label: Division
-    team:
+    - name: team
       datatype: String
       label: Team
-    active_work_items:
+    - name: active_work_items
       datatype: Float
       label: Active work items
   definition:
@@ -21,7 +21,7 @@ spec:
       SELECT division, team, CAST(active_work_items AS DOUBLE) AS active_work_items
       FROM source."docs.service_teams"
   entities:
-    team:
+    - name: team
       type: primary
       fields:
       - team

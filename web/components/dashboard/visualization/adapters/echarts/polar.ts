@@ -1,9 +1,10 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { displayUnitForField, formatDisplayField, formatField, inlineDataset, legendDecoration, toneColor, type EChartsTranslation } from './common'
+import { displayUnitForField, escapeHTML, formatDisplayField, formatField, inlineDataset, legendDecoration, toneColor, type EChartsTranslation } from './common'
 import { echartsLabelPolicy, truncateVisualizationLabel } from './label-policy'
 import { parseDecimal } from '../../decimal'
 import { categoryIdentity } from './category-colors'
+import { formatTooltipValue } from '../../tooltip-format'
 
 export function polarOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
   const spec = envelope.spec
@@ -125,7 +126,29 @@ export function polarOption(envelope: VisualizationEnvelope, context: RendererCo
       splitLine: { lineStyle: { color: context.colors.grid } },
       splitArea: { areaStyle: { color: [context.colors.surface, context.colors.grid], opacity: 0.18 } },
     },
-    series: [{ id: 'series:polar:radar', type: 'radar', data: values, areaStyle: spec.presentation.area ? {} : undefined, ...labels }],
+    series: [{
+      id: 'series:polar:radar', type: 'radar', data: values, areaStyle: spec.presentation.area ? {} : undefined, ...labels,
+      // Radar points contain one value per indicator, so the shared row
+      // formatter would label the vector with unrelated source columns. Keep
+      // indicator names aligned with the values shown in the polygon.
+      tooltip: {
+        formatter: (params: { seriesName?: unknown; name?: unknown; value?: unknown }) => {
+          const values = Array.isArray(params.value) ? params.value : [params.value]
+          const seriesName = typeof params.name === 'string' && params.name.length > 0
+            ? params.name
+            : typeof params.seriesName === 'string' && params.seriesName.length > 0 ? params.seriesName : undefined
+          const displaySeriesName = seriesName === undefined
+            ? undefined
+            : seriesValues.find((candidate) => candidate.key === seriesName)?.label ?? seriesName
+          if (envelope.spec.tooltipItems?.length === 0) return ''
+          const valueItem = envelope.spec.tooltipItems?.find((item) => item.field.dataset === spec.value.dataset && item.field.field === spec.value.field)
+          const entries = categories.map((category, index) => `${escapeHTML(category.label)}: ${escapeHTML(valueItem
+            ? formatTooltipValue(envelope, spec.value, values[index], context, valueItem.format)
+            : formatField(envelope, spec.value, values[index], context))}`)
+          return [displaySeriesName ? escapeHTML(displaySeriesName) : undefined, ...entries].filter((entry): entry is string => entry !== undefined).join('<br>')
+        },
+      },
+    }],
   }
 }
 

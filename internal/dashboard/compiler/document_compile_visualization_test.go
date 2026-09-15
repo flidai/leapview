@@ -133,7 +133,7 @@ func TestCompileVisualsSupportsDynamicCategorySeriesIntent(t *testing.T) {
 
 func TestCompileAuthoredCandlestickColorsFromJSONAndYAML(t *testing.T) {
 	contents := map[string]string{
-		"json": `{"apiVersion":"leapview.dev/v1","kind":"Dashboard","metadata":{"id":"dashboard:ohlc","name":"ohlc"},"spec":{"semanticModel":"sales","filters":[],"visuals":{"market":{"type":"candlestick","query":{"type":"aggregate","dimensions":["purchaseDate"],"metrics":["open","close","low","high"]},"presentation":{"type":"cartesian","gainColor":"data_2","lossColor":"warning"}}},"pages":[]}}`,
+		"json": `{"apiVersion":"leapview.dev/v1","kind":"Dashboard","metadata":{"id":"dashboard:ohlc","name":"ohlc"},"spec":{"semanticModel":"sales","filters":[],"visuals":[{"id":"market","type":"candlestick","query":{"type":"aggregate","dimensions":["purchaseDate"],"metrics":["open","close","low","high"]},"presentation":{"type":"cartesian","gainColor":"data_2","lossColor":"warning"}}],"pages":[]}}`,
 		"yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
@@ -143,7 +143,7 @@ spec:
   semanticModel: sales
   filters: []
   visuals:
-    market:
+    - id: market
       type: candlestick
       query:
         type: aggregate

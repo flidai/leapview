@@ -20,7 +20,6 @@ import (
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
@@ -58,6 +57,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 // nativeProjectSourceComposition keeps the native source reader's authority
@@ -307,6 +307,13 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(fmt.Errorf("build PostgreSQL authority graph: %w", err))
 	}
+	// Targets activated before target-owned authorization policies existed are
+	// upgraded from their exact immutable active-generation snapshot before any
+	// release surface is exposed. Missing snapshot evidence is a startup error;
+	// an upgrade must never fabricate an empty or current-policy substitute.
+	if err := appaccesspostgres.InitializeActiveTargetAuthorizationPolicy(ctx, bootstrap.RuntimePool().Begin, graph.DeploymentRepository, graph.ServingState, graph.Access, instanceID, string(environment)); err != nil {
+		return fail(err)
+	}
 	nativeProjectSource, err := composeNativeProjectSource(ctx, cfg, instanceID, string(environment), func(beginCtx context.Context) (projectsource.Tx, error) {
 		return bootstrap.RuntimePool().Begin(beginCtx)
 	}, graph.Project)
@@ -350,7 +357,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, Environment: string(environment), MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
 	if err != nil {
 		return fail(err)
 	}
@@ -383,7 +390,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	developmentCredentialVariables := strings.FieldsFunc(cfg.DevelopmentCredentialVariables, func(char rune) bool {
 		return char == ',' || char == ' ' || char == '\t' || char == '\r' || char == '\n'
 	})
-	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{ConnectionBindings: graph.ConnectionBinding, QueryAuditStore: graph.QueryAudit, Production: production, CredentialMode: credentialMode, CredentialTarget: instanceID, Environment: string(environment), CredentialEnvironmentVariables: developmentCredentialVariables, CredentialEnvironmentVersionKey: developmentCredentialVersionKey, RootDir: cfg.DuckDBDirPath(), DataPath: cfg.DuckLakeDataDir(), ExtensionSupply: extensionSupply, MaxConnections: cfg.WorkloadConfig().MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes, TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(), DisableProcessEnv: production, RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes, NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes})
+	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{ConnectionBindings: graph.ConnectionBinding, QueryAuditStore: graph.QueryAudit, Production: production, CredentialMode: credentialMode, CredentialTarget: instanceID, Environment: string(environment), CredentialEnvironmentVariables: developmentCredentialVariables, CredentialEnvironmentVersionKey: developmentCredentialVersionKey, RootDir: cfg.DuckDBDirPath(), DataPath: cfg.DuckLakeDataDir(), ExtensionSupply: extensionSupply, MaxConnections: duckDBReadConnections(cfg), MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes, TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(), DisableProcessEnv: production, RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes, NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes})
 	if err != nil {
 		return fail(err)
 	}
@@ -434,7 +441,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(fmt.Errorf("build release persistence: %w", err))
 	}
-	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: &releasePersistence, Catalog: graph.ReleaseCatalog, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, Environment: environment, CandidateSourceReader: nativeProjectSource.CandidateSourceReader, CandidateArtifactStore: nativeProjectSource.Objects, StorageSecurityDomain: nativeProjectSource.StorageSecurityDomain, API: releasemodule.APIConfig{CurrentPrincipal: func(r *http.Request) (releasemodule.Principal, bool) {
+	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: &releasePersistence, Catalog: graph.ReleaseCatalog, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), TargetID: instanceID, AuthorizationPolicies: graph.Access, ExtensionPreparation: extensionSupply, Environment: environment, CandidateSourceReader: nativeProjectSource.CandidateSourceReader, CandidateArtifactStore: nativeProjectSource.Objects, StorageSecurityDomain: nativeProjectSource.StorageSecurityDomain, API: releasemodule.APIConfig{CurrentPrincipal: func(r *http.Request) (releasemodule.Principal, bool) {
 		p, ok := accessBundle.Module.CurrentPrincipal(r)
 		return releasemodule.Principal{ID: p.ID}, ok
 	}, Jobs: workloadBundle.Jobs}})
@@ -687,7 +694,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 			PoolContract:        contract.PoolContract,
 			CredentialBootstrap: credentialBootstrap,
 			ExtensionAdmission:  extensionSupply,
-			MaxConnections:      cfg.WorkloadConfig().MaxRunning,
+			MaxConnections:      duckDBReadConnections(cfg),
 			MemoryMaxBytes:      cfg.DuckDBNodeMemoryMaxBytes,
 			TempMaxBytes:        cfg.DuckDBNodeTempMaxBytes,
 			MaxThreads:          cfg.DuckDBNodeMaxThreads,
@@ -821,7 +828,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		SnapshotFactory:       appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
 		QualificationFactory:  qualificationFactory,
 		RuntimeVersion:        runtimeVersion,
-		Bounds:                gates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000},
+		Bounds:                nativeCandidateGateBounds(production),
 		Events:                graph.DeploymentPersistence.Events,
 		Audit:                 graph.DeploymentPersistence.Audit,
 		Workflow:              graph.DeploymentPersistence.Workflow,
@@ -966,6 +973,17 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
+	// PostgreSQL NOTIFY wakes one listener per app instance. Browser streams
+	// subscribe to the existing in-process broker, then reread authorized state.
+	if routes.projectBrowser != nil {
+		routes.projectBrowser.PipelineChanges = runtimeServices.broker
+		routes.projectBrowser.PipelineChangesStreamID = refreshmodule.RunChangeStreamID
+	}
+	refreshChanges := refreshmodule.NewPostgresRunChangeListener(bootstrap.RuntimePool(), func(change refreshmodule.RunChange) {
+		if change.Resync || (change.ProjectID == projectID.String() && change.Environment == string(environment)) {
+			runtimeServices.broker.Publish(refreshmodule.RunChangeStreamID, pagestream.SignalPatch{"refreshChanged": true})
+		}
+	})
 	platform.telemetry.Register(platformpostgres.NewPoolMetricsCollector(bootstrap.NamedPools()...))
 	handler := Routes(routes, runtimeServices, platform, policy)
 
@@ -979,7 +997,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	bootstrapLifecycle.onStartFailure = func() error {
 		return errors.Join(closeRuntimeHost(), closeResources())
 	}
-	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, runtimeLifecycle}
+	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, refreshChanges, runtimeLifecycle}
 	return newApplication(handler, components), nil
 }
 

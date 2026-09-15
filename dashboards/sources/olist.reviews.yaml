@@ -13,5 +13,5 @@ spec:
   schema:
     mode: compatible
   fields:
-    order_id: {datatype: String, description: Order identifier associated with the review.}
-    review_score: {datatype: Integer, description: Customer review score.}
+    - {name: order_id, datatype: String, description: Order identifier associated with the review.}
+    - {name: review_score, datatype: Integer, description: Customer review score.}

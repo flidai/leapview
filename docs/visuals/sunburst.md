@@ -12,7 +12,7 @@ Order two dimensions from parent to child and provide one metric for sector size
 
 ```yaml visual-example=category_status_sunburst
 visuals:
-  category_status_sunburst:
+  - id: category_status_sunburst
     title: Category and status hierarchy
     description: Shows category and status hierarchy by order count.
     type: sunburst
@@ -48,7 +48,7 @@ Add a third ordered dimension for deeper nesting and enable roaming for drill-do
 
 ```yaml visual-example=category_state_status_sunburst
 visuals:
-  category_state_status_sunburst:
+  - id: category_state_status_sunburst
     title: Category, state, and status sunburst
     type: sunburst
     presentation:
@@ -76,7 +76,7 @@ Replace the parent dimension with state to reuse the hierarchy contract for a ge
 
 ```yaml visual-example=state_status_sunburst
 visuals:
-  state_status_sunburst:
+  - id: state_status_sunburst
     title: State and status sunburst
     type: sunburst
     query:

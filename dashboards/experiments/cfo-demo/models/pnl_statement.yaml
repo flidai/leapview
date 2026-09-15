@@ -7,17 +7,17 @@ metadata:
   description: P&L fact with one row per financial record and statement line.
 spec:
   fields:
-    pnl_row_id: {datatype: String, label: P&L row ID}
-    finance_date: {datatype: Date, label: Date}
-    segment: {datatype: String, label: Segment key}
-    country: {datatype: String, label: Country key}
-    product: {datatype: String, label: Product key}
-    pnl_group: {datatype: String, label: Statement}
-    line_order: {datatype: Integer, label: Order}
-    actual_amount: {datatype: Decimal, label: Actual}
-    budget_amount: {datatype: Decimal, label: Budget}
-    forecast_amount: {datatype: Decimal, label: Forecast}
-    variance_amount: {datatype: Decimal, label: F/(U)}
+    - {name: pnl_row_id, datatype: String, label: P&L row ID}
+    - {name: finance_date, datatype: Date, label: Date}
+    - {name: segment, datatype: String, label: Segment key}
+    - {name: country, datatype: String, label: Country key}
+    - {name: product, datatype: String, label: Product key}
+    - {name: pnl_group, datatype: String, label: Statement}
+    - {name: line_order, datatype: Integer, label: Order}
+    - {name: actual_amount, datatype: Decimal, label: Actual}
+    - {name: budget_amount, datatype: Decimal, label: Budget}
+    - {name: forecast_amount, datatype: Decimal, label: Forecast}
+    - {name: variance_amount, datatype: Decimal, label: F/(U)}
   definition:
     type: sql
     sql: |
@@ -55,22 +55,22 @@ spec:
         END, 2) AS DECIMAL(38,2)) AS variance_amount
       FROM lines
   entities:
-    pnl_row:
+    - name: pnl_row
       type: primary
       fields: [pnl_row_id]
-    finance_date:
+    - name: finance_date
       type: foreign
       fields: [finance_date]
-    segment:
+    - name: segment
       type: foreign
       fields: [segment]
-    country:
+    - name: country
       type: foreign
       fields: [country]
-    product:
+    - name: product
       type: foreign
       fields: [product]
-    pnl_line:
+    - name: pnl_line
       type: foreign
       fields: [line_order]
   grain:

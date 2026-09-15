@@ -47,7 +47,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /runs", "GET /search", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -58,27 +58,6 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 				t.Fatalf("legacy route %q was mounted", legacy)
 			}
 		}
-	}
-}
-
-func TestRequestedAssetSectionSupportsFixedDashboardRoutes(t *testing.T) {
-	for _, section := range []string{"details", "definition", "versions", "lineage"} {
-		request := httptest.NewRequest(stdhttp.MethodGet, "/dashboards/dashboard:executive-sales/"+section, nil)
-		if got := requestedAssetSection(request); got != section {
-			t.Fatalf("section = %q, want %q", got, section)
-		}
-	}
-}
-
-func TestBoundProjectUsesActiveProjectResolver(t *testing.T) {
-	want := projectgraph.ResourceID("project:active")
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return want, nil }}
-	got, err := h.boundProject(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("project ID = %q, want %q", got, want)
 	}
 }
 
@@ -267,6 +246,34 @@ func TestAssetVersionsStateDiscoversHistoryWhenCurrentHashIsMissing(t *testing.T
 	}
 	if len(state.Versions) != 1 || state.Versions[0].ContentHash != "sha256:old" {
 		t.Fatalf("versions state = %#v, want history discovery for Versions tab", state)
+	}
+}
+
+func TestAssetOverviewLoadsActiveVersionHistory(t *testing.T) {
+	h := &BrowserHandler{Environment: "dev", AssetVersions: browserAssetVersionsStub{versions: []servingstate.AssetVersion{
+		{ServingStateID: "state:current", ContentHash: "sha256:current"},
+		{ServingStateID: "state:old", ContentHash: "sha256:old"},
+	}}}
+	state, err := h.assetVersionsState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "model:sales", Type: string(projectview.AssetTypeModel), ContentHash: "sha256:current"}, "details")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Versions) != 2 {
+		t.Fatalf("asset overview versions = %#v, want active version history", state.Versions)
+	}
+}
+
+func TestLegacyPipelineReadModelAcceptsEmptyDefinition(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "pipeline:daily", Type: "pipeline", Key: "daily"}
+	definition := projectmanifest.ResourceManifest{
+		RefreshPipelines: map[string]refreshschedule.Definition{asset.ID: {}},
+	}
+	enriched, err := projectAssetReadModelFromDefinition(asset, definition, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.ID != asset.ID || enriched.Type != asset.Type || enriched.Key != asset.Key {
+		t.Fatalf("enriched pipeline = %#v, want original valid empty pipeline", enriched)
 	}
 }
 

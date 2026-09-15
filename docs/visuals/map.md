@@ -42,7 +42,7 @@ governed metric.
 
 ```yaml visual-example=state_order_map
 visuals:
-  state_order_map:
+  - id: state_order_map
     title: Orders by state
     description: Maps order count by Brazilian state.
     type: map
@@ -96,7 +96,7 @@ tiled terminal zoom (18); at the terminal zoom and above there is no valid
 
 ```yaml visual-example=order_point_map
 visuals:
-  order_point_map:
+  - id: order_point_map
     title: Order locations
     description: Shows governed order locations with revenue context.
     type: map
@@ -147,7 +147,7 @@ field references governed.
 
 ```yaml visual-example=revenue_heat_map
 visuals:
-  revenue_heat_map:
+  - id: revenue_heat_map
     title: Revenue concentration
     type: map
     query:
@@ -181,7 +181,7 @@ cells are weighted by their contained row count.
 
 ```yaml visual-example=order_density_map
 visuals:
-  order_density_map:
+  - id: order_density_map
     title: Order density
     type: map
     query:
@@ -214,7 +214,7 @@ such as `choropleth` when row-level tooltip context is needed.
 
 ```yaml visual-example=state_reference_map
 visuals:
-  state_reference_map:
+  - id: state_reference_map
     title: Brazil state reference boundaries
     type: map
     query:
@@ -251,7 +251,7 @@ deterministically.
 
 ```yaml visual-example=state_order_paths
 visuals:
-  state_order_paths:
+  - id: state_order_paths
     title: State order paths
     type: map
     query:

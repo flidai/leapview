@@ -4,7 +4,7 @@ import type { Browser } from '@playwright/test'
 export async function verifyDashboardOptionRequests(browser: Browser, baseURL: string) {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(baseURL, { waitUntil: 'networkidle' })
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
     const stateFilter = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const seen: unknown[] = []

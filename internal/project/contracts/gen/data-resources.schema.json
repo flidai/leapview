@@ -1463,6 +1463,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "tags": {
           "items": {
             "type": "string"
@@ -1470,6 +1474,9 @@
           "type": "array"
         }
       },
+      "required": [
+        "name"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -1551,6 +1558,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -1572,6 +1583,7 @@
       },
       "required": [
         "expression",
+        "name",
         "type"
       ],
       "type": "object"
@@ -2309,6 +2321,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -2322,6 +2338,9 @@
           "$ref": "#/$defs/SemanticTimeSemantics"
         }
       },
+      "required": [
+        "name"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -2469,6 +2488,10 @@
           },
           "type": "array"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "type": {
           "enum": [
             "primary",
@@ -2481,6 +2504,7 @@
       },
       "required": [
         "fields",
+        "name",
         "type"
       ],
       "type": "object",
@@ -2511,24 +2535,16 @@
           "$ref": "#/$defs/ModelDefinition"
         },
         "entities": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/ModelEntity"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "fields": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "grain": {
           "$ref": "#/$defs/ModelGrain"
@@ -2578,6 +2594,24 @@
         "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
+    },
+    "NamedSemanticFilter": {
+      "description": "Only a top-level reusable filter has an identity; child expressions do not.",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/SemanticFilter"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "definition",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "NamedSemanticRelationshipEndpoint": {
       "properties": {
@@ -2962,6 +2996,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "numerator": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -2987,6 +3025,7 @@
       },
       "required": [
         "denominator",
+        "name",
         "numerator",
         "type"
       ],
@@ -3320,6 +3359,10 @@
           "$ref": "#/$defs/SemanticAllowedValues",
           "uniqueItems": true
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "userAttribute": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -3327,6 +3370,7 @@
       },
       "required": [
         "allowedValues",
+        "name",
         "userAttribute"
       ],
       "type": "object",
@@ -3380,30 +3424,26 @@
           "type": "string"
         },
         "dimensions": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/LocalSemanticDimension"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "displayName": {
           "type": "string"
         },
         "metrics": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SimpleSemanticMetric"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "model": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "requiredAccessGrants": {
@@ -3417,7 +3457,8 @@
         }
       },
       "required": [
-        "model"
+        "model",
+        "name"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -3428,14 +3469,10 @@
           "$ref": "#/$defs/AIContext"
         },
         "bindings": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDimensionBinding"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "datatype": {
           "enum": [
@@ -3458,6 +3495,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3472,13 +3513,18 @@
         }
       },
       "required": [
-        "bindings"
+        "bindings",
+        "name"
       ],
       "type": "object",
       "unevaluatedProperties": false
     },
     "SemanticDimensionBinding": {
       "properties": {
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "field": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -3492,6 +3538,7 @@
         }
       },
       "required": [
+        "dataset",
         "field"
       ],
       "type": "object",
@@ -3720,65 +3767,41 @@
     "SemanticModelSpec": {
       "properties": {
         "accessGrants": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticAccessGrant"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "datasets": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDataset"
           },
-          "minProperties": 1,
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "minItems": 1,
+          "type": "array"
         },
         "dimensions": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDimension"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "filters": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SemanticFilter"
+          "items": {
+            "$ref": "#/$defs/NamedSemanticFilter"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "metrics": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticMetric"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "relationships": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticRelationship"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         }
       },
       "required": [
@@ -3798,12 +3821,17 @@
         "from": {
           "$ref": "#/$defs/SemanticRelationshipEndpoint"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "to": {
           "$ref": "#/$defs/SemanticRelationshipEndpoint"
         }
       },
       "required": [
         "from",
+        "name",
         "to"
       ],
       "type": "object",
@@ -3904,6 +3932,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3937,6 +3969,7 @@
       },
       "required": [
         "agg",
+        "name",
         "type"
       ],
       "type": "object",
@@ -4072,14 +4105,10 @@
           "type": "string"
         },
         "fields": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "location": {
           "$ref": "#/$defs/SourceLocation"

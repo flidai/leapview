@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import * as echarts from 'echarts'
 
 import type { VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
@@ -126,12 +127,68 @@ test('ECharts applies typed temporal axis policies without leaking renderer fiel
 
   const option = echartsOption(envelope, defaultRendererContext) as any
 
-  expect(option.xAxis).toMatchObject({ type: 'time', inverse: true, splitNumber: 5, axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 45 } })
+  expect(option.xAxis).toMatchObject({ type: 'time', inverse: true, splitNumber: 5, boundaryGap: ['5%', '5%'], axisTick: { show: true }, splitLine: { show: false }, axisLabel: { rotate: 45 } })
+  expect(option.yAxis.boundaryGap).toEqual(['5%', '5%'])
   expect(option.xAxis.axisLabel.formatter(Date.UTC(2026, 0, 1))).toBe('Jan 2026')
 
   envelope.spec.axes[0].dateUnit = 'week'
   const weekOption = echartsOption(envelope, defaultRendererContext) as any
   expect(weekOption.xAxis.axisLabel.formatter(Date.UTC(2018, 11, 31))).toBe('W01 2019')
+})
+
+test('ECharts keeps an authored zero baseline while reserving continuous symbol room', () => {
+  const envelope = cartesianPresentationFixture('line') as any
+  envelope.spec.axes = [{ id: 'primary_y', type: 'automatic', scale: 'automatic', zero: 'include', inversion: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'automatic', dateUnit: 'automatic', tickDensity: 'automatic' }]
+  envelope.dataState.datasets[0].rows = [['A', 0], ['B', 10]]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.yAxis).toMatchObject({ boundaryGap: ['5%', '5%'], scale: false })
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    const extent = (chart as any).getModel().getComponent('yAxis').axis.scale.getExtent()
+    expect(extent[0]).toBeLessThanOrEqual(0)
+    expect(extent[1]).toBeGreaterThanOrEqual(10)
+  } finally {
+    chart.dispose()
+  }
+})
+
+test('ECharts keeps compact histogram endpoint labels inside the chart', () => {
+  const envelope = cartesianPresentationFixture('histogram') as any
+  envelope.spec.presentation.orientation = 'vertical'
+  envelope.spec.axes = [{ id: 'x', type: 'automatic', scale: 'automatic', zero: 'automatic', inversion: 'automatic', tickDensity: 'automatic', ticks: 'automatic', grid: 'automatic', labelRotation: 'diagonal', dateUnit: 'automatic' }]
+  envelope.dataState.datasets[0].rows = [
+    ['0-12.50', 42],
+    ['12.50-25.00', 18],
+    ['196.88-209.38', 3],
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.xAxis.axisLabel).toMatchObject({ alignMinLabel: 'left', alignMaxLabel: 'right', rotate: 45 })
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 320, height: 240 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    const svg = chart.renderToSVGString()
+    expect(svg).toContain('196.88-209.38')
+    const endpointLabels = chart.getZr().storage.getDisplayList()
+      .filter((item: any) => item.type === 'tspan' && typeof item.style?.text === 'string' && ['0-12.50', '196.88-209.38'].includes(item.style.text))
+    expect(endpointLabels).toHaveLength(2)
+    for (const item of endpointLabels) {
+      const bounds = item.getBoundingRect().clone()
+      const transform = item.getComputedTransform?.() ?? item.transform
+      if (transform) bounds.applyTransform(transform)
+      expect(bounds.x, `${item.style.text} should not clip on the left`).toBeGreaterThanOrEqual(0)
+      expect(bounds.x + bounds.width, `${item.style.text} should not clip on the right`).toBeLessThanOrEqual(320)
+    }
+    const axisModel = (chart as any).getModel().getComponent('xAxis')
+    expect(axisModel.getModel('axisLabel').get('alignMinLabel')).toBe('left')
+    expect(axisModel.getModel('axisLabel').get('alignMaxLabel')).toBe('right')
+  } finally {
+    chart.dispose()
+  }
 })
 
 function cartesianPresentationFixture(mark: string): VisualizationEnvelope {

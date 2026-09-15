@@ -5,7 +5,7 @@ metadata:
   name: genre-analysis
   displayName: Genre Analysis
   description: Genre-level rating volume, rating quality, trends, and release-decade
-    comparisons.
+    comparisons, initially showing the dataset's final 12 months.
   tags:
   - movies
   - genres
@@ -18,7 +18,15 @@ spec:
     label: Rating date
     dimension: rating_date
     control:
-      type: relativePeriod
+      type: dateRange
+    default:
+      type: range
+      lower:
+        value: {type: date, value: '2022-10-01'}
+        inclusive: true
+      upper:
+        value: {type: date, value: '2023-10-13'}
+        inclusive: true
     urlParameter: period
     operators: []
   - id: genre
@@ -40,7 +48,7 @@ spec:
     - notIn
     urlParameter: decade
   visuals:
-    genre_rating_count:
+    - id: genre_rating_count
       type: kpi
       query:
         type: aggregate
@@ -51,7 +59,7 @@ spec:
         type: kpi
         note: Rating-genre rows
         tone: ink
-    average_rating:
+    - id: average_rating
       type: kpi
       query:
         type: aggregate
@@ -62,7 +70,7 @@ spec:
         type: kpi
         note: Mean rating
         tone: warning
-    active_users:
+    - id: active_users
       type: kpi
       query:
         type: aggregate
@@ -73,7 +81,7 @@ spec:
         type: kpi
         note: Distinct users
         tone: success
-    rated_movies:
+    - id: rated_movies
       type: kpi
       query:
         type: aggregate
@@ -84,7 +92,7 @@ spec:
         type: kpi
         note: Distinct movies
         tone: danger
-    ratings_by_genre:
+    - id: ratings_by_genre
       type: bar
       query:
         type: aggregate
@@ -99,7 +107,7 @@ spec:
       title: Ratings by genre
       presentation:
         type: cartesian
-    average_by_genre:
+    - id: average_by_genre
       type: bar
       query:
         type: aggregate
@@ -114,7 +122,7 @@ spec:
       title: Average rating by genre
       presentation:
         type: cartesian
-    genre_trend:
+    - id: genre_trend
       type: column
       query:
         type: aggregate
@@ -131,7 +139,7 @@ spec:
       title: Genre ratings by year
       presentation:
         type: cartesian
-    decade_genres:
+    - id: decade_genres
       type: pivot
       query:
         type: pivot

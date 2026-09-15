@@ -252,7 +252,7 @@ func facetTestPipeline(t *testing.T) Pipeline {
 func facetTestSourcePublication(t *testing.T) ContractPublication {
 	t.Helper()
 	var authored projectcontracts.Source
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/orders.parquet","format":"parquet"},"schema":{"mode":"strict"},"fields":{"id":{"datatype":"String"},"order_id":{"datatype":"String"},"a":{"datatype":"String"},"z":{"datatype":"String"}}}}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/orders.parquet","format":"parquet"},"schema":{"mode":"strict"},"fields":[{"name":"id","datatype":"String"},{"name":"order_id","datatype":"String"},{"name":"a","datatype":"String"},{"name":"z","datatype":"String"}]}}`), &authored); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := contractprojection.ProjectSource(authored, contractprojection.Contract{Version: "1.0.0", Compatibility: "backward"})
@@ -273,7 +273,7 @@ func facetTestSourcePublication(t *testing.T) ContractPublication {
 func facetTestModelPublication(t *testing.T) ContractPublication {
 	t.Helper()
 	var authored projectcontracts.Model
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders"},"spec":{"definition":{"type":"direct","source":"source:orders"},"entities":{"order":{"type":"primary","fields":["id"]}},"grain":{"entity":"order"},"fields":{"id":{"datatype":"String"},"amount":{"datatype":"Decimal"}},"checks":[{"id":"id_present","type":"non_null","field":"id","severity":"error"},{"id":"amount_present","type":"non_null","field":"amount","severity":"warning"},{"id":"row_bounds","type":"row_count","minimum":1,"maximum":100,"severity":"error"},{"id":"row_bounds_secondary","type":"row_count","minimum":1,"maximum":100,"severity":"error"}]}}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders"},"spec":{"definition":{"type":"direct","source":"source:orders"},"entities":[{"name":"order","type":"primary","fields":["id"]}],"grain":{"entity":"order"},"fields":[{"name":"id","datatype":"String"},{"name":"amount","datatype":"Decimal"}],"checks":[{"id":"id_present","type":"non_null","field":"id","severity":"error"},{"id":"amount_present","type":"non_null","field":"amount","severity":"warning"},{"id":"row_bounds","type":"row_count","minimum":1,"maximum":100,"severity":"error"},{"id":"row_bounds_secondary","type":"row_count","minimum":1,"maximum":100,"severity":"error"}]}}`), &authored); err != nil {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "source:orders", Name: "orders_source", Kind: projectgraph.KindSource}}, nil)

@@ -95,7 +95,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 		ID: planID, TargetID: admissionInstanceID, ProjectID: projectID, Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: sourceDigest,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: sourceDigest, CompilerDigest: assemblerDigest('1'), ExecutableDigest: assemblerDigest('2'), DependencyDigest: assemblerDigest('3'), ConfigDigest: assemblerDigest('c'), BindingDigest: bindingFingerprint, RuntimeDigest: assemblerDigest('5'), CapabilityDigest: assemblerDigest('6')},
 		Provenance: deployment.DeliveryProvenance{Builder: "assembler-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: assemblerDigest('7'), AuthorizationDigest: assemblerDigest('d'), QualificationDigest: assemblerDigest('8'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: false},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: assemblerDigest('7'), PolicyRevision: 1, AuthorizationDigest: assemblerDigest('d'), QualificationDigest: assemblerDigest('8'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: false},
 		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "impact", PhysicalWorkStatement: "refresh", ReuseStatement: "none", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact", Steps: []deployment.DeliveryQualificationStep{{ID: "schema", Kind: "contract", Description: "schema", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
 		CreatedAt:  now,
 	})
@@ -142,7 +142,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	if err := json.Unmarshal(qualificationJSON, &qualification); err != nil {
 		t.Fatal(err)
 	}
-	return NativeSealEvidenceAssemblerInput{Build: build, AttemptAdmission: attemptAdmission, PoolContract: &ducklake.PoolContract{Pool: pool, Tuple: tuple, Admission: admission, Evidence: evidence}, CatalogIdentity: ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: build.CatalogID, CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}, Compatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: compatDigest, CatalogSchemaVersion: "schema-v1"}, Plan: plan, Artifacts: release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: portableArtifact.Digest(), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1}, AuthorizationFingerprint: assemblerDigest('d'), Generation: artifact, Compiler: release.CandidateCompilerEvidence{Graph: graph, Manifest: portableArtifact.Manifest(), Artifact: portableArtifact}}, Bindings: bindings, RuntimeVersion: "runtime-assembler", Qualification: qualification, SealID: sealID, GenerationID: generation, TenantDomain: identity.Tenant, EncryptionDomain: "encryption-assembler", ObjectNamespace: "objects/assembler"}
+	return NativeSealEvidenceAssemblerInput{Build: build, AttemptAdmission: attemptAdmission, PoolContract: &ducklake.PoolContract{Pool: pool, Tuple: tuple, Admission: admission, Evidence: evidence}, CatalogIdentity: ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: build.CatalogID, CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}, Compatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: compatDigest, CatalogSchemaVersion: "schema-v1"}, Plan: plan, Artifacts: release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: portableArtifact.Digest(), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1}, AuthorizationPolicyRevision: 1, AuthorizationPolicyDigest: assemblerDigest('7'), AuthorizationFingerprint: assemblerDigest('d'), Generation: artifact, Compiler: release.CandidateCompilerEvidence{Graph: graph, Manifest: portableArtifact.Manifest(), Artifact: portableArtifact}}, Bindings: bindings, RuntimeVersion: "runtime-assembler", Qualification: qualification, SealID: sealID, GenerationID: generation, TenantDomain: identity.Tenant, EncryptionDomain: "encryption-assembler", ObjectNamespace: "objects/assembler"}
 }
 
 func nativeAssemblerClosure(t *testing.T, catalogID, root, namespace string, relations []ducklake.BaseTable) ducklake.NativeSnapshotClosureEvidence {
@@ -265,6 +265,39 @@ func TestAssembleRecoveredNativeGenerationAdmissionInputAcceptsExactEvidence(t *
 	// the later atomic transaction will reconcile both indeterminate ledgers.
 	if got.Fence.LeaseID != input.AttemptAdmission.Lease.LeaseID || got.Fence.FencingEpoch != input.AttemptAdmission.Attempt.FencingEpoch {
 		t.Fatalf("assembled recovery fence = %#v", got.Fence)
+	}
+}
+
+func TestAssembleRecoveredNativeGenerationAdmissionInputAcceptsPre017PolicyEvidence(t *testing.T) {
+	input := recoveredNativeSealAssemblerInput(t)
+	input.Plan.Governance.PolicyRevision = 0
+	input.Plan.Governance.PolicyDigest = input.Plan.Governance.AuthorizationDigest
+	input.Plan.Digest = ""
+	plan, err := deployment.NewDeliveryPlan(input.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Plan = plan
+	input.AttemptAdmission.Attempt.PlanDigest = plan.Digest
+	input.Build.Marker.PlanDigest = plan.Digest
+	marker, err := input.Build.Marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Build.CanonicalMarkerJSON = []byte(marker)
+	input.Build.Seal.CommitMarker = marker
+	input.Artifacts.AuthorizationPolicyRevision = 0
+	input.Artifacts.AuthorizationPolicyDigest = ""
+
+	got, err := AssembleRecoveredNativeGenerationAdmissionInput(input)
+	if err != nil {
+		t.Fatalf("assemble pre-017 recovery: %v", err)
+	}
+	if !got.legacyAuthorizationPolicy || got.AuthorizationPolicy.Revision != 0 || got.AuthorizationPolicy.Digest != "" || got.Seal.AuthorizationPolicyRevision != 0 || got.Seal.AuthorizationPolicyDigest != "" {
+		t.Fatalf("legacy authorization admission = %#v", got)
+	}
+	if _, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput(input)); err == nil {
+		t.Fatal("fresh assembler accepted pre-017 policy evidence")
 	}
 }
 

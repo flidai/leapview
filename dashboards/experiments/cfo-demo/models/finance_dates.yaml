@@ -7,8 +7,8 @@ metadata:
   description: Conformed reporting-date dimension shared by the finance facts.
 spec:
   fields:
-    finance_date: {datatype: Date, label: Date}
-    finance_month: {datatype: String, label: Month}
+    - {name: finance_date, datatype: Date, label: Date}
+    - {name: finance_month, datatype: String, label: Month}
   definition:
     type: sql
     sql: |
@@ -20,7 +20,7 @@ spec:
         ) AS finance_month
       FROM source."finance.financials"
   entities:
-    finance_date:
+    - name: finance_date
       type: primary
       fields: [finance_date]
   grain:

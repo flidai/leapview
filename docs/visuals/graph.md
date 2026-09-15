@@ -12,7 +12,7 @@ Map two dimensions to source and target nodes, then use the metric as edge weigh
 
 ```yaml visual-example=status_delivery_graph
 visuals:
-  status_delivery_graph:
+  - id: status_delivery_graph
     title: Status and delivery network
     description: Shows status and delivery-speed relationships as a network.
     type: graph
@@ -48,7 +48,7 @@ Replace the source dimension with category to inspect a different relationship w
 
 ```yaml visual-example=category_status_graph
 visuals:
-  category_status_graph:
+  - id: category_status_graph
     title: Category and status network
     type: graph
     query:
@@ -74,7 +74,7 @@ Set `presentation.layout: circular` for a stable ring, curve overlapping edges, 
 
 ```yaml visual-example=category_status_graph_circular
 visuals:
-  category_status_graph_circular:
+  - id: category_status_graph_circular
     title: Circular category and status network
     type: graph
     presentation:

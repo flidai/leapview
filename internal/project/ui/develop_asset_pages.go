@@ -2,6 +2,7 @@ package ui
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,7 +125,7 @@ func projectAssetRouteDocument(asset projectview.DevelopAssetView, catalog catal
 			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/asset-lineage-graph.js"))),
 		)
 	}
-	if activeSection == "details" && asset.Type == "semantic_model" {
+	if (activeSection == "details" || activeSection == "definition") && asset.Type == "semantic_model" {
 		extraHead = append(extraHead,
 			h.Link(h.Rel("stylesheet"), h.Href(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.css"))),
 			h.Script(h.Type("module"), h.Src(projectStaticAssetURL(chromeOptions, "/static/semantic-model-graph.js"))),
@@ -189,7 +190,12 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 		pairs := []string{"surface", "asset", "environment", uisignals.ValueOrZero(typed.Environment), "asset", typed.AssetID, "section", typed.ActiveSection}
 		return updatesURL(routeKind, pairs...)
 	case uisignals.PipelinePageSignal:
-		return updatesURL(routeKind, "surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment)
+		pairs := []string{"surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment}
+		if monitor := typed.RunMonitor; monitor != nil {
+			pairs = append(pairs, "q", monitor.Query, "range", monitor.Range, "status", monitor.Status,
+				"trigger", monitor.Trigger, "page", strconv.FormatInt(monitor.Page, 10))
+		}
+		return updatesURL(routeKind, pairs...)
 	default:
 		return updatesURL(routeKind, "surface", "project")
 	}
@@ -230,7 +236,7 @@ func projectAreaForAssetType(assetType string) string {
 		return "models"
 	case string(projectview.AssetTypeSemanticModel):
 		return "semantic-models"
-	case string(projectview.AssetTypeRefreshPipeline):
+	case string(projectview.AssetTypeRefreshPipeline), "pipeline":
 		return "pipelines"
 	case string(projectview.AssetTypeConnection):
 		return "connections"

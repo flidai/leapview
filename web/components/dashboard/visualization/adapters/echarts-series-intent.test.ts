@@ -390,6 +390,14 @@ test('ECharts normalizes multi-metric percent stacks without changing raw toolti
 
   const option = echartsOption(envelope, defaultRendererContext) as any
   expect(option.series.map((series: any) => series.name)).toEqual(['cost', 'revenue'])
+  expect(option.yAxis.boundaryGap).toBeUndefined()
+  const percentChart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    percentChart.setOption(option)
+    expect((percentChart as any).getModel().getComponent('yAxis').axis.scale.getExtent()).toEqual([0, 100])
+  } finally {
+    percentChart.dispose()
+  }
   expect(option.series.map((series: any) => series.encode.y)).toEqual(['__lv_percent_cost', '__lv_percent_revenue'])
   expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
     defaultRendererContext.colors.attention,

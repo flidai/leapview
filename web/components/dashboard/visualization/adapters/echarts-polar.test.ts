@@ -41,6 +41,10 @@ test('ECharts translation builds radar indicators and aligned series from typed 
   expect(option.series[0]).not.toHaveProperty('pointer')
   expect(option.series[0]).not.toHaveProperty('progress')
   expect(option.series[0].data).toEqual([{ name: 'A', value: ['8', '9'] }, { name: 'B', value: ['6', '7'] }])
+  expect(option.series[0].tooltip.formatter({ name: 'A', seriesName: 'series:polar:radar', value: ['8', '9'] })).toBe('A<br>Speed: 8<br>Quality: 9')
+  envelope.spec.tooltipItems = []
+  expect((echartsOption(envelope, context) as any).series[0].tooltip.formatter({ seriesName: 'A', value: ['8', '9'] })).toBe('')
+  envelope.spec.tooltipItems = undefined
 
   const presentation = envelope.spec.presentation as Extract<VisualizationEnvelope['spec'], { kind: 'polar' }>['presentation']
   presentation.maximum = 12
@@ -109,6 +113,7 @@ test('ECharts radar keeps null, display-colliding, and typed series identities d
   expect(option.legend.data).toEqual([{ name: 'null:' }, { name: 'string:—' }, { name: 'number:1' }, { name: 'string:1' }])
   expect(option.legend.formatter('null:')).toBe('—')
   expect(option.legend.formatter('number:1')).toBe('1')
+  expect(option.series[0].tooltip.formatter({ seriesName: 'number:1', value: ['6'] })).toBe('1<br>Speed: 6')
 })
 
 test('ECharts emits only mark-supported proportional fields and preserves explicit false and zero', () => {

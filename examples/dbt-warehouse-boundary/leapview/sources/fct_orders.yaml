@@ -13,8 +13,8 @@ spec:
   schema:
     mode: strict
   fields:
-    order_id: {datatype: String}
-    customer_id: {datatype: String}
-    order_date: {datatype: Date}
-    order_status: {datatype: String}
-    revenue: {datatype: Float}
+    - {name: order_id, datatype: String}
+    - {name: customer_id, datatype: String}
+    - {name: order_date, datatype: Date}
+    - {name: order_status, datatype: String}
+    - {name: revenue, datatype: Float}

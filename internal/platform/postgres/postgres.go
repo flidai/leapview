@@ -764,3 +764,28 @@ func parseBoolSetting(raw string) (bool, error) {
 		return false, errors.New("expected on or off")
 	}
 }
+
+// ConnectListener opens one dedicated, admitted session for PostgreSQL
+// LISTEN/NOTIFY. A listener must not hold a runtime pool slot indefinitely:
+// some admitted runtime pools have a maximum of one connection. The caller
+// owns the returned connection and must close it.
+func (p *Pool) ConnectListener(ctx context.Context) (*pgx.Conn, error) {
+	if p == nil || p.pool == nil {
+		return nil, errors.New("postgres pool is nil")
+	}
+	connectCtx := ctx
+	if p.acquireTimeout > 0 {
+		var cancel context.CancelFunc
+		connectCtx, cancel = context.WithTimeout(ctx, p.acquireTimeout)
+		defer cancel()
+	}
+	conn, err := pgx.ConnectConfig(connectCtx, p.pool.Config().ConnConfig.Copy())
+	if err != nil {
+		return nil, err
+	}
+	if err := Validate(connectCtx, conn, p.config); err != nil {
+		_ = conn.Close(context.Background())
+		return nil, err
+	}
+	return conn, nil
+}

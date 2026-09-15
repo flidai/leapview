@@ -13,8 +13,8 @@ spec:
   schema:
     mode: strict
   fields:
-    customer_id: {datatype: String}
-    customer_name: {datatype: String}
-    region: {datatype: String}
-    order_count: {datatype: Integer}
-    lifetime_value: {datatype: Float}
+    - {name: customer_id, datatype: String}
+    - {name: customer_name, datatype: String}
+    - {name: region, datatype: String}
+    - {name: order_count, datatype: Integer}
+    - {name: lifetime_value, datatype: Float}

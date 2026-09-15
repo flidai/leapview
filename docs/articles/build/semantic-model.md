@@ -36,10 +36,10 @@ metadata:
   description: Governed order and revenue analysis.
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders
       metrics:
-        order_count:
+        - name: order_count
           type: simple
           label: Orders
           description: Distinct orders in the filtered result.
@@ -47,21 +47,21 @@ spec:
           format: integer
           agg: count_distinct
           field: order_id
-        revenue:
+        - name: revenue
           type: simple
           label: Revenue
           description: Sum of order revenue in the filtered result.
           empty: zero
           format: currency
           agg: sum
-    customers:
+    - name: customers
       model: customers
   relationships:
-    orders_customers:
+    - name: orders_customers
       from: { dataset: orders, fields: [ customer_id ] }
       to: { dataset: customers, fields: [ customer_id ] }
   metrics:
-    aov:
+    - name: aov
       type: ratio
       label: Average order value
       numerator: revenue

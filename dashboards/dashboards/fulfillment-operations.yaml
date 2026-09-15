@@ -43,7 +43,7 @@ spec:
     - notIn
     urlParameter: delivery
   visuals:
-    total_orders:
+    - id: total_orders
       type: kpi
       query:
         type: aggregate
@@ -54,7 +54,7 @@ spec:
         type: kpi
         note: Filtered order count
         tone: ink
-    delivery_days:
+    - id: delivery_days
       type: kpi
       query:
         type: aggregate
@@ -65,7 +65,7 @@ spec:
         type: kpi
         note: Average days
         tone: warning
-    review_score:
+    - id: review_score
       type: kpi
       query:
         type: aggregate
@@ -76,7 +76,7 @@ spec:
         type: kpi
         note: Average score
         tone: danger
-    orders_by_status:
+    - id: orders_by_status
       type: donut
       query:
         type: aggregate
@@ -91,7 +91,7 @@ spec:
       title: Orders by status
       presentation:
         type: proportional
-    delivery_speed:
+    - id: delivery_speed
       type: bar
       query:
         type: aggregate
@@ -105,7 +105,7 @@ spec:
       title: Delivery speed
       presentation:
         type: cartesian
-    review_by_status:
+    - id: review_by_status
       type: bar
       query:
         type: aggregate
