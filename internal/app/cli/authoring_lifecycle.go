@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"sort"
 	"strings"
 	"syscall"
 
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/spf13/cobra"
@@ -27,14 +29,24 @@ type localRuntimeLifecycle interface {
 
 type localRuntimeControllerFactory func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error)
 
+type localDevelopmentProfileStatusReader func(context.Context, localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error)
+
 func newLocalRuntimeController(endpoint localdocker.Endpoint, command *cobra.Command) (localRuntimeLifecycle, error) {
+	return newLocalRuntimeControllerWithCredentials(endpoint, command, nil)
+}
+
+func newLocalRuntimeControllerWithCredentials(endpoint localdocker.Endpoint, command *cobra.Command, credentials map[string]string) (*localruntime.Controller, error) {
+	return newLocalRuntimeControllerForProfile(endpoint, command, credentials, localruntime.DevelopmentProfileIdentity{})
+}
+
+func newLocalRuntimeControllerForProfile(endpoint localdocker.Endpoint, command *cobra.Command, credentials map[string]string, profile localruntime.DevelopmentProfileIdentity) (*localruntime.Controller, error) {
 	return localruntime.New(localruntime.Options{
 		Endpoint: endpoint, ResolveProjectAuthority: resolveLocalProjectAuthority,
 		EstablishSessions: func(ctx context.Context, request localruntime.SessionRequest) (localruntime.SessionResult, error) {
 			return establishLocalAuthoringSessions(ctx, request, command.OutOrStdout())
 		},
 		ResetSessions: resetLocalAuthoringSessions,
-		Stdout:        command.OutOrStdout(),
+		Stdout:        command.OutOrStdout(), DevelopmentCredentials: credentials, DevelopmentProfile: profile,
 	})
 }
 
@@ -44,8 +56,8 @@ func runAttachedLocalRuntime(ctx context.Context, controller localRuntimeLifecyc
 	return controller.Run(signalContext, once)
 }
 
-func addLocalDevLifecycleCommands(ctx context.Context, parent *cobra.Command, resolve localDockerResolver, factory localRuntimeControllerFactory) {
-	parent.AddCommand(localDevStatusCommand(ctx, resolve, factory))
+func addLocalDevLifecycleCommands(ctx context.Context, parent *cobra.Command, resolve localDockerResolver, factory localRuntimeControllerFactory, readProfileStatus localDevelopmentProfileStatusReader) {
+	parent.AddCommand(localDevStatusCommand(ctx, resolve, factory, readProfileStatus))
 	parent.AddCommand(localDevLogsCommand(ctx, resolve, factory))
 	parent.AddCommand(localDevStopCommand(ctx, resolve, factory))
 	parent.AddCommand(localDevResetCommand(ctx, resolve, factory))
@@ -72,7 +84,7 @@ func (selection localDockerSelection) controller(ctx context.Context, command *c
 	return factory(endpoint, command)
 }
 
-func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, factory localRuntimeControllerFactory) *cobra.Command {
+func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, factory localRuntimeControllerFactory, readProfileStatus localDevelopmentProfileStatusReader) *cobra.Command {
 	selection := &localDockerSelection{}
 	format := "text"
 	command := &cobra.Command{
@@ -91,6 +103,12 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 			if err != nil {
 				return err
 			}
+			if status.Exists && status.TargetName != "" && readProfileStatus != nil {
+				status.DevelopmentProfile, err = readProfileStatus(ctx, status)
+				if err != nil {
+					return fmt.Errorf("read retained development profile status: %w", err)
+				}
+			}
 			if format == "json" {
 				return json.NewEncoder(command.OutOrStdout()).Encode(status)
 			}
@@ -101,6 +119,55 @@ func localDevStatusCommand(ctx context.Context, resolve localDockerResolver, fac
 	selection.bind(command)
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command
+}
+
+func readApplicationDevelopmentProfileStatus(ctx context.Context, status localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error) {
+	authority, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	if err != nil {
+		return nil, err
+	}
+	return readDevelopmentProfileStatusWith(ctx, status, authority, http.DefaultClient)
+}
+
+func readDevelopmentProfileStatusWith(ctx context.Context, status localruntime.LifecycleStatus, authority authoringCredentialResolver, client *http.Client) (*localruntime.DevelopmentProfileStatus, error) {
+	if status.TargetName == "" || status.TargetID == "" || status.ProjectID == "" || status.URL == "" {
+		return nil, errors.New("local runtime target identity is incomplete")
+	}
+	if authority == nil || client == nil {
+		return nil, errors.New("local authoring status authority is unavailable")
+	}
+	resolved, err := authority.Resolve(ctx, status.TargetName)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.Profile.ProjectID != status.ProjectID || resolved.Profile.InstanceID != status.TargetID || resolved.Profile.Origin != status.URL {
+		return nil, errors.New("local runtime identity disagrees with the retained authoring login")
+	}
+	transport := capabilityAPITransport{target: resolved.Profile.Origin, token: resolved.AccessToken, client: client}
+	response, err := analyticsgen.NewGenClient(transport).GetDevelopmentProfileApplication(ctx, analyticsgen.GenGetDevelopmentProfileApplicationClientRequest{
+		Project: status.ProjectID, Target: status.TargetID,
+	})
+	if isDevelopmentProfileNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	incomplete := append([]string(nil), response.Body.IncompleteConnections...)
+	sort.Strings(incomplete)
+	return &localruntime.DevelopmentProfileStatus{
+		ApplicationID: response.Body.ApplicationId, Status: string(response.Body.Status), ProfileName: response.Body.ProfileName,
+		LastCompletedApplicationID: optionalLocalStatusString(response.Body.LastCompletedApplicationId), LastCompletedAt: optionalLocalStatusString(response.Body.LastCompletedAt),
+		RequiredConnections: response.Body.RequiredConnectionCount, AppliedConnections: response.Body.AppliedConnectionCount,
+		IncompleteConnections: incomplete, UpdatedAt: response.Body.UpdatedAt,
+	}, nil
+}
+
+func optionalLocalStatusString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func writeLocalRuntimeStatus(command *cobra.Command, status localruntime.LifecycleStatus) {
@@ -120,6 +187,21 @@ func writeLocalRuntimeStatus(command *cobra.Command, status localruntime.Lifecyc
 	sort.Strings(serviceNames)
 	for _, name := range serviceNames {
 		fmt.Fprintf(out, "Service %s: %s\n", name, status.Services[name])
+	}
+	if status.DevelopmentProfile == nil {
+		fmt.Fprintln(out, "Development profile application: none")
+	} else {
+		profile := status.DevelopmentProfile
+		fmt.Fprintf(out, "Development profile application: %s (%s, profile %s, updated %s)\n", profile.ApplicationID, profile.Status, profile.ProfileName, profile.UpdatedAt)
+		if profile.LastCompletedApplicationID == "" {
+			fmt.Fprintln(out, "Last completed profile application: none")
+		} else {
+			fmt.Fprintf(out, "Last completed profile application: %s (%s)\n", profile.LastCompletedApplicationID, profile.LastCompletedAt)
+		}
+		fmt.Fprintf(out, "Development profile connections: %d/%d applied\n", profile.AppliedConnections, profile.RequiredConnections)
+		if len(profile.IncompleteConnections) > 0 {
+			fmt.Fprintf(out, "Incomplete connections: %s\n", strings.Join(profile.IncompleteConnections, ", "))
+		}
 	}
 	if len(status.Attachments) == 0 {
 		fmt.Fprintln(out, "Attachments: none")

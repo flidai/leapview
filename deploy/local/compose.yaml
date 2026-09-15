@@ -96,6 +96,17 @@ services:
       # Contributor-only diagnostics are independent of the environment name
       # and remain disabled in the released local authoring experience.
       LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS: "false"
+      # Only names selected by the validated local profile are eligible for
+      # the development resolver. The adjacent env_file contains exactly
+      # those bundles, never the host process environment.
+      LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES: ${LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES:-}
+      LEAPVIEW_LOCAL_CHECKOUT_ID: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      LEAPVIEW_LOCAL_OWNER_ID: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
+      LEAPVIEW_DEVELOPMENT_PROFILE_NAME: ${LEAPVIEW_DEVELOPMENT_PROFILE_NAME:?development profile name is required}
+      LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST: ${LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST:?development graph digest is required}
+      LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST: ${LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST:?development profile digest is required}
+    env_file:
+      - ${LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE:?private selected development credential file is required}
     volumes:
       # This one private application volume durably contains analytical files,
       # managed objects, immutable source/artifact objects, DuckDB state, and

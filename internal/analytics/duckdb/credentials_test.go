@@ -2,6 +2,7 @@ package duckdb
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestDevelopmentEnvironmentCredentialResolverRequiresExplicitDevelopmentSele
 		Kind: connectionbinding.ResolverInfisical,
 	})
 	require.NoError(t, err)
-	if _, err := NewDevelopmentEnvironmentCredentialResolver(production); !errors.Is(err, connectionbinding.ErrInvalidBinding) {
+	if _, err := NewDevelopmentEnvironmentCredentialResolver(production, nil); !errors.Is(err, connectionbinding.ErrInvalidBinding) {
 		t.Fatalf("production selection error = %v", err)
 	}
 
@@ -37,18 +38,51 @@ func TestDevelopmentEnvironmentCredentialResolverRequiresExplicitDevelopmentSele
 		Kind: connectionbinding.ResolverEnvironment,
 	})
 	require.NoError(t, err)
-	resolver, err := NewDevelopmentEnvironmentCredentialResolver(development)
+	resolver, err := NewDevelopmentEnvironmentCredentialResolver(development, []string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"})
 	require.NoError(t, err)
-	t.Setenv("LEAPVIEW_TEST_DEVELOPMENT_CREDENTIAL", `{"password":"source-secret"}`)
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", `{"password":"source-secret"}`)
 	auth, err := resolver.Resolve(context.Background(), "warehouse", semanticmodel.Connection{
 		Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{
-			Provider: "env", Secret: "LEAPVIEW_TEST_DEVELOPMENT_CREDENTIAL",
+			Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE",
 		},
 	})
 	require.NoError(t, err)
 	if auth["password"] != "source-secret" {
 		t.Fatalf("resolved auth = %#v", auth)
 	}
+}
+
+func TestDevelopmentEnvironmentCredentialResolverAcceptsComposeSafeSelectedBundle(t *testing.T) {
+	development, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
+		TargetID: "target-dev", ProjectID: "sales", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
+		Kind: connectionbinding.ResolverEnvironment,
+	})
+	require.NoError(t, err)
+	resolver, err := NewDevelopmentEnvironmentCredentialResolver(development, []string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE"})
+	require.NoError(t, err)
+	raw := `{"password":"source $VALUE # comment"}`
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_WAREHOUSE", "leapview-base64-v1:"+base64.RawStdEncoding.EncodeToString([]byte(raw)))
+	auth, err := resolver.Resolve(t.Context(), "warehouse", semanticmodel.Connection{
+		Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "source $VALUE # comment", auth["password"])
+}
+
+func TestDevelopmentEnvironmentCredentialResolverRejectsUnselectedVariableBeforeLookup(t *testing.T) {
+	development, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
+		TargetID: "target-dev", ProjectID: "sales", Environment: "dev", TargetClass: connectionbinding.TargetDevelopment,
+		Kind: connectionbinding.ResolverEnvironment,
+	})
+	require.NoError(t, err)
+	resolver, err := NewDevelopmentEnvironmentCredentialResolver(development, []string{"LEAPVIEW_DEV_CONNECTION_SELECTED"})
+	require.NoError(t, err)
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_UNSELECTED", `{"password":"must-not-be-read"}`)
+	_, err = resolver.Resolve(t.Context(), "warehouse", semanticmodel.Connection{
+		Kind: "postgres", Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_UNSELECTED"},
+	})
+	require.ErrorContains(t, err, "not selected")
+	require.NotContains(t, err.Error(), "must-not-be-read")
 }
 
 func TestDefaultSourceRuntimeUsesFailClosedNonSecretResolver(t *testing.T) {

@@ -147,7 +147,6 @@ model TargetConnectionBindingResponse {
   environment: TargetConnectionIdentifier;
   endpoint: TargetConnectionEndpoint;
   enabled: boolean;
-  validatedVersion?: string;
   health: TargetConnectionHealth;
   lastValidatedAt?: utcDateTime;
   createdAt: utcDateTime;
@@ -167,7 +166,6 @@ model TargetConnectionBindingHealthResponse {
   connectorKind: TargetConnectionIdentifier;
   environment: TargetConnectionIdentifier;
   bindingRevision: TargetConnectionRevision;
-  validatedVersion?: string;
   health: TargetConnectionHealth;
   diagnosticCode?: string;
   lastAttemptAt?: utcDateTime;
@@ -182,7 +180,7 @@ model TargetConnectionBindingHealthResponse {
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @extension("x-leapview-object-scope", "project")
   listTargetConnectionBindings(
     @path project: ResourceId,
@@ -191,7 +189,7 @@ interface TargetConnectionBindings {
 
   @summary("Create a target connection binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
   @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)
@@ -374,4 +372,97 @@ interface TargetConnectionBindings {
     @path target: TargetConnectionIdentifier,
     @path @apigen.target connection: LogicalConnectionId,
   ): OkJson<TargetConnectionBindingHealthResponse> | CommonErrors;
+}
+
+enum DevelopmentProfileApplicationMode {
+  new;
+  resume;
+}
+
+enum DevelopmentProfileApplicationStatus {
+  applying;
+  incomplete;
+  applied;
+}
+
+model DevelopmentProfileConnectionIntent {
+  logicalConnection: LogicalConnectionId;
+  connectorKind: TargetConnectionIdentifier;
+  authenticationMode: TargetConnectionAuthenticationMode;
+  endpoint: TargetConnectionEndpoint;
+  credentialReference?: TargetConnectionCredentialReference;
+}
+
+model DevelopmentProfileApplicationRequest {
+  applicationId: TargetConnectionIdentifier;
+  mode: DevelopmentProfileApplicationMode;
+  @doc("The immutable source snapshot observed when a new application begins. Ordinary source edits do not change profile identity.")
+  sourceDigest: string;
+  graphDigest: string;
+  profileDigest: string;
+  connections: DevelopmentProfileConnectionIntent[];
+}
+
+model DevelopmentProfileApplicationResponse {
+  applicationId: string;
+  status: DevelopmentProfileApplicationStatus;
+  profileName: string;
+  @doc("The completed application retained by this runtime. Absent while its first application is incomplete. In-place replacement is not exposed; use ownership-gated local runtime recreation.")
+  lastCompletedApplicationId?: string;
+  lastCompletedAt?: utcDateTime;
+  @doc("Logical connections required by the retained profile intent. This count contains no credential material.")
+  requiredConnectionCount: int32;
+  @doc("Logical connections whose exact binding and protected credential evidence have been durably applied.")
+  appliedConnectionCount: int32;
+  @doc("Required logical connection IDs that are not yet durably applied. Credential references and provider versions are never returned.")
+  incompleteConnections: LogicalConnectionId[];
+  sourceDigest: string;
+  graphDigest: string;
+  profileDigest: string;
+  revision: TargetConnectionRevision;
+  updatedAt: utcDateTime;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model DevelopmentProfileApplicationAuditPayload {
+  @apigen.auditInternal
+  applicationId: string;
+
+  @apigen.auditPublic
+  mode: DevelopmentProfileApplicationMode;
+
+  @apigen.auditPublic
+  connectionCount: int32;
+}
+
+@route("/projects/{project}/targets/{target}/development-profile-application")
+@tag("Connections")
+interface DevelopmentProfileApplications {
+  @summary("Read the local runtime's retained development profile application")
+  @get
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @extension("x-leapview-object-scope", "project")
+  getDevelopmentProfileApplication(
+    @path project: ResourceId,
+    @path target: TargetConnectionIdentifier,
+  ): OkJson<DevelopmentProfileApplicationResponse> | CommonErrors;
+
+  @summary("Apply an exact development profile to the local runtime")
+  @post
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_MANAGE" })
+  @extension("x-leapview-object-scope", "project")
+  @apigen.failsWith(InvalidConnectionBindingFailure)
+  @apigen.failsWith(ForbiddenConnectionOperationFailure)
+  @apigen.failsWith(ConnectionBindingNotFoundFailure)
+  @apigen.failsWith(ConnectionBindingConflictFailure)
+  @apigen.failsWith(ConnectionTestFailedFailure)
+  @apigen.failsWith(ConnectionProviderUnavailableFailure)
+  @apigen.command(#{ auditAction: "development.profile.applied", guarantee: "best-effort" })
+  @apigen.auditPayload(DevelopmentProfileApplicationAuditPayload)
+  applyDevelopmentProfile(
+    @path @apigen.target project: ResourceId,
+    @path target: TargetConnectionIdentifier,
+    @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
+    @body body: DevelopmentProfileApplicationRequest,
+  ): OkJson<DevelopmentProfileApplicationResponse> | CommonErrors;
 }

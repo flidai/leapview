@@ -71,7 +71,7 @@ func DevCommand(
 				values.SourceRoot = args[0]
 			}
 			return RunDev(
-				ctx,
+				command.Context(),
 				client,
 				checkpoints,
 				remotes,
@@ -83,6 +83,7 @@ func DevCommand(
 			)
 		},
 	}
+	command.SetContext(ctx)
 	command.Flags().StringVar(&values.SourceRoot, "source-root", values.SourceRoot, "analytics source root")
 	command.Flags().StringVar(
 		&values.Credentials.Target,

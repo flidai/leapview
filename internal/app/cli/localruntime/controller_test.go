@@ -240,8 +240,9 @@ func TestStartRecoversAttachmentRegistryInitializationBoundary(t *testing.T) {
 	require.NoError(t, err)
 	root := stateDirectory(stateRoot, checkoutID)
 	require.NoError(t, os.MkdirAll(root, 0o700))
-	values, err := initialEnvironment(state, manifest)
+	values, err := initialEnvironment(state, manifest, filepath.Join(root, developmentCredentialsFileName), "", DevelopmentProfileIdentity{})
 	require.NoError(t, err)
+	require.NoError(t, writeEnvironment(filepath.Join(root, developmentCredentialsFileName), nil))
 	require.NoError(t, writeEnvironment(filepath.Join(root, runtimeEnvFileName), values))
 	require.NoError(t, saveState(filepath.Join(root, stateFileName), state))
 
@@ -251,6 +252,105 @@ func TestStartRecoversAttachmentRegistryInitializationBoundary(t *testing.T) {
 	registry, err := loadAttachmentRegistry(filepath.Join(root, attachmentsFileName), attachmentBindingFor(resumed), false)
 	require.NoError(t, err)
 	require.Empty(t, registry.Attachments)
+}
+
+func TestStartPersistsOnlyExplicitDevelopmentCredentialBundles(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner)
+	options.DevelopmentCredentials = map[string]string{
+		"LEAPVIEW_DEV_CONNECTION_WAREHOUSE": `{"username":"dev","password":"local-only"}`,
+	}
+	controller, err := New(options)
+	require.NoError(t, err)
+	state, err := controller.Start(t.Context())
+	require.NoError(t, err)
+	root := stateDirectory(stateRoot, state.Checkout.ID)
+	credentialsPath := filepath.Join(root, developmentCredentialsFileName)
+	credentials := mustReadFile(t, credentialsPath)
+	require.Contains(t, string(credentials), "LEAPVIEW_DEV_CONNECTION_WAREHOUSE=")
+	require.NotContains(t, string(credentials), "local-only")
+	require.NotContains(t, string(credentials), "DATABASE_URL")
+	decodedCredentials, err := readDevelopmentCredentialEnvironment(credentialsPath)
+	require.NoError(t, err)
+	require.Equal(t, options.DevelopmentCredentials, decodedCredentials)
+	info, err := os.Stat(credentialsPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	runtimeValues, err := readEnvironment(filepath.Join(root, runtimeEnvFileName))
+	require.NoError(t, err)
+	require.Equal(t, credentialsPath, runtimeValues["LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE"])
+	require.Equal(t, "LEAPVIEW_DEV_CONNECTION_WAREHOUSE", runtimeValues["LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES"])
+	require.NotContains(t, string(mustReadFile(t, filepath.Join(root, runtimeEnvFileName))), "local-only")
+}
+
+func TestStartRejectsRetainedDevelopmentProfileIdentityDriftBeforeDockerMutation(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner)
+	options.DevelopmentProfile = DevelopmentProfileIdentity{
+		Name: "local", GraphDigest: "sha256:" + strings.Repeat("a", 64), ProfileDigest: "sha256:" + strings.Repeat("b", 64),
+	}
+	controller, err := New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	commandsAfterFirstStart := len(runner.commands)
+
+	options.DevelopmentProfile.ProfileDigest = "sha256:" + strings.Repeat("c", 64)
+	controller, err = New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.ErrorContains(t, err, "LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST")
+	require.Len(t, runner.commands, commandsAfterFirstStart)
+}
+
+func TestStartRejectsChangedDevelopmentCredentialsBeforeDockerMutation(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner)
+	options.DevelopmentCredentials = map[string]string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE": `{"password":"first-secret"}`}
+	controller, err := New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	commandsBefore := len(runner.commands)
+
+	options.DevelopmentCredentials = map[string]string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE": `{"password":"replacement-secret"}`}
+	replacement, err := New(options)
+	require.NoError(t, err)
+	_, err = replacement.Start(t.Context())
+	require.ErrorContains(t, err, "leapview dev reset")
+	require.NotContains(t, err.Error(), "first-secret")
+	require.NotContains(t, err.Error(), "replacement-secret")
+	require.Len(t, runner.commands, commandsBefore)
+}
+
+func TestStartRejectsRetainedCredentialFileRedirectionBeforeDockerMutation(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner)
+	options.DevelopmentCredentials = map[string]string{"LEAPVIEW_DEV_CONNECTION_WAREHOUSE": `{"password":"local-only"}`}
+	controller, err := New(options)
+	require.NoError(t, err)
+	state, err := controller.Start(t.Context())
+	require.NoError(t, err)
+	commandsBefore := len(runner.commands)
+	runtimePath := filepath.Join(stateDirectory(stateRoot, state.Checkout.ID), runtimeEnvFileName)
+	values, err := readEnvironment(runtimePath)
+	require.NoError(t, err)
+	values["LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE"] = filepath.Join(t.TempDir(), "redirected.env")
+	require.NoError(t, writeEnvironment(runtimePath, values))
+
+	replacement, err := New(options)
+	require.NoError(t, err)
+	_, err = replacement.Start(t.Context())
+	require.ErrorContains(t, err, "credential file identity is invalid")
+	require.Len(t, runner.commands, commandsBefore)
 }
 
 func TestStartRejectsEditedRetainedPoolQualificationIntent(t *testing.T) {

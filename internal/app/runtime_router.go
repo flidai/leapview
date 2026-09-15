@@ -17,6 +17,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -54,6 +55,7 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type QueryMetrics = dashboardmodule.Metrics
@@ -77,6 +79,7 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	profileApplications            connectionbinding.ProfileApplicationStore
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -294,17 +297,18 @@ type capabilityAssemblyInputs struct {
 	// AgentPersistence is the graph-owned native agent authority. The router
 	// passes it through opaquely to agentmodule.Build; production must provide
 	// the complete native authority.
-	AgentPersistence  *agentmodule.Persistence
-	AccessModule      *accessmodule.Module
-	Agent             *agentmodule.Service
-	ManagedDataModule *manageddatamodule.Module
-	AnalyticsModule   *analyticsmodule.Module
-	Authoring         *dashboardmodule.AuthoringApplication
-	DashboardAssets   dashboardmodule.Assets
-	Product           *adminmodule.ProductService
-	ProductStatus     adminmodule.ProductStatus
-	ProjectCatalog    *projectcatalog.Service
-	ProjectGraph      projecthttp.GraphReader
+	AgentPersistence    *agentmodule.Persistence
+	AccessModule        *accessmodule.Module
+	Agent               *agentmodule.Service
+	ManagedDataModule   *manageddatamodule.Module
+	AnalyticsModule     *analyticsmodule.Module
+	ProfileApplications connectionbinding.ProfileApplicationStore
+	Authoring           *dashboardmodule.AuthoringApplication
+	DashboardAssets     dashboardmodule.Assets
+	Product             *adminmodule.ProductService
+	ProductStatus       adminmodule.ProductStatus
+	ProjectCatalog      *projectcatalog.Service
+	ProjectGraph        projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
@@ -334,7 +338,12 @@ type runtimeAssemblyInputs struct {
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
 	// evaluation fixtures to exercise sealed-runtime behavior.
-	Production bool
+	Production               bool
+	LocalCheckoutID          string
+	LocalRuntimeID           string
+	DevelopmentProfileName   string
+	DevelopmentGraphDigest   string
+	DevelopmentProfileDigest string
 	// DeliveryTargetReader is the durable target-owned active-generation
 	// pointer. Sealed production serving must consult it before the legacy
 	// serving-state scope table when deciding whether bootstrap is still open.
@@ -702,6 +711,7 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.profileApplications = capabilities.ProfileApplications
 	routes.dashboardAssets = capabilities.DashboardAssets
 	routes.dashboardAuthoring = capabilities.Authoring
 	routes.releaseModule = capabilities.ReleaseModule
@@ -901,6 +911,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
+	var developmentProfileAPI analyticsmodule.DevelopmentProfileApplicationAPIConfig
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
@@ -961,6 +972,40 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		connectionAdministration = administration
+		if !runtimeConfig.Production && runtime.profileApplications != nil && runtimeConfig.LocalCheckoutID != "" && runtimeConfig.LocalRuntimeID != "" && runtimeConfig.DevelopmentProfileName != "" {
+			resolver, err := runtime.analyticsModule.DevelopmentProfileCredentialResolver()
+			if err != nil {
+				return fmt.Errorf("build development profile credential resolver: %w", err)
+			}
+			profileService, err := connectionbinding.NewProfileApplicationService(connectionbinding.ProfileApplicationServiceConfig{
+				Store: runtime.profileApplications, Bindings: administration, Resolver: resolver,
+				NewBindingID: func() (connectionbinding.BindingID, error) {
+					return connectionbinding.ParseBindingID("binding:" + uuid.NewString())
+				},
+				Now: time.Now,
+			})
+			if err != nil {
+				return fmt.Errorf("build development profile application service: %w", err)
+			}
+			developmentProfileAPI = analyticsmodule.DevelopmentProfileApplicationAPIConfig{
+				Service: profileService, Store: runtime.profileApplications, Enabled: true,
+				CheckoutID: runtimeConfig.LocalCheckoutID, RuntimeID: runtimeConfig.LocalRuntimeID,
+				ProfileName: runtimeConfig.DevelopmentProfileName, GraphDigest: runtimeConfig.DevelopmentGraphDigest,
+				ProfileDigest: runtimeConfig.DevelopmentProfileDigest, Environment: runtimeConfig.DefaultEnvironment,
+				TargetID: storage.instanceID, ResolveProjectID: runtime.resolveProjectID,
+				CurrentPrincipal: func(r *http.Request) (string, bool) {
+					principal, ok := routes.accessModule.CurrentPrincipal(r)
+					return principal.ID, ok
+				},
+				Audit: func(ctx context.Context, principalID, projectID, action, metadata string) error {
+					record := accessAuditRecorder(routes.accessModule)
+					if record == nil {
+						return errors.New("development profile audit authority is unavailable")
+					}
+					return record(ctx, access.AuditEventInput{ProjectID: projectID, PrincipalID: principalID, Action: action, ResourceKind: "project", ResourceID: projectID, Capability: access.CapabilityResourceManage, Status: "succeeded", MetadataJSON: metadata})
+				},
+			}
+		}
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.ConnectionAdministration = connectionAdministration
@@ -1076,6 +1121,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
+		DevelopmentProfiles: developmentProfileAPI,
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {

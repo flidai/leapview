@@ -14,8 +14,12 @@ import (
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
+	"github.com/flidai/leapview/internal/analytics/connectionadmin"
+	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	developmentprofile "github.com/flidai/leapview/internal/project/developmentprofile"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +36,74 @@ func TestSourceRootDoesNotDeriveProjectIdentity(t *testing.T) {
 	if _, err := projectcompiler.Compile(path); err == nil {
 		t.Fatal("source loader accepted an authored Project file")
 	}
+}
+
+func TestProfileApplyingDevRemoteAppliesExactCheckpointBeforeSynchronization(t *testing.T) {
+	const sourceDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const graphDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	const profileDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	var state localruntime.State
+	require.NoError(t, json.Unmarshal([]byte(`{"checkout":{"checkoutId":"sha256:checkout"},"runtime":{"ownerId":"owner-1"},"authority":{"instanceId":"target-local","environment":"dev"}}`), &state))
+	transport := &developmentProfileTransportStub{current: analyticsgen.DevelopmentProfileApplicationResponse{
+		ApplicationId: "profile_existing", Status: analyticsgen.DevelopmentProfileApplicationStatusApplied,
+		SourceDigest: sourceDigest, GraphDigest: graphDigest, ProfileDigest: profileDigest, Revision: 3,
+	}}
+	delegate := &recordingProfileDelegate{}
+	remote := &profileApplyingDevRemote{
+		remote: delegate, client: analyticsgen.NewGenClient(transport),
+		local: localDevelopmentSession{state: state, profile: localDevelopmentProfile{
+			GraphDigest: graphDigest,
+			Profile: developmentprofile.Selected{ProfileName: "local", ProfileDigest: profileDigest, Connections: []developmentprofile.Connection{{
+				Name: "warehouse", ID: "connection:warehouse", ConnectorKind: "postgres",
+				Endpoint:    connectionadmin.EndpointConfig{Host: "warehouse.internal", Port: 5432, Database: "analytics", TLSMode: "verify-full"},
+				Credentials: developmentprofile.CredentialMode{EnvironmentVariable: "LEAPVIEW_DEV_CONNECTION_WAREHOUSE"},
+			}}},
+		}},
+	}
+	snapshot := projectdevloop.Snapshot{ProjectID: "project:test", Digest: sourceDigest, GraphDigest: graphDigest}
+	candidate, err := remote.Synchronize(t.Context(), projectdevloop.SyncRequest{Snapshot: snapshot})
+	require.NoError(t, err)
+	require.Equal(t, sourceDigest, candidate.ArtifactDigest)
+	require.Equal(t, snapshot, delegate.request.Snapshot)
+	require.NotNil(t, transport.applied)
+	require.Equal(t, analyticsgen.DevelopmentProfileApplicationModeResume, transport.applied.Mode)
+	require.Equal(t, "profile_existing", transport.applied.ApplicationId)
+	require.Len(t, transport.applied.Connections, 1)
+	require.Equal(t, "LEAPVIEW_DEV_CONNECTION_WAREHOUSE", transport.applied.Connections[0].CredentialReference.SecretKey)
+}
+
+type recordingProfileDelegate struct{ request projectdevloop.SyncRequest }
+
+func (remote *recordingProfileDelegate) Synchronize(_ context.Context, request projectdevloop.SyncRequest) (projectdevloop.Candidate, error) {
+	remote.request = request
+	return projectdevloop.Candidate{ArtifactDigest: request.Snapshot.Digest}, nil
+}
+
+type developmentProfileTransportStub struct {
+	current analyticsgen.DevelopmentProfileApplicationResponse
+	applied *analyticsgen.DevelopmentProfileApplicationRequest
+}
+
+func (transport *developmentProfileTransportStub) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
+	var response analyticsgen.DevelopmentProfileApplicationResponse
+	switch request.OperationID {
+	case analyticsgen.GenOperationGetDevelopmentProfileApplication:
+		response = transport.current
+	case analyticsgen.GenOperationApplyDevelopmentProfile:
+		body := request.Body.(analyticsgen.DevelopmentProfileApplicationRequest)
+		transport.applied = &body
+		response = analyticsgen.DevelopmentProfileApplicationResponse{
+			ApplicationId: body.ApplicationId, Status: analyticsgen.DevelopmentProfileApplicationStatusApplied,
+			SourceDigest: body.SourceDigest, GraphDigest: body.GraphDigest, ProfileDigest: body.ProfileDigest, Revision: 4,
+		}
+	default:
+		return apigenclient.Response{}, fmt.Errorf("unexpected operation %s", request.OperationID)
+	}
+	encoded, err := json.Marshal(response)
+	if err == nil {
+		err = json.Unmarshal(encoded, out)
+	}
+	return apigenclient.Response{StatusCode: http.StatusOK, Headers: make(http.Header), ContentType: "application/json"}, err
 }
 
 func TestNativeSynchronizationProjectsCanonicalDeliveryCandidate(t *testing.T) {

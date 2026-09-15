@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 189
+const expectedAPIGenAggregateOperationCount = 191
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -268,7 +268,7 @@ func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 
 func TestAPIGenAnalyticsCapabilityOwnsItsOperationSurface(t *testing.T) {
 	analyticsContracts := analyticsgen.GetAPIGenOperationContracts()
-	if got, want := len(analyticsContracts), 11; got != want {
+	if got, want := len(analyticsContracts), 13; got != want {
 		t.Fatalf("Analytics generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range analyticsContracts {

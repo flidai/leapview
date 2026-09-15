@@ -111,9 +111,10 @@ type Connection struct {
 // Selected is the deterministic result of selecting one file and one profile.
 // Connections is sorted by exact logical name.
 type Selected struct {
-	File        string
-	ProfileName string
-	Connections []Connection
+	File          string
+	ProfileName   string
+	ProfileDigest string
+	Connections   []Connection
 }
 
 // DiagnosticError is deliberately metadata-only: invalid scalar values are
@@ -177,7 +178,9 @@ func Load(options LoadOptions) (Selected, error) {
 			return Selected{}, diagnostic(file, "", "profile.size", "profile document exceeds the supported size", nil)
 		}
 		if !explicit && errors.Is(err, os.ErrNotExist) && !requiresProfile(options.Connections) {
-			return Selected{File: file, ProfileName: profileName, Connections: []Connection{}}, nil
+			selected := Selected{File: file, ProfileName: profileName, Connections: []Connection{}}
+			selected.ProfileDigest, err = selectedProfileDigest(selected)
+			return selected, err
 		}
 		if !explicit && errors.Is(err, os.ErrNotExist) {
 			return Selected{}, diagnostic(file, "", "profile.setup_required", "external connections require a local profile; run guided setup", nil)
@@ -198,7 +201,26 @@ func Load(options LoadOptions) (Selected, error) {
 	}
 	selected.File = file
 	selected.ProfileName = profileName
+	selected.ProfileDigest, err = selectedProfileDigest(selected)
+	if err != nil {
+		return Selected{}, err
+	}
 	return selected, nil
+}
+
+func selectedProfileDigest(selected Selected) (string, error) {
+	connections := make([]connectionadmin.DevelopmentProfileDigestConnection, len(selected.Connections))
+	for index, connection := range selected.Connections {
+		connections[index] = connectionadmin.DevelopmentProfileDigestConnection{
+			ConnectionID: connection.ID, ConnectorKind: connection.ConnectorKind, Endpoint: connection.Endpoint,
+			CredentialVariable: connection.Credentials.EnvironmentVariable, Unauthenticated: connection.Credentials.None,
+		}
+	}
+	digest, err := connectionadmin.DevelopmentProfileDigest(selected.ProfileName, connections)
+	if err != nil {
+		return "", errors.New("encode selected development profile identity")
+	}
+	return digest, nil
 }
 
 func resolveSelection(options LoadOptions) (string, string, bool, error) {

@@ -6,10 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
-	"github.com/flidai/leapview/internal/analytics/connectors"
+	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
 
@@ -39,11 +40,13 @@ func (NonSecretCredentialResolver) Resolve(_ context.Context, name string, conne
 }
 
 type DevelopmentEnvironmentCredentialResolver struct {
-	selection connectionbinding.ResolverSelection
+	selection        connectionbinding.ResolverSelection
+	allowedVariables map[string]struct{}
 }
 
 func NewDevelopmentEnvironmentCredentialResolver(
 	selection connectionbinding.ResolverSelection,
+	allowedVariables []string,
 ) (DevelopmentEnvironmentCredentialResolver, error) {
 	validated, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput(selection))
 	if err != nil {
@@ -55,21 +58,29 @@ func NewDevelopmentEnvironmentCredentialResolver(
 			connectionbinding.ErrInvalidBinding,
 		)
 	}
-	return DevelopmentEnvironmentCredentialResolver{selection: validated}, nil
+	allowed, err := developmentCredentialAllowlist(allowedVariables)
+	if err != nil {
+		return DevelopmentEnvironmentCredentialResolver{}, err
+	}
+	return DevelopmentEnvironmentCredentialResolver{selection: validated, allowedVariables: allowed}, nil
 }
 
 // NewUnboundDevelopmentEnvironmentCredentialResolver builds the process
 // environment resolver before the first serving generation has established a
 // project. Environment credentials are resolved from the authored connection
 // reference at query time; no project identity is captured in this resolver.
-func NewUnboundDevelopmentEnvironmentCredentialResolver(targetID connectionbinding.TargetID, environment string) (DevelopmentEnvironmentCredentialResolver, error) {
+func NewUnboundDevelopmentEnvironmentCredentialResolver(targetID connectionbinding.TargetID, environment string, allowedVariables []string) (DevelopmentEnvironmentCredentialResolver, error) {
 	if err := connectionbinding.ValidateResolverTarget(targetID, environment); err != nil {
+		return DevelopmentEnvironmentCredentialResolver{}, err
+	}
+	allowed, err := developmentCredentialAllowlist(allowedVariables)
+	if err != nil {
 		return DevelopmentEnvironmentCredentialResolver{}, err
 	}
 	return DevelopmentEnvironmentCredentialResolver{selection: connectionbinding.ResolverSelection{
 		TargetID: targetID, Environment: strings.TrimSpace(environment),
 		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
-	}}, nil
+	}, allowedVariables: allowed}, nil
 }
 
 func (resolver DevelopmentEnvironmentCredentialResolver) Resolve(
@@ -89,24 +100,29 @@ func (resolver DevelopmentEnvironmentCredentialResolver) Resolve(
 		return ambientAuth(connection), nil
 	case "env":
 		secretName := strings.TrimSpace(connection.Credentials.Secret)
+		if _, allowed := resolver.allowedVariables[secretName]; !allowed {
+			return nil, fmt.Errorf("connection %q credential reference is not selected", name)
+		}
 		value, ok := os.LookupEnv(secretName)
 		if !ok {
 			return nil, fmt.Errorf("connection %q credential reference is unavailable", name)
 		}
-		var object map[string]any
-		if err := json.Unmarshal([]byte(value), &object); err == nil {
-			return semanticmodel.ConnectionAuth(object), nil
+		value, err := analyticsenvironment.DecodeCredentialBundleTransport(value)
+		if err != nil {
+			return nil, fmt.Errorf("connection %q credential bundle is invalid", name)
 		}
-		spec, ok := connectors.LookupConnection(connection.Kind)
-		if !ok {
-			return nil, fmt.Errorf("connection %q has unsupported kind %q", name, connection.Kind)
+		if err := analyticsenvironment.ValidateCredentialBundle(value); err != nil {
+			return nil, fmt.Errorf("connection %q credential bundle is invalid", name)
 		}
-		for _, key := range []string{"connection_string", "token"} {
-			if containsString(spec.AuthKeys, key) {
-				return semanticmodel.ConnectionAuth{key: value}, nil
-			}
+		var object map[string]string
+		if err := json.Unmarshal([]byte(value), &object); err != nil {
+			return nil, fmt.Errorf("connection %q credential bundle is invalid", name)
 		}
-		return nil, fmt.Errorf("connection %q credential reference has an invalid shape", name)
+		result := make(semanticmodel.ConnectionAuth, len(object))
+		for key, item := range object {
+			result[key] = item
+		}
+		return result, nil
 	default:
 		return nil, fmt.Errorf("connection %q has unsupported credential provider %q", name, provider)
 	}
@@ -126,11 +142,23 @@ func ambientAuth(connection semanticmodel.Connection) semanticmodel.ConnectionAu
 	return auth
 }
 
-func containsString(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
+func developmentCredentialAllowlist(values []string) (map[string]struct{}, error) {
+	ordered := append([]string(nil), values...)
+	sort.Strings(ordered)
+	result := make(map[string]struct{}, len(ordered))
+	for _, value := range ordered {
+		if !strings.HasPrefix(value, "LEAPVIEW_DEV_CONNECTION_") || len(value) == len("LEAPVIEW_DEV_CONNECTION_") {
+			return nil, connectionbinding.ErrInvalidBinding
 		}
+		for _, char := range strings.TrimPrefix(value, "LEAPVIEW_DEV_CONNECTION_") {
+			if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' {
+				return nil, connectionbinding.ErrInvalidBinding
+			}
+		}
+		if _, duplicate := result[value]; duplicate {
+			return nil, connectionbinding.ErrInvalidBinding
+		}
+		result[value] = struct{}{}
 	}
-	return false
+	return result, nil
 }

@@ -58,6 +58,8 @@ type Controller struct {
 	stdout                      io.Writer
 	sleep                       func(context.Context, time.Duration) error
 	now                         func() time.Time
+	developmentCredentials      map[string]string
+	developmentProfile          DevelopmentProfileIdentity
 	attachmentHeartbeatInterval time.Duration
 	attachmentStaleAfter        time.Duration
 }
@@ -89,6 +91,9 @@ func New(options Options) (*Controller, error) {
 	}
 	if options.ResolveProjectAuthority == nil {
 		return nil, errors.New("issuer-owned Project identity authority is required")
+	}
+	if err := validateDevelopmentProfileIdentity(options.DevelopmentProfile); err != nil {
+		return nil, err
 	}
 	checkoutRoot := strings.TrimSpace(options.CheckoutRoot)
 	if checkoutRoot == "" {
@@ -171,6 +176,8 @@ func New(options Options) (*Controller, error) {
 		endpoint: options.Endpoint, resolveProjectAuthority: options.ResolveProjectAuthority, identity: identity,
 		runner: runner, httpClient: httpClient, establishSessions: options.EstablishSessions,
 		resetSessions: options.ResetSessions, stdout: stdout, sleep: sleep, now: now,
+		developmentCredentials:      cloneStringMap(options.DevelopmentCredentials),
+		developmentProfile:          options.DevelopmentProfile,
 		attachmentHeartbeatInterval: heartbeatInterval, attachmentStaleAfter: staleAfter,
 	}, nil
 }
@@ -206,6 +213,7 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 
 	statePath := filepath.Join(root, stateFileName)
 	envPath := filepath.Join(root, runtimeEnvFileName)
+	developmentCredentialsPath := filepath.Join(root, developmentCredentialsFileName)
 	state, exists, err := loadState(statePath)
 	if err != nil {
 		return State{}, err
@@ -227,15 +235,28 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 				return State{}, err
 			}
 		}
-		if err := validateRetainedEnvironment(state, manifest, values); err != nil {
+		if err := validateRetainedEnvironment(state, manifest, values, controller.developmentProfile, developmentCredentialsPath); err != nil {
 			return State{}, err
+		}
+		retainedCredentials, credentialErr := readDevelopmentCredentialEnvironment(developmentCredentialsPath)
+		if credentialErr != nil {
+			return State{}, fmt.Errorf("retained development credentials are unavailable; refusing replacement: %w", credentialErr)
+		}
+		if !samePrivateEnvironment(retainedCredentials, controller.developmentCredentials) {
+			return State{}, errors.New("selected development credential bundles differ from the retained runtime; detach every other session, run `leapview dev reset` with its exact confirmation, review the replacement profile, and start again")
 		}
 	} else {
 		state, err = controller.newIntent(canonicalCheckout, checkoutID, manifestDigest)
 		if err != nil {
 			return State{}, err
 		}
-		values, err := initialEnvironment(state, manifest)
+		if err := validateDevelopmentCredentials(controller.developmentCredentials); err != nil {
+			return State{}, err
+		}
+		if err := writeDevelopmentCredentialEnvironment(developmentCredentialsPath, controller.developmentCredentials); err != nil {
+			return State{}, fmt.Errorf("persist selected development credentials: %w", err)
+		}
+		values, err := initialEnvironment(state, manifest, developmentCredentialsPath, developmentCredentialNames(controller.developmentCredentials), controller.developmentProfile)
 		if err != nil {
 			return State{}, err
 		}

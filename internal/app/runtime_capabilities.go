@@ -42,28 +42,30 @@ type workloadCapabilityBundle struct {
 }
 
 type analyticsCapabilityConfig struct {
-	ConnectionBindings connectionbinding.BindingCatalog
-	QueryAuditStore    analyticsmodule.QueryAuditStore
-	Production         bool
-	CredentialMode     analyticsmodule.CredentialMode
-	CredentialTarget   string
-	CredentialProject  projectgraph.ResourceID
-	Environment        string
-	TargetCredentials  analyticsmodule.TargetCredentialConfig
-	RootDir            string
-	ExtensionSupply    *extensionsupply.Supply
-	CatalogPath        string
-	DataPath           string
-	MaxConnections     int
-	MemoryMaxBytes     int64
-	TempMaxBytes       int64
-	MaxThreads         int
-	TempDir            string
-	DisableProcessEnv  bool
-	RuntimeCacheItems  int
-	RuntimeCacheBytes  int64
-	NodeCacheItems     int
-	NodeCacheBytes     int64
+	ConnectionBindings              connectionbinding.BindingCatalog
+	QueryAuditStore                 analyticsmodule.QueryAuditStore
+	Production                      bool
+	CredentialMode                  analyticsmodule.CredentialMode
+	CredentialTarget                string
+	CredentialProject               projectgraph.ResourceID
+	Environment                     string
+	CredentialEnvironmentVariables  []string
+	CredentialEnvironmentVersionKey []byte
+	TargetCredentials               analyticsmodule.TargetCredentialConfig
+	RootDir                         string
+	ExtensionSupply                 *extensionsupply.Supply
+	CatalogPath                     string
+	DataPath                        string
+	MaxConnections                  int
+	MemoryMaxBytes                  int64
+	TempMaxBytes                    int64
+	MaxThreads                      int
+	TempDir                         string
+	DisableProcessEnv               bool
+	RuntimeCacheItems               int
+	RuntimeCacheBytes               int64
+	NodeCacheItems                  int
+	NodeCacheBytes                  int64
 }
 
 func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig) (analyticsCapabilityBundle, error) {
@@ -77,8 +79,10 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 		ConnectionBindings: cfg.ConnectionBindings, QueryAuditStore: cfg.QueryAuditStore,
 		CredentialMode: cfg.CredentialMode, Production: cfg.Production,
 		CredentialTargetID: cfg.CredentialTarget, CredentialProjectID: cfg.CredentialProject, CredentialEnvironment: cfg.Environment,
-		TargetCredentials: cfg.TargetCredentials,
-		RootDir:           cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,
+		CredentialEnvironmentVariables:  cfg.CredentialEnvironmentVariables,
+		CredentialEnvironmentVersionKey: cfg.CredentialEnvironmentVersionKey,
+		TargetCredentials:               cfg.TargetCredentials,
+		RootDir:                         cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,
 		CatalogPath: cfg.CatalogPath, DataPath: cfg.DataPath,
 		MaxConnections: cfg.MaxConnections, MemoryMaxBytes: cfg.MemoryMaxBytes,
 		TempMaxBytes: cfg.TempMaxBytes, MaxThreads: cfg.MaxThreads, TempDir: cfg.TempDir,
