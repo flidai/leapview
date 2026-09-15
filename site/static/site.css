@@ -507,7 +507,10 @@ lv-site-search:not(:defined) > .site-search-active-input {
 /* DuckDB keeps the article outline through 1201px and removes it at 1200px. */
 @media (max-width: 75rem) {
   .site-docs-reading-layout {
-    width: min(100%, var(--site-docs-content-width));
+    width: min(
+      100%,
+      calc(var(--site-article-width) + var(--base-size-64) + var(--base-size-16))
+    );
     grid-template-columns: minmax(0, 1fr);
     margin: 0 auto;
   }
@@ -519,11 +522,14 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-layout {
   display: grid;
+  width: min(100%, var(--site-layout-width));
   min-height: calc(100svh - var(--site-header-height));
-  grid-template-columns: minmax(
-      var(--base-size-128),
-      calc(var(--base-size-128) + var(--base-size-128))
-    ) minmax(0, 1fr);
+  grid-template-columns:
+    calc(var(--base-size-128) + var(--base-size-96))
+    minmax(0, 1fr);
+  column-gap: var(--base-size-32);
+  margin-inline: auto;
+  padding-inline: var(--site-header-inline-space);
 }
 
 .site-docs-sidebar {
@@ -536,7 +542,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   scrollbar-width: thin;
   border-right: var(--lv-border-muted);
   background: var(--lv-bg-panel);
-  padding: var(--stack-padding-normal);
+  padding: var(--base-size-32) var(--base-size-16) var(--base-size-16) 0;
 }
 
 .site-docs-drawer-actions {
@@ -589,6 +595,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   min-height: max(var(--control-small-size), var(--control-minTarget-auto));
   align-items: center;
   justify-content: space-between;
+  gap: var(--base-size-8);
   border-radius: var(--lv-radius-default);
   color: var(--lv-fg-muted);
   cursor: pointer;
@@ -656,7 +663,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-content {
   min-width: 0;
-  padding: var(--base-size-32) var(--base-size-32) var(--base-size-128);
+  padding: var(--base-size-32) 0 var(--base-size-128);
   container: site-docs-content / inline-size;
 }
 
@@ -2508,8 +2515,8 @@ lv-site-search:not(:defined) > .site-search-active-input {
   color: var(--lv-fg-accent);
 }
 
-/* DuckDB keeps the documentation tree docked through 901px. */
-@media (max-width: 56.25rem) {
+/* Keep the article readable before docking the navigation. */
+@media (max-width: 64rem) {
   .site-docs-layout {
     grid-template-columns: 1fr;
   }
@@ -2566,14 +2573,16 @@ lv-site-search:not(:defined) > .site-search-active-input {
   }
 
   .site-docs-content {
-    padding: var(--base-size-32) var(--base-size-16) var(--base-size-64);
+    padding-block: var(--base-size-32) var(--base-size-64);
   }
 
   .site-docs-article-header {
     align-items: center;
     margin-bottom: var(--base-size-24);
   }
+}
 
+@media (max-width: 56.25rem) {
   .site-stack-flow {
     --site-stack-flow-gap: var(--base-size-48);
 

@@ -1498,16 +1498,17 @@ test('documentation articles provide a readable, navigable reference experience'
   }
 })
 
-test('documentation navigation follows DuckDBs 900px drawer breakpoint', async () => {
-  const page = await browser.newPage({ viewport: { width: 901, height: 900 } })
+test('documentation navigation becomes a drawer before narrowing the reading column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1025, height: 900 } })
   try {
     await page.goto(`${baseURL}/docs/guides/build`)
     const sidebar = page.locator('.site-docs-sidebar')
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('sticky')
     expect(await sidebar.getAttribute('aria-hidden')).toBe('false')
     expect(await page.getByRole('button', { name: 'Open documentation menu' }).isVisible()).toBe(false)
+    expect(await page.locator('.site-docs-article').evaluate((article) => article.getBoundingClientRect().width)).toBeGreaterThanOrEqual(700)
 
-    await page.setViewportSize({ width: 900, height: 900 })
+    await page.setViewportSize({ width: 1024, height: 900 })
     await page.waitForFunction(() => document.querySelector('.site-docs-sidebar')?.getAttribute('aria-hidden') === 'true')
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('fixed')
     expect(await sidebar.getAttribute('aria-hidden')).toBe('true')
@@ -1517,6 +1518,7 @@ test('documentation navigation follows DuckDBs 900px drawer breakpoint', async (
       shell: shell.getBoundingClientRect().width,
     }))
     expect(Math.abs(widths.shell - widths.article)).toBeLessThanOrEqual(1)
+    expect(widths.article).toBeGreaterThanOrEqual(700)
 
     await page.setViewportSize({ width: 390, height: 844 })
     const hierarchy = await page.locator('.site-docs-article').evaluate((article) => ({
@@ -1632,8 +1634,8 @@ test('documentation reading columns stay centered and readable at every layout t
     expect(wide.outlineVisible).toBe(true)
     expect(Math.abs(wide.outlineRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(wide.readingLeftSpace - wide.readingRightSpace)).toBeLessThanOrEqual(1)
-    expect(wide.articleWidth).toBeGreaterThanOrEqual(1000)
-    expect(wide.articleWidth).toBeLessThanOrEqual(1024)
+    expect(wide.articleWidth).toBeGreaterThanOrEqual(620)
+    expect(wide.articleWidth).toBeLessThanOrEqual(680)
     expect(Math.abs(wide.paragraphWidth - wide.articleWidth)).toBeLessThanOrEqual(1)
     expect(wide.sectionGap).toBeGreaterThanOrEqual(40)
     expect(wide.sectionGap).toBeLessThanOrEqual(60)
@@ -1651,9 +1653,19 @@ test('documentation reading columns stay centered and readable at every layout t
     const desktop = await measure()
     expect(desktop.outlineVisible).toBe(false)
     expect(Math.abs(desktop.articleLeftSpace - desktop.articleRightSpace)).toBeLessThanOrEqual(1)
-    expect(desktop.articleWidth).toBeGreaterThan(816)
-    expect(desktop.articleWidth).toBeLessThanOrEqual(1024)
+    expect(desktop.articleWidth).toBeGreaterThanOrEqual(700)
+    expect(desktop.articleWidth).toBeLessThanOrEqual(760)
     expect(Math.abs(desktop.paragraphWidth - desktop.articleWidth)).toBeLessThanOrEqual(1)
+
+    await page.setViewportSize({ width: 1025, height: 900 })
+    const docked = await measure()
+    expect(docked.outlineVisible).toBe(false)
+    expect(docked.articleWidth).toBeGreaterThanOrEqual(700)
+
+    await page.setViewportSize({ width: 1024, height: 900 })
+    const drawer = await measure()
+    expect(drawer.outlineVisible).toBe(false)
+    expect(drawer.articleWidth).toBeGreaterThanOrEqual(700)
 
     await page.setViewportSize({ width: 768, height: 900 })
     const tablet = await measure()
@@ -1668,6 +1680,36 @@ test('documentation reading columns stay centered and readable at every layout t
     expect(Math.abs(mobile.articleLeftSpace - mobile.articleRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.articleWidth - mobile.shellWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.paragraphWidth - mobile.articleWidth)).toBeLessThanOrEqual(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('documentation sidebar aligns with the centered header on wide screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1025, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/docs/concepts`)
+    for (const width of [1025, 1200, 1440, 1920, 2560]) {
+      await page.setViewportSize({ width, height: 900 })
+      const layout = await page.evaluate(() => {
+        const brand = document.querySelector('.site-header .site-brand') as HTMLElement
+        const sidebar = document.querySelector('.site-docs-sidebar') as HTMLElement
+        const docs = document.querySelector('.site-docs-layout') as HTMLElement
+        const brandRect = brand.getBoundingClientRect()
+        const sidebarRect = sidebar.getBoundingClientRect()
+        const docsRect = docs.getBoundingClientRect()
+        return {
+          brandLeft: brandRect.left,
+          sidebarLeft: sidebarRect.left,
+          frameLeft: docsRect.left,
+          frameRight: innerWidth - docsRect.right,
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+        }
+      })
+      expect(Math.abs(layout.brandLeft - layout.sidebarLeft)).toBeLessThanOrEqual(1)
+      expect(Math.abs(layout.frameLeft - layout.frameRight)).toBeLessThanOrEqual(1)
+      expect(layout.horizontalOverflow).toBe(false)
+    }
   } finally {
     await page.close()
   }
