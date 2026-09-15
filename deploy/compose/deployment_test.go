@@ -137,10 +137,13 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native offline extension supply", "extension-supply.json.sha256", "duckdb_extension"} {
+	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --json`, "Run installed-candidate journey"} {
 		if !strings.Contains(release, required) {
-			t.Fatalf("release qualification missing extension supply check %q", required)
+			t.Fatalf("release qualification missing distroless runtime contract %q", required)
 		}
+	}
+	if strings.Contains(release, "--entrypoint /bin/sh") {
+		t.Fatal("release qualification must not require a shell in the distroless production image")
 	}
 }
 
