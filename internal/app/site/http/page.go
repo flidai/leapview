@@ -55,7 +55,7 @@ var siteStackGroups = []siteStackGroupSpec{
 		},
 	},
 	{
-		title: "Formats",
+		title: "Files and lakehouse formats",
 		integrations: []siteStackIntegration{
 			{label: "CSV", registryKey: "csv", icon: "csv", format: true},
 			{label: "JSON", registryKey: "json", icon: "json", format: true},

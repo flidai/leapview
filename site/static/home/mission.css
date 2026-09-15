@@ -21,18 +21,6 @@
     text-wrap: pretty;
   }
 
-  .mission-cursor {
-    display: inline-block;
-    width: 2px;
-    height: .9em;
-    margin-left: 4px;
-    background: currentColor;
-    vertical-align: -.1em;
-    animation: mission-caret 1s step-end infinite;
-  }
-
-  @keyframes mission-caret { 50% { opacity: 0; } }
-
   .mission-copy {
     color: color-mix(in srgb, var(--ink) 88%, var(--muted));
     font: 16px/1.7 var(--fontStack-system);
@@ -59,7 +47,4 @@
     .mission-copy p + p { margin-top: 20px; }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .mission-cursor { animation: none; }
-  }
 }

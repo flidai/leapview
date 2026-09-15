@@ -187,16 +187,7 @@ test('homepage hero fits the first screen and mission copy stays readable', asyn
 
     await page.locator('#mission').scrollIntoViewIfNeeded()
     expect(await page.getByRole('heading', { level: 2, name: 'Your business intelligence should belong to your business.' }).isVisible()).toBe(true)
-    const cursorOffset = await page.evaluate(() => {
-      const subject = document.querySelector('.mission-subject')!.getBoundingClientRect()
-      const cursor = document.querySelector('.mission-cursor')!.getBoundingClientRect()
-      return cursor.left - subject.right
-    })
-    expect(cursorOffset).toBeGreaterThanOrEqual(0)
-    expect(cursorOffset).toBeLessThan(8)
-    expect(await page.locator('.mission-subject').textContent()).toBe('business intelligence')
-    await page.emulateMedia({ reducedMotion: 'reduce' })
-    expect(await page.locator('.mission-subject').textContent()).toBe('business intelligence')
+    expect(await page.locator('.mission-cursor').count()).toBe(0)
 
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(baseURL)

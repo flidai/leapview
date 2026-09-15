@@ -13,8 +13,8 @@
 .orbit-center:before{content:'';position:absolute;z-index:-1;inset:-25px -55px;background:radial-gradient(ellipse,var(--bg) 12%,var(--bg) 32%,transparent 72%);opacity:.97;pointer-events:none}
 .orbit-center h2{margin:0;font-size:clamp(38px,3.6vw,50px);font-weight:600;line-height:1.04;letter-spacing:-.055em}
 .orbit-center p{max-width:470px;margin:17px auto 0;color:var(--muted);font-size:15px;line-height:1.55;text-wrap:pretty}
-.orbit-cta{display:inline-flex;align-items:center;gap:24px;margin-top:31px;padding:11px 0;border-bottom:1px solid var(--accent);color:var(--accent);font-size:12px;font-weight:750;text-decoration:none;transition:gap .2s}
-.orbit-cta:hover{gap:31px}
+.orbit-cta{display:inline-flex;align-items:center;gap:24px;margin-top:31px;padding:11px 0;border-bottom:1px solid transparent;color:var(--accent);font-size:12px;font-weight:750;text-decoration:none;transition:gap .2s,border-color .2s}
+.orbit-cta:hover,.orbit-cta:focus-visible{gap:31px;border-bottom-color:var(--accent)}
 .orbit-cta span{font-size:19px;font-weight:400}
 .orbit-nodes{position:absolute;inset:0;z-index:2;mask-image:radial-gradient(ellipse 335px 220px at 50% 49%,transparent 0 69%,#000 100%)}
 .orbit-nodes:has(.orbit-node:focus-visible){z-index:4;mask-image:none}

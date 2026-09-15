@@ -12,7 +12,7 @@ const mobileAngles = {
   middle: [215, 325, 15, 90, 165]
 };
 const mobileOrbit = matchMedia('(max-width: 700px)');
-const orbitLabels = { inner: 'Databases', middle: 'Object storage', outer: 'Formats' };
+const orbitLabels = { inner: 'Databases', middle: 'Object storage', outer: 'Files and lakehouse formats' };
 const orbitNodes = document.querySelector('.orbit-nodes');
 const buttonsByIntegration = new Map(orbitButtons.map(button => [button.dataset.integration, button]));
 const anchors = [];
