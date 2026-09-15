@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +62,13 @@ type DeliveryPlanOptions struct {
 	SourceDigest            string
 	SourceAttestationDigest string
 	Environment             string
+	// IdempotencyKey is supplied by a retained deployment operation. Empty
+	// retains the standalone plan command's deterministic-key behavior.
+	IdempotencyKey string
+	// SourceSnapshot is an immutable local capture retained by deploy before
+	// its first remote request. Resume passes this exact capture; it never
+	// rereads the current checkout.
+	SourceSnapshot *projectdevloop.Snapshot
 }
 
 // DeliveryPlanResult is the redacted durable plan identity printed by plan,
@@ -217,24 +225,33 @@ func writeDeliveryPlanResult(out io.Writer, format string, result DeliveryPlanRe
 	return nil
 }
 
+// WriteDeliveryPlanResult exposes the canonical plan review envelope to the
+// application deploy orchestrator without duplicating its redacted output.
+func WriteDeliveryPlanResult(out io.Writer, format string, result DeliveryPlanResult) error {
+	return writeDeliveryPlanResult(out, format, result)
+}
+
 type DeliveryBuildOptions struct {
 	PlanID      string
 	ProjectID   string
 	Credentials cliapi.Credentials
 	Format      string
+	// IdempotencyKey is supplied by a retained deployment operation.
+	IdempotencyKey string
 }
 
 type DeliveryBuildResult struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	BuildID         string `json:"buildId"`
-	PlanID          string `json:"planId"`
-	PlanDigest      string `json:"planDigest"`
-	SourceDigest    string `json:"sourceDigest"`
-	ExecutionDigest string `json:"executionDigest"`
-	CandidateID     string `json:"candidateId,omitempty"`
-	SealID          string `json:"sealId,omitempty"`
-	Status          string `json:"status"`
-	Revision        int64  `json:"revision"`
+	SchemaVersion     int    `json:"schemaVersion"`
+	BuildID           string `json:"buildId"`
+	PlanID            string `json:"planId"`
+	PlanDigest        string `json:"planDigest"`
+	SourceDigest      string `json:"sourceDigest"`
+	ExecutionDigest   string `json:"executionDigest"`
+	CandidateID       string `json:"candidateId,omitempty"`
+	CandidateRevision int64  `json:"candidateRevision,omitempty"`
+	SealID            string `json:"sealId,omitempty"`
+	Status            string `json:"status"`
+	Revision          int64  `json:"revision"`
 }
 
 type DeliveryBuildOperations interface {

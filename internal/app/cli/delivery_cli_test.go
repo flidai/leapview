@@ -277,6 +277,25 @@ func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
 	}
 }
 
+func TestDeliveryPlanRejectsPortableSnapshotProjectBeforeRemoteMutation(t *testing.T) {
+	projectPath := filepath.Join("..", "..", "..", "examples", "dbt-warehouse-boundary", "leapview")
+	snapshot, err := (devloop.FilesystemBuilder{SourceRoot: projectPath, ProjectID: "project:snapshot"}).Build(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &deliveryPlanSourceHandoffTransport{}
+	_, err = (projectDeliveryPlanOperations{client: deliveryPlanSourceHandoffClient{transport: transport}}).Create(t.Context(), projectcli.DeliveryPlanOptions{
+		ProjectID: "project:target", TargetID: "target-1", Environment: "development",
+		SourceSnapshot: &snapshot, UploadConcurrency: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match target-bound Project") {
+		t.Fatalf("portable snapshot mismatch error = %v", err)
+	}
+	if transport.retainCalls != 0 || transport.createCalls != 0 || transport.planCalls != 0 {
+		t.Fatalf("remote mutation occurred before snapshot identity rejection: %#v", transport)
+	}
+}
+
 type deliveryPlanSourceHandoffClient struct {
 	transport *deliveryPlanSourceHandoffTransport
 }

@@ -73,15 +73,33 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		if err != nil {
 			return projectcli.DeliveryPlanResult{}, err
 		}
-		sourceRoot := strings.TrimSpace(options.SourceRoot)
-		boundProjectID, err := projectgraph.NewResourceID(projectID)
-		if err != nil {
-			return projectcli.DeliveryPlanResult{}, fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile: %w", err)
-		}
-		builder := devloop.FilesystemBuilder{SourceRoot: sourceRoot, ProjectID: boundProjectID, CandidateKey: options.CandidateKey}
-		snapshot, err := builder.Build(ctx)
-		if err != nil {
-			return projectcli.DeliveryPlanResult{}, fmt.Errorf("capture project source snapshot: %w", err)
+		var snapshot devloop.Snapshot
+		if options.SourceSnapshot != nil {
+			snapshot = *options.SourceSnapshot
+			snapshot.Artifacts = append([]devloop.Artifact(nil), snapshot.Artifacts...)
+			if projectID != "" && snapshot.ProjectID.String() != projectID {
+				return projectcli.DeliveryPlanResult{}, fmt.Errorf("retained source Project %q does not match target-bound Project %q", snapshot.ProjectID, projectID)
+			}
+			if sourceDigest != "" && snapshot.Digest != sourceDigest {
+				return projectcli.DeliveryPlanResult{}, fmt.Errorf("retained source digest %q does not match asserted %q", snapshot.Digest, sourceDigest)
+			}
+			if projectID == "" {
+				projectID = snapshot.ProjectID.String()
+			}
+			if sourceDigest == "" {
+				sourceDigest = snapshot.Digest
+			}
+		} else {
+			sourceRoot := strings.TrimSpace(options.SourceRoot)
+			boundProjectID, err := projectgraph.NewResourceID(projectID)
+			if err != nil {
+				return projectcli.DeliveryPlanResult{}, fmt.Errorf("target-bound Project identity is required; provide --project-id or use a target profile: %w", err)
+			}
+			builder := devloop.FilesystemBuilder{SourceRoot: sourceRoot, ProjectID: boundProjectID, CandidateKey: options.CandidateKey}
+			snapshot, err = builder.Build(ctx)
+			if err != nil {
+				return projectcli.DeliveryPlanResult{}, fmt.Errorf("capture project source snapshot: %w", err)
+			}
 		}
 		remote, err := devloop.NewTransportRemote(
 			newProjectDevSynchronizationTransport(
@@ -138,9 +156,12 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	if err != nil {
 		return projectcli.DeliveryPlanResult{}, err
 	}
-	operationKey, err := newDeploymentIdempotencyKey("delivery-plan", projectID, targetID, operation, sourceDigest, candidateID)
-	if err != nil {
-		return projectcli.DeliveryPlanResult{}, err
+	operationKey := strings.TrimSpace(options.IdempotencyKey)
+	if operationKey == "" {
+		operationKey, err = newDeploymentIdempotencyKey("delivery-plan", projectID, targetID, operation, sourceDigest, candidateID)
+		if err != nil {
+			return projectcli.DeliveryPlanResult{}, err
+		}
 	}
 	response, err := deploymentgen.NewGenClient(transport).CreateDeliveryPlan(ctx, deploymentgen.GenCreateDeliveryPlanClientRequest{
 		Project: projectID,
@@ -152,7 +173,7 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	}
 	result := deliveryPlanResult(response.Body)
 	if operations.checkpoints != nil {
-		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{PlanID: result.PlanID, ProjectID: result.ProjectID, TargetID: result.TargetID, Environment: result.Environment, TargetOrigin: credentials.Target, TargetSelector: targetSelector, SourceDigest: result.SourceDigest, SourceAttestationDigest: result.SourceAttestationDigest, PlanDigest: result.PlanDigest, ExecutionDigest: result.ExecutionDigest, EvidenceDigest: result.EvidenceDigest}); err != nil {
+		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{PlanID: result.PlanID, ProjectID: result.ProjectID, TargetID: result.TargetID, Environment: result.Environment, TargetOrigin: credentials.Target, TargetSelector: targetSelector, SourceDigest: result.SourceDigest, SourceAttestationDigest: result.SourceAttestationDigest, ProvenanceDigest: result.ProvenanceDigest, PlanDigest: result.PlanDigest, ExecutionDigest: result.ExecutionDigest, EvidenceDigest: result.EvidenceDigest}); err != nil {
 			return projectcli.DeliveryPlanResult{}, fmt.Errorf("persist delivery plan checkpoint: %w", err)
 		}
 	}
@@ -217,6 +238,7 @@ func (operations projectDeliveryPlanOperations) resolveCandidatePlan(
 			TargetID: result.TargetID, Environment: result.Environment,
 			TargetOrigin: credentials.Target, TargetSelector: targetSelector, SourceDigest: result.SourceDigest,
 			SourceAttestationDigest: result.SourceAttestationDigest,
+			ProvenanceDigest:        result.ProvenanceDigest,
 			PlanDigest:              result.PlanDigest, ExecutionDigest: result.ExecutionDigest,
 			EvidenceDigest: result.EvidenceDigest,
 		}); err != nil {
@@ -285,15 +307,20 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 	if err != nil {
 		return projectcli.DeliveryBuildResult{}, err
 	}
-	operationKey := deploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+	operationKey := strings.TrimSpace(options.IdempotencyKey)
+	if operationKey == "" {
+		operationKey = deploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+	}
 	if operations.checkpoints != nil && planCheckpoint.PlanID != "" {
-		freshKey, keyErr := newDeploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
-		if keyErr != nil {
-			return projectcli.DeliveryBuildResult{}, keyErr
-		}
-		operationKey, keyErr = operations.checkpoints.BindPlanBuildIdempotencyKey(options.PlanID, "", freshKey)
-		if keyErr != nil {
-			return projectcli.DeliveryBuildResult{}, fmt.Errorf("persist delivery build operation: %w", keyErr)
+		if strings.TrimSpace(options.IdempotencyKey) == "" {
+			freshKey, keyErr := newDeploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+			if keyErr != nil {
+				return projectcli.DeliveryBuildResult{}, keyErr
+			}
+			operationKey, keyErr = operations.checkpoints.BindPlanBuildIdempotencyKey(options.PlanID, "", freshKey)
+			if keyErr != nil {
+				return projectcli.DeliveryBuildResult{}, fmt.Errorf("persist delivery build operation: %w", keyErr)
+			}
 		}
 	}
 	client := deploymentgen.NewGenClient(transport)
@@ -323,7 +350,7 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 		return projectcli.DeliveryBuildResult{}, mapDeliveryCLIError("build delivery plan", err)
 	}
 	value := response.Body
-	result := projectcli.DeliveryBuildResult{SchemaVersion: 1, BuildID: value.Id, PlanID: value.PlanId, PlanDigest: value.PlanDigest, SourceDigest: value.SourceDigest, ExecutionDigest: value.ExecutionDigest, CandidateID: optionalString(value.CandidateId), SealID: optionalString(value.SnapshotSealId), Status: string(value.Status), Revision: value.Revision}
+	result := projectcli.DeliveryBuildResult{SchemaVersion: 1, BuildID: value.Id, PlanID: value.PlanId, PlanDigest: value.PlanDigest, SourceDigest: value.SourceDigest, ExecutionDigest: value.ExecutionDigest, CandidateID: optionalString(value.CandidateId), CandidateRevision: optionalInt64(value.CandidateRevision), SealID: optionalString(value.SnapshotSealId), Status: string(value.Status), Revision: value.Revision}
 	if result.CandidateID != "" && operations.checkpoints != nil {
 		if planCheckpoint.PlanID == "" {
 			planCheckpoint, _ = operations.checkpoints.LoadPlan(options.PlanID)
@@ -382,6 +409,13 @@ func optionalString(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+func optionalInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 func optionalEnumString[T ~string](value *T) string {

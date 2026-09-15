@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -38,17 +39,36 @@ func (operations projectPublishOperations) Publish(
 	options projectcli.PublishOptions,
 	out io.Writer,
 ) error {
+	result, err := operations.PublishResult(ctx, options)
+	if err != nil {
+		return err
+	}
+	if options.Format == "json" {
+		return json.NewEncoder(out).Encode(result)
+	}
+	fmt.Fprintf(out, "publication %s candidate %s generation %s status %s\n", result.PublicationID, result.CandidateID, result.GenerationID, result.Status)
+	fmt.Fprintf(out, "plan %s digest %s target-revision %d\n", result.PlanID, result.PlanDigest, result.TargetRevision)
+	return nil
+}
+
+func (operations projectPublishOperations) PublishResult(
+	ctx context.Context,
+	options projectcli.PublishOptions,
+) (projectcli.PublishResult, error) {
 	if operations.client == nil {
-		return fmt.Errorf("Project publish API client is required")
+		return projectcli.PublishResult{}, fmt.Errorf("Project publish API client is required")
 	}
 	transport, err := operations.client.Transport(ctx, options.Credentials)
 	if err != nil {
-		return err
+		return projectcli.PublishResult{}, err
 	}
 	checkpoint := options.Checkpoint
-	idempotencyKey, err := publicationAttemptIdempotencyKey(checkpoint)
-	if err != nil {
-		return err
+	idempotencyKey := strings.TrimSpace(options.IdempotencyKey)
+	if idempotencyKey == "" {
+		idempotencyKey, err = publicationAttemptIdempotencyKey(checkpoint)
+		if err != nil {
+			return projectcli.PublishResult{}, err
+		}
 	}
 	response, err := deploymentgen.NewGenClient(transport).PublishDeliveryCandidate(
 		ctx,
@@ -61,30 +81,50 @@ func (operations projectPublishOperations) Publish(
 		},
 	)
 	if err != nil {
-		return mapDeliveryCLIError("publish delivery candidate", err)
+		return projectcli.PublishResult{}, mapDeliveryCLIError("publish delivery candidate", err)
 	}
 	if response.Body.Id == "" {
-		return fmt.Errorf("publish delivery candidate returned no durable publication identity")
+		return projectcli.PublishResult{}, fmt.Errorf("publish delivery candidate returned no durable publication identity")
+	}
+	if err := validatePublicationEvidence(response.Body, checkpoint); err != nil {
+		return projectcli.PublishResult{}, err
 	}
 	if operations.checkpoints != nil {
-		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target, TargetSelector: checkpoint.TargetSelector}
+		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target, TargetSelector: checkpoint.TargetSelector, TargetID: checkpoint.TargetID, Environment: checkpoint.Environment}
 		if response.Body.CandidateId != "" {
-			_ = operations.checkpoints.SaveObjectIdentity("candidate", response.Body.CandidateId, identity)
+			if err := operations.checkpoints.SaveObjectIdentity("candidate", response.Body.CandidateId, identity); err != nil {
+				return projectcli.PublishResult{}, fmt.Errorf("persist published candidate identity: %w", err)
+			}
 		}
 		if response.Body.GenerationId != "" {
-			_ = operations.checkpoints.SaveObjectIdentity("generation", response.Body.GenerationId, identity)
+			if err := operations.checkpoints.SaveObjectIdentity("generation", response.Body.GenerationId, identity); err != nil {
+				return projectcli.PublishResult{}, fmt.Errorf("persist published generation identity: %w", err)
+			}
 		}
 	}
-	if options.Format == "json" {
-		return json.NewEncoder(out).Encode(projectcli.PublishResult{
-			SchemaVersion: 1, PublicationID: response.Body.Id,
-			Status: string(response.Body.Status), CandidateID: response.Body.CandidateId,
-			GenerationID: response.Body.GenerationId, PlanID: response.Body.PlanId, PlanDigest: response.Body.PlanDigest,
-			TargetRevision: response.Body.ResultTargetRevision,
-		})
+	return projectcli.PublishResult{
+		SchemaVersion: 1, PublicationID: response.Body.Id,
+		Status: string(response.Body.Status), CandidateID: response.Body.CandidateId,
+		GenerationID: response.Body.GenerationId, PlanID: response.Body.PlanId, PlanDigest: response.Body.PlanDigest,
+		TargetRevision: response.Body.ResultTargetRevision,
+	}, nil
+}
+
+func validatePublicationEvidence(evidence deploymentgen.DeliveryPublicationEvidenceResponse, checkpoint projectcli.CandidateCheckpoint) error {
+	for _, identity := range []struct {
+		name, expected, actual string
+	}{
+		{"project", strings.TrimSpace(checkpoint.ProjectID), strings.TrimSpace(evidence.ProjectId)},
+		{"candidate", strings.TrimSpace(checkpoint.CandidateID), strings.TrimSpace(evidence.CandidateId)},
+		{"plan", strings.TrimSpace(checkpoint.PlanID), strings.TrimSpace(evidence.PlanId)},
+		{"plan digest", strings.TrimSpace(checkpoint.PlanDigest), strings.TrimSpace(evidence.PlanDigest)},
+		{"target", strings.TrimSpace(checkpoint.TargetID), strings.TrimSpace(evidence.TargetId)},
+		{"environment", strings.TrimSpace(checkpoint.Environment), strings.TrimSpace(evidence.Environment)},
+	} {
+		if identity.expected != "" && identity.expected != identity.actual {
+			return fmt.Errorf("publication %s identity %q does not match retained checkpoint %q", identity.name, identity.actual, identity.expected)
+		}
 	}
-	fmt.Fprintf(out, "publication %s candidate %s generation %s status %s\n", response.Body.Id, response.Body.CandidateId, response.Body.GenerationId, response.Body.Status)
-	fmt.Fprintf(out, "plan %s digest %s target-revision %d\n", response.Body.PlanId, response.Body.PlanDigest, response.Body.ResultTargetRevision)
 	return nil
 }
 
