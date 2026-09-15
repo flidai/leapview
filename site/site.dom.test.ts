@@ -390,8 +390,8 @@ test('site brand pairs the LeapView wordmark with the Lucide Aperture ring mark'
       width: element.getBoundingClientRect().width,
       viewportWidth: window.innerWidth,
     }))
-    expect(navigation.left).toBe(0)
-    expect(navigation.width).toBe(navigation.viewportWidth)
+    expect(navigation.width).toBe(1152)
+    expect(navigation.left).toBe((navigation.viewportWidth - navigation.width) / 2)
   } finally {
     await page.close()
   }

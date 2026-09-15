@@ -165,10 +165,12 @@ a {
 .site-nav {
   display: flex;
   width: 100%;
+  max-width: var(--site-layout-width);
   min-height: var(--site-header-height);
   align-items: center;
   justify-content: space-between;
   gap: var(--site-header-gap);
+  margin-inline: auto;
   padding-inline: var(--site-header-inline-space);
 }
 
