@@ -13,10 +13,10 @@ export const adapter: RendererAdapter = {
     const table = new ReportTable() as ReportTableElement
     // Forward the host's Ask action into the table's own toolbar so all
     // controls share alignment and scale without positional offsets.
+    table.style.setProperty('--lv-visual-action-target', 'calc(max(24px, var(--lv-button-height, var(--control-medium-size))) * var(--lv-visual-inverse-scale, 1))')
     const agentAction = document.createElement('slot')
     agentAction.name = 'agent-action'
     agentAction.slot = 'agent-action'
-    agentAction.style.setProperty('--lv-visual-action-target', 'var(--lv-button-height, var(--control-medium-size))')
     table.append(agentAction)
     container.replaceChildren(table)
     const handle = new TanStackHandle(container, table)

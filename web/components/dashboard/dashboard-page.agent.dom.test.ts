@@ -244,6 +244,12 @@ test('dashboard agent drawer carries page context and explicit visual references
           && drawer.shadowRoot.querySelector('.title svg')?.innerHTML === agentIconMarkup,
         chartAction: expand.getAttribute('aria-label'),
         tableHasExpand: Boolean(table.shadowRoot.querySelector('[data-visualization-expand]')),
+        zoomedTableActionHeights: await (async () => {
+          const surface = root.querySelector('lv-report-canvas').shadowRoot.querySelector('.surface') as HTMLElement
+          surface.style.cssText += `--report-canvas-scale:.47;--report-canvas-inverse-scale:${1 / .47}`
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          return [tableAsk, tableExpand, tableOptions].map(item => item.getBoundingClientRect().height)
+        })(),
       }
     })
     expect(visualActionsAtRest).toMatchObject({
@@ -264,6 +270,7 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(visualActionsAtRest.tableExpandLeft - visualActionsAtRest.tableAskRight).toBeGreaterThanOrEqual(4)
     expect(visualActionsAtRest.tableExpandRight).toBeLessThanOrEqual(visualActionsAtRest.tableOptionsLeft)
     expect(visualActionsAtRest.tableRight - visualActionsAtRest.tableOptionsRight).toBe(8)
+    for (const height of visualActionsAtRest.zoomedTableActionHeights) expect(height).toBeGreaterThanOrEqual(31)
 
     await page.locator('lv-dashboard-visual-frame[data-visual-id="orders_chart"]').hover()
     const visualActionsOnHover = await page.locator('lv-dashboard-page').evaluate((element: any) => {

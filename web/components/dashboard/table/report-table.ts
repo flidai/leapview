@@ -273,9 +273,9 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
-      width: var(--lv-button-height, var(--control-medium-size));
-      height: var(--lv-button-height, var(--control-medium-size));
-      min-height: var(--lv-button-height, var(--control-medium-size));
+      width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
     }
 
     .visual-options summary {
