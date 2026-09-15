@@ -1,4 +1,4 @@
-import { LitElement, css, html, nothing } from 'lit'
+import { LitElement, css, html, nothing, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
   ArrowLeft,
@@ -256,6 +256,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private pushedRefreshRunDrawerEntry = false
   private assetVersionDrawerPageKey = ''
   private pushedAssetVersionDrawerEntry = false
+  private definitionNavigation?: HTMLElement
 
   static get styles() {
     return [projectStyles, breadcrumbStyles]
@@ -268,6 +269,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     window.addEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
     window.addEventListener('popstate', this.syncSemanticModelViewFromLocation)
     window.addEventListener('popstate', this.syncAssetDefinitionViewFromLocation)
+    window.addEventListener('resize', this.revealSelectedDefinitionView)
   }
 
   override disconnectedCallback(): void {
@@ -276,10 +278,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     window.removeEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
     window.removeEventListener('popstate', this.syncSemanticModelViewFromLocation)
     window.removeEventListener('popstate', this.syncAssetDefinitionViewFromLocation)
+    window.removeEventListener('resize', this.revealSelectedDefinitionView)
     super.disconnectedCallback()
   }
 
-  updated(): void {
+  updated(changedProperties: PropertyValues): void {
     checkSignalContract('project asset page', this.page, { title: 'required', breadcrumbs: 'required', tabs: 'required' })
     const page = this.page
     const semanticModelPageKey = page?.asset.type === 'semantic_model' && page.activeSection === 'definition' ? page.asset.id : ''
@@ -318,6 +321,27 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     if (versionDrawerPageKey && versionDrawerPageKey !== this.assetVersionDrawerPageKey) {
       this.assetVersionDrawerPageKey = versionDrawerPageKey
       this.syncAssetVersionDrawerFromLocation()
+    }
+    const navigation = this.shadowRoot?.querySelector<HTMLElement>('#definition .semantic-model-navigation')
+    if (navigation && (navigation !== this.definitionNavigation || changedProperties.has('semanticModelView') || changedProperties.has('assetDefinitionView'))) {
+      this.revealSelectedDefinitionView()
+    }
+    this.definitionNavigation = navigation ?? undefined
+  }
+
+  private revealSelectedDefinitionView = (): void => {
+    const navigation = this.shadowRoot?.querySelector<HTMLElement>('#definition .semantic-model-navigation')
+    const active = navigation?.querySelector<HTMLElement>('.semantic-model-nav-item[data-active="true"]')
+    if (!navigation || !active) return
+    const navigationBounds = navigation.getBoundingClientRect()
+    const activeBounds = active.getBoundingClientRect()
+    const style = getComputedStyle(navigation)
+    const startInset = Number.parseFloat(style.paddingInlineStart) || 0
+    const endInset = Number.parseFloat(style.paddingInlineEnd) || 0
+    if (activeBounds.left < navigationBounds.left + startInset) {
+      navigation.scrollLeft += activeBounds.left - navigationBounds.left - startInset
+    } else if (activeBounds.right > navigationBounds.right - endInset) {
+      navigation.scrollLeft += activeBounds.right - navigationBounds.right + endInset
     }
   }
 

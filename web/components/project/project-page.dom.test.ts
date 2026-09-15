@@ -339,6 +339,46 @@ test('semantic model Definition uses a full-width horizontal section bar', async
   }
 })
 
+test('narrow Definition deep links and history keep the selected section visible', async () => {
+  const page = await browser.newPage({ viewport: { width: 240, height: 800 } })
+  try {
+    await page.goto(`${baseURL}/?root=semantic-definition&view=source`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const selectedSection = () => page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const navigation = element.shadowRoot!.querySelector<HTMLElement>('#definition .semantic-model-navigation')!
+      const active = navigation.querySelector<HTMLElement>('[data-active="true"]')!
+      const navBounds = navigation.getBoundingClientRect()
+      const activeBounds = active.getBoundingClientRect()
+      return {
+        label: active.textContent?.replace(/\s+/g, ' ').trim(),
+        scrollLeft: navigation.scrollLeft,
+        visible: activeBounds.left >= navBounds.left - 1 && activeBounds.right <= navBounds.right + 1,
+      }
+    })
+    expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
+
+    await page.locator('lv-project-asset-page').evaluate((element: any) => {
+      element.shadowRoot!.querySelector<HTMLButtonElement>('[data-model-view="relationships"]')!.click()
+    })
+    expect(await selectedSection()).toEqual({ label: 'Relationships 1', scrollLeft: expect.any(Number), visible: true })
+    await page.evaluate(() => history.back())
+    await page.waitForFunction(() => window.location.search.includes('view=source'))
+    expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
+
+    await page.setViewportSize({ width: 960, height: 800 })
+    await page.setViewportSize({ width: 240, height: 800 })
+    expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
+
+    await page.goto(`${baseURL}/?root=dashboard-definition&view=source`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    expect(await selectedSection()).toEqual({ label: 'Source', scrollLeft: expect.any(Number), visible: true })
+  } finally {
+    await page.close()
+  }
+})
+
 test('simple source Definition exposes both views in the horizontal section bar', async () => {
   const page = await browser.newPage()
   try {
