@@ -23,7 +23,7 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	root := repositoryRoot(t)
 	binary := filepath.Join(t.TempDir(), "leapview")
 	version := `{"version":"1.2.3","revision":"` + strings.Repeat("a", 40) + `","buildTime":"2026-09-15T12:00:00Z","dirty":false,"development":false}`
-	requireWriteFile(t, binary, "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '"+version+"'; fi\nexit 0\n", 0o755)
+	requireWriteFile(t, binary, "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '"+version+"'; elif [ \"$2\" = --help ]; then case \"$1\" in init) printf '%s\\n' 'Usage: leapview init [flags]' 'credentials: {\"username\":\"demo\",\"password\":\"qualification-secret\"} https://user:url-secret@example.test/?token=query-secret' \"env-probe=${QUALIFICATION_UNSAFE:-unset}\";; dev) printf '%s\\n' 'Usage: leapview dev [flags]';; plan) printf '%s\\n' 'Usage: leapview plan [flags]';; build) printf '%s\\n' 'Usage: leapview build [flags]';; publish) printf '%s\\n' 'Usage: leapview publish [flags]';; deploy) printf '%s\\n' 'Usage: leapview deploy [flags]';; esac; fi\nexit 0\n", 0o755)
 	output := t.TempDir()
 	packageCommand := exec.Command(filepath.Join(root, "scripts", "package-authoring-cli.sh"), binary, output, runtime.GOOS, runtime.GOARCH)
 	packageCommand.Dir = root
@@ -43,6 +43,7 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	qualify := exec.Command(filepath.Join(root, "deploy", "local", "qualification", "qualify.sh"),
 		"--archive", archive, "--required", "--evidence-dir", evidenceDir)
 	qualify.Dir = root
+	qualify.Env = append(os.Environ(), "QUALIFICATION_UNSAFE=must-not-forward", "DOCKER_CONTEXT=must-not-forward")
 	if combined, err := qualify.CombinedOutput(); err != nil {
 		t.Fatalf("static qualification: %v\n%s", err, combined)
 	}
@@ -54,11 +55,19 @@ func TestReleasedAuthoringQualificationStaticJourney(t *testing.T) {
 	if err := json.Unmarshal(encoded, &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence["result"] != "passed" {
-		t.Fatalf("qualification result = %#v, want passed", evidence["result"])
+	if evidence["result"] != "partial" {
+		t.Fatalf("qualification result = %#v, want partial static result", evidence["result"])
 	}
 	if strings.Contains(string(encoded), "ghcr.io/flidai/leapview@sha256:") == false {
 		t.Fatal("qualification evidence should retain the immutable image identity")
+	}
+	for _, secret := range []string{"qualification-secret", "url-secret", "query-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("qualification evidence contains an unredacted secret %q", secret)
+		}
+	}
+	if !strings.Contains(string(encoded), "env-probe=unset") {
+		t.Fatal("qualification subprocess inherited an unsafe host environment variable")
 	}
 	if strings.Contains(string(encoded), "password=") || strings.Contains(string(encoded), "Authorization: Bearer") {
 		t.Fatal("qualification evidence contains an unredacted credential-shaped value")
@@ -102,10 +111,60 @@ func TestReleasedAuthoringQualificationRejectsArchiveChecksumDrift(t *testing.T)
 	}
 }
 
+func TestReleasedAuthoringQualificationRejectsMissingOrWrongCommandHelp(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("authoring archives support Linux and macOS")
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		t.Skip("authoring archives support amd64 and arm64")
+	}
+	root := repositoryRoot(t)
+	version := `{"version":"1.2.3","revision":"` + strings.Repeat("a", 40) + `","buildTime":"2026-09-15T12:00:00Z","dirty":false,"development":false}`
+	for _, test := range []struct {
+		name string
+		help string
+	}{
+		{name: "missing help", help: ":"},
+		{name: "root help instead of command help", help: "printf '%s\\n' 'Usage: leapview [command]'"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binary := filepath.Join(t.TempDir(), "leapview")
+			script := "#!/bin/sh\nif [ \"$1\" = version ]; then printf '%s\\n' '" + version + "'; elif [ \"$2\" = --help ]; then " + test.help + "; fi\nexit 0\n"
+			requireWriteFile(t, binary, script, 0o755)
+			output := t.TempDir()
+			packageCommand := exec.Command(filepath.Join(root, "scripts", "package-authoring-cli.sh"), binary, output, runtime.GOOS, runtime.GOARCH)
+			packageCommand.Dir = root
+			packageCommand.Env = append(os.Environ(),
+				"BUILD_VERSION=1.2.3",
+				"BUILD_REVISION="+strings.Repeat("a", 40),
+				"BUILD_TIME=2026-09-15T12:00:00Z",
+				"BUILD_RELEASE=true",
+				"IMAGE_REFERENCE=ghcr.io/flidai/leapview@sha256:"+strings.Repeat("b", 64),
+				"RELEASE_TAG=v1.2.3",
+			)
+			combined, err := packageCommand.CombinedOutput()
+			if err != nil {
+				t.Fatalf("package authoring CLI: %v\n%s", err, combined)
+			}
+			archive := strings.TrimSpace(string(combined))
+			evidenceDir := filepath.Join(t.TempDir(), "evidence")
+			qualify := exec.Command(filepath.Join(root, "deploy", "local", "qualification", "qualify.sh"), "--archive", archive, "--required", "--evidence-dir", evidenceDir)
+			qualify.Dir = root
+			combined, err = qualify.CombinedOutput()
+			if err == nil || !strings.Contains(string(combined), "cli-help-init") {
+				t.Fatalf("unrecognized command help unexpectedly passed: %v\n%s", err, combined)
+			}
+		})
+	}
+}
+
 func TestReleasedAuthoringQualificationContractDeclaresPendingMeasurements(t *testing.T) {
 	root := repositoryRoot(t)
 	contract := readFile(t, filepath.Join("qualification", "qualification-contract.json"))
 	for _, required := range []string{
+		"milestone-5-static",
+		"staticResult",
+		"partial",
 		"outerChecksum",
 		"innerManifest",
 		"leapview version --json",

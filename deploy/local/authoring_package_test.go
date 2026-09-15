@@ -117,6 +117,13 @@ func TestAuthoringPackageSchemaAndNativeArchive(t *testing.T) {
 	if !strings.Contains(string(files[prefix+"SHA256SUMS"]), "./local-runtime/runtime-package.json") {
 		t.Fatal("internal checksums do not cover runtime manifest")
 	}
+	readme := string(files[prefix+"local-runtime/README.md"])
+	if strings.Contains(readme, "../../") || strings.Contains(readme, "](/docs/") {
+		t.Fatal("packaged runtime README contains a checkout-relative documentation link")
+	}
+	if !strings.Contains(readme, "https://github.com/flidai/leapview/") {
+		t.Fatal("packaged runtime README does not retain a usable documentation URL")
+	}
 }
 
 func TestAuthoringPackagerRejectsUnsupportedTarget(t *testing.T) {

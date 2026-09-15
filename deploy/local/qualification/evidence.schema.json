@@ -8,6 +8,7 @@
     "schemaVersion",
     "evidenceKind",
     "qualification",
+    "scope",
     "result",
     "required",
     "startedAt",
@@ -22,8 +23,9 @@
   "properties": {
     "schemaVersion": { "const": 1 },
     "evidenceKind": { "const": "released-authoring-package-qualification" },
-    "qualification": { "const": "milestone-5" },
-    "result": { "enum": ["running", "passed", "skipped", "failed"] },
+    "qualification": { "const": "milestone-5-static" },
+    "scope": { "const": "static" },
+    "result": { "enum": ["running", "partial", "skipped", "failed"] },
     "required": { "type": "boolean" },
     "startedAt": { "type": "string", "format": "date-time" },
     "finishedAt": { "type": ["string", "null"], "format": "date-time" },
@@ -151,15 +153,30 @@
     "docker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cli", "endpoint", "transport", "server", "composeVersion", "endpointPinned"],
+      "required": ["cli", "endpoint", "transport", "server", "composeVersion", "endpointPinned", "pinState"],
       "properties": {
         "cli": { "type": "string" },
         "endpoint": { "type": "string", "pattern": "^(unix://<local-socket>|<redacted-endpoint>)$" },
         "transport": { "const": "unix" },
         "server": { "type": "object", "additionalProperties": { "type": "string" } },
         "composeVersion": { "type": "string" },
-        "endpointPinned": { "const": true }
-      }
+        "endpointPinned": { "type": "boolean" },
+        "pinState": { "enum": ["not-proven", "verified-pre-post"] },
+        "serverPost": { "type": "object", "additionalProperties": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "endpointPinned": { "const": true } } },
+          "then": {
+            "required": ["serverPost"],
+            "properties": { "pinState": { "const": "verified-pre-post" } }
+          }
+        },
+        {
+          "if": { "properties": { "endpointPinned": { "const": false } } },
+          "then": { "properties": { "pinState": { "const": "not-proven" } } }
+        }
+      ]
     },
     "compose": {
       "type": "object",

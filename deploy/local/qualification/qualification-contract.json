@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "contract": "released-authoring-package-qualification",
-  "qualification": "milestone-5",
+  "qualification": "milestone-5-static",
   "governing": [
     "../../adr/0021-adopt-a-local-first-analytics-development-workflow.md",
     "../../adr/specifications/analytics-development-cli-contract.md"
@@ -27,12 +27,17 @@
     "endpoint": {
       "required": true,
       "acceptedTransports": ["unix socket"],
-      "rejectedTransports": ["ssh", "tcp", "loopback tunnel", "unknown proxy"],
-      "pinBeforeMutation": true
+      "acceptedEndpoints": ["absolute recognized local Engine/Desktop socket"],
+      "rejectedTransports": ["ssh", "tcp", "loopback tunnel", "unknown socket path"],
+      "pinBeforeMutation": true,
+      "effectiveIdentityChecks": ["before init", "after init", "after dev"],
+      "endpointPinnedClaim": "true only after all pre/post identities agree; recognized-path proxy adversarial evidence remains external"
     },
     "manualPrerequisite": "device authentication may require a human browser approval"
   },
   "evidence": {
+    "scope": "static",
+    "staticResult": "partial",
     "metadata": [
       "os",
       "toolchain",
