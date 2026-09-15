@@ -34,9 +34,14 @@ const (
 	phaseProject     = "project"
 	phaseSession     = "session"
 	phaseReady       = "ready"
-	controllerLock   = ".local-runtime.lock"
-	maxPortAttempts  = 5
-	defaultChecks    = 120
+	phaseReset       = "reset"
+
+	resetStagePlanned          = "planned"
+	resetStageResourcesRemoved = "resources_removed"
+	resetStageSessionRemoved   = "session_removed"
+	controllerLock             = ".local-runtime.lock"
+	maxPortAttempts            = 5
+	defaultChecks              = 120
 )
 
 type Controller struct {
@@ -208,6 +213,9 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 	if exists {
 		if err := validateRetainedIntent(state, canonicalCheckout, checkoutID, manifestDigest, controller.endpoint, controller.identity); err != nil {
 			return State{}, err
+		}
+		if state.Reset != nil {
+			return State{}, ErrResetInProgress
 		}
 		values, err := readEnvironment(envPath)
 		if err != nil {
@@ -398,10 +406,15 @@ func (controller *Controller) newIntent(canonicalCheckout, checkoutID, manifestD
 }
 
 func validateRetainedIntent(state State, root, checkoutID, manifestDigest string, endpoint Endpoint, identity buildinfo.Identity) error {
-	validPhase := map[string]bool{phaseIntent: true, phasePostgres: true, phaseInstance: true, phasePool: true, phaseApplication: true, phaseProject: true, phaseSession: true, phaseReady: true}
+	validPhase := map[string]bool{phaseIntent: true, phasePostgres: true, phaseInstance: true, phasePool: true, phaseApplication: true, phaseProject: true, phaseSession: true, phaseReady: true, phaseReset: true}
 	validStatus := map[string]bool{statusApplying: true, statusIncomplete: true, statusApplied: true}
-	if !validPhase[state.Phase] || !validStatus[state.Status] || (state.Status == statusApplied && state.Phase != phaseReady) {
+	if !validPhase[state.Phase] || !validStatus[state.Status] ||
+		(state.Status == statusApplied && state.Phase != phaseReady) ||
+		(state.Phase == phaseReset && state.Status == statusApplied) {
 		return errors.New("retained local runtime progress state is invalid; refusing guessed recovery")
+	}
+	if err := validateResetState(state); err != nil {
+		return err
 	}
 	if state.AttachmentRegistryVersion != attachmentSchemaVersion &&
 		!(state.AttachmentRegistryVersion == 0 && state.Phase == phaseIntent && state.Status != statusApplied) {
@@ -429,6 +442,41 @@ func validateRetainedIntent(state State, root, checkoutID, manifestDigest string
 		if state.Session.TargetName != sessionTargetName(state) {
 			return errors.New("retained local CLI session target disagrees with checkout identity")
 		}
+	}
+	return nil
+}
+
+func validateResetState(state State) error {
+	if state.Phase != phaseReset {
+		if state.Reset != nil {
+			return errors.New("retained local reset progress exists outside the reset phase; refusing guessed recovery")
+		}
+		return nil
+	}
+	if state.Reset == nil {
+		return errors.New("retained local reset phase has no progress descriptor; refusing guessed recovery")
+	}
+	validStage := map[string]bool{
+		resetStagePlanned:          true,
+		resetStageResourcesRemoved: true,
+		resetStageSessionRemoved:   true,
+	}
+	if !validStage[state.Reset.Stage] {
+		return errors.New("retained local reset stage is invalid; refusing guessed recovery")
+	}
+	previous := ""
+	for _, resource := range state.Reset.Resources {
+		if resource.Kind != "container" && resource.Kind != "volume" && resource.Kind != "network" {
+			return errors.New("retained local reset resource kind is invalid; refusing guessed recovery")
+		}
+		if resource.ID == "" || strings.TrimSpace(resource.ID) != resource.ID || strings.ContainsAny(resource.ID, "\x00\r\n") {
+			return errors.New("retained local reset resource identity is invalid; refusing guessed recovery")
+		}
+		key := resource.Kind + "\x00" + resource.ID
+		if previous != "" && key <= previous {
+			return errors.New("retained local reset resources are not a unique canonical set; refusing guessed recovery")
+		}
+		previous = key
 	}
 	return nil
 }

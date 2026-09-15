@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	stateSchemaVersion           = 2
+	stateSchemaVersion           = 3
 	manifestSchemaVersion        = 1
 	persistentStateSchemaVersion = 1
 	postgresMajor                = 18
@@ -63,7 +63,13 @@ type State struct {
 	Network                   networkID   `json:"network"`
 	Authority                 authorityID `json:"authority"`
 	Session                   sessionID   `json:"session"`
+	Reset                     *resetState `json:"reset,omitempty"`
 	LastError                 *failure    `json:"lastError,omitempty"`
+}
+
+type resetState struct {
+	Stage     string          `json:"stage"`
+	Resources []OwnedResource `json:"resources"`
 }
 
 type checkout struct {

@@ -161,6 +161,88 @@ func TestResetRechecksAttachmentsAfterConfirmation(t *testing.T) {
 	require.Equal(t, downBefore, countCommands(runner.commands, " down --timeout"))
 }
 
+func TestResetPersistsIntentBeforeDockerMutationAndResumes(t *testing.T) {
+	controller, runner, _ := startedLifecycleController(t)
+	runner.responses = map[string][]byte{
+		"container ls":      []byte("container-one\n"),
+		"container inspect": exactOwnershipLabels(t, controller),
+	}
+	plan, err := controller.PlanReset(t.Context())
+	require.NoError(t, err)
+	runner.failOnce = " down --timeout"
+	runner.failError = "daemon acknowledgement lost"
+
+	err = controller.Reset(t.Context(), plan.Confirmation)
+	require.ErrorContains(t, err, "daemon acknowledgement lost")
+	state, exists, err := loadState(filepath.Join(plan.StateRoot, stateFileName))
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, phaseReset, state.Phase)
+	require.Equal(t, resetStagePlanned, state.Reset.Stage)
+	require.Equal(t, plan.Resources, state.Reset.Resources)
+
+	_, err = controller.Start(t.Context())
+	require.ErrorIs(t, err, ErrResetInProgress)
+	recovered, err := controller.PlanReset(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, plan, recovered)
+	require.NoError(t, controller.Reset(t.Context(), plan.Confirmation))
+	_, err = os.Stat(filepath.Join(plan.StateRoot, stateFileName))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestResetResumesAfterSubordinateStateCleanupInterruption(t *testing.T) {
+	controller, _, _ := startedLifecycleController(t)
+	plan, err := controller.PlanReset(t.Context())
+	require.NoError(t, err)
+	statePath := filepath.Join(plan.StateRoot, stateFileName)
+	state, exists, err := loadState(statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	state.Phase = phaseReset
+	state.Status = statusApplying
+	state.Reset = &resetState{Stage: resetStageSessionRemoved, Resources: plan.Resources}
+	require.NoError(t, saveState(statePath, state))
+	require.NoError(t, os.Remove(filepath.Join(plan.StateRoot, runtimeEnvFileName)))
+	require.NoError(t, os.Remove(filepath.Join(plan.StateRoot, attachmentsFileName)))
+
+	recovered, err := controller.PlanReset(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, plan.Confirmation, recovered.Confirmation)
+	require.NoError(t, controller.Reset(t.Context(), plan.Confirmation))
+	_, err = os.Stat(statePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestResetRecoveryRejectsTamperedProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		progress resetState
+	}{
+		{name: "unknown stage", progress: resetState{Stage: "guessed"}},
+		{name: "unknown resource kind", progress: resetState{Stage: resetStagePlanned, Resources: []OwnedResource{{Kind: "image", ID: "sha256:unknown"}}}},
+		{name: "duplicate resource", progress: resetState{Stage: resetStagePlanned, Resources: []OwnedResource{{Kind: "volume", ID: "same"}, {Kind: "volume", ID: "same"}}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			controller, _, _ := startedLifecycleController(t)
+			status, err := controller.Status(t.Context())
+			require.NoError(t, err)
+			statePath := filepath.Join(status.StateRoot, stateFileName)
+			state, exists, err := loadState(statePath)
+			require.NoError(t, err)
+			require.True(t, exists)
+			state.Phase = phaseReset
+			state.Status = statusApplying
+			state.Reset = &test.progress
+			require.NoError(t, saveState(statePath, state))
+
+			_, err = controller.PlanReset(t.Context())
+			require.ErrorContains(t, err, "refusing guessed recovery")
+		})
+	}
+}
+
 func TestAttachWaitsForConcurrentLifecycleOperation(t *testing.T) {
 	controller, _, _ := startedLifecycleController(t)
 	status, err := controller.Status(t.Context())

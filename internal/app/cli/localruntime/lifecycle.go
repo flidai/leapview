@@ -22,6 +22,7 @@ import (
 var (
 	ErrRuntimeNotFound   = errors.New("no local development runtime exists for this checkout")
 	ErrResetConfirmation = errors.New("reset confirmation does not match the current checkout resource set")
+	ErrResetInProgress   = errors.New("local runtime reset is incomplete; rerun leapview dev reset with the original confirmation")
 )
 
 type lifecycleRuntime struct {
@@ -87,6 +88,9 @@ func (controller *Controller) lifecycleRuntime(ctx context.Context) (lifecycleRu
 		return lifecycleRuntime{}, err
 	}
 	envPath := filepath.Join(root, runtimeEnvFileName)
+	if state.Reset != nil {
+		return lifecycleRuntime{state: state, root: root, envPath: envPath}, nil
+	}
 	values, err := readEnvironment(envPath)
 	if err != nil {
 		return lifecycleRuntime{}, fmt.Errorf("read retained local runtime environment: %w", err)
@@ -128,6 +132,9 @@ func (controller *Controller) Attach(ctx context.Context) (*Attachment, State, e
 	runtime, err := controller.lifecycleRuntime(ctx)
 	if err != nil {
 		return nil, State{}, err
+	}
+	if runtime.state.Reset != nil {
+		return nil, State{}, ErrResetInProgress
 	}
 	lock, err := acquireLifecycleLock(ctx, runtime.root)
 	if err != nil {
@@ -267,6 +274,15 @@ func (controller *Controller) Status(ctx context.Context) (LifecycleStatus, erro
 	if err != nil {
 		return LifecycleStatus{}, err
 	}
+	if runtime.state.Reset != nil {
+		return LifecycleStatus{
+			Exists: true, RuntimeStatus: runtime.state.Status, Phase: runtime.state.Phase,
+			CheckoutRoot: runtime.state.Checkout.CanonicalRoot, CheckoutID: runtime.state.Checkout.ID,
+			StateRoot: runtime.root, ComposeProject: runtime.state.Runtime.ComposeProject,
+			OwnerID: runtime.state.Runtime.OwnerID, URL: runtime.state.Network.URL,
+			Attachments: []AttachmentStatus{},
+		}, nil
+	}
 	if err := controller.verifyResourceOwnership(ctx, runtime.state, false); err != nil {
 		return LifecycleStatus{}, err
 	}
@@ -319,6 +335,9 @@ func (controller *Controller) Stop(ctx context.Context) error {
 	runtime, err := controller.lifecycleRuntime(ctx)
 	if err != nil {
 		return err
+	}
+	if runtime.state.Reset != nil {
+		return ErrResetInProgress
 	}
 	lock, err := acquireLifecycleLock(ctx, runtime.root)
 	if err != nil {
@@ -381,6 +400,9 @@ func (controller *Controller) Logs(ctx context.Context, tail int) ([]byte, error
 	if err != nil {
 		return nil, err
 	}
+	if runtime.state.Reset != nil {
+		return nil, ErrResetInProgress
+	}
 	if err := controller.verifyResourceOwnership(ctx, runtime.state, false); err != nil {
 		return nil, err
 	}
@@ -430,6 +452,9 @@ func (controller *Controller) PlanReset(ctx context.Context) (ResetPlan, error) 
 	if err != nil {
 		return ResetPlan{}, err
 	}
+	if runtime.state.Reset != nil {
+		return resetPlan(runtime, runtime.state.Reset.Resources), nil
+	}
 	if _, err := controller.requireNoLiveAttachments(ctx, runtime, false); err != nil {
 		return ResetPlan{}, err
 	}
@@ -478,36 +503,80 @@ func (controller *Controller) Reset(ctx context.Context, confirmation string) er
 	if err != nil {
 		return err
 	}
-	if _, err := controller.requireNoLiveAttachments(ctx, runtime, false); err != nil {
-		return err
+	var plan ResetPlan
+	if runtime.state.Reset == nil {
+		if _, err := controller.requireNoLiveAttachments(ctx, runtime, false); err != nil {
+			return err
+		}
+		resources, err := controller.ownedResources(ctx, runtime.state, false)
+		if err != nil {
+			return err
+		}
+		plan = resetPlan(runtime, resources)
+	} else {
+		plan = resetPlan(runtime, runtime.state.Reset.Resources)
 	}
-	resources, err := controller.ownedResources(ctx, runtime.state, false)
-	if err != nil {
-		return err
-	}
-	plan := resetPlan(runtime, resources)
 	if confirmation == "" || confirmation != plan.Confirmation {
 		return ErrResetConfirmation
 	}
-	if err := controller.compose(ctx, runtime.envPath, nil, "down", "--timeout", "30", "--volumes", "--remove-orphans"); err != nil {
-		return fmt.Errorf("remove confirmed checkout-owned local resources: %w", err)
+	if runtime.state.Reset == nil {
+		runtime.state.Phase = phaseReset
+		runtime.state.Status = statusApplying
+		runtime.state.LastError = nil
+		runtime.state.Reset = &resetState{Stage: resetStagePlanned, Resources: plan.Resources}
+		if err := saveState(filepath.Join(runtime.root, stateFileName), runtime.state); err != nil {
+			return fmt.Errorf("persist local reset intent before mutation: %w", err)
+		}
 	}
-	remaining, err := controller.ownedResources(ctx, runtime.state, false)
-	if err != nil {
-		return err
+	return controller.resumeReset(ctx, runtime)
+}
+
+func (controller *Controller) resumeReset(ctx context.Context, runtime lifecycleRuntime) error {
+	statePath := filepath.Join(runtime.root, stateFileName)
+	if runtime.state.Reset == nil {
+		return errors.New("local reset progress is unavailable; refusing guessed recovery")
 	}
-	if len(remaining) != 0 {
-		return errors.New("confirmed local Docker resources remain after reset; retained state was preserved for recovery")
+	if runtime.state.Reset.Stage == resetStagePlanned {
+		current, err := controller.ownedResources(ctx, runtime.state, false)
+		if err != nil {
+			return err
+		}
+		if !resourceSubset(current, runtime.state.Reset.Resources) {
+			return errors.New("local Docker resource set changed after reset intent was persisted; refusing mutation")
+		}
+		if len(current) > 0 {
+			if err := controller.compose(ctx, runtime.envPath, nil, "down", "--timeout", "30", "--volumes", "--remove-orphans"); err != nil {
+				return fmt.Errorf("remove confirmed checkout-owned local resources: %w", err)
+			}
+		}
+		remaining, err := controller.ownedResources(ctx, runtime.state, false)
+		if err != nil {
+			return err
+		}
+		if len(remaining) != 0 {
+			return errors.New("confirmed local Docker resources remain after reset; retained reset progress was preserved for recovery")
+		}
+		runtime.state.Reset.Stage = resetStageResourcesRemoved
+		if err := saveState(statePath, runtime.state); err != nil {
+			return fmt.Errorf("persist local reset resource removal: %w", err)
+		}
 	}
-	if controller.resetSessions == nil {
-		return errors.New("local session reset authority is unavailable; retained state was preserved for recovery")
-	}
-	request := SessionRequest{TargetName: sessionTargetName(runtime.state), Origin: runtime.state.Network.URL, InstanceID: runtime.state.Authority.InstanceID, Environment: runtime.state.Authority.Environment, ProjectID: runtime.state.Authority.ProjectUID}
-	if err := controller.resetSessions(ctx, request); err != nil {
-		return fmt.Errorf("remove checkout-owned local authoring session: %w", err)
+	if runtime.state.Reset.Stage == resetStageResourcesRemoved {
+		if controller.resetSessions == nil {
+			return errors.New("local session reset authority is unavailable; retained reset progress was preserved for recovery")
+		}
+		request := SessionRequest{TargetName: sessionTargetName(runtime.state), Origin: runtime.state.Network.URL, InstanceID: runtime.state.Authority.InstanceID, Environment: runtime.state.Authority.Environment, ProjectID: runtime.state.Authority.ProjectUID}
+		if err := controller.resetSessions(ctx, request); err != nil {
+			return fmt.Errorf("remove checkout-owned local authoring session: %w", err)
+		}
+		runtime.state.Reset.Stage = resetStageSessionRemoved
+		if err := saveState(statePath, runtime.state); err != nil {
+			return fmt.Errorf("persist local reset session removal: %w", err)
+		}
 	}
 	// Keep the authoritative state descriptor until every subordinate artifact
-	// has been removed, so ordinary cleanup failures remain diagnosable.
+	// has been removed. A retry can therefore finish cleanup even when an
+	// interruption happened after runtime.env or the attachment registry left.
 	for _, name := range []string{runtimeEnvFileName, credentialsFileName, qualificationFileName, poolFileName, evidenceFileName, attachmentsFileName, stateFileName} {
 		path := filepath.Join(runtime.root, name)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -515,4 +584,17 @@ func (controller *Controller) Reset(ctx context.Context, confirmation string) er
 		}
 	}
 	return nil
+}
+
+func resourceSubset(current, planned []OwnedResource) bool {
+	allowed := make(map[OwnedResource]struct{}, len(planned))
+	for _, resource := range planned {
+		allowed[resource] = struct{}{}
+	}
+	for _, resource := range current {
+		if _, ok := allowed[resource]; !ok {
+			return false
+		}
+	}
+	return true
 }

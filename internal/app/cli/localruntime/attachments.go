@@ -195,7 +195,7 @@ func (controller *Controller) Heartbeat(ctx context.Context, attachment *Attachm
 		return ErrAttachmentLost
 	}
 	state, exists, err := loadState(filepath.Join(attachment.root, stateFileName))
-	if err != nil || !exists || state.AttachmentRegistryVersion != attachmentSchemaVersion || attachmentBindingFor(state) != attachment.binding {
+	if err != nil || !exists || state.Reset != nil || state.AttachmentRegistryVersion != attachmentSchemaVersion || attachmentBindingFor(state) != attachment.binding {
 		return ErrAttachmentLost
 	}
 	lock, err := acquireAttachmentLock(ctx, attachment.root)
