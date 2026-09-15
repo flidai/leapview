@@ -634,7 +634,6 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`id="enterprise"`,
 		`id="openness"`,
 		`id="get-involved"`,
-		`id="get-started"`,
 		`https://discord.gg/pcfV4zAeRV`,
 		`<footer class="site-footer" role="contentinfo">`,
 		`<header class="site-header">`,

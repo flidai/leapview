@@ -6,7 +6,7 @@
   scroll-margin-top: 72px;
   padding: 96px clamp(18px, 4vw, 64px) 105px;
   border-top: 1px solid var(--border);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   color: var(--ink);
 }
 .architecture-inner { width: min(100%, 1220px); margin: 0 auto; }

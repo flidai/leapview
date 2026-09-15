@@ -40,15 +40,20 @@ test('homepage presents the new sections inside the shared site shell', async ()
     expect(await page.locator('.site-footer-bottom').getByRole('link', { name: 'Flid AI' }).getAttribute('href')).toBe('https://flid.ai/')
     expect(await page.locator('.landing-footer, .topbar').count()).toBe(0)
     expect(await page.getByRole('heading', { level: 1, name: 'Metrics your whole team can build on.' }).isVisible()).toBe(true)
-    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'layers', 'enterprise', 'openness', 'get-involved', 'get-started']
+    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'enterprise', 'layers', 'openness', 'get-involved']
     expect(await page.locator('.site-home > section').evaluateAll((sections) => sections.map((section) => section.id))).toEqual(sectionOrder)
     for (const id of sectionOrder) {
       expect(await page.locator(`#${id}`).count()).toBe(1)
     }
+    const sectionBackgrounds = await page.locator('#build, #enterprise, #layers, #openness').evaluateAll((sections) => sections.map((section) => getComputedStyle(section).backgroundColor))
+    expect(new Set(sectionBackgrounds).size).toBe(2)
+    for (let index = 1; index < sectionBackgrounds.length; index++) {
+      expect(sectionBackgrounds[index]).not.toBe(sectionBackgrounds[index - 1])
+    }
     expect(await page.locator('.mission-kicker, .story-kicker, .project-kicker, .architecture-kicker, .enterprise-kicker, .openness-kicker, .involved-kicker').count()).toBe(0)
     expect(await page.getByRole('heading', { level: 2, name: 'Analytics as code. Changes you can review.' }).count()).toBe(1)
     expect(await page.getByRole('heading', { level: 2, name: 'How LeapView works.' }).count()).toBe(1)
-    expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(0)
     expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
     const screenshot = page.locator('#product-image')
     await page.waitForFunction(() => {

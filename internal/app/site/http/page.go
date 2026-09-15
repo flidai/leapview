@@ -75,7 +75,7 @@ const siteBrandName = brand.Name
 
 func sitePage(metadata sitePageMetadata) g.Node {
 	head := siteHead(metadata)
-	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "openness", "involved", "closing-cta"} {
+	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "openness", "involved"} {
 		head = append(head, h.Link(h.Rel("stylesheet"), h.Href("/static/home/"+stylesheet+".css")))
 	}
 	head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-dark.png"), g.Attr("as", "image")))
