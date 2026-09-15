@@ -6,6 +6,7 @@ import { RotateCcw, Table2, type IconNode } from 'lucide'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
+  BaseEdge,
   Controls,
   EdgeLabelRenderer,
   getBezierPath,
@@ -201,9 +202,19 @@ function SemanticModelGraphFlow({
   }, [clearSelection])
 
   const handleGraphKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape') return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      clearSelection()
+      return
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const edgeID = target.closest('.react-flow__edge')?.getAttribute('data-id')
+    if (!edgeID) return
     event.preventDefault()
-    clearSelection()
+    setSelectedID(undefined)
+    setSelectedEdgeID((current) => current === edgeID ? undefined : edgeID)
   }, [clearSelection])
 
   return React.createElement(
@@ -467,11 +478,12 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
   const data = props.data
   const style = props.style ?? {}
   return React.createElement(React.Fragment, null,
-    React.createElement('path', {
+    React.createElement(BaseEdge, {
       id: props.id,
-      className: 'react-flow__edge-path semantic-model-relationship-path',
-      d: path,
+      className: 'semantic-model-relationship-path',
+      path,
       style,
+      interactionWidth: props.interactionWidth,
     }),
     React.createElement(EdgeLabelRenderer, null,
       React.createElement('div', {

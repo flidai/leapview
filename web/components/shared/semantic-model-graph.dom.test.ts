@@ -61,6 +61,7 @@ for (const viewport of [
         const flow = graph.querySelector('.react-flow') as HTMLElement
         const nodes = Array.from(graph.querySelectorAll('.react-flow__node')) as HTMLElement[]
         const edges = Array.from(graph.querySelectorAll('.react-flow__edge')) as HTMLElement[]
+        const edgeInteraction = graph.querySelector('.react-flow__edge-interaction')
         const labels = Array.from(graph.querySelectorAll('.semantic-model-edge-label')).map((label) => label.textContent?.trim())
         const endpointLabels = Array.from(graph.querySelectorAll('.semantic-model-edge-endpoint')).map((label) => label.textContent?.trim())
         const nodeTexts = nodes.map((node) => node.textContent ?? '')
@@ -84,6 +85,7 @@ for (const viewport of [
         return {
           nodeCount: nodes.length,
           edgeCount: edges.length,
+          edgeInteractionWidth: edgeInteraction?.getAttribute('stroke-width'),
           labels,
           endpointLabels,
           hasOrders: nodeTexts.some((text) => text.includes('orders')),
@@ -117,6 +119,7 @@ for (const viewport of [
 
       expect(state.nodeCount).toBe(2)
       expect(state.edgeCount).toBe(1)
+      expect(state.edgeInteractionWidth).toBe('18')
       expect(state.labels).toContain('*:1')
       expect(state.endpointLabels).toEqual(['*', '1'])
       expect(state.hasOrders).toBe(true)
@@ -254,6 +257,13 @@ test('semantic model graph starts undimmed and clears an intentional selection f
     await graph.locator('.semantic-model-graph-layout').press('Escape')
     expect(await graph.locator('.semantic-model-relationship-inspector').count()).toBe(0)
     expect(await graph.locator('.semantic-model-field-highlighted').count()).toBe(0)
+
+    const relationshipEdge = graph.locator('.react-flow__edge').first()
+    await relationshipEdge.focus()
+    await relationshipEdge.press('Enter')
+    expect(await graph.locator('.semantic-model-relationship-inspector').count()).toBe(1)
+    await relationshipEdge.press('Escape')
+    expect(await graph.locator('.semantic-model-relationship-inspector').count()).toBe(0)
 
     await graph.locator('.react-flow__node').filter({ hasText: 'orders' }).click()
     expect(await graph.locator('.semantic-model-node-selected').count()).toBe(1)

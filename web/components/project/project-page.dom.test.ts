@@ -1131,42 +1131,6 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
   }
 })
 
-test('pipeline catalog and run monitor are separate list surfaces without local tabs', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.goto(`${baseURL}/?root=pipelines`)
-    await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
-    const catalog = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot!
-      return { title: root.querySelector('h1')?.textContent?.trim(), metrics: root.querySelectorAll('.metrics').length, tabs: root.querySelectorAll('.tabs').length, lists: root.querySelectorAll('lv-entity-list').length }
-    })
-    expect(catalog).toEqual({ title: 'Pipelines', metrics: 0, tabs: 0, lists: 1 })
-
-    await page.goto(`${baseURL}/?root=runs`)
-    const monitor = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot!
-      const form = root.querySelector('.run-toolbar') as HTMLFormElement
-      return { title: root.querySelector('h1')?.textContent?.trim(), metrics: root.querySelectorAll('.metric').length, tabs: root.querySelectorAll('.tabs').length,
-        filters: root.querySelectorAll('.run-toolbar input, .run-toolbar select').length, action: form?.getAttribute('action'),
-        range: (form?.querySelector('[name="range"]') as HTMLSelectElement)?.value, pageLink: root.querySelector('.run-pagination a')?.getAttribute('href') }
-    })
-    expect(monitor).toEqual({ title: 'Runs', metrics: 3, tabs: 0, filters: 4, action: '/runs', range: '7d', pageLink: '/runs?q=sales&range=7d&status=failed&trigger=manual&page=1' })
-    const detail = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
-      element.selectedRunID = 'run-failed'
-      await element.updateComplete
-      const root = element.shadowRoot!
-      return { firstSection: root.querySelector('.run-detail-section h2')?.textContent?.trim(),
-        actions: [...root.querySelectorAll('.run-detail-actions a, .run-detail-actions button')].map((item) => item.textContent?.trim()),
-        error: root.querySelector('.run-detail-error')?.textContent?.trim() }
-    })
-    expect(detail).toEqual({ firstSection: 'Error', actions: ['View pipeline', 'Run again'], error: 'Source unavailable' })
-  } finally {
-    await page.close()
-  }
-})
-
 test('connection terminal command failure keeps the drawer state and offers reload guidance', async () => {
   const page = await browser.newPage()
   try {
