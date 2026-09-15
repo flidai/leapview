@@ -1366,7 +1366,7 @@ type PipelineRunMonitorSignal struct {
 	Range    string `json:"range" yaml:"range"`
 	Status   string `json:"status" yaml:"status"`
 	Trigger  string `json:"trigger" yaml:"trigger"`
-	Page     int32  `json:"page" yaml:"page"`
+	Page     int64  `json:"page" yaml:"page"`
 	PageSize int32  `json:"pageSize" yaml:"pageSize"`
 	Total    int64  `json:"total" yaml:"total"`
 }

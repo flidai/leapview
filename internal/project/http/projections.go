@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 	return state, nil
 }
 
-func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int32) {
+func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int64) {
 	query := r.URL.Query()
 	rangeLabel := query.Get("range")
 	since := now.Add(-24 * time.Hour)
@@ -117,19 +118,21 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 	if trigger != "manual" && trigger != "schedule" {
 		trigger = ""
 	}
-	pageValue, err := strconv.ParseInt(query.Get("page"), 10, 32)
+	pageValue, err := strconv.ParseInt(query.Get("page"), 10, 64)
 	if err != nil || pageValue < 1 {
 		pageValue = 1
 	}
-	if pageValue > 1000 {
-		pageValue = 1000
+	const pageSize int64 = 25
+	maxPage := int64(math.MaxInt64/pageSize) + 1
+	if pageValue > maxPage {
+		pageValue = maxPage
 	}
 	search := strings.TrimSpace(query.Get("q"))
 	if runes := []rune(search); len(runes) > 120 {
 		search = string(runes[:120])
 	}
-	page := int32(pageValue)
-	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: int(page-1) * 25}, rangeLabel, page
+	page := pageValue
+	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: int(pageSize), Offset: (page - 1) * pageSize}, rangeLabel, page
 }
 
 type assetPageProjection struct {

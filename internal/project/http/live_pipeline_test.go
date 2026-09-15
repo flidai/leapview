@@ -1,6 +1,7 @@
 package http
 
 import (
+	"math"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,6 +19,17 @@ func TestPipelineRunMonitorFilterNormalizesAndBoundsRequest(t *testing.T) {
 	filter, selectedRange, page = pipelineRunMonitorFilter(request, now)
 	if selectedRange != "24h" || page != 1 || filter.Status != "" || filter.Trigger != "" || filter.Since != now.Add(-24*time.Hour) {
 		t.Fatalf("normalized filter = %#v, range = %q, page = %d", filter, selectedRange, page)
+	}
+	request = httptest.NewRequest(stdhttp.MethodGet, "/runs?range=all&page=1001", nil)
+	filter, selectedRange, page = pipelineRunMonitorFilter(request, now)
+	if selectedRange != "all" || page != 1001 || filter.Offset != 25_000 {
+		t.Fatalf("deep-page filter = %#v, range = %q, page = %d", filter, selectedRange, page)
+	}
+	request = httptest.NewRequest(stdhttp.MethodGet, "/runs?page=9223372036854775807", nil)
+	filter, _, page = pipelineRunMonitorFilter(request, now)
+	wantPage := int64(math.MaxInt64/25) + 1
+	if page != wantPage || filter.Offset != (wantPage-1)*25 {
+		t.Fatalf("maximum-page filter = %#v, page = %d, want page %d", filter, page, wantPage)
 	}
 }
 

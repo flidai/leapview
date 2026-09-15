@@ -793,7 +793,7 @@ model PipelineRunMonitorSignal {
   `range`: string;
   `status`: string;
   `trigger`: string;
-  `page`: int32;
+  `page`: int64;
   `pageSize`: int32;
   `total`: int64;
 }

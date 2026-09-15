@@ -191,7 +191,8 @@ type MonitorFilter struct {
 	Search, Status, Trigger string
 	PipelineIDs             []string
 	AllowedPipelineIDs      []string
-	Limit, Offset           int
+	Limit                   int
+	Offset                  int64
 }
 
 type MonitorPage struct {

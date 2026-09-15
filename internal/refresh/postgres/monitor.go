@@ -15,7 +15,8 @@ type MonitorFilter struct {
 	Search, Status, Trigger string
 	PipelineIDs             []string
 	AllowedPipelineIDs      []string
-	Limit, Offset           int
+	Limit                   int
+	Offset                  int64
 }
 
 type MonitorPage struct {
@@ -58,7 +59,7 @@ func (r *Repository) MonitorRuns(ctx context.Context, scope Scope, filter Monito
 		ProjectID: scope.ProjectID, Environment: scope.Environment, AllowedPipelineIds: filter.AllowedPipelineIDs,
 		Search: filter.Search, MatchedPipelineIds: filter.PipelineIDs, Trigger: filter.Trigger,
 		Status: filter.Status, SinceAt: filter.Since, UntilAt: filter.Until,
-		PageLimit: int32(filter.Limit), PageOffset: int32(filter.Offset),
+		PageLimit: int32(filter.Limit), PageOffset: filter.Offset,
 	})
 	if err != nil {
 		return MonitorPage{}, err

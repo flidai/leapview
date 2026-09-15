@@ -43,7 +43,8 @@ type PipelineMonitorState struct {
 
 type PipelineRunMonitor struct {
 	Query, Range, Status, Trigger    string
-	Page, PageSize                   int32
+	Page                             int64
+	PageSize                         int32
 	Total, Failed, Completed, Active int64
 	Runs                             []PipelineMonitorRun
 }
