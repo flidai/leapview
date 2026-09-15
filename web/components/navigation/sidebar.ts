@@ -578,7 +578,7 @@ class LeapViewSidebar extends LitElement {
     .nav-group-label {
       overflow: hidden;
       margin: var(--base-size-4) var(--control-xsmall-paddingInline-normal) var(--base-size-2);
-      color: var(--fgColor-disabled);
+      color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);

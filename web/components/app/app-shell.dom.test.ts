@@ -1599,6 +1599,7 @@ test('insights and develop navigation expose the stable route contract with grou
           const style = getComputedStyle(label)
           return style.display !== 'none' && style.visibility !== 'hidden'
         }).map((label: Element) => label.textContent?.trim()),
+        subtitleColors: Array.from(root.querySelectorAll('.nav-group-label')).map((label: Element) => getComputedStyle(label).color),
       }
     })
     const developState = await navigationState()
@@ -1617,6 +1618,7 @@ test('insights and develop navigation expose the stable route contract with grou
     expect(developState.develop[2].icon).toContain('M6 12h12')
     expect(developState.develop[1].icon).not.toBe(developState.develop[2].icon)
     expect(developState.subtitles).toEqual(['Catalog', 'Operations'])
+    expect(developState.subtitleColors).toEqual(['rgb(87, 96, 106)', 'rgb(87, 96, 106)'])
 
     await page.goto(`${baseURL}/`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
