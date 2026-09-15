@@ -86,14 +86,22 @@ test('architecture connections stay aligned with the layers across screen sizes'
       })
       expect(await page.locator('.architecture-wire').count()).toBe(6)
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
-      const layerGap = await page.locator('#architecture-board').evaluate((board) => {
+      const layerSpacing = await page.locator('#architecture-board').evaluate((board) => {
         const layers = ['interfaces', 'serving', 'compute', 'foundation'].map((name) =>
-          [...board.querySelectorAll<HTMLElement>(`.layer-slab[data-layer="${name}"] .slab-piece`)]
-            .map((piece) => piece.getBoundingClientRect()))
-        return layers.slice(1).map((current, index) =>
-          Math.min(...current.map((rect) => rect.top)) - Math.max(...layers[index].map((rect) => rect.bottom)))
+          [...board.querySelectorAll<HTMLElement>(`.layer-slab[data-layer="${name}"] .slab-piece`)])
+        return {
+          gaps: layers.slice(1).map((current, index) =>
+            Math.min(...current.map((piece) => piece.getBoundingClientRect().top)) -
+            Math.max(...layers[index].map((piece) => piece.getBoundingClientRect().bottom))),
+          labelClearance: layers.slice(1).map((current, index) =>
+            Math.min(...current.flatMap((piece) =>
+              [...piece.querySelectorAll<HTMLElement>('.slab-face > span')]
+                .map((label) => label.getBoundingClientRect().top))) -
+            Math.max(...layers[index].map((piece) => piece.getBoundingClientRect().bottom))),
+        }
       })
-      expect(Math.min(...layerGap)).toBeGreaterThan(2)
+      expect(Math.max(...layerSpacing.gaps)).toBeLessThan(-5)
+      expect(Math.min(...layerSpacing.labelClearance)).toBeGreaterThan(0)
       const cardOverlap = await page.locator('#architecture-board').evaluate((board) => {
         const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
           .map((card) => card.getBoundingClientRect())

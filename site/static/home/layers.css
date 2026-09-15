@@ -14,7 +14,7 @@
 .architecture-heading h2 { margin: 0; font-size: clamp(38px, 3.6vw, 50px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
 .architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
 
-.architecture-board { position: relative; min-height: 650px; isolation: isolate; }
+.architecture-board { position: relative; min-height: 590px; isolation: isolate; }
 .architecture-wires { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .architecture-wire path { fill: none; stroke: color-mix(in srgb, var(--border) 55%, var(--muted)); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: stroke .25s, stroke-width .25s; }
 .architecture-wire circle { fill: color-mix(in srgb, var(--border) 55%, var(--muted)); transition: fill .25s; }
@@ -28,7 +28,7 @@
 :is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="postgres"] { --tone-fg: var(--fgColor-attention); --tone-bg: var(--bgColor-attention-muted); --tone-border: var(--borderColor-attention-emphasis); }
 :is(.slab-piece, .architecture-callout, .architecture-wire)[data-detail="ducklake"] { --tone-fg: var(--fgColor-sponsors); --tone-bg: var(--bgColor-sponsors-muted); --tone-border: var(--borderColor-sponsors-emphasis); }
 
-.architecture-stack { position: absolute; z-index: 2; top: 18px; left: 50%; width: min(46%, 530px); aspect-ratio: 570 / 680; transform: translateX(-50%); }
+.architecture-stack { position: absolute; z-index: 2; top: 56px; left: 50%; width: min(46%, 530px); aspect-ratio: 570 / 545; transform: translateX(-50%); }
 .layer-slab { position: absolute; left: 50%; display: block; width: 48.8%; aspect-ratio: 278 / 149; padding: 0; color: var(--ink); transform: translateX(-50%); --slab-top: var(--bgColor-inverse); --slab-side: color-mix(in srgb, var(--bgColor-inverse) 77%, var(--borderColor-emphasis)); --slab-stroke: var(--borderColor-emphasis); --slab-ink: var(--fgColor-onInverse); }
 :scope.is-light .layer-slab { --slab-top: var(--borderColor-emphasis); --slab-side: var(--bgColor-neutral-emphasis); --slab-stroke: var(--bgColor-emphasis); --slab-ink: var(--fgColor-onEmphasis); }
 .slab-piece:hover, .slab-piece:focus-visible, .slab-piece.is-active { --slab-top: color-mix(in srgb, var(--tone-fg) 82%, var(--bgColor-inverse)); --slab-side: color-mix(in srgb, var(--tone-fg) 72%, var(--bgColor-inverse)); --slab-stroke: var(--tone-border); --slab-ink: var(--fgColor-onInverse); transform: translateY(-5px); filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--tone-fg) 20%, transparent)); }
@@ -36,10 +36,10 @@
 .slab-piece:focus-visible { outline: 2px solid var(--tone-border); outline-offset: 2px; border-radius: 4px; }
 .layer-slab--split { display: flex; gap: 2.1%; width: 100%; aspect-ratio: 570 / 149; }
 .layer-slab--split .slab-piece { flex: 1 1 0; min-width: 0; }
-.layer-slab[data-layer="interfaces"] { z-index: 4; top: 4%; }
-.layer-slab[data-layer="serving"] { z-index: 3; top: 27%; }
-.layer-slab[data-layer="compute"] { z-index: 2; top: 50%; }
-.layer-slab[data-layer="foundation"] { z-index: 1; top: 73%; }
+.layer-slab[data-layer="interfaces"] { z-index: 4; top: 16.3%; }
+.layer-slab[data-layer="serving"] { z-index: 3; top: 32.2%; }
+.layer-slab[data-layer="compute"] { z-index: 2; top: 51.9%; }
+.layer-slab[data-layer="foundation"] { z-index: 1; top: 65%; }
 .slab-piece { position: relative; display: block; width: 100%; height: 100%; cursor: default; user-select: none; transition: transform .28s, filter .28s; }
 .slab-piece svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .slab-piece svg path { stroke: var(--slab-stroke); stroke-width: 2; stroke-linejoin: round; transition: fill .28s, stroke .28s; }
@@ -54,12 +54,12 @@
 
 .architecture-callouts { display: contents; }
 .architecture-callout { position: absolute; z-index: 2; width: 25%; min-height: 112px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 2px; background: var(--frame-bg); transition: border-color .25s, background-color .25s, transform .25s; }
-.architecture-callout[data-detail="dashboards"] { top: 30px; left: 0; }
-.architecture-callout[data-detail="agents"] { top: 30px; right: 0; }
-.architecture-callout[data-layer="serving"] { top: 198px; right: 0; }
-.architecture-callout[data-layer="compute"] { top: 336px; left: 0; }
-.architecture-callout[data-detail="postgres"] { top: 484px; left: 0; }
-.architecture-callout[data-detail="ducklake"] { top: 484px; right: 0; }
+.architecture-callout[data-detail="dashboards"] { top: 0; left: 0; }
+.architecture-callout[data-detail="agents"] { top: 0; right: 0; }
+.architecture-callout[data-layer="serving"] { top: 162px; right: 0; }
+.architecture-callout[data-layer="compute"] { top: 288px; left: 0; }
+.architecture-callout[data-detail="postgres"] { top: 448px; left: 0; }
+.architecture-callout[data-detail="ducklake"] { top: 448px; right: 0; }
 .architecture-callout.is-active { border-color: var(--tone-border); background: color-mix(in srgb, var(--frame-bg) 55%, var(--tone-bg)); transform: translateY(-3px); }
 .architecture-callout.is-active .architecture-callout-kicker { color: var(--tone-fg); }
 .architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--accent); font-family: var(--fontStack-system); font-size: 10px; font-weight: 750; letter-spacing: .09em; }
@@ -73,12 +73,11 @@
   .architecture { padding: 82px clamp(20px, 5vw, 46px) 85px; }
   .architecture-heading { margin-bottom: 50px; }
   .architecture-board { min-height: 570px; }
-  .architecture-stack { top: 65px; width: min(46%, 340px); }
+  .architecture-stack { top: 100px; width: min(46%, 340px); }
   .architecture-callout { width: 26%; min-height: 112px; padding: 12px 13px; }
-  .architecture-callout[data-detail="dashboards"], .architecture-callout[data-detail="agents"] { top: 40px; }
   .architecture-callout[data-layer="serving"] { top: 190px; }
-  .architecture-callout[data-layer="compute"] { top: 275px; }
-  .architecture-callout[data-detail="postgres"], .architecture-callout[data-detail="ducklake"] { top: 405px; }
+  .architecture-callout[data-layer="compute"] { top: 305px; }
+  .architecture-callout[data-detail="postgres"], .architecture-callout[data-detail="ducklake"] { top: 445px; }
   .architecture-callout h3 { font-size: 16px; }
   .architecture-callout > p:not(.architecture-callout-kicker) { font-size: 11px; }
   .architecture-callout-tags { gap: 4px; }
