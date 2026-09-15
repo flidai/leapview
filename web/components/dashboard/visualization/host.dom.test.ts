@@ -762,3 +762,39 @@ test('visual options fit their content, close outside and on Escape, and restore
     await page.close()
   }
 })
+
+test('visual options open above the trigger when the viewport has no room below', async () => {
+  const page = await browser.newPage({ viewport: { width: 640, height: 480 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    const geometry = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'position:fixed;right:8px;bottom:0;width:320px;height:48px;z-index:10'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      document.body.append(host)
+      await host.updateComplete
+      const shadow = host.shadowRoot as ShadowRoot
+      const details = shadow.querySelector('.visual-options') as HTMLDetailsElement
+      const summary = details.querySelector('summary') as HTMLElement
+      summary.click()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      const menu = details.querySelector('.menu') as HTMLElement
+      const menuRect = menu.getBoundingClientRect()
+      const summaryRect = summary.getBoundingClientRect()
+      return {
+        opensUp: details.hasAttribute('data-menu-open-up'),
+        menuTop: menuRect.top,
+        menuBottom: menuRect.bottom,
+        summaryTop: summaryRect.top,
+        viewportHeight: innerHeight,
+      }
+    })
+    expect(geometry.opensUp).toBe(true)
+    expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.summaryTop)
+    expect(geometry.menuTop).toBeGreaterThanOrEqual(0)
+    expect(geometry.menuBottom).toBeLessThanOrEqual(geometry.viewportHeight)
+  } finally {
+    await page.close()
+  }
+})

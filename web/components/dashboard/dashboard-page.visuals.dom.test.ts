@@ -481,6 +481,21 @@ test('scaled report tables preserve action targets and virtual row geometry', as
       viewport.dispatchEvent(new Event('scroll'))
       await new Promise((resolve) => requestAnimationFrame(resolve))
       const afterScroll = [...root.querySelectorAll<HTMLElement>('.canvas > .row[role="row"]')].slice(0, 4).map((row) => ({ top: row.getBoundingClientRect().top, text: row.textContent?.replace(/\s+/g, ' ').trim() }))
+      const details = root.querySelector('.visual-options') as HTMLDetailsElement
+      ;(details.querySelector('summary') as HTMLElement).click()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      const menu = details.querySelector('.menu') as HTMLElement
+      const menuRect = menu.getBoundingClientRect()
+      const menuButtons = [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      const menuState = {
+        top: menuRect.top,
+        bottom: menuRect.bottom,
+        scrollable: menu.scrollHeight > menu.clientHeight,
+        minimumButtonHeight: Math.min(...menuButtons.map((button) => button.getBoundingClientRect().height)),
+        hostOpen: host.hasAttribute('data-visual-menu-open'),
+        cardOpen: host.closest('[data-canvas-visual]')?.hasAttribute('data-visual-menu-open') ?? false,
+        cardOverflow: getComputedStyle(host.closest('[data-canvas-visual]')!).overflow,
+      }
       return {
         scale: Number((canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.scale),
         rowHeight: table.rowHeight,
@@ -489,6 +504,7 @@ test('scaled report tables preserve action targets and virtual row geometry', as
         actionRects,
         beforeScroll,
         afterScroll,
+        menuState,
       }
     })
     expect(result.scale).toBeCloseTo(0.7, 2)
@@ -501,6 +517,12 @@ test('scaled report tables preserve action targets and virtual row geometry', as
     }
     expect(result.afterScroll.length).toBeGreaterThan(0)
     expect(result.afterScroll.map((row: any) => row.text)).toContain('o11')
+    expect(result.menuState.top).toBeGreaterThanOrEqual(0)
+    expect(result.menuState.bottom).toBeLessThanOrEqual(820)
+    expect(result.menuState.minimumButtonHeight).toBeGreaterThanOrEqual(24)
+    expect(result.menuState.hostOpen).toBe(true)
+    expect(result.menuState.cardOpen).toBe(true)
+    expect(result.menuState.cardOverflow).toBe('visible')
   } finally { await page.close() }
 })
 

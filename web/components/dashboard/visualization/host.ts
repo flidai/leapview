@@ -5,7 +5,7 @@ import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import validateGeneratedEnvelope from '../../../generated/visualization/validate'
 import '../../shared/loading-spinner'
-import { visualActionStyles } from '../visual-action-styles'
+import { positionVisualOptionsMenu, resetVisualOptionsMenuPlacement, visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
 import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
@@ -382,7 +382,10 @@ export class VisualizationHost extends LitElement {
   }
 
   private handleVisualOptionsToggle = (event: Event): void => {
-    this.setVisualOptionsOpen((event.currentTarget as HTMLDetailsElement).open)
+    const details = event.currentTarget as HTMLDetailsElement
+    this.setVisualOptionsOpen(details.open)
+    if (details.open) queueMicrotask(() => positionVisualOptionsMenu(details))
+    else resetVisualOptionsMenuPlacement(details)
   }
 
   private handleVisualOptionsClick = (event: Event): void => {
@@ -392,7 +395,10 @@ export class VisualizationHost extends LitElement {
 
   private setVisualOptionsOpen(open: boolean): void {
     this.toggleAttribute('data-visual-menu-open', open)
-    this.closest<HTMLElement>('[data-canvas-visual]')?.toggleAttribute('data-visual-menu-open', open)
+    const card = this.closest<HTMLElement>('[data-canvas-visual]')
+    card?.toggleAttribute('data-visual-menu-open', open)
+    if (open) card?.style.setProperty('overflow', 'visible')
+    else card?.style.removeProperty('overflow')
   }
 
   private closeVisualOptions(restoreFocus: boolean): void {
@@ -400,6 +406,7 @@ export class VisualizationHost extends LitElement {
     if (!details?.open) return
     const summary = details.querySelector<HTMLElement>('summary')
     details.removeAttribute('open')
+    resetVisualOptionsMenuPlacement(details)
     this.setVisualOptionsOpen(false)
     if (restoreFocus) summary?.focus()
   }

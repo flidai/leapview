@@ -32,7 +32,7 @@ import {
   table_getAllLeafColumns,
 } from '@tanstack/table-core/static-functions'
 import { visualMenuIcon } from '../visual-menu-icons'
-import { visualActionStyles } from '../visual-action-styles'
+import { positionVisualOptionsMenu, resetVisualOptionsMenuPlacement, visualActionStyles } from '../visual-action-styles'
 import { conditionalCellAppearance } from './conditional-formatting'
 import { defaultDirection, formatCell, rowKey } from './format'
 import { blockStartsForAll, emptyBlocks, emptyTable, preserveCardinality, sameSort, sortedBlockRows, tableConverter } from './block-source'
@@ -171,11 +171,18 @@ export class ReportTable extends LitElement {
   private handleOutsidePointerDown = (event: PointerEvent) => {
     const details = this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')
     if (!details?.open) return
-    if (!event.composedPath().includes(details)) details.removeAttribute('open')
+    if (!event.composedPath().includes(details)) this.closeVisualOptions(false)
   }
   private handleDocumentKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return
-    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    if (event.key !== 'Escape' || !this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.open) return
+    event.preventDefault()
+    this.closeVisualOptions(true)
+  }
+  private handleVisualOptionsToggle = (event: Event): void => {
+    const details = event.currentTarget as HTMLDetailsElement
+    this.setVisualOptionsOpen(details.open)
+    if (details.open) queueMicrotask(() => positionVisualOptionsMenu(details))
+    else resetVisualOptionsMenuPlacement(details)
   }
   private handleResizeGuideMove = (event: MouseEvent | TouchEvent) => {
     this.scheduleResizeGuideUpdate(event)
@@ -337,7 +344,7 @@ export class ReportTable extends LitElement {
       display: flex;
       align-items: center;
       gap: var(--base-size-8);
-      min-height: var(--lv-button-height-sm, var(--control-small-size));
+      min-height: var(--lv-visual-menu-target, var(--lv-button-height-sm, var(--control-small-size)));
       border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
       border-radius: var(--lv-radius-tight);
       background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest, var(--lv-bg-panel)));
@@ -1036,6 +1043,7 @@ export class ReportTable extends LitElement {
     document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
     document.removeEventListener('keydown', this.handleDocumentKeyDown)
     document.removeEventListener('lv-report-zoom-state', this.handleReportZoomState)
+    this.setVisualOptionsOpen(false)
     this.resizeObserver?.disconnect()
     if (this.scrollFrame) {
       cancelAnimationFrame(this.scrollFrame)
@@ -1099,6 +1107,27 @@ export class ReportTable extends LitElement {
     const scale = Number.isFinite(value) && value > 0 ? value : 1
     if (Math.abs(scale - this.canvasScale) <= 0.001) return
     this.canvasScale = scale
+  }
+
+  private setVisualOptionsOpen(open: boolean): void {
+    this.toggleAttribute('data-visual-menu-open', open)
+    const root = this.getRootNode()
+    const visualizationHost = root instanceof ShadowRoot ? root.host as HTMLElement : null
+    visualizationHost?.toggleAttribute('data-visual-menu-open', open)
+    const card = visualizationHost?.closest<HTMLElement>('[data-canvas-visual]')
+    card?.toggleAttribute('data-visual-menu-open', open)
+    if (open) card?.style.setProperty('overflow', 'visible')
+    else card?.style.removeProperty('overflow')
+  }
+
+  private closeVisualOptions(restoreFocus: boolean): void {
+    const details = this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')
+    if (!details?.open) return
+    const summary = details.querySelector<HTMLElement>('summary')
+    details.removeAttribute('open')
+    resetVisualOptionsMenuPlacement(details)
+    this.setVisualOptionsOpen(false)
+    if (restoreFocus) summary?.focus()
   }
 
   get columns(): TableColumn[] {
@@ -1650,7 +1679,7 @@ export class ReportTable extends LitElement {
           <div class="visual-actions">
             <slot name="agent-action"></slot>
             <button class="icon-action" type="button" data-visualization-expand aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
-            <details class="visual-options">
+            <details class="visual-options" @toggle=${this.handleVisualOptionsToggle}>
               <summary aria-label="Visual options" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
               <div class="menu" role="menu">
                 <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
@@ -1870,7 +1899,7 @@ export class ReportTable extends LitElement {
 
   private runAction(action: VisualAction): void {
     const tableId = this.resolvedTableId()
-    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    this.closeVisualOptions(true)
     if (action === 'clear-selection') {
       if (tableId) {
         this.dispatchEvent(

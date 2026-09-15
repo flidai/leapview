@@ -1,5 +1,37 @@
 import { css } from 'lit'
 
+const visualMenuViewportGap = 56
+
+export function resetVisualOptionsMenuPlacement(details: HTMLDetailsElement): void {
+  const menu = details.querySelector<HTMLElement>('.menu')
+  details.removeAttribute('data-menu-open-up')
+  details.style.removeProperty('--lv-visual-menu-max-height')
+  menu?.style.removeProperty('top')
+  menu?.style.removeProperty('bottom')
+}
+
+export function positionVisualOptionsMenu(details: HTMLDetailsElement): void {
+  const menu = details.querySelector<HTMLElement>('.menu')
+  const summary = details.querySelector<HTMLElement>('summary')
+  if (!details.open || !menu || !summary) return
+
+  resetVisualOptionsMenuPlacement(details)
+  const summaryRect = summary.getBoundingClientRect()
+  const renderedScale = summary.offsetHeight > 0 ? summaryRect.height / summary.offsetHeight : 1
+  const scale = Number.isFinite(renderedScale) && renderedScale > 0 ? renderedScale : 1
+  const gap = 4 * scale
+  const spaceBelow = Math.max(0, window.innerHeight - summaryRect.bottom - gap - visualMenuViewportGap)
+  const spaceAbove = Math.max(0, summaryRect.top - gap - visualMenuViewportGap)
+  const naturalHeight = menu.scrollHeight * scale
+  const openUp = naturalHeight > spaceBelow && spaceAbove > spaceBelow
+  const availableHeight = openUp ? spaceAbove : spaceBelow
+
+  details.toggleAttribute('data-menu-open-up', openUp)
+  details.style.setProperty('--lv-visual-menu-max-height', `${availableHeight / scale}px`)
+  menu.style.top = openUp ? `${-(menu.offsetHeight + 4)}px` : `${details.offsetHeight + 4}px`
+  menu.style.bottom = 'auto'
+}
+
 export const visualActionStyles = css`
   .visual-actions {
     display: flex;
@@ -43,4 +75,12 @@ export const visualActionStyles = css`
     outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
     outline-offset: var(--focus-outline-offset, var(--base-size-2));
   }
+
+  .visual-options .menu {
+    box-sizing: border-box;
+    max-height: var(--lv-visual-menu-max-height, calc(100vh - var(--base-size-16)));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
 `

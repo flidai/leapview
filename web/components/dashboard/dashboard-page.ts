@@ -1599,7 +1599,7 @@ class DashboardVisualFrame extends LitElement {
       box-sizing: border-box;
     }
 
-    :host([data-component-kind='visual'][data-visual-menu-open]) {
+    :host([data-visual-menu-open]) {
       overflow: visible;
     }
 
@@ -1615,7 +1615,7 @@ class DashboardVisualFrame extends LitElement {
       box-sizing: border-box;
     }
 
-    :host([data-component-kind='visual'][data-visual-menu-open]) .frame {
+    :host([data-visual-menu-open]) .frame {
       overflow: visible;
     }
 

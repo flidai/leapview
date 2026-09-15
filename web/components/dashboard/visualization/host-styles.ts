@@ -15,6 +15,8 @@ export const visualizationHostStyles = css`
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
   .renderer { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+  :host([data-visual-menu-open]) .renderer-stage,
+  :host([data-visual-menu-open]) .renderer { overflow: visible; }
   /* Map data is a secondary, space-intensive disclosure. Keep compact map
      cards focused on the map and expose the disclosure in visual focus mode. */
   :host(:not([slot='focus-visual'])) [data-map-data-table] { display: none !important; }
@@ -292,6 +294,5 @@ export const visualizationHostStyles = css`
   @media (max-width: 480px) {
     .toolbar { gap: var(--base-size-4); padding-inline: var(--base-size-8); }
     .toolbar-subtitle { display: none; }
-    .visual-options .menu { position: fixed; top: var(--base-size-48); right: var(--base-size-8); }
   }
 `
