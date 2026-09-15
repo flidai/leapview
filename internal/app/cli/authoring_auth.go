@@ -66,6 +66,55 @@ func establishLocalAuthoringSessions(ctx context.Context, request localruntime.S
 	return establishLocalAuthoringSessionsWith(ctx, localSessionAuthority{Authenticator: authenticator}, request, out)
 }
 
+func resetLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest) error {
+	authenticator, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	if err != nil {
+		return err
+	}
+	return resetLocalAuthoringSessionsWith(ctx, localSessionAuthority{Authenticator: authenticator}, request)
+}
+
+type localSessionResetAuthority interface {
+	Profile(string) (cliapi.TargetProfile, error)
+	DeleteProfile(string, cliapi.TargetProfile) error
+	DeleteCredential(context.Context, string) error
+}
+
+func (authority localSessionAuthority) DeleteProfile(name string, expected cliapi.TargetProfile) error {
+	return authority.Profiles.DeleteIfMatch(name, expected)
+}
+
+func (authority localSessionAuthority) DeleteCredential(ctx context.Context, account string) error {
+	return authority.Secrets.Delete(ctx, account)
+}
+
+func resetLocalAuthoringSessionsWith(ctx context.Context, authority localSessionResetAuthority, request localruntime.SessionRequest) error {
+	if authority == nil {
+		return errors.New("local authoring session reset authority is required")
+	}
+	profile, err := authority.Profile(request.TargetName)
+	if errors.Is(err, cliapi.ErrProfileNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if profile.Origin != request.Origin || profile.InstanceID != request.InstanceID ||
+		profile.Environment != request.Environment || profile.ProjectID != request.ProjectID {
+		return fmt.Errorf("local authoring target %q changed before reset; refusing credential removal", request.TargetName)
+	}
+	if err := authority.DeleteCredential(ctx, profile.CredentialAccount); err != nil && !errors.Is(err, securestore.ErrNotFound) {
+		return fmt.Errorf("remove local authoring credential: %w", err)
+	}
+	// Remove the credential first so a transient keychain failure leaves the
+	// exact profile available for an idempotent retry. DeleteIfMatch then keeps
+	// a concurrent profile replacement from being removed.
+	if err := authority.DeleteProfile(request.TargetName, profile); err != nil {
+		return err
+	}
+	return nil
+}
+
 type localSessionAuthentication interface {
 	Profile(string) (cliapi.TargetProfile, error)
 	RebindLoopbackOrigin(string, cliapi.TargetProfile, string) error

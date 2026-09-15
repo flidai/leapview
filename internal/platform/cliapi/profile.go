@@ -305,6 +305,32 @@ func (store *ProfileStore) Delete(name string) error {
 	return store.save(document)
 }
 
+// DeleteIfMatch removes one target profile only when its complete retained
+// identity still matches the caller's verified expectation.
+func (store *ProfileStore) DeleteIfMatch(name string, expected TargetProfile) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	document, err := store.load()
+	if err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	current, ok := document.Targets[name]
+	if !ok {
+		return ErrProfileNotFound
+	}
+	if current != expected {
+		return fmt.Errorf("target profile %q changed before removal", name)
+	}
+	delete(document.Targets, name)
+	return store.save(document)
+}
+
 func (store *ProfileStore) load() (profileDocument, error) {
 	document := profileDocument{Version: profileDocumentVersion, Targets: map[string]TargetProfile{}}
 	content, err := os.ReadFile(store.path)

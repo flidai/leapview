@@ -12,7 +12,6 @@ import (
 
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
-	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/digest"
@@ -46,7 +45,9 @@ func devCommand(ctx context.Context) *cobra.Command {
 		openSystemBrowser,
 		projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
 	)
-	return dispatchLocalDevCommand(ctx, remote, localdocker.Resolve, runLocalDevRuntime)
+	command := dispatchLocalDevCommand(ctx, remote, localdocker.Resolve, runLocalDevRuntime)
+	addLocalDevLifecycleCommands(ctx, command, localdocker.Resolve, newLocalRuntimeController)
+	return command
 }
 
 type localDockerResolver func(context.Context, localdocker.Options) (localdocker.Endpoint, error)
@@ -110,18 +111,15 @@ func runLocalDevRuntime(
 	command *cobra.Command,
 	_ []string,
 ) error {
-	controller, err := localruntime.New(localruntime.Options{
-		Endpoint: endpoint, ResolveProjectAuthority: resolveLocalProjectAuthority,
-		EstablishSessions: func(ctx context.Context, request localruntime.SessionRequest) (localruntime.SessionResult, error) {
-			return establishLocalAuthoringSessions(ctx, request, command.OutOrStdout())
-		},
-		Stdout: command.OutOrStdout(),
-	})
+	controller, err := newLocalRuntimeController(endpoint, command)
 	if err != nil {
 		return err
 	}
-	_, err = controller.Start(ctx)
-	return err
+	once, err := command.Flags().GetBool("once")
+	if err != nil {
+		return err
+	}
+	return runAttachedLocalRuntime(ctx, controller, once)
 }
 
 func (factory projectDevRemoteFactory) Remote(

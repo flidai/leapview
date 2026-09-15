@@ -252,3 +252,28 @@ func TestProfileStoreFindsStableNameByCanonicalOrigin(t *testing.T) {
 		t.Fatalf("name=%q profile=%+v", name, profile)
 	}
 }
+
+func TestProfileStoreDeleteIfMatchRefusesConcurrentReplacement(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "cli.json"))
+	profile := TargetProfile{Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_local", Environment: "dev", CredentialAccount: "account", ProjectID: "project"}
+	if err := store.Put("local", profile); err != nil {
+		t.Fatal(err)
+	}
+	changed := profile
+	changed.Origin = "http://127.0.0.1:9090"
+	if err := store.RebindLoopbackOrigin("local", profile, changed.Origin); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteIfMatch("local", profile); err == nil || !strings.Contains(err.Error(), "changed before removal") {
+		t.Fatalf("DeleteIfMatch error = %v, want concurrent replacement refusal", err)
+	}
+	if _, err := store.Get("local"); err != nil {
+		t.Fatalf("changed profile was removed: %v", err)
+	}
+	if err := store.DeleteIfMatch("local", changed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get("local"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("Get after matching delete = %v, want ErrProfileNotFound", err)
+	}
+}
