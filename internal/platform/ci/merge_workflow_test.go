@@ -17,10 +17,11 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 	}
 	var workflow struct {
 		Jobs map[string]struct {
-			Name  string   `yaml:"name"`
-			If    string   `yaml:"if"`
-			Needs []string `yaml:"needs"`
-			Steps []struct {
+			Name           string   `yaml:"name"`
+			If             string   `yaml:"if"`
+			Needs          []string `yaml:"needs"`
+			TimeoutMinutes string   `yaml:"timeout-minutes"`
+			Steps          []struct {
 				Name string            `yaml:"name"`
 				If   string            `yaml:"if"`
 				ID   string            `yaml:"id"`
@@ -63,6 +64,9 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 		t.Fatal("full merge validation must retain the complete extras contract")
 	}
 	frontend := workflow.Jobs["frontend-validation"]
+	if frontend.TimeoutMinutes != "${{ matrix.shard == 'site' && 120 || 20 }}" {
+		t.Fatal("frontend site QA must retain the prior 120-minute budget without changing other shard timeouts")
+	}
 	prepareIndex, qaIndex, generatedIndex, artifactIndex := -1, -1, -1, -1
 	frontendToolchain := false
 	for index, step := range frontend.Steps {

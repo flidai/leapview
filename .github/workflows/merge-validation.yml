@@ -98,7 +98,7 @@ jobs:
         shard: [core, reports, chat, data, site]
     if: github.repository == 'flidai/leapview'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}
     permissions:
       contents: read
 
