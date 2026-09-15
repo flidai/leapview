@@ -163,7 +163,7 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	require.NotNil(t, runtime.container)
 	t.Cleanup(func() { require.NoError(t, topology.Remove(context.Background())) })
 
-	require.Equal(t, qualificationPostgreSQL18Image, runtime.request.Image)
+	require.Equal(t, "docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2", runtime.request.Image)
 	require.Equal(t, "leapview-qualification_default", runtime.request.NetworkMode)
 	require.Equal(t, []string{"sh"}, runtime.request.Entrypoint)
 	require.True(t, runtime.request.NoHealth)
