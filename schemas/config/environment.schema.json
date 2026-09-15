@@ -2209,6 +2209,40 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_AUTHORING_ARCHIVE": {
+      "description": "Exact released authoring archive supplied to the qualification task.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_AUTHORING_DOCKER_HOST": {
+      "description": "Explicit local Unix Docker socket supplied to the optional authoring lifecycle lane.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_AUTHORING_EVIDENCE_DIR": {
+      "description": "Directory where bounded authoring qualification evidence is written.",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_AUTHORING_REQUIRED": {
+      "default": "false",
+      "description": "Require authoring package prerequisites instead of recording a skipped result.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_AUTHORING_RUN_LIFECYCLE": {
+      "default": "false",
+      "description": "Enable the opt-in released-archive init and local development lifecycle lane.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
     "LEAPVIEW_AZURE_CALLBACK_URL": {
       "description": "HTTPS callback URL registered with Azure AD or Entra ID.",
       "type": "string",
@@ -3505,6 +3539,30 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
+    },
+    "LEAPVIEW_QUALIFICATION_MANUAL_PREREQUISITES": {
+      "default": "false",
+      "description": "Confirm that required human browser authentication prerequisites are available.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_QUALIFICATION_REQUIRED": {
+      "default": "false",
+      "description": "Make missing qualification prerequisites fail the released-artifact gate.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
+    },
+    "LEAPVIEW_QUALIFICATION_RUN_LIFECYCLE": {
+      "default": "false",
+      "description": "Enable the qualification harness lifecycle lane for an exact archive.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "authoring package qualification"
     },
     "LEAPVIEW_QUERY_CACHE_NODE_MAX_BYTES": {
       "default": "536870912",

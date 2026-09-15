@@ -42,7 +42,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
-	"github.com/flidai/leapview/internal/project/developmentsession"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -81,7 +81,7 @@ type capabilityRoutes struct {
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
 	profileApplications            connectionbinding.ProfileApplicationStore
-	developmentSessions            developmentsession.Store
+	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -308,7 +308,7 @@ type capabilityAssemblyInputs struct {
 	ManagedDataModule   *manageddatamodule.Module
 	AnalyticsModule     *analyticsmodule.Module
 	ProfileApplications connectionbinding.ProfileApplicationStore
-	DevelopmentSessions developmentsession.Store
+	DevelopmentSessions developmentsessionmodule.Store
 	Authoring           *dashboardmodule.AuthoringApplication
 	DashboardAssets     dashboardmodule.Assets
 	Product             *adminmodule.ProductService

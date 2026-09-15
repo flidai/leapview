@@ -584,6 +584,13 @@ func TestEnterpriseAuthoringGuideDefinesOneTargetHostedLifecycle(t *testing.T) {
 			"leapview staging",
 			"--auto-approve",
 		} {
+			// ADR-0021 defines guided deploy as the reviewed production
+			// delivery step after local analytics authoring. It is not an
+			// alternate hosted authoring lifecycle, and its dedicated guide is
+			// the only CLI guide allowed to teach this command.
+			if entry.Name() == "analytics-development.md" && forbidden == "leapview deploy" {
+				continue
+			}
 			if strings.Contains(string(content), forbidden) {
 				t.Errorf("docs/guides/cli/%s presents alternate authoring command %q", entry.Name(), forbidden)
 			}

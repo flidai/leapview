@@ -19,7 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/observability"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
-	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -60,7 +60,7 @@ type authenticatedRouteDependencies struct {
 	pageStreams        *uitransport.PageStream
 	rateLimits         apihttpmiddleware.RateLimitConfig
 	candidates         candidateRouteDependencies
-	developmentSession *developmenthttp.Handler
+	developmentSession *developmentsessionmodule.Handler
 }
 
 type apiRouteDependencies struct {
@@ -74,7 +74,7 @@ type apiRouteDependencies struct {
 	scimBearerToken       string
 	managedDataTus        http.Handler
 	managedDataBootstrap  accessmodule.APIGenBootstrapAuthorizer
-	developmentSession    *developmenthttp.Handler
+	developmentSession    *developmentsessionmodule.Handler
 }
 
 type staticRouteDependencies struct {

@@ -12,8 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
-	"github.com/flidai/leapview/internal/project/developmentsession"
-	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -34,18 +33,18 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	registerAPIGen := func(r chi.Router) {
 		apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 	}
-	var developmentSession *developmenthttp.Handler
+	var developmentSession *developmentsessionmodule.Handler
 	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" {
-		developmentSession = developmenthttp.New(developmenthttp.Config{
+		developmentSession = developmentsessionmodule.New(developmentsessionmodule.Config{
 			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
 			ResolveProjectID: runtime.resolveProjectID,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				return principal.ID, ok
 			}, Enabled: true,
-			ValidateCandidate: func(ctx context.Context, owner, candidate string, project projectgraph.ResourceID, target, environment string) (developmenthttp.CandidateValidation, error) {
+			ValidateCandidate: func(ctx context.Context, owner, candidate string, project projectgraph.ResourceID, target, environment string) (developmentsessionmodule.CandidateValidation, error) {
 				if routes.deploymentModule == nil {
-					return developmenthttp.CandidateValidation{}, deployment.ErrCandidateUnavailable
+					return developmentsessionmodule.CandidateValidation{}, deployment.ErrCandidateUnavailable
 				}
 				value, err := routes.deploymentModule.ResolveOwnedCandidate(ctx, candidate, owner)
 				if err != nil {
@@ -53,19 +52,19 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 						// A retired/deleted candidate is terminal for a durable
 						// session pointer. Stable reads will mark it expired and
 						// never redirect to its stale URL.
-						return developmenthttp.CandidateValidation{Expired: true}, nil
+						return developmentsessionmodule.CandidateValidation{Expired: true}, nil
 					}
-					return developmenthttp.CandidateValidation{}, err
+					return developmentsessionmodule.CandidateValidation{}, err
 				}
 				if value.Scope.ProjectID != project || value.TargetID != target || value.Scope.Environment != environment {
-					return developmenthttp.CandidateValidation{}, deployment.ErrCandidateNotFound
+					return developmentsessionmodule.CandidateValidation{}, deployment.ErrCandidateNotFound
 				}
-				return developmenthttp.CandidateValidation{
+				return developmentsessionmodule.CandidateValidation{
 					Qualified: value.Status == deployment.CandidateReady,
 					Expired:   value.Status == deployment.CandidateExpired,
 					OwnerID:   value.OwnerID, ProjectID: value.Scope.ProjectID,
 					TargetID: value.TargetID, Environment: value.Scope.Environment,
-					Identity: developmentsession.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, GraphDigest: value.GraphDigest, PreviewURL: value.PreviewURL},
+					Identity: developmentsessionmodule.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, GraphDigest: value.GraphDigest, PreviewURL: value.PreviewURL},
 				}, nil
 			},
 		})

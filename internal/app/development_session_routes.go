@@ -9,8 +9,7 @@ import (
 
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
-	"github.com/flidai/leapview/internal/project/developmentsession"
-	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -20,7 +19,7 @@ import (
 // implementation with a stable RouteBasePath. The generated dashboard does
 // not need to know the candidate ID and its document/page/command/update URLs
 // therefore remain stable across pointer advances.
-func mountDevelopmentSessionRoutes(r chi.Router, session *developmenthttp.Handler, candidates candidateRouteDependencies, updates func(http.Handler) http.Handler, guard func(http.HandlerFunc) http.HandlerFunc) {
+func mountDevelopmentSessionRoutes(r chi.Router, session *developmentsessionmodule.Handler, candidates candidateRouteDependencies, updates func(http.Handler) http.Handler, guard func(http.HandlerFunc) http.HandlerFunc) {
 	if session == nil {
 		return
 	}
@@ -50,7 +49,7 @@ func mountDevelopmentSessionRoutes(r chi.Router, session *developmenthttp.Handle
 	}))
 }
 
-func stableCandidatePreview(session *developmenthttp.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
+func stableCandidatePreview(session *developmentsessionmodule.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
 	proof, ok := resolveStableSessionCandidate(session, w, r)
 	if !ok {
 		return
@@ -70,7 +69,7 @@ func stableCandidatePreview(session *developmenthttp.Handler, candidates candida
 	})
 }
 
-func stableCandidateDocument(session *developmenthttp.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
+func stableCandidateDocument(session *developmentsessionmodule.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
 	proof, ok := resolveStableSessionCandidate(session, w, r)
 	if !ok {
 		return
@@ -88,7 +87,7 @@ func stableCandidateDocument(session *developmenthttp.Handler, candidates candid
 	})
 }
 
-func stableCandidateUpdates(session *developmenthttp.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
+func stableCandidateUpdates(session *developmentsessionmodule.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
 	proof, ok := resolveStableSessionCandidate(session, w, r)
 	if !ok {
 		return
@@ -102,7 +101,7 @@ func stableCandidateUpdates(session *developmenthttp.Handler, candidates candida
 	})
 }
 
-func stableCandidateCommand(session *developmenthttp.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
+func stableCandidateCommand(session *developmentsessionmodule.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
 	proof, ok := resolveStableSessionCandidate(session, w, r)
 	if !ok {
 		return
@@ -133,23 +132,23 @@ func stableCandidateCommand(session *developmenthttp.Handler, candidates candida
 	})
 }
 
-func resolveStableSessionCandidate(session *developmenthttp.Handler, w http.ResponseWriter, r *http.Request) (developmenthttp.CandidateValidation, bool) {
+func resolveStableSessionCandidate(session *developmentsessionmodule.Handler, w http.ResponseWriter, r *http.Request) (developmentsessionmodule.CandidateValidation, bool) {
 	proof, err := session.ResolveCandidate(r)
 	if err != nil {
 		switch {
-		case errors.Is(err, developmentsession.ErrOwnerMismatch):
+		case errors.Is(err, developmentsessionmodule.ErrOwnerMismatch):
 			http.Error(w, "The development session is not owned by the authenticated principal", http.StatusForbidden)
-		case errors.Is(err, developmentsession.ErrNotFound):
+		case errors.Is(err, developmentsessionmodule.ErrNotFound):
 			http.NotFound(w, r)
 		default:
 			http.Error(w, "The development session candidate is unavailable", http.StatusServiceUnavailable)
 		}
-		return developmenthttp.CandidateValidation{}, false
+		return developmentsessionmodule.CandidateValidation{}, false
 	}
 	if proof.Expired {
 		session.MarkCandidateExpired(r)
 		http.Error(w, "The development session candidate has expired or been retired", http.StatusGone)
-		return developmenthttp.CandidateValidation{}, false
+		return developmentsessionmodule.CandidateValidation{}, false
 	}
 	return proof, true
 }
