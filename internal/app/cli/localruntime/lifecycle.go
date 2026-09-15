@@ -489,7 +489,7 @@ func resetPlan(runtime lifecycleRuntime, resources []OwnedResource) ResetPlan {
 	}
 }
 
-func (controller *Controller) Reset(ctx context.Context, confirmation string) error {
+func (controller *Controller) Reset(ctx context.Context, confirmation string) (err error) {
 	runtime, err := controller.lifecycleRuntime(ctx)
 	if err != nil {
 		return err
@@ -527,8 +527,21 @@ func (controller *Controller) Reset(ctx context.Context, confirmation string) er
 		if err := saveState(filepath.Join(runtime.root, stateFileName), runtime.state); err != nil {
 			return fmt.Errorf("persist local reset intent before mutation: %w", err)
 		}
+	} else if runtime.state.Status != statusApplying || runtime.state.LastError != nil {
+		runtime.state.Status = statusApplying
+		runtime.state.LastError = nil
+		if err := saveState(filepath.Join(runtime.root, stateFileName), runtime.state); err != nil {
+			return fmt.Errorf("persist resumed local reset intent before mutation: %w", err)
+		}
 	}
-	return controller.resumeReset(ctx, runtime)
+	if err = controller.resumeReset(ctx, runtime); err != nil {
+		runtime.state.Status = statusIncomplete
+		runtime.state.LastError = &failure{Phase: phaseReset, Code: "reset_failed"}
+		if saveErr := saveState(filepath.Join(runtime.root, stateFileName), runtime.state); saveErr != nil {
+			return errors.Join(err, fmt.Errorf("persist local reset failure: %w", saveErr))
+		}
+	}
+	return err
 }
 
 func (controller *Controller) resumeReset(ctx context.Context, runtime lifecycleRuntime) error {

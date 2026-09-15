@@ -178,6 +178,8 @@ func TestResetPersistsIntentBeforeDockerMutationAndResumes(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.Equal(t, phaseReset, state.Phase)
+	require.Equal(t, statusIncomplete, state.Status)
+	require.Equal(t, &failure{Phase: phaseReset, Code: "reset_failed"}, state.LastError)
 	require.Equal(t, resetStagePlanned, state.Reset.Stage)
 	require.Equal(t, plan.Resources, state.Reset.Resources)
 
