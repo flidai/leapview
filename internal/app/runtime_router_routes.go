@@ -232,10 +232,18 @@ func mountAPIRoutes(mux *chi.Mux, dependencies apiRouteDependencies, publicProto
 		dependencies.managedData.MountTus(r, dependencies.managedDataTus, func(next http.Handler) http.Handler {
 			return protectManagedDataTransportWithBootstrap(dependencies.access, dependencies.runtimeHost, dependencies.managedData, dependencies.managedDataBootstrap, next)
 		})
-		if dependencies.developmentSession != nil {
-			dependencies.developmentSession.Mount(r)
-		}
+		mountDevelopmentSessionAPIRoutes(r, dependencies.access, dependencies.developmentSession)
 		registerAPIGen(r)
+	})
+}
+
+func mountDevelopmentSessionAPIRoutes(r chi.Router, accessModule *accessmodule.Module, session *developmentsessionmodule.Handler) {
+	if accessModule == nil || session == nil {
+		return
+	}
+	r.Group(func(authenticated chi.Router) {
+		authenticated.Use(accessModule.Authenticate)
+		session.Mount(authenticated)
 	})
 }
 

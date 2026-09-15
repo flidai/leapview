@@ -351,6 +351,13 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Events exposes the owner-scoped stream to the browser-authenticated stable
+// preview route. The bearer API mount uses the private handler directly; the
+// two transports therefore have distinct paths but identical replay semantics.
+func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
+	h.events(w, r)
+}
+
 func writeSessionEvent(w http.ResponseWriter, record developmentsession.Record) {
 	payload, err := json.Marshal(record)
 	if err != nil {

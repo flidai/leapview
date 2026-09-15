@@ -35,7 +35,7 @@ describe('development-session stable preview transitions', () => {
   })
 
   test('stable document route derives its session event endpoint without changing query state', () => {
-    expect(developmentSessionEventsPath('/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/dashboards/sales')).toBe('/api/v1/projects/project_1/targets/target_1/development-session/events')
+    expect(developmentSessionEventsPath('/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/dashboards/sales')).toBe('/api/v1/projects/project_1/targets/target_1/development-session/candidate/preview/events')
     expect(developmentSessionEventsPath('/candidates/candidate-a/dashboards/sales')).toBeNull()
   })
 })

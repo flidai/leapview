@@ -25,7 +25,7 @@ export function developmentSessionEventsPath(pathname: string): string | null {
   const marker = '/development-session/candidate/preview'
   const markerIndex = pathname.indexOf(marker)
   if (markerIndex < 0) return null
-  return `${pathname.slice(0, markerIndex)}/development-session/events`
+  return `${pathname.slice(0, markerIndex)}${marker}/events`
 }
 
 function identityKey(identity: DevelopmentSessionRecord['lastValid']): string {
