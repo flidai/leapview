@@ -241,6 +241,50 @@ func (store *ProfileStore) Put(name string, profile TargetProfile) error {
 	return store.save(document)
 }
 
+// RebindLoopbackOrigin changes only the port-bearing origin of an exact local
+// target profile. It is a compare-and-swap operation for automatic local port
+// conflict recovery; it cannot retarget credentials to another instance,
+// Project, environment, account, or non-loopback endpoint.
+func (store *ProfileStore) RebindLoopbackOrigin(name string, expected TargetProfile, origin string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("target profile name is required")
+	}
+	expectedOrigin, err := canonicalTargetOrigin(expected.Origin)
+	if err != nil {
+		return err
+	}
+	nextOrigin, err := canonicalTargetOrigin(origin)
+	if err != nil {
+		return err
+	}
+	if !isHTTPLoopbackOrigin(expectedOrigin) || !isHTTPLoopbackOrigin(nextOrigin) {
+		return fmt.Errorf("target profile loopback rebind requires HTTP loopback origins")
+	}
+	expected.Origin = expectedOrigin
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireMutationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	document, err := store.load()
+	if err != nil {
+		return err
+	}
+	current, ok := document.Targets[name]
+	if !ok {
+		return ErrProfileNotFound
+	}
+	if current != expected {
+		return fmt.Errorf("target profile %q changed before loopback origin rebind", name)
+	}
+	current.Origin = nextOrigin
+	document.Targets[name] = current
+	return store.save(document)
+}
+
 func (store *ProfileStore) Delete(name string) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -344,6 +388,11 @@ func isLoopbackHost(host string) bool {
 		return true
 	}
 	return net.ParseIP(host).IsLoopback()
+}
+
+func isHTTPLoopbackOrigin(origin string) bool {
+	parsed, err := url.Parse(origin)
+	return err == nil && parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())
 }
 
 func secretBearingField(value any) string {

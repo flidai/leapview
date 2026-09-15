@@ -4,10 +4,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
@@ -63,6 +65,19 @@ type CatalogUpgradeResult struct {
 	CatalogSchemaVersion string `json:"catalogSchemaVersion"`
 	RecoveryDecision     string `json:"recoveryDecision"`
 	Applied              bool   `json:"applied"`
+}
+
+type ProjectClaimBootstrapRequest struct {
+	ProjectUID, IssuerID, Environment, OperationID string
+}
+
+type ProjectClaimBootstrapResult struct {
+	InstanceID, ProjectUID, Environment, ClaimedBy string
+	ClaimedAt                                      time.Time
+}
+
+type ProjectClaimOperations interface {
+	BootstrapProjectClaim(context.Context, ProjectClaimBootstrapRequest, io.Writer) error
 }
 
 // Options are the values accepted by Admin operations.
@@ -126,10 +141,38 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	maintenance.Flags().IntVar(&values.AuthStateDays, "auth-state-days", defaultAuthStateRetentionDays, "expired or revoked auth state retention in days; 0 disables auth-state pruning")
 
 	parent.AddCommand(initialize, maintenance)
+	parent.AddCommand(projectClaimCommand(ctx, operations))
 	delivery := deliveryPoolCommand(ctx, operations)
 	parent.AddCommand(delivery)
 	parent.AddCommand(recoveryCommand(ctx, operations))
 	return parent
+}
+
+func projectClaimCommand(ctx context.Context, operations Operations) *cobra.Command {
+	var request ProjectClaimBootstrapRequest
+	command := &cobra.Command{
+		Use: "project-claim", Short: "Bind the local instance to one issuer-owned Project", Hidden: true,
+		Args: cobra.NoArgs,
+		Annotations: map[string]string{
+			"leapview.dev/effect": "write", "leapview.dev/confirmation": "never",
+		},
+		RunE: func(command *cobra.Command, _ []string) error {
+			native, ok := operations.(ProjectClaimOperations)
+			if !ok {
+				return errors.New("native Project-claim operation is unavailable")
+			}
+			return native.BootstrapProjectClaim(ctx, request, command.OutOrStdout())
+		},
+	}
+	command.Flags().StringVar(&request.ProjectUID, "project", "", "canonical issuer-owned ProjectUID")
+	command.Flags().StringVar(&request.IssuerID, "issuer", "", "canonical Project issuer identity")
+	command.Flags().StringVar(&request.Environment, "environment", "", "exact instance environment")
+	command.Flags().StringVar(&request.OperationID, "operation", "", "stable bootstrap operation identity")
+	_ = command.MarkFlagRequired("project")
+	_ = command.MarkFlagRequired("issuer")
+	_ = command.MarkFlagRequired("environment")
+	_ = command.MarkFlagRequired("operation")
+	return command
 }
 
 func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Command {

@@ -280,13 +280,9 @@ func (c *Controller) runQualificationAuthoring(
 			ctx, browser, "install authoring browser dependencies", err,
 		)
 	}
-	browserWorker, err := startQualificationJSONWorker(
-		rootContext,
-		c.root,
-		os.Environ(),
-		c.dockerBin,
-		"exec", "-i", browserContainer,
-		"node", "/work/authoring-worker.mjs",
+	browserWorker, err := c.startQualificationDockerJSONWorker(
+		rootContext, os.Environ(),
+		"exec", "-i", browserContainer, "node", "/work/authoring-worker.mjs",
 	)
 	if err != nil {
 		return report, fmt.Errorf("start qualification browser worker: %w", err)
@@ -379,11 +375,8 @@ func (c *Controller) runQualificationAuthoring(
 		os.Environ(),
 		"QUALIFICATION_KEYRING_PASSWORD="+keyringPassword,
 	)
-	clientWorker, err := startQualificationJSONWorker(
-		rootContext,
-		c.root,
-		clientEnvironment,
-		c.dockerBin,
+	clientWorker, err := c.startQualificationDockerJSONWorker(
+		rootContext, clientEnvironment,
 		"run", "--rm", "-i",
 		"--name", clientContainer,
 		"--network", "host",

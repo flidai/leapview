@@ -373,6 +373,38 @@ jobs:
             "dist/$package/qualification/validate-bundle.sh" "dist/$package"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
             cp image-reference.txt release-identity.json "dist/$package/"
+            local_runtime_dir="dist/$package/local-runtime"
+            mkdir -p "$local_runtime_dir"
+            cp deploy/local/compose.yaml deploy/local/README.md deploy/local/runtime-package.schema.json "$local_runtime_dir/"
+            cp deploy/postgres/init.sh "$local_runtime_dir/postgres-init.sh"
+            chmod 0644 "$local_runtime_dir/compose.yaml" "$local_runtime_dir/README.md" "$local_runtime_dir/runtime-package.schema.json"
+            chmod 0755 "$local_runtime_dir/postgres-init.sh"
+            test "$(sha256sum "$local_runtime_dir/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
+            postgres_image="$(awk '/^[[:space:]]+image: docker.io\/library\/postgres:/{print $2; exit}' deploy/local/compose.yaml)"
+            test -n "$postgres_image"
+            POSTGRES_IMAGE="$postgres_image" python3 - "$local_runtime_dir/runtime-package.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], "w", encoding="utf-8") as target:
+              json.dump({
+                  "schemaVersion": 1,
+                  "persistentStateSchemaVersion": 1,
+                  "composeMinimumVersion": "2.17.0",
+                  "leapview": {
+                      "version": os.environ["BUILD_VERSION"],
+                      "revision": os.environ["BUILD_REVISION"],
+                      "image": os.environ["IMAGE_REFERENCE"],
+                  },
+                  "postgres": {
+                      "major": 18,
+                      "image": os.environ["POSTGRES_IMAGE"],
+                  },
+              }, target, indent=2)
+              target.write("\n")
+          PY
+            chmod 0644 "$local_runtime_dir/runtime-package.json"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
               (
                 cd "dist/$package"
