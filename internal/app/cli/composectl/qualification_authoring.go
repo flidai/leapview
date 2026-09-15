@@ -96,20 +96,22 @@ func qualificationReviewerCapabilities() []string {
 }
 
 type qualificationAuthoringReport struct {
-	SchemaVersion  int                          `json:"schemaVersion"`
-	Result         string                       `json:"result"`
-	Target         string                       `json:"target"`
-	Candidate      string                       `json:"candidate"`
-	Revision       int64                        `json:"revision"`
-	SourceArtifact string                       `json:"sourceArtifact"`
-	Artifact       string                       `json:"artifact"`
-	ReleaseDigest  string                       `json:"releaseDigest"`
-	Principal      string                       `json:"principal"`
-	SourceRevision string                       `json:"sourceRevision"`
-	GenerationID   string                       `json:"generationId"`
-	SnapshotSealID string                       `json:"snapshotSealId"`
-	Phases         []qualificationPhaseEvidence `json:"phases"`
-	Assertions     struct {
+	SchemaVersion               int                          `json:"schemaVersion"`
+	Result                      string                       `json:"result"`
+	Target                      string                       `json:"target"`
+	Candidate                   string                       `json:"candidate"`
+	Revision                    int64                        `json:"revision"`
+	SourceArtifact              string                       `json:"sourceArtifact"`
+	Artifact                    string                       `json:"artifact"`
+	ReleaseDigest               string                       `json:"releaseDigest"`
+	Principal                   string                       `json:"principal"`
+	SourceRevision              string                       `json:"sourceRevision"`
+	GenerationID                string                       `json:"generationId"`
+	SnapshotSealID              string                       `json:"snapshotSealId"`
+	AuthorizationPolicyRevision int64                        `json:"authorizationPolicyRevision"`
+	AuthorizationPolicyDigest   string                       `json:"authorizationPolicyDigest"`
+	Phases                      []qualificationPhaseEvidence `json:"phases"`
+	Assertions                  struct {
 		BrowserApprovedLogin    bool `json:"browserApprovedLogin"`
 		NativeKeyring           bool `json:"nativeKeyring"`
 		PrivatePreview          bool `json:"privatePreview"`
@@ -346,6 +348,19 @@ func (c *Controller) runQualificationAuthoring(
 	if administratorToken.AccessToken == "" {
 		return report, fmt.Errorf("browser worker returned an empty administrator token")
 	}
+	apiClient, err := qualificationHTTPSClient(certificateFile)
+	if err != nil {
+		return report, err
+	}
+	policyRevision, policyDigest, err := bootstrapQualificationRoleBindings(
+		ctx, apiClient, options.Target, options.ProjectID, options.Environment, administratorToken.AccessToken,
+		administrator.Principal.Id, reviewer.Principal.Id,
+	)
+	if err != nil {
+		return report, err
+	}
+	report.AuthorizationPolicyRevision = policyRevision
+	report.AuthorizationPolicyDigest = policyDigest
 	if err := browserWorker.CallContext(ctx, "signInReviewer", map[string]string{
 		"email":             qualificationReviewerEmail,
 		"temporaryPassword": reviewer.TemporaryPassword,
@@ -363,10 +378,6 @@ func (c *Controller) runQualificationAuthoring(
 		return report, fmt.Errorf("browser worker returned an empty reviewer token")
 	}
 	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
-	apiClient, err := qualificationHTTPSClient(certificateFile)
-	if err != nil {
 		return report, err
 	}
 	ctx = phases.Begin(rootContext, "native keyring login", 10*time.Minute)

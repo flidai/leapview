@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +18,162 @@ import (
 var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
 var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
 var ErrLocalPasswordPolicy = errors.New("local password does not meet policy")
+
+// Authorization policy is target-owned mutable control state. The portable
+// project manifest intentionally has no revision or digest fields; these
+// values are supplied only by this target authority and are consumed by
+// release planning as an exact qualified input.
+const AuthorizationPolicyProfile = "leapview.authorization-policy/v1"
+
+var (
+	ErrAuthorizationPolicyNotFound       = errors.New("authorization policy was not found")
+	ErrAuthorizationPolicyConflict       = errors.New("authorization policy conflicts with current state")
+	ErrAuthorizationPolicyStaleRevision  = errors.New("authorization policy revision is stale")
+	ErrAuthorizationPolicyIdempotency    = errors.New("authorization policy idempotency key conflicts with current state")
+	ErrAuthorizationPolicyInvalidScope   = errors.New("authorization policy scope is invalid")
+	ErrAuthorizationPolicyInvalidBinding = errors.New("authorization policy role binding is invalid")
+)
+
+// AuthorizationPolicyScope is the complete target-owned namespace for a
+// mutable authorization policy. TargetID is required even when project and
+// environment are already known: the same project can be served by several
+// independently controlled targets.
+type AuthorizationPolicyScope struct {
+	TargetID    string `json:"targetId"`
+	ProjectID   string `json:"projectId"`
+	Environment string `json:"environment"`
+}
+
+// RoleBinding is the canonical project-wide RBAC assignment shared by the
+// mutable target policy and immutable serving snapshots. Capabilities are
+// captured rather than expanded at read time so a release can bind the exact
+// role semantics it was qualified against.
+type RoleBinding struct {
+	ID           string       `json:"id"`
+	Name         string       `json:"name,omitempty"`
+	Subject      SubjectRef   `json:"subject"`
+	Role         ProjectRole  `json:"role"`
+	Capabilities []Capability `json:"capabilities"`
+}
+
+// AuthorizationPolicy is the exact target-owned policy document plus its
+// durable authority metadata. RoleBindings is always a defensive copy when
+// returned by a repository.
+type AuthorizationPolicy struct {
+	Scope        AuthorizationPolicyScope
+	Revision     int64
+	Digest       string
+	RoleBindings []RoleBinding
+}
+
+// AuthorizationRoleBindingInput is one exact-role upsert command. The
+// expected revision is a compare-and-swap fence: zero creates the first
+// policy revision, while a positive value must equal the current revision.
+// IdempotencyKey is mandatory so a retry after an unknown commit cannot apply
+// a second mutation.
+type AuthorizationRoleBindingInput struct {
+	Scope            AuthorizationPolicyScope
+	Binding          RoleBinding
+	ExpectedRevision int64
+	IdempotencyKey   string
+}
+
+// AuthorizationPolicyReader is intentionally narrow so release planning can
+// consume target policy state without gaining mutation authority.
+type AuthorizationPolicyReader interface {
+	AuthorizationPolicy(context.Context, AuthorizationPolicyScope) (AuthorizationPolicy, error)
+	AuthorizationPolicyRevision(context.Context, AuthorizationPolicyScope, int64) (AuthorizationPolicy, error)
+}
+
+// AuthorizationPolicyWriter is the mutation half of the target policy
+// boundary. Implementations must preserve CAS and idempotency semantics.
+type AuthorizationPolicyWriter interface {
+	UpsertAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingInput) (AuthorizationPolicy, error)
+}
+
+type AuthorizationPolicyRepository interface {
+	AuthorizationPolicyReader
+	AuthorizationPolicyWriter
+}
+
+// ValidateAuthorizationRoleBinding applies the same role and capability
+// validation used by serving snapshots without requiring a project graph.
+func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
+	if strings.TrimSpace(binding.ID) != binding.ID || binding.ID == "" || len(binding.ID) > 255 || strings.ContainsAny(binding.ID, "\x00\r\n") {
+		return fmt.Errorf("%w: binding id is invalid", ErrAuthorizationPolicyInvalidBinding)
+	}
+	if strings.TrimSpace(binding.Name) != binding.Name || len(binding.Name) > 255 || strings.ContainsAny(binding.Name, "\x00\r\n") {
+		return fmt.Errorf("%w: binding name is invalid", ErrAuthorizationPolicyInvalidBinding)
+	}
+	if err := binding.Subject.Validate(); err != nil {
+		return fmt.Errorf("%w: subject: %w", ErrAuthorizationPolicyInvalidBinding, err)
+	}
+	role, err := ParseProjectRole(string(binding.Role))
+	if err != nil {
+		return fmt.Errorf("%w: role: %w", ErrAuthorizationPolicyInvalidBinding, err)
+	}
+	want := ProjectRoleCapabilities(role)
+	if len(binding.Capabilities) != len(want) {
+		return fmt.Errorf("%w: role %q requires exactly %d capabilities", ErrAuthorizationPolicyInvalidBinding, role, len(want))
+	}
+	for index, capability := range binding.Capabilities {
+		if capability != want[index] {
+			return fmt.Errorf("%w: role %q has a non-canonical capability bundle", ErrAuthorizationPolicyInvalidBinding, role)
+		}
+	}
+	return nil
+}
+
+// ValidateAuthorizationPolicyScope rejects malformed or ambiguous target
+// namespaces before any database access. It is deliberately stricter than a
+// SQL text type so callers cannot smuggle scope through whitespace/control
+// characters.
+func ValidateAuthorizationPolicyScope(scope AuthorizationPolicyScope) error {
+	for label, value := range map[string]string{"target id": scope.TargetID, "project id": scope.ProjectID, "environment": scope.Environment} {
+		if value == "" || value != strings.TrimSpace(value) || len(value) > 255 || strings.ContainsAny(value, "\x00\r\n\t") {
+			return fmt.Errorf("%w: %s is invalid", ErrAuthorizationPolicyInvalidScope, label)
+		}
+	}
+	return nil
+}
+
+// AuthorizationPolicyDigest computes the stable identity of one qualified
+// target policy. Input ordering never affects the result; duplicate binding
+// IDs or subject/role keys are rejected rather than silently canonicalized.
+func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBinding) (string, error) {
+	if err := ValidateAuthorizationPolicyScope(scope); err != nil {
+		return "", err
+	}
+	canonical := append([]RoleBinding(nil), bindings...)
+	sort.Slice(canonical, func(i, j int) bool { return canonical[i].ID < canonical[j].ID })
+	seenID := make(map[string]struct{}, len(canonical))
+	seenSubjectRole := make(map[string]struct{}, len(canonical))
+	for i := range canonical {
+		if err := ValidateAuthorizationRoleBinding(canonical[i]); err != nil {
+			return "", fmt.Errorf("binding %q: %w", canonical[i].ID, err)
+		}
+		if _, exists := seenID[canonical[i].ID]; exists {
+			return "", fmt.Errorf("%w: duplicate binding id %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
+		}
+		seenID[canonical[i].ID] = struct{}{}
+		key := string(canonical[i].Subject.Kind) + "\x00" + canonical[i].Subject.ID + "\x00" + string(canonical[i].Role)
+		if _, exists := seenSubjectRole[key]; exists {
+			return "", fmt.Errorf("%w: duplicate subject/role for %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
+		}
+		seenSubjectRole[key] = struct{}{}
+	}
+	wire := struct {
+		Profile      string                   `json:"profile"`
+		Scope        AuthorizationPolicyScope `json:"scope"`
+		RoleBindings []RoleBinding            `json:"roleBindings"`
+	}{Profile: AuthorizationPolicyProfile, Scope: scope, RoleBindings: canonical}
+	encoded, err := json.Marshal(wire)
+	if err != nil {
+		return "", fmt.Errorf("encode authorization policy digest: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
 
 const (
 	MinimumLocalPasswordCharacters = 12

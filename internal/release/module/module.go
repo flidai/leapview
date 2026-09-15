@@ -61,12 +61,16 @@ type Config struct {
 	Deployments release.DeploymentLinkage
 	// States is the immutable serving-state authority used by native PostgreSQL
 	// composition.
-	States               ServingStateReader
-	ManagedDataPins      ManagedDataPins
-	Environment          servingstate.Environment
-	API                  APIConfig
-	Logger               *slog.Logger
-	ExtensionPreparation extension.Preparation
+	States          ServingStateReader
+	ManagedDataPins ManagedDataPins
+	// TargetID and AuthorizationPolicies are the target-owned authorization
+	// authority used to bind an exact policy revision into every native plan.
+	TargetID              string
+	AuthorizationPolicies access.AuthorizationPolicyReader
+	Environment           servingstate.Environment
+	API                   APIConfig
+	Logger                *slog.Logger
+	ExtensionPreparation  extension.Preparation
 	// CandidateSourceReader is the optional native object-backed source reader.
 	// Native candidate inspect is enabled only when this capability is present.
 	CandidateSourceReader project.CandidateSourceObjectReader
@@ -226,6 +230,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.States == nil {
 		return nil, errors.New("native PostgreSQL release module requires immutable serving-state reader")
 	}
+	if strings.TrimSpace(config.TargetID) == "" || config.AuthorizationPolicies == nil {
+		return nil, errors.New("native PostgreSQL release module requires target authorization policy authority")
+	}
 	hasSourceReader := config.CandidateSourceReader != nil
 	hasArtifactStore := config.CandidateArtifactStore != nil
 	hasStorageDomain := config.StorageSecurityDomain != ""
@@ -302,6 +309,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			reader: config.CandidateSourceReader, environment: environment,
 			states: config.States, provenance: servingProvenance,
 			artifacts: config.CandidateArtifactStore, storageDomain: config.StorageSecurityDomain,
+			targetID: config.TargetID, authorizationPolicies: config.AuthorizationPolicies,
 			pins: config.ManagedDataPins, extensionPreparation: config.ExtensionPreparation,
 		}
 	}

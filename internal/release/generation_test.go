@@ -17,7 +17,7 @@ func TestProvenanceBindsExactGenerationAndBaseIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := ProvenanceInput{Artifact: ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ContentDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1}, Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"}, Plan: GenerationPlanProvenance{Identity: identity, BaseIdentity: &base, TargetID: "target_1", RuntimeVersion: "runtime", PolicyDigest: sha('d'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseBase}}
+	input := ProvenanceInput{Artifact: ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ContentDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1}, Candidate: CandidateProvenance{ID: "candidate_1", Revision: 1, OwnerID: "principal_1"}, Plan: GenerationPlanProvenance{Identity: identity, BaseIdentity: &base, TargetID: "target_1", RuntimeVersion: "runtime", PolicyDigest: sha('d'), PolicyRevision: 1, AuthorizationDigest: sha('e'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseBase}}
 	input.Plan.GateEvidence = testPlanGateEvidence(t, input.Artifact, input.Candidate, input.Plan)
 	p, err := NewProvenance(input)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestProvenanceAllowsInitialGenerationWithoutBaseIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := ProvenanceInput{Artifact: ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ContentDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1}, Candidate: CandidateProvenance{ID: "candidate_initial", Revision: 1, OwnerID: "principal_1"}, Plan: GenerationPlanProvenance{Identity: identity, TargetID: "target_initial", RuntimeVersion: "runtime", PolicyDigest: sha('d'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseBase}}
+	input := ProvenanceInput{Artifact: ProjectArtifactProvenance{SourceDigest: sha('a'), ProjectDigest: sha('b'), ContentDigest: sha('c'), CompilerVersion: "compiler", SchemaVersion: 1}, Candidate: CandidateProvenance{ID: "candidate_initial", Revision: 1, OwnerID: "principal_1"}, Plan: GenerationPlanProvenance{Identity: identity, TargetID: "target_initial", RuntimeVersion: "runtime", PolicyDigest: sha('d'), PolicyRevision: 1, AuthorizationDigest: sha('e'), DataRevision: "snapshot:1", DataMode: GenerationDataReuseBase}}
 	input.Plan.GateEvidence = testPlanGateEvidence(t, input.Artifact, input.Candidate, input.Plan)
 	p, err := NewProvenance(input)
 	if err != nil {

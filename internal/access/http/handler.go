@@ -58,13 +58,18 @@ type AuthoringAuthentication interface {
 }
 
 type Handler struct {
-	Repository                   RepositoryProvider
-	CurrentPrincipal             PrincipalProvider
-	CurrentCredential            CredentialProvider
-	CurrentSession               SessionProvider
-	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	RequestEffectiveCapabilities EffectiveCapabilitiesProvider
+	Repository RepositoryProvider
+	// AuthorizationPolicyTargetID and AuthorizationPolicyEnvironment are
+	// target-owned configuration. They are deliberately not read from request
+	// fields so callers cannot select a policy namespace.
+	AuthorizationPolicyTargetID    string
+	AuthorizationPolicyEnvironment string
+	CurrentPrincipal               PrincipalProvider
+	CurrentCredential              CredentialProvider
+	CurrentSession                 SessionProvider
+	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
+	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
+	RequestEffectiveCapabilities   EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally
 	// applies request-credential attenuation.

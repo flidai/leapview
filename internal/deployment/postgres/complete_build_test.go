@@ -71,7 +71,7 @@ func newCompleteBuildFixtureWithSuffixBindingAndLifetime(t *testing.T, r *Reposi
 	}
 	f.Commit = CommitAttemptInput{AttemptID: f.AttemptID, OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch, SnapshotID: 42, CommitMarker: testCommitMarker(f.AttemptID, "pool-complete", f.RequestDigest, f.PlanDigest)}
 	f.Seal = SnapshotSealInput{
-		SealID: f.SealID, AttemptID: f.AttemptID, CandidateID: f.CandidateID, PhysicalPoolID: "pool-complete", TenantDomain: "tenant-complete", Region: "us-east", EncryptionDomain: "enc-complete", ObjectNamespace: "objects/complete", CatalogDatabase: "ducklake", CatalogID: "catalog-complete", CatalogUUID: fmt.Sprintf("0198f2c0-7c7a-7f00-0000-00000000%s006", suffix), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/complete", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/complete/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/complete", ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-complete", ServingArtifactDigest: f.ArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`),
+		SealID: f.SealID, AttemptID: f.AttemptID, CandidateID: f.CandidateID, PhysicalPoolID: "pool-complete", TenantDomain: "tenant-complete", Region: "us-east", EncryptionDomain: "enc-complete", ObjectNamespace: "objects/complete", CatalogDatabase: "ducklake", CatalogID: "catalog-complete", CatalogUUID: fmt.Sprintf("0198f2c0-7c7a-7f00-0000-00000000%s006", suffix), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/complete", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/complete/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/complete", ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), AuthorizationPolicyRevision: 1, AuthorizationPolicyDigest: testDigest('a'), RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-complete", ServingArtifactDigest: f.ArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`),
 	}
 	if bind {
 		if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: f.AttemptID, ServingArtifactID: f.Seal.ServingArtifactID, ServingArtifactDigest: f.Seal.ServingArtifactDigest, ServingStateID: "generation-test", OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch}); err != nil {
@@ -596,5 +596,21 @@ func TestPostgresBuildCompletionRequiresArtifactBindingIdentity(t *testing.T) {
 	wrongCatalog.CatalogID = "catalog-other"
 	if _, err := r.CreateSnapshotSeal(ctx, wrongCatalog); !errors.Is(err, ErrNotQualified) {
 		t.Fatalf("mismatched attempt catalog = %v, want ErrNotQualified", err)
+	}
+}
+
+func TestPostgresSnapshotSealRejectsLegacyMarkerForPost017Plan(t *testing.T) {
+	ctx := t.Context()
+	r := New(deliveryTestDB(t))
+	f := newCompleteBuildFixtureWithSuffix(t, r, "7")
+	if _, err := r.CommitBuildAttempt(ctx, f.Commit); err != nil {
+		t.Fatal(err)
+	}
+	legacy := f.Seal
+	legacy.AuthorizationPolicyRevision = 0
+	legacy.AuthorizationPolicyDigest = ""
+	legacy.LegacyAuthorizationPolicy = true
+	if _, err := r.CreateSnapshotSeal(ctx, legacy); !errors.Is(err, ErrConflict) {
+		t.Fatalf("post-017 plan legacy seal error = %v, want conflict", err)
 	}
 }

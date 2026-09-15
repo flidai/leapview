@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -81,6 +82,16 @@ func (s deploymentStub) Configured() bool   { return s.configured }
 
 type unmarkedDeploymentStub struct{ release.DeploymentLinkage }
 
+type authorizationPolicyReaderStub struct{}
+
+func (authorizationPolicyReaderStub) AuthorizationPolicy(context.Context, access.AuthorizationPolicyScope) (access.AuthorizationPolicy, error) {
+	return access.AuthorizationPolicy{}, access.ErrAuthorizationPolicyNotFound
+}
+
+func (authorizationPolicyReaderStub) AuthorizationPolicyRevision(context.Context, access.AuthorizationPolicyScope, int64) (access.AuthorizationPolicy, error) {
+	return access.AuthorizationPolicy{}, access.ErrAuthorizationPolicyNotFound
+}
+
 func TestBuildRejectsUnmarkedNativePostgreSQLAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	// Deliberately bypass NewPostgresPersistence to ensure Build still validates
@@ -133,7 +144,8 @@ func TestBuildRequiresNativePostgreSQLArtifactLifecycle(t *testing.T) {
 	}
 	if _, err := Build(t.Context(), Config{
 		Persistence: &persistence, Catalog: nativeCatalogStub{configured: true},
-		States: nativeServingStateReaderStub{}, Environment: "dev",
+		States: nativeServingStateReaderStub{}, TargetID: "target-dev",
+		AuthorizationPolicies: authorizationPolicyReaderStub{}, Environment: "dev",
 	}); err == nil || !strings.Contains(err.Error(), "candidate source reader, artifact store, and storage security domain") {
 		t.Fatalf("missing native artifact lifecycle error = %v", err)
 	}
@@ -200,7 +212,8 @@ func configuredNativeReleaseConfig(t *testing.T, persistence *Persistence) Confi
 	}
 	return Config{
 		Persistence: persistence, Catalog: nativeCatalogStub{configured: true},
-		States: nativeServingStateReaderStub{}, Environment: "dev",
+		States: nativeServingStateReaderStub{}, TargetID: "target-dev",
+		AuthorizationPolicies: authorizationPolicyReaderStub{}, Environment: "dev",
 		CandidateSourceReader: &nativeInspectReaderStub{}, CandidateArtifactStore: store,
 		StorageSecurityDomain: "release-test",
 	}
