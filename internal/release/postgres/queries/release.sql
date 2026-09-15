@@ -224,3 +224,179 @@ FROM release.migration_capability
 WHERE artifact_admission_digest = $1
   AND target_identity_digest = $2
   AND subsystem = $3;
+
+-- Durable transition operation persistence. The repository performs the
+-- canonical identity comparison and maps affected-row counts to its typed
+-- conflict/fence errors.
+-- name: InsertTransitionOperation :execrows
+INSERT INTO release.release_transition_operation
+    (operation_id, target_identity_digest, predecessor_artifact_digest,
+     candidate_artifact_digest, recovery_frontier_id, recovery_frontier_digest,
+     preflight_evidence_digest, preflight_evidence, idempotency_key,
+     request_digest, status, current_phase)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(target_identity_digest),
+        sqlc.arg(predecessor_artifact_digest), sqlc.arg(candidate_artifact_digest),
+        sqlc.arg(recovery_frontier_id), sqlc.arg(recovery_frontier_digest),
+        sqlc.arg(preflight_evidence_digest), sqlc.arg(preflight_evidence),
+        sqlc.arg(idempotency_key), sqlc.arg(request_digest), 'pending', 'preflight')
+ON CONFLICT (target_identity_digest, idempotency_key) DO NOTHING;
+
+-- name: GetTransitionOperation :one
+SELECT operation_id, target_identity_digest, predecessor_artifact_digest,
+       candidate_artifact_digest, recovery_frontier_id, recovery_frontier_digest,
+       preflight_evidence_digest, preflight_evidence, idempotency_key,
+       request_digest, status, current_phase, owner_id, fencing_generation,
+       COALESCE(lease_expires_at, 'epoch'::timestamptz), created_at, updated_at,
+       COALESCE(terminal_at, 'epoch'::timestamptz)
+FROM release.release_transition_operation
+WHERE operation_id = $1::uuid;
+
+-- name: GetTransitionOperationByIdempotency :one
+SELECT operation_id, target_identity_digest, predecessor_artifact_digest,
+       candidate_artifact_digest, recovery_frontier_id, recovery_frontier_digest,
+       preflight_evidence_digest, preflight_evidence, idempotency_key,
+       request_digest, status, current_phase, owner_id, fencing_generation,
+       COALESCE(lease_expires_at, 'epoch'::timestamptz), created_at, updated_at,
+       COALESCE(terminal_at, 'epoch'::timestamptz)
+FROM release.release_transition_operation
+WHERE target_identity_digest = $1 AND idempotency_key = $2;
+
+-- name: LockTransitionOperationByIdempotency :one
+SELECT operation_id, target_identity_digest, predecessor_artifact_digest,
+       candidate_artifact_digest, recovery_frontier_id, recovery_frontier_digest,
+       preflight_evidence_digest, preflight_evidence, idempotency_key,
+       request_digest, status, current_phase, owner_id, fencing_generation,
+       COALESCE(lease_expires_at, 'epoch'::timestamptz), created_at, updated_at,
+       COALESCE(terminal_at, 'epoch'::timestamptz)
+FROM release.release_transition_operation
+WHERE target_identity_digest = $1 AND idempotency_key = $2
+FOR UPDATE;
+
+-- name: LockTransitionOperation :one
+SELECT operation_id, target_identity_digest, predecessor_artifact_digest,
+       candidate_artifact_digest, recovery_frontier_id, recovery_frontier_digest,
+       preflight_evidence_digest, preflight_evidence, idempotency_key,
+       request_digest, status, current_phase, owner_id, fencing_generation,
+       COALESCE(lease_expires_at, 'epoch'::timestamptz), created_at, updated_at,
+       COALESCE(terminal_at, 'epoch'::timestamptz)
+FROM release.release_transition_operation
+WHERE operation_id = $1::uuid
+FOR UPDATE;
+
+-- name: LockTransitionFence :one
+SELECT target_identity_digest, operation_id, owner_id, fencing_generation,
+       lease_expires_at, updated_at
+FROM release.release_transition_fence
+WHERE target_identity_digest = $1
+FOR UPDATE;
+
+-- name: CurrentTransitionDatabaseTime :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: EnsureTransitionFence :execrows
+INSERT INTO release.release_transition_fence(target_identity_digest)
+VALUES ($1)
+ON CONFLICT (target_identity_digest) DO NOTHING;
+
+-- name: MarkTransitionIndeterminate :execrows
+UPDATE release.release_transition_operation
+SET status = 'indeterminate', terminal_at = clock_timestamp(), owner_id = '',
+    lease_expires_at = NULL, updated_at = clock_timestamp()
+WHERE operation_id = $1::uuid AND status = 'running';
+
+-- name: ClearTransitionFence :execrows
+UPDATE release.release_transition_fence
+SET operation_id = NULL, owner_id = '', lease_expires_at = NULL,
+    updated_at = clock_timestamp()
+WHERE target_identity_digest = $1
+  AND ($2::uuid IS NULL OR operation_id = $2::uuid)
+  AND ($3::text = '' OR owner_id = $3)
+  AND ($4::bigint < 0 OR fencing_generation = $4);
+
+-- name: ClaimTransitionFence :execrows
+UPDATE release.release_transition_fence
+SET operation_id = $1::uuid, owner_id = $2, fencing_generation = $3,
+    lease_expires_at = clock_timestamp() + $4::interval,
+    updated_at = clock_timestamp()
+WHERE target_identity_digest = $5;
+
+-- name: ClaimTransitionOperation :execrows
+UPDATE release.release_transition_operation
+SET owner_id = $1, fencing_generation = $2,
+    lease_expires_at = clock_timestamp() + $3::interval,
+    updated_at = clock_timestamp(), status = 'running'
+WHERE operation_id = $4::uuid AND status IN ('pending','running');
+
+-- name: InsertTransitionPhaseResult :execrows
+INSERT INTO release.release_transition_phase_result
+    (operation_id, phase, result_status, result_digest, result_bytes,
+     started_at, completed_at)
+VALUES (sqlc.arg(operation_id)::uuid, sqlc.arg(phase), sqlc.arg(result_status),
+        sqlc.arg(result_digest), sqlc.arg(result_bytes),
+        sqlc.arg(started_at), sqlc.arg(completed_at))
+ON CONFLICT (operation_id, phase) DO NOTHING;
+
+-- name: GetTransitionPhaseResult :one
+SELECT result_status, result_digest, result_bytes
+FROM release.release_transition_phase_result
+WHERE operation_id = $1::uuid AND phase = $2;
+
+-- name: ListTransitionPhaseResults :many
+SELECT phase, result_status, result_digest, result_bytes, started_at,
+       completed_at
+FROM release.release_transition_phase_result
+WHERE operation_id = $1::uuid
+ORDER BY CASE phase WHEN 'preflight' THEN 1 WHEN 'migrations' THEN 2
+                    WHEN 'candidate-staged' THEN 3 WHEN 'candidate-activated' THEN 4
+                    WHEN 'candidate-restarted' THEN 5 WHEN 'post-validated' THEN 6
+                    WHEN 'success' THEN 7 END;
+
+-- name: AdvanceTransitionOperation :execrows
+UPDATE release.release_transition_operation
+SET status = $1, current_phase = $2, updated_at = clock_timestamp(),
+    terminal_at = CASE WHEN $1 IN ('completed','failed','indeterminate') THEN clock_timestamp() ELSE NULL END,
+    owner_id = CASE WHEN $1 IN ('completed','failed','indeterminate') THEN '' ELSE owner_id END,
+    lease_expires_at = CASE WHEN $1 IN ('completed','failed','indeterminate') THEN NULL ELSE lease_expires_at END
+WHERE operation_id = $3::uuid AND owner_id = $4 AND fencing_generation = $5
+  AND (lease_expires_at > clock_timestamp() OR $1 = 'indeterminate')
+  AND status IN ('pending','running');
+
+-- name: RenewTransitionFence :one
+UPDATE release.release_transition_fence
+SET lease_expires_at = clock_timestamp() + $1::interval,
+    updated_at = clock_timestamp()
+WHERE target_identity_digest = $5 AND operation_id = $2::uuid AND owner_id = $3
+  AND fencing_generation = $4 AND lease_expires_at > clock_timestamp()
+RETURNING target_identity_digest, operation_id, owner_id, fencing_generation,
+          lease_expires_at, updated_at;
+
+-- name: UpdateTransitionOperationLease :execrows
+UPDATE release.release_transition_operation
+SET lease_expires_at = $1, updated_at = clock_timestamp()
+WHERE operation_id = $2::uuid AND owner_id = $3 AND fencing_generation = $4
+  AND lease_expires_at > clock_timestamp();
+
+-- name: ValidateTransitionFence :one
+SELECT f.lease_expires_at > clock_timestamp() AS active
+FROM release.release_transition_fence f
+JOIN release.release_transition_operation o
+  ON o.target_identity_digest = f.target_identity_digest
+WHERE f.operation_id = $1::uuid AND f.owner_id = $2
+  AND f.fencing_generation = $3 AND f.operation_id = o.operation_id;
+
+-- name: ReleaseTransitionFence :execrows
+UPDATE release.release_transition_fence f
+SET operation_id = NULL, owner_id = '', lease_expires_at = NULL,
+    updated_at = clock_timestamp()
+FROM release.release_transition_operation o
+WHERE f.target_identity_digest = o.target_identity_digest
+  AND f.operation_id = $1::uuid AND f.owner_id = $2
+  AND f.fencing_generation = $3 AND o.operation_id = f.operation_id
+  AND o.status IN ('completed','failed','indeterminate');
+
+-- name: CompleteTransitionOperation :execrows
+UPDATE release.release_transition_operation
+SET status = $1, terminal_at = clock_timestamp(), owner_id = '',
+    lease_expires_at = NULL, updated_at = clock_timestamp()
+WHERE operation_id = $2::uuid AND owner_id = $3 AND fencing_generation = $4
+  AND lease_expires_at > clock_timestamp();
