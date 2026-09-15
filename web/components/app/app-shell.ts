@@ -49,6 +49,12 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
       border-right: 0;
     }
 
+    :host([data-asset-page]) lv-sidebar[data-collapsed] + main {
+      --lv-chrome-rule-gutter: calc(var(--base-size-28) + (var(--base-size-8) * 2));
+      margin-left: calc(-1 * var(--lv-chrome-rule-gutter));
+      padding-left: var(--lv-chrome-rule-gutter);
+    }
+
     main {
       min-width: 0;
       min-height: 0;
@@ -86,6 +92,12 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
         overflow-y: auto;
       }
 
+      :host([data-asset-page]) main {
+        --lv-chrome-rule-gutter: calc(var(--base-size-28) + (var(--base-size-8) * 2));
+        margin-left: calc(-1 * var(--lv-chrome-rule-gutter));
+        padding-left: var(--lv-chrome-rule-gutter);
+      }
+
       ::slotted([slot='page']) {
         min-height: 100%;
       }
@@ -100,6 +112,12 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
   updated(): void {
     checkSignalContract('chrome', this.chrome, { sidebar: 'required' })
     this.toggleAttribute('data-dashboard', this.isAppDashboard)
+    this.syncAssetPage()
+  }
+
+  private syncAssetPage = (): void => {
+    const page = this.querySelector('[slot="page"]')
+    this.toggleAttribute('data-asset-page', page?.localName === 'lv-project-asset-page')
   }
 
   get chrome(): ChromeSignal {
@@ -124,7 +142,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     return html`
       ${this.isAppDashboard ? null : html`<lv-sidebar .config=${this.chrome.sidebar}></lv-sidebar>`}
       <main>
-        <slot name="page"></slot>
+        <slot name="page" @slotchange=${this.syncAssetPage}></slot>
       </main>
       <lv-product-search
         .open=${this.productSearchOpen}

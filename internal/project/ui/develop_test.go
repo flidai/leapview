@@ -177,7 +177,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsDimensionsMetricsRelationsh
 	if definitionPage.Details == nil || definitionPage.Definition == nil {
 		t.Fatalf("semantic model definition page = %#v, want model details and authored source", definitionPage)
 	}
-	wantTabs := map[string]string{"details": "Overview", "definition": "Model", "data": "Explore"}
+	wantTabs := map[string]string{"details": "Overview", "definition": "Definition", "data": "Explore"}
 	for _, tab := range definitionPage.Tabs {
 		if want, ok := wantTabs[tab.ID]; ok && tab.Label != want {
 			t.Fatalf("semantic model tab %q label = %q, want %q", tab.ID, tab.Label, want)

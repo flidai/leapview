@@ -56,14 +56,19 @@ func TestProviderUsesDevelopNavigationForTechnicalRoutes(t *testing.T) {
 			if chrome.Sidebar.Area != "develop" || chrome.Sidebar.Admin {
 				t.Fatalf("sidebar = %#v, want develop area", chrome.Sidebar)
 			}
-			if len(chrome.Sidebar.Groups) != 1 {
-				t.Fatalf("develop navigation = %#v", chrome.Sidebar.Groups)
+			if len(chrome.Sidebar.Groups) != 2 || chrome.Sidebar.Groups[0].Label != "Catalog" || chrome.Sidebar.Groups[1].Label != "Operations" {
+				t.Fatalf("develop navigation groups = %#v, want Catalog and Operations", chrome.Sidebar.Groups)
 			}
 			got := []string{}
 			gotIcons := []string{}
-			for _, item := range chrome.Sidebar.Groups[0].Items {
-				got = append(got, item.ID)
-				gotIcons = append(gotIcons, item.Icon)
+			for _, group := range chrome.Sidebar.Groups {
+				for _, item := range group.Items {
+					got = append(got, item.ID)
+					gotIcons = append(gotIcons, item.Icon)
+				}
+			}
+			if len(chrome.Sidebar.Groups[0].Items) != 6 || len(chrome.Sidebar.Groups[1].Items) != 1 || chrome.Sidebar.Groups[1].Items[0].ID != "runs" {
+				t.Fatalf("develop navigation item grouping = %#v", chrome.Sidebar.Groups)
 			}
 			want := []string{"sources", "models", "semantic-models", "dashboard-catalog", "pipelines", "connections", "runs"}
 			wantIcons := []string{"database", "boxes", "waypoints", "dashboard", "workflow", "data", "activity"}

@@ -294,7 +294,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       : ''
     if (page && assetDefinitionPageKey && assetDefinitionPageKey !== this.assetDefinitionPageKey) {
       this.assetDefinitionPageKey = assetDefinitionPageKey
-      this.assetDefinitionView = assetDefinitionViewFromLocation(assetDefinitionViews(page))
+      const views = assetDefinitionViews(page)
+      this.assetDefinitionView = assetDefinitionViewFromLocation(views)
       this.assetDefinitionQuery = ''
     }
     const drawerPageKey = page?.asset.type === 'model' && page.activeSection === 'definition'
@@ -679,7 +680,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs, 'Connection sections')}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : 'section-body'}>
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'definition' ? 'section-body definition-body' : 'section-body'}>
             ${feedback}
             ${this.renderSection(page)}
           </div>
@@ -717,7 +718,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </header>
         <div class="asset-body">
           ${renderTabs(page.tabs)}
-          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.asset.type === 'semantic_model' && (page.activeSection === 'details' || page.activeSection === 'definition') ? 'section-body semantic-model-body' : 'section-body'}>
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : page.activeSection === 'data' ? 'section-body data-body' : page.activeSection === 'definition' ? 'section-body definition-body' : page.asset.type === 'semantic_model' && page.activeSection === 'details' ? 'section-body semantic-model-body' : 'section-body'}>
             ${this.renderSection(page)}
           </div>
         </div>
@@ -821,19 +822,9 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     const table = filterRecordTable(selected?.section?.table, this.assetDefinitionQuery)
     return html`
       <section class="semantic-model-view asset-definition-view" id="definition" aria-label="Definition">
-        <header class="semantic-model-toolbar">
-          <h2>Definition</h2>
-        </header>
         <div class="semantic-model-layout">
-          <nav class="semantic-model-navigation" aria-label="Definition views">
-            <span class="semantic-model-navigation-label">Structure</span>
-            ${views.filter((view) => view.kind !== 'source').map((view) => renderAssetDefinitionNavigationItem(
-              view,
-              selected?.id ?? '',
-              (id) => this.selectAssetDefinitionView(id),
-            ))}
-            <span class="semantic-model-navigation-separator" aria-hidden="true"></span>
-            ${views.filter((view) => view.kind === 'source').map((view) => renderAssetDefinitionNavigationItem(
+          <nav class="semantic-model-navigation" aria-label="Definition sections">
+            ${views.map((view) => renderAssetDefinitionNavigationItem(
               view,
               selected?.id ?? '',
               (id) => this.selectAssetDefinitionView(id),
@@ -848,10 +839,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                     ? html`
                       <div class="semantic-object-list">
                         <div class="semantic-object-list-header">
-                          <div>
-                            <h2>${semanticSectionName(selected.section.title)}</h2>
-                            <p>${detailSectionCount(selected.section)} objects</p>
-                          </div>
+                          <h2>${semanticSectionName(selected.section.title)}</h2>
                           ${selected.section.table?.rows?.length
                             ? html`
                               <label class="semantic-object-search-wrap">
@@ -901,14 +889,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     const selectedSection = sections.find((section) => semanticSectionSlug(section.title) === this.semanticModelView)
     const table = filterRecordTable(selectedSection?.table, this.semanticObjectQuery)
     return html`
-      <section class="semantic-model-view" id="definition" aria-label="Model">
-        <header class="semantic-model-toolbar">
-          <h2>Model</h2>
-        </header>
+      <section class="semantic-model-view" id="definition" aria-label="Definition">
         <div class="semantic-model-layout">
-          <nav class="semantic-model-navigation" aria-label="Model views">
+          <nav class="semantic-model-navigation" aria-label="Definition sections">
             ${renderSemanticModelNavigationItem('diagram', 'Diagram', undefined, this.semanticModelView, (view) => this.selectSemanticModelView(view))}
-            <span class="semantic-model-navigation-label">Objects</span>
             ${sections.map((section) => renderSemanticModelNavigationItem(
               semanticSectionSlug(section.title),
               semanticSectionName(section.title),
@@ -916,7 +900,6 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
               this.semanticModelView,
               (view) => this.selectSemanticModelView(view),
             ))}
-            <span class="semantic-model-navigation-separator" aria-hidden="true"></span>
             ${renderSemanticModelNavigationItem('source', 'Source', undefined, this.semanticModelView, (view) => this.selectSemanticModelView(view))}
           </nav>
           <div class="semantic-model-content">
@@ -928,10 +911,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                   ? html`
                     <div class="semantic-object-list">
                       <div class="semantic-object-list-header">
-                        <div>
-                          <h2>${semanticSectionName(selectedSection.title)}</h2>
-                          <p>${selectedSection.table?.rows?.length ?? 0} objects</p>
-                        </div>
+                        <h2>${semanticSectionName(selectedSection.title)}</h2>
                         <label class="semantic-object-search-wrap">
                           <span class="visually-hidden">Search ${semanticSectionName(selectedSection.title).toLowerCase()}</span>
                           ${lucideIcon(Search, { size: 16 })}
@@ -1782,8 +1762,26 @@ const projectStyles = css`
   }
 
   .breadcrumb-header {
+    position: relative;
     border-bottom: var(--lv-border-muted);
     padding: var(--lv-space-control) var(--base-size-16);
+  }
+
+  .breadcrumb-header::before,
+  .asset-body > .tabs::before {
+    position: absolute;
+    right: 100%;
+    bottom: -1px;
+    box-sizing: border-box;
+    width: var(--lv-chrome-rule-gutter, 0);
+    height: 0;
+    border-bottom: var(--lv-border-muted);
+    content: '';
+    pointer-events: none;
+  }
+
+  .asset-body > .tabs::before {
+    border-bottom: var(--lv-border-default);
   }
 
   .title-block {
@@ -2173,6 +2171,7 @@ const projectStyles = css`
   }
 
   .asset-body > .tabs {
+    position: relative;
     padding-inline: var(--base-size-16);
   }
 
@@ -2197,6 +2196,7 @@ const projectStyles = css`
   }
 
   .graph-details-body,
+  .definition-body,
   .semantic-model-body {
     padding: 0;
   }
@@ -2215,10 +2215,6 @@ const projectStyles = css`
 
   .semantic-model-details-page {
     gap: 0;
-  }
-
-  .semantic-model-overview {
-    border-bottom: var(--lv-border-muted);
   }
 
   .semantic-overview-panels {
@@ -2433,15 +2429,13 @@ const projectStyles = css`
     gap: var(--base-size-16);
   }
 
-  .semantic-model-summary-heading > div,
-  .semantic-object-list-header > div {
+  .semantic-model-summary-heading > div {
     display: grid;
     min-width: 0;
     gap: var(--base-size-4);
   }
 
-  .semantic-model-summary-heading p,
-  .semantic-object-list-header p {
+  .semantic-model-summary-heading p {
     color: var(--lv-fg-muted);
     font: var(--lv-type-body-compact);
   }
@@ -2531,76 +2525,61 @@ const projectStyles = css`
   .semantic-model-view {
     display: grid;
     min-height: 0;
-    background: var(--lv-bg-panel);
-  }
-
-  .semantic-model-toolbar {
-    display: flex;
-    min-width: 0;
-    min-height: var(--control-xlarge-size);
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--base-size-16);
-    border-bottom: var(--lv-border-muted);
-    padding: var(--base-size-8) var(--base-size-16);
+    background: transparent;
   }
 
   .semantic-model-layout {
     display: grid;
     min-width: 0;
-    grid-template-columns: 13rem minmax(0, 1fr);
-    align-items: stretch;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
   }
 
   .semantic-model-navigation {
-    display: grid;
-    align-content: start;
+    display: flex;
+    min-width: 0;
+    align-items: stretch;
     gap: var(--base-size-4);
-    border-right: var(--lv-border-muted);
-    padding: var(--base-size-12);
-  }
-
-  .semantic-model-navigation-label {
-    padding: var(--base-size-12) var(--lv-space-control) var(--base-size-4);
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
-  }
-
-  .semantic-model-navigation-separator {
-    border-top: var(--lv-border-muted);
-    margin: var(--base-size-4) 0;
+    margin-top: var(--base-size-12);
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: var(--lv-border-muted);
+    padding: 0 var(--base-size-16);
+    scrollbar-width: thin;
   }
 
   .semantic-model-nav-item {
-    display: flex;
-    width: 100%;
+    display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
-    justify-content: space-between;
     gap: var(--base-size-8);
     border: 0;
-    border-radius: var(--lv-radius-default);
+    border-bottom: 2px solid transparent;
     background: transparent;
     color: var(--lv-fg-muted);
     cursor: pointer;
-    padding: var(--base-size-8) var(--lv-space-control);
-    text-align: left;
+    padding: var(--base-size-12) var(--base-size-8);
     font: var(--lv-type-body-compact);
+    white-space: nowrap;
   }
 
   .semantic-model-nav-item[data-active='true'] {
-    background: var(--lv-bg-control-hover);
+    border-bottom-color: var(--lv-fg-accent);
     color: var(--lv-fg-default);
-    font-weight: var(--base-text-weight-medium);
+    font-weight: var(--base-text-weight-normal, 400);
   }
 
   .semantic-model-nav-item strong {
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
+    font-weight: var(--base-text-weight-normal, 400);
   }
 
-  .semantic-model-nav-item:hover,
-  .semantic-model-nav-item:focus-visible {
+  .semantic-model-nav-item:hover {
     color: var(--lv-fg-default);
+  }
+
+  .semantic-model-nav-item:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-outline-offset);
   }
@@ -2739,7 +2718,7 @@ const projectStyles = css`
     min-height: 0;
     overflow: hidden;
     border-bottom: var(--lv-border-muted);
-    background: var(--lv-bg-panel);
+    background: transparent;
   }
 
   .lineage-grids {
@@ -2889,27 +2868,6 @@ const projectStyles = css`
     .semantic-overview-panels,
     .semantic-overview-impact-grid {
       grid-template-columns: 1fr;
-    }
-
-    .semantic-model-layout {
-      grid-template-columns: 1fr;
-    }
-
-    .semantic-model-navigation {
-      display: flex;
-      overflow-x: auto;
-      border-right: 0;
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .semantic-model-navigation-label,
-    .semantic-model-navigation-separator {
-      display: none;
-    }
-
-    .semantic-model-nav-item {
-      width: auto;
-      flex: 0 0 auto;
     }
 
     .semantic-object-list-header {

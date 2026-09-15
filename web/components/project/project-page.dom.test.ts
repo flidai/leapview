@@ -154,6 +154,9 @@ test('semantic model overview separates summary metadata from model inspection',
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
+      element.style.setProperty('--lv-border-muted', '1px solid currentColor')
+      element.style.setProperty('--lv-border-default', '1px solid currentColor')
+      element.style.setProperty('--lv-chrome-rule-gutter', '44px')
       const root = element.shadowRoot!
       const details = root.querySelector('#details') as HTMLElement
       return {
@@ -181,6 +184,15 @@ test('semantic model overview separates summary metadata from model inspection',
         downstreamAssetHref: details.querySelector<HTMLAnchorElement>('.semantic-overview-downstream-asset')?.getAttribute('href'),
         openModelLinks: details.querySelectorAll('.semantic-model-summary-heading > a').length,
         typeLabels: Array.from(details.querySelectorAll('dt')).filter((node) => node.textContent?.trim() === 'Type').length,
+        contentRules: {
+          afterOverview: getComputedStyle(details.querySelector('.semantic-model-overview') as HTMLElement).borderBottomWidth,
+          beforeContents: getComputedStyle(details.querySelector('.semantic-model-summary') as HTMLElement).borderTopWidth,
+          beforeImpact: getComputedStyle(details.querySelector('.semantic-overview-impact-grid') as HTMLElement).borderTopWidth,
+        },
+        chromeRuleExtensions: {
+          breadcrumb: getComputedStyle(root.querySelector('.breadcrumb-header') as HTMLElement, '::before').width,
+          tabs: getComputedStyle(root.querySelector('.asset-body > .tabs') as HTMLElement, '::before').width,
+        },
       }
     })
     expect(state.graphCount).toBe(0)
@@ -206,6 +218,8 @@ test('semantic model overview separates summary metadata from model inspection',
     ])
     expect(state.openModelLinks).toBe(0)
     expect(state.typeLabels).toBe(0)
+    expect(state.contentRules).toEqual({ afterOverview: '0px', beforeContents: '1px', beforeImpact: '1px' })
+    expect(state.chromeRuleExtensions).toEqual({ breadcrumb: '44px', tabs: '44px' })
     expect(state.impactHeadings).toEqual(['Upstream', 'Downstream impact'])
     expect(state.upstreamFacts).toEqual(['2 governed datasets', '1 refresh pipeline'])
     expect(state.lineageHref).toBe('/semantic-models/semantic:orders/lineage')
@@ -217,7 +231,7 @@ test('semantic model overview separates summary metadata from model inspection',
   }
 })
 
-test('semantic model Model page exposes every view directly and synchronizes URL history', async () => {
+test('semantic model Definition page exposes every view directly and synchronizes URL history', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=semantic-definition`)
@@ -235,20 +249,25 @@ test('semantic model Model page exposes every view directly and synchronizes URL
       await element.updateComplete
       const objectTable = root.querySelector('lv-record-table') as any
       const filteredRows = objectTable?.table?.rows?.length
+      const duplicateCount = root.querySelector('.semantic-object-list-header p')?.textContent?.trim() ?? null
       const metricsURL = window.location.search
       root.querySelector<HTMLButtonElement>('[data-model-view="source"]')!.click()
       await element.updateComplete
       return {
+        activeTab: root.querySelector('.tabs a[aria-current="page"]')?.textContent?.trim(),
         labels: labels(),
         filteredRows,
+        duplicateCount,
         metricsURL,
         sourceURL: window.location.search,
         sourceVisible: Boolean(root.querySelector('lv-config-viewer')),
         diagramVisibleAfterSource: Boolean(root.querySelector('lv-semantic-model-graph')),
       }
     })
+    expect(state.activeTab).toBe('Definition')
     expect(state.labels).toEqual(['Diagram', 'Datasets 2', 'Dimensions 1', 'Metrics 1', 'Relationships 1', 'Source'])
     expect(state.filteredRows).toBe(1)
+    expect(state.duplicateCount).toBeNull()
     expect(state.metricsURL).toContain('view=metrics')
     expect(state.sourceURL).toContain('view=source')
     expect(state.sourceVisible).toBe(true)
@@ -268,7 +287,102 @@ test('semantic model Model page exposes every view directly and synchronizes URL
   }
 })
 
-test('semantic model Model page supports direct object links and remembers the last view', async () => {
+test('semantic model Definition uses a full-width horizontal section bar', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=semantic-definition`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const view = root.querySelector<HTMLElement>('.semantic-model-view')!
+      const navigation = root.querySelector<HTMLElement>('#definition .semantic-model-navigation')!
+      const layout = root.querySelector<HTMLElement>('.semantic-model-layout')!
+      return {
+        repeatedTitle: root.querySelectorAll('#definition h2').length,
+        background: getComputedStyle(view).backgroundColor,
+        bodyPadding: getComputedStyle(root.querySelector<HTMLElement>('.section-body')!).paddingLeft,
+        toggle: Boolean(root.querySelector('[data-toggle-definition-navigation]')),
+        navigationDirection: getComputedStyle(navigation).flexDirection,
+        navigationOverflow: getComputedStyle(navigation).overflowX,
+        navigationTopSpacing: getComputedStyle(navigation).marginTop,
+        navigationWidth: Math.round(navigation.getBoundingClientRect().width),
+        layoutWidth: Math.round(layout.getBoundingClientRect().width),
+        diagramVisible: Boolean(root.querySelector('lv-semantic-model-graph')),
+      }
+    })
+    expect(state.repeatedTitle).toBe(0)
+    expect(state.background).toBe('rgba(0, 0, 0, 0)')
+    expect(state.bodyPadding).toBe('0px')
+    expect(state.toggle).toBe(false)
+    expect(state.navigationDirection).toBe('row')
+    expect(state.navigationOverflow).toBe('auto')
+    expect(state.navigationTopSpacing).toBe('12px')
+    expect(state.navigationWidth).toBe(state.layoutWidth)
+    expect(state.diagramVisible).toBe(true)
+    await page.setViewportSize({ width: 240, height: 800 })
+    const narrow = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      const root = element.shadowRoot!
+      const navigation = root.querySelector<HTMLElement>('#definition .semantic-model-navigation')!
+      const source = root.querySelector<HTMLButtonElement>('[data-model-view="source"]')!
+      source.click()
+      await element.updateComplete
+      return {
+        scrollable: navigation.scrollWidth > navigation.clientWidth,
+        sourceSelected: source.getAttribute('data-active'),
+        sourceVisible: Boolean(root.querySelector('lv-config-viewer')),
+      }
+    })
+    expect(narrow).toEqual({ scrollable: true, sourceSelected: 'true', sourceVisible: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('simple source Definition exposes both views in the horizontal section bar', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=source-definition`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const navigation = root.querySelector<HTMLElement>('#definition .semantic-model-navigation')!
+      const sectionNames = Array.from(navigation.querySelectorAll<HTMLButtonElement>('[data-definition-view]')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim())
+      const duplicateCount = root.querySelector('.semantic-object-list-header p')?.textContent?.trim() ?? null
+      root.querySelector<HTMLButtonElement>('[data-definition-view="source"]')!.click()
+      await element.updateComplete
+      return {
+        headings: Array.from(root.querySelectorAll('#definition h2')).map((node: Element) => node.textContent?.trim()),
+        sectionNames,
+        duplicateCount,
+        navigationDirection: getComputedStyle(navigation).flexDirection,
+        navigationTopSpacing: getComputedStyle(navigation).marginTop,
+        toggle: Boolean(root.querySelector('[data-toggle-definition-navigation]')),
+        sourceURL: window.location.search,
+        source: (root.querySelector('lv-config-viewer') as any)?.configuration,
+        background: getComputedStyle(root.querySelector<HTMLElement>('#definition')!).backgroundColor,
+        bodyPadding: getComputedStyle(root.querySelector<HTMLElement>('.section-body')!).paddingLeft,
+      }
+    })
+    expect(state).toEqual({
+      headings: ['Configuration'],
+      sectionNames: ['Fields 5', 'Source'],
+      duplicateCount: null,
+      navigationDirection: 'row',
+      navigationTopSpacing: '12px',
+      toggle: false,
+      sourceURL: '?root=source-definition&view=source',
+      source: 'kind: Source\n',
+      background: 'rgba(0, 0, 0, 0)',
+      bodyPadding: '0px',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model Definition page supports direct object links and remembers the last view', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=semantic-definition&view=dimensions`)
@@ -424,6 +538,7 @@ test('asset Definition tab renders an outline and highlighted Transform SQL', as
       return {
         activeTab: root.querySelector('.tabs a[aria-current="page"]')?.textContent?.trim(),
         label: root.querySelector('#definition')?.getAttribute('aria-label'),
+        sectionLabels: Array.from(root.querySelectorAll('#definition .semantic-model-navigation [data-definition-view]')).map((node: Element) => node.textContent?.trim()),
         configuration: viewer?.configuration,
         sqlRows: viewer?.shadowRoot?.querySelectorAll('.sql-row').length ?? 0,
         transformSections: root.querySelectorAll('.transform-section').length,
@@ -432,6 +547,7 @@ test('asset Definition tab renders an outline and highlighted Transform SQL', as
     })
     expect(definition.activeTab).toBe('Definition')
     expect(definition.label).toBe('Definition')
+    expect(definition.sectionLabels).toEqual(['Source'])
     expect(definition.configuration).toContain('definition:')
     expect(definition.sqlRows).toBe(1)
     expect(definition.transformSections).toBe(0)
@@ -832,11 +948,15 @@ test('dashboard Definition starts with authored structure and excludes the appea
       return {
         views: Array.from(root.querySelectorAll<HTMLElement>('[data-definition-view]')).map((item) => item.dataset.definitionView),
         selected: root.querySelector<HTMLElement>('[data-definition-view][data-active="true"]')?.dataset.definitionView,
+        navigationDirection: getComputedStyle(root.querySelector<HTMLElement>('.semantic-model-navigation')!).flexDirection,
+        bodyPadding: getComputedStyle(root.querySelector<HTMLElement>('.section-body')!).paddingLeft,
         appearance: Boolean(root.querySelector('lv-dashboard-appearance-editor')),
       }
     })
     expect(definition.views).toEqual(['pages', 'filters', 'visuals', 'source'])
     expect(definition.selected).toBe('pages')
+    expect(definition.navigationDirection).toBe('row')
+    expect(definition.bodyPadding).toBe('0px')
     expect(definition.appearance).toBe(false)
   } finally {
     await page.close()
@@ -1046,6 +1166,8 @@ function testDocument(rootName: string): string {
     ...(rootName === 'runs' ? { runMonitor: { query: 'sales', range: '7d', status: 'failed', trigger: 'manual', page: 2, pageSize: 25, total: 27 } } : {}),
   } : rootName === 'connection-detail' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Type', value: 'Connection' }, { label: 'Key', value: 'connection:conn', code: true }, { label: 'Description', value: 'Primary warehouse.' }, { label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], assetOverview: { upstreamAssets: [], downstreamAssets: [{ label: 'Orders', href: '/sources/source:orders/details', type: 'Source' }], pipelines: [] }, sections: [] },
+  } : rootName === 'source-definition' ? {
+    kind: 'data', title: 'Customers', assetId: 'source:olist.customers', activeSection: 'definition', asset: { id: 'source:olist.customers', key: 'olist.customers', title: 'Customers', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:olist.customers/details', openHref: '/sources/source:olist.customers/details' }, breadcrumbs: [{ label: 'Sources', href: '/sources' }, { label: 'Customers', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/sources/source:olist.customers/details' }, { id: 'definition', label: 'Definition', href: '/sources/source:olist.customers/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Source\n', lang: 'yaml' }] }, details: { sections: [{ title: 'Fields (5)', table: { columns: [{ id: 'name', header: 'Name' }], rows: ['customer_id', 'customer_unique_id', 'customer_zip_code_prefix', 'customer_city', 'customer_state'].map((name) => ({ name })), empty: 'No fields.' } }] },
   } : rootName === 'model-definition' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model', typeLabel: 'Model', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\nspec:\n  definition:\n    type: sql\n    sql: |\n      select * from source.orders\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
   } : rootName === 'model-refresh' ? {
@@ -1065,7 +1187,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'detail' ? {
     kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model:orders', title: 'orders', type: 'model', typeLabel: 'Model', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/models/model:orders/details', active: true }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'semantic-detail' || rootName === 'semantic-definition' ? {
-    kind: 'data', title: 'orders', assetId: 'semantic:orders', activeSection: rootName === 'semantic-definition' ? 'definition' : 'details', asset: { id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', description: 'Governed orders model.', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/semantic-models/semantic:orders/details', active: rootName === 'semantic-detail' }, { id: 'definition', label: 'Model', href: '/semantic-models/semantic:orders/definition', active: rootName === 'semantic-definition' }, { id: 'data', label: 'Explore', href: '/semantic-models/semantic:orders/data' }, { id: 'refreshes', label: 'Refreshes', href: '/semantic-models/semantic:orders/refreshes' }, { id: 'versions', label: 'Versions', href: '/semantic-models/semantic:orders/versions' }, { id: 'lineage', label: 'Lineage', href: '/semantic-models/semantic:orders/lineage' }], details: { overview: [{ label: 'Type', value: 'Semantic model' }, { label: 'Key', value: 'semantic_model:orders', code: true }, { label: 'Description', value: 'Governed orders model.', wide: true }, { label: 'Refresh status', value: 'succeeded' }, { label: 'Last refreshed', value: '2026-08-24T14:32:05Z' }], assetOverview: { activeVersion: 9, owner: 'Finance', tags: ['finance', 'governed'], upstreamDatasetCount: 2, upstreamAssets: [], pipelines: [{ label: 'orders-refresh', href: '/pipelines/pipeline:orders-refresh/details', type: 'Pipeline' }], downstreamAssets: [{ label: 'Executive Sales', href: '/dashboards/dashboard:executive-sales/details', type: 'Dashboard' }] }, semanticModelGraph: { datasets: ['orders'], nodes: [], edges: [] }, sections: [{ title: 'Datasets (2)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'orders' }, { name: 'customers' }], empty: 'No datasets.' } }, { title: 'Dimensions (1)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'customer' }], empty: 'No dimensions.' } }, { title: 'Metrics (1)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'order_count' }], empty: 'No metrics.' } }, { title: 'Relationships (1)', table: { columns: [{ id: 'id', header: 'ID' }], rows: [{ id: 'orders_customer' }], empty: 'No relationships.' } }] }, definition: { sections: [{ title: 'Configuration', code: 'kind: SemanticModel\nspec:\n  datasets:\n    orders: {}\n', lang: 'yaml' }] },
+    kind: 'data', title: 'orders', assetId: 'semantic:orders', activeSection: rootName === 'semantic-definition' ? 'definition' : 'details', asset: { id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', description: 'Governed orders model.', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Overview', href: '/semantic-models/semantic:orders/details', active: rootName === 'semantic-detail' }, { id: 'definition', label: 'Definition', href: '/semantic-models/semantic:orders/definition', active: rootName === 'semantic-definition' }, { id: 'data', label: 'Explore', href: '/semantic-models/semantic:orders/data' }, { id: 'refreshes', label: 'Refreshes', href: '/semantic-models/semantic:orders/refreshes' }, { id: 'versions', label: 'Versions', href: '/semantic-models/semantic:orders/versions' }, { id: 'lineage', label: 'Lineage', href: '/semantic-models/semantic:orders/lineage' }], details: { overview: [{ label: 'Type', value: 'Semantic model' }, { label: 'Key', value: 'semantic_model:orders', code: true }, { label: 'Description', value: 'Governed orders model.', wide: true }, { label: 'Refresh status', value: 'succeeded' }, { label: 'Last refreshed', value: '2026-08-24T14:32:05Z' }], assetOverview: { activeVersion: 9, owner: 'Finance', tags: ['finance', 'governed'], upstreamDatasetCount: 2, upstreamAssets: [], pipelines: [{ label: 'orders-refresh', href: '/pipelines/pipeline:orders-refresh/details', type: 'Pipeline' }], downstreamAssets: [{ label: 'Executive Sales', href: '/dashboards/dashboard:executive-sales/details', type: 'Dashboard' }] }, semanticModelGraph: { datasets: ['orders'], nodes: [], edges: [] }, sections: [{ title: 'Datasets (2)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'orders' }, { name: 'customers' }], empty: 'No datasets.' } }, { title: 'Dimensions (1)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'customer' }], empty: 'No dimensions.' } }, { title: 'Metrics (1)', table: { columns: [{ id: 'name', header: 'Name' }], rows: [{ name: 'order_count' }], empty: 'No metrics.' } }, { title: 'Relationships (1)', table: { columns: [{ id: 'id', header: 'ID' }], rows: [{ id: 'orders_customer' }], empty: 'No relationships.' } }] }, definition: { sections: [{ title: 'Configuration', code: 'kind: SemanticModel\nspec:\n  datasets:\n    orders: {}\n', lang: 'yaml' }] },
   } : rootName === 'model-data' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'data', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model', typeLabel: 'Model', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'data', label: 'Data', href: '/models/model:orders/data', active: true }], details: { overview: [], sections: [] },
   } : rootName === 'models' ? {
@@ -1075,7 +1197,7 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' || rootName === 'runs' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-failed' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' || rootName === 'runs' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-definition' || rootName === 'semantic-refreshes' || rootName === 'source-definition' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-versions' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-failed' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' || rootName === 'dashboard-definition' ? 'lv-project-asset-page' : 'lv-project-page'
   if (rootName === 'pipeline-detail' || rootName === 'pipeline-failed') {
     const pipeline = page as any
     pipeline.details.assetOverview = {
@@ -1098,7 +1220,7 @@ function testDocument(rootName: string): string {
     pipelineCommand: rootName === 'pipelines' ? { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' } : {},
     pipelineCommandStatus: rootName === 'pipelines' ? { loading: true, error: '', message: '' } : { loading: false, error: '', message: '' },
   }
-  return `<!doctype html><html><body style="--lv-button-height:32px;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-border-rest:#0969da;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f"><main data-signals="${escapeHTML(JSON.stringify(signals))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><body style="--base-size-12:12px;--lv-button-height:32px;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-border-rest:#0969da;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f"><main data-signals="${escapeHTML(JSON.stringify(signals))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function lifecycle(state = 'ready') {

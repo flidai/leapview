@@ -316,13 +316,13 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})
 	}
 	page.Actions = uisignals.OptionalSlice(actions)
-	detailsLabel, definitionLabel, dataLabel := "Overview", "Definition", "Data"
+	detailsLabel, dataLabel := "Overview", "Data"
 	if asset.Type == string(projectview.AssetTypeSemanticModel) {
-		definitionLabel, dataLabel = "Model", "Explore"
+		dataLabel = "Explore"
 	}
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: detailsLabel, Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
-		{ID: "definition", Label: definitionLabel, Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
+		{ID: "definition", Label: "Definition", Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
 	}
 	if assetDataInspectable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: dataLabel, Href: projectAssetDataHref(asset), Active: activeSection == "data"})
