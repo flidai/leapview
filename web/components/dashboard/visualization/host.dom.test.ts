@@ -695,7 +695,7 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
   } finally { await page.close() }
 })
 
-test('visual options close outside and on Escape while restoring trigger focus', async () => {
+test('visual options fit their content, close outside and on Escape, and restore trigger focus', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -716,6 +716,19 @@ test('visual options close outside and on Escape while restoring trigger focus',
       const summary = details.querySelector('summary') as HTMLElement
       summary.click()
       await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    })
+    const menuSpacing = await page.evaluate(() => {
+      const host = document.querySelector('#visual-options-focus-test') as any
+      const details = host.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const menu = details.querySelector('.menu') as HTMLElement
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button')]
+      return {
+        width: menu.getBoundingClientRect().width,
+        maximumTrailingSpace: Math.max(...buttons.map((button) => {
+          const label = button.querySelector('span') as HTMLElement
+          return button.getBoundingClientRect().right - label.getBoundingClientRect().right
+        })),
+      }
     })
     await page.locator('#visual-options-outside-target').click()
     const outside = await page.evaluate(() => {
@@ -743,6 +756,8 @@ test('visual options close outside and on Escape while restoring trigger focus',
       outside: { open: false, clicked: true, focused: true },
       escape: { open: false, focused: true },
     })
+    expect(menuSpacing.width).toBeLessThan(160)
+    expect(menuSpacing.maximumTrailingSpace).toBeLessThanOrEqual(16)
   } finally {
     await page.close()
   }

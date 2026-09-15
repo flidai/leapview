@@ -324,7 +324,8 @@ export class ReportTable extends LitElement {
       right: 0;
       z-index: var(--zIndex-dropdown);
       display: grid;
-      width: calc(var(--overlay-width-xsmall) - var(--base-size-16));
+      width: max-content;
+      max-width: calc(100vw - var(--base-size-24));
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-overlay);
@@ -346,6 +347,7 @@ export class ReportTable extends LitElement {
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-medium);
       text-align: left;
+      white-space: nowrap;
     }
 
     .menu svg {
