@@ -147,14 +147,12 @@ func shortCandidateDigest(value string) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-const candidatePolicyGenerationID = "candidate-policy"
-
 // candidatePolicyIdentity is a stable, non-runtime identity used only when
 // hashing candidate authorization policy evidence. The policy fingerprint
 // must remain unchanged as a candidate moves between concrete serving
 // generations; runtime snapshots retain their actual generation identity.
 func candidatePolicyIdentity(projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
-	return projectgraph.NewServingIdentity(projectID, environment, candidatePolicyGenerationID)
+	return projectgraph.NewServingIdentity(projectID, environment, release.CandidatePolicyGenerationID)
 }
 
 func candidateRelationContexts(pins map[string]string, artifact projectartifact.SourceBundle, bindingKinds ...map[string]string) (map[string]string, error) {

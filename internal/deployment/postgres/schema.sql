@@ -190,6 +190,8 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     compiled_graph_digest text NOT NULL CHECK (compiled_graph_digest ~ '^sha256:[0-9a-f]{64}$'),
     compiled_config_digest text NOT NULL CHECK (compiled_config_digest ~ '^sha256:[0-9a-f]{64}$'),
     security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    authorization_policy_revision bigint CHECK (authorization_policy_revision > 0),
+    authorization_policy_digest text CHECK (authorization_policy_digest ~ '^sha256:[0-9a-f]{64}$'),
     request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
     compatibility_digest text NOT NULL CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -203,6 +205,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     qualification_evidence jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(qualification_evidence) = 'object' AND octet_length(qualification_evidence::text) <= 32768),
     qualified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK ((authorization_policy_revision IS NULL) = (authorization_policy_digest IS NULL)),
     UNIQUE (attempt_id),
     UNIQUE (seal_id, candidate_id),
     UNIQUE (physical_pool_id, catalog_id, catalog_database, catalog_uuid, ducklake_snapshot_id),

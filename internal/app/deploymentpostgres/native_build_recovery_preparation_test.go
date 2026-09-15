@@ -66,7 +66,11 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 	ducklake := ducklakepostgres.New(p)
 	operationLeaseDuration := time.Minute
 	if expireOperation {
-		operationLeaseDuration = 100 * time.Millisecond
+		// Leave enough time for PostgreSQL fixture admission even when the
+		// package is running beside other container-backed suites. The test
+		// explicitly waits for expiry below, so correctness does not depend on
+		// a scheduler-sensitive sub-second lease.
+		operationLeaseDuration = 2 * time.Second
 	}
 	operations := deploymentoperation.New(operationpostgres.NewWithConfig(p, operationLeaseDuration, time.Hour))
 	request := deploymentmodule.NativeDeliveryBuildRequest{
@@ -85,10 +89,10 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 		QualificationDigest: preparationDigest('1'),
 	}, request.ProjectID.String())
 	if _, err := delivery.CreateTarget(t.Context(), deploymentnative.TargetInput{TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("create recovery target: %v", err)
 	}
 	if _, err := delivery.CreatePlan(t.Context(), plan); err != nil {
-		t.Fatal(err)
+		t.Fatalf("create recovery plan: %v", err)
 	}
 	const catalogID = "catalog-recovery-preparation"
 	if _, err := ducklake.RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{
@@ -100,7 +104,7 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 	owner := "0198f2c0-7c7a-7f00-8a11-000000001002"
 	reserved, err := ReserveNativeBuildOperation(t.Context(), delivery, operations, NativeBuildOperationReservationInput{Request: request, RequestDigest: digest, OwnerID: owner, LeaseDuration: operationLeaseDuration})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("reserve recovery operation: %v", err)
 	}
 	candidateID, err := nativeBuildConsequenceID(reserved.Operation.OperationID, "candidate")
 	if err != nil {
@@ -126,7 +130,7 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 	boundOperationAttempt, err := operations.BeginAttemptTx(t.Context(), tx, deploymentmodule.NativeOperationBeginAttemptInput{Lease: reserved.Lease, AttemptID: attemptID, AttemptIdentity: attemptIdentity})
 	if err != nil {
 		_ = tx.Rollback(t.Context())
-		t.Fatal(err)
+		t.Fatalf("admit recovery build attempt: %v", err)
 	}
 	if _, err := delivery.CreateCandidateAllocatedTx(t.Context(), tx, deploymentnative.CandidateInput{CandidateID: candidateID, TargetID: request.TargetID, PlanID: request.PlanID.String(), ArtifactDigest: plan.ArtifactDigest}); err != nil {
 		_ = tx.Rollback(t.Context())
