@@ -76,7 +76,7 @@ test('architecture connections stay aligned with the layers across screen sizes'
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
-    for (const width of [1440, 820, 390, 320]) {
+    for (const width of [320, 390, 640, 800, 801, 820, 1000, 1001, 1440, 1920]) {
       await page.setViewportSize({ width, height: 900 })
       await page.waitForFunction(() => {
         const board = document.querySelector('#architecture-board')
@@ -100,6 +100,12 @@ test('architecture connections stay aligned with the layers across screen sizes'
     await page.setViewportSize({ width: 820, height: 900 })
     await page.locator('#architecture-postgres').hover()
     expect(await page.locator('#architecture-postgres').evaluate((element) => element.classList.contains('is-active'))).toBe(true)
+    expect(await page.locator('.architecture-wire.is-active').count()).toBe(1)
+    await page.keyboard.press('Tab')
+    await page.locator('.slab-piece[data-detail="postgres"]').focus()
+    expect(await page.locator('.slab-piece[data-detail="postgres"]').evaluate((element) => element.matches(':focus-visible'))).toBe(true)
+    await page.setViewportSize({ width: 390, height: 900 })
+    await page.waitForFunction(() => document.querySelector('#architecture-board')?.querySelector('svg.architecture-wires')?.getAttribute('viewBox')?.split(' ')[2] === String(document.querySelector('#architecture-board')?.getBoundingClientRect().width))
     expect(await page.locator('.architecture-wire.is-active').count()).toBe(1)
   } finally {
     await page.close()

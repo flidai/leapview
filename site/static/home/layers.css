@@ -58,7 +58,7 @@
 .architecture-callout-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .architecture-callout-tags span { padding: 5px 7px; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; }
 
-@media (max-width: 1000px) and (min-width: 641px) {
+@media (max-width: 1000px) and (min-width: 801px) {
   .architecture { padding: 82px clamp(20px, 5vw, 46px) 85px; }
   .architecture-heading { margin-bottom: 50px; }
   .architecture-board { min-height: 570px; }
@@ -71,7 +71,7 @@
   .architecture-callout > p:last-child:not(.architecture-callout-kicker) { font-size: 11px; }
   .slab-face { font-size: clamp(8px, 1.25vw, 11px); }
 }
-@media (max-width: 640px) {
+@media (max-width: 800px) {
   .architecture { padding: 70px 17px 72px; }
   .architecture-heading { margin-bottom: 32px; }
   .architecture-heading h2 { font-size: clamp(34px, 9vw, 40px); }

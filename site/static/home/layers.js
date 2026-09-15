@@ -60,6 +60,7 @@ function drawWires() {
     wireCanvas.append(wire);
     return { card, piece, wire };
   });
+  restoreFocusOrHover();
 }
 
 function highlight(piece) {
