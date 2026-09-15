@@ -401,7 +401,7 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("b", 64), ArtifactLocator: "serving-artifacts/" + strings.Repeat("a", 64) + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: "application/gzip", ArtifactMetadataDigest: "sha256:" + strings.Repeat("9", 64), Artifact: servingstate.Artifact{ID: "artifact-" + strings.Repeat("a", 64), ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{"name":"demo"}`, SizeBytes: 1}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
+	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("b", 64), ArtifactLocator: "serving-artifacts/" + strings.Repeat("a", 64) + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: "application/gzip", ArtifactMetadataDigest: "sha256:" + strings.Repeat("9", 64), Artifact: servingstate.Artifact{ID: "artifact-" + strings.Repeat("a", 64), ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{"name":"demo"}`, SizeBytes: 1}, AccessPolicyJSON: `{"roleBindings":{"owner":{"role":"admin"}}}`, DashboardPublicationsJSON: `{"sales":{"published":true}}`, DashboardAppearancesJSON: `{"sales":{"theme":"dark"}}`, CreatedBy: "test"}
 	if _, err := AdmitGenerationBundleTx(t.Context(), tx, input, testGraph(t)); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -413,14 +413,14 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.ID != servingstate.ID(generation) || artifact.ID != "artifact-"+strings.Repeat("a", 64) || artifact.Path != "" || artifact.Locator != input.ArtifactLocator || artifact.StorageSecurityDomain != "runtime" || artifact.ContentType != "application/gzip" || artifact.MetadataDigest != input.ArtifactMetadataDigest {
+	if state.ID != servingstate.ID(generation) || artifact.ID != "artifact-"+strings.Repeat("a", 64) || artifact.Path != "" || artifact.Locator != input.ArtifactLocator || artifact.StorageSecurityDomain != "runtime" || artifact.ContentType != "application/gzip" || artifact.MetadataDigest != input.ArtifactMetadataDigest || state.AccessPolicyJSON != input.AccessPolicyJSON || state.DashboardPublicationsJSON != input.DashboardPublicationsJSON || state.DashboardAppearancesJSON != input.DashboardAppearancesJSON {
 		t.Fatalf("active=%#v %#v", state, artifact)
 	}
 	if activatedAt, err := time.Parse(time.RFC3339Nano, state.ActivatedAt); err != nil || !activatedAt.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
 		t.Fatalf("active serving state activation time = %q, %v", state.ActivatedAt, err)
 	}
 	byID, err := r.ByID(t.Context(), servingstate.ID(generation))
-	if err != nil || byID.Status != servingstate.StatusActive || byID.ActivatedAt != state.ActivatedAt {
+	if err != nil || byID.Status != servingstate.StatusActive || byID.ActivatedAt != state.ActivatedAt || byID.AccessPolicyJSON != input.AccessPolicyJSON || byID.DashboardPublicationsJSON != input.DashboardPublicationsJSON || byID.DashboardAppearancesJSON != input.DashboardAppearancesJSON {
 		t.Fatalf("active serving state by id = %#v, %v", byID, err)
 	}
 	tx, err = pool.Begin(t.Context())
