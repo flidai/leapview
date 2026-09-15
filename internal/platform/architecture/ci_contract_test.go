@@ -186,18 +186,19 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	hostedExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:hosted")
 	for _, want := range []string{
 		"- task: desktop:test",
-		"- task: qa:ui-framework",
-		"- task: generate",
 		"- task: ci:full:extras:parallel",
 	} {
 		if !strings.Contains(hostedExtras, want) {
 			t.Fatalf("ci:full:extras:hosted missing %q", want)
 		}
 	}
+	for _, moved := range []string{"- task: qa:ui-framework", "- task: generate"} {
+		if strings.Contains(hostedExtras, moved) {
+			t.Fatalf("ci:full:extras:hosted must not serialize the site-owned UI QA path with %q", moved)
+		}
+	}
 	hostedExtrasOrder := []string{
 		"- task: desktop:test",
-		"- task: qa:ui-framework",
-		"- task: generate",
 		"- task: ci:full:extras:parallel",
 	}
 	for index := 1; index < len(hostedExtrasOrder); index++ {
