@@ -268,6 +268,65 @@ func TestUpdatesEstablishesInitialRefreshBeforeBootstrap(t *testing.T) {
 	}
 }
 
+type initialWorkGateMetrics struct {
+	fakeMetrics
+	executed chan struct{}
+}
+
+func (m initialWorkGateMetrics) ExecuteConsumersPage(_ context.Context, _ consumer.Request, _ consumer.Publisher) error {
+	select {
+	case m.executed <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+type bootstrapWorkGateWriter struct {
+	*httptest.ResponseRecorder
+	executed            <-chan struct{}
+	workBeforeBootstrap bool
+	writes              int
+}
+
+func (w *bootstrapWorkGateWriter) Write(body []byte) (int, error) {
+	if w.writes == 0 {
+		select {
+		case <-w.executed:
+			w.workBeforeBootstrap = true
+		case <-time.After(75 * time.Millisecond):
+		}
+	}
+	w.writes++
+	return w.ResponseRecorder.Write(body)
+}
+
+func TestUpdatesDefersInitialWorkUntilBootstrapIsWritten(t *testing.T) {
+	registry := dashboardstream.NewRegistry()
+	defer registry.Close()
+	executed := make(chan struct{}, 1)
+	handler := Handler{
+		Metrics: initialWorkGateMetrics{executed: executed}, ProjectID: "workspace", Coordinators: registry,
+	}
+	recorder := &bootstrapWorkGateWriter{ResponseRecorder: httptest.NewRecorder(), executed: executed}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?dashboard=dash&page=overview&clientId=client&streamInstance=instance", nil)
+
+	handler.Updates(recorder, request)
+
+	if recorder.workBeforeBootstrap {
+		t.Fatal("initial dashboard work executed while bootstrap was still being written")
+	}
+	if recorder.writes == 0 {
+		t.Fatal("updates did not write bootstrap")
+	}
+	select {
+	case <-executed:
+	default:
+		t.Fatal("initial dashboard work did not execute after bootstrap")
+	}
+}
+
 func TestUpdatesReturnsServiceUnavailableBeforeSSEBootstrapWhenRegistryIsFull(t *testing.T) {
 	registry := dashboardstream.NewRegistryWithLimits(time.Minute, 1)
 	defer registry.Close()

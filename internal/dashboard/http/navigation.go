@@ -18,10 +18,16 @@ import (
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
-func navigationPatchEnvelope(patch pagestream.SignalPatch) dashboardstream.Envelope {
+const navigationDeliverySequenceKey = "dashboard-navigation"
+
+func navigationPatchEnvelope(patch pagestream.SignalPatch, sequence uint64) dashboardstream.Envelope {
 	return dashboardstream.Envelope{
-		Signals:  patch,
-		Delivery: dashboardstream.DeliveryMetadata{Boundary: true},
+		Signals: patch,
+		Delivery: dashboardstream.DeliveryMetadata{
+			SequenceKey: navigationDeliverySequenceKey,
+			Sequence:    sequence,
+			Boundary:    true,
+		},
 	}
 }
 
@@ -96,6 +102,10 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "dashboard session is unavailable", nethttp.StatusServiceUnavailable)
 		return
 	}
+	if record.State.ActivePage != targetPage.ID || record.State.StreamGeneration != result.StreamGeneration {
+		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": record.State.ActivePage, "stale": true})
+		return
+	}
 	filterState := dashboardfilter.CloneState(record.State.Filters.State)
 	initialFilters := definition.NormalizeFiltersForPage(targetPage.ID, dashboard.Filters{
 		CompiledState: &filterState, ServingStateID: key.ServingStateID,
@@ -163,7 +173,7 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	// Page identity is durable stream state, independent of analytical refresh
 	// generations. Window scrolling may advance the coordinator many times;
 	// keeping this patch unscoped prevents those reads from discarding navigation.
-	broker.PublishEnvelope(sourceStreamID, navigationPatchEnvelope(patch))
+	broker.PublishEnvelope(sourceStreamID, navigationPatchEnvelope(patch, result.StreamGeneration))
 	if result.Duplicate {
 		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": targetPage.ID, "duplicate": true})
 		return
@@ -182,7 +192,10 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.observeRefreshes(coordinator, dashboardID, targetPage.ID)
 	_, err = coordinator.BeginPrepared(func(dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		prepared, prepareErr := (command.Service{Metrics: metrics}).PrepareInitial(request, initialFilters)
-		return streamPreparation(prepared), prepareErr
+		preparation := streamPreparation(prepared)
+		preparation.SequenceKey = navigationDeliverySequenceKey
+		preparation.Sequence = int64(result.StreamGeneration)
+		return preparation, prepareErr
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
 		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{

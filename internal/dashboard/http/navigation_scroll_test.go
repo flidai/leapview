@@ -51,6 +51,7 @@ func TestNavigationPatchSurvivesNewerTableWindowGeneration(t *testing.T) {
 
 	broker.PublishEnvelope("client:page", navigationPatchEnvelope(
 		pagestream.SignalPatch{"page": map[string]any{"pageId": "overview"}},
+		21,
 	))
 	select {
 	case patch := <-updates:

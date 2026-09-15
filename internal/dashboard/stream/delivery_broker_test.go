@@ -99,6 +99,54 @@ func TestDeliveryBrokerDropsPendingOlderGeneration(t *testing.T) {
 	}
 }
 
+func TestDeliveryBrokerDropsSupersededDurableSequence(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+
+	broker := NewDeliveryBrokerWithPendingLimit(8)
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "older"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    2,
+			Boundary:    true,
+		},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "newer"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    3,
+			Boundary:    true,
+		},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "stale"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    2,
+			Boundary:    true,
+		},
+	})
+
+	select {
+	case patch := <-updates:
+		if patch["page"] != "newer" {
+			t.Fatalf("patch = %#v, want newer navigation", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for newer navigation")
+	}
+	select {
+	case patch := <-updates:
+		t.Fatalf("superseded navigation was delivered: %#v", patch)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 func TestDeliveryBrokerPreservesPendingPriorGenerationWhenRequested(t *testing.T) {
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -187,12 +188,13 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			})
 		})
 	})
+	initialWorkGate := make(chan struct{})
 	_, err = coordinator.BeginPrepared(func(dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		prepared, err := service.PrepareInitial(request, initialFilters)
 		return streamPreparation(prepared), err
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
-		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
+		work := dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
 			DashboardID:              dashboardID,
 			PageID:                   activePage.ID,
 			ModelID:                  request.ModelID,
@@ -202,13 +204,23 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			CacheObserved:            h.CacheObserved,
 			CacheObservationObserved: h.CacheObservationObserved,
 		})
+		return func(ctx context.Context, publish dashboardstream.RefreshPublisher) {
+			select {
+			case <-initialWorkGate:
+				work(ctx, publish)
+			case <-ctx.Done():
+			}
+		}
 	})
-	// Establish the initial refresh before exposing bootstrap state. A table
-	// can emit its first window request as soon as bootstrap mounts; publishing
-	// bootstrap first lets the later initial plan cancel that window request.
+	// Establish the initial refresh before exposing bootstrap state, but hold
+	// its query work until the bootstrap write completes. A table can emit its
+	// first window request as soon as bootstrap mounts; publishing bootstrap
+	// before establishing the plan lets that plan cancel the window request,
+	// while running it during bootstrap can overflow the subscribed mailbox.
 	if patchErr := updates.Patch(bootstrap); patchErr != nil {
 		return
 	}
+	close(initialWorkGate)
 	if err != nil {
 		return
 	}

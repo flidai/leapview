@@ -18,6 +18,8 @@ type Envelope struct {
 // Generation zero means the message is not generation scoped.
 type DeliveryMetadata struct {
 	Generation              uint64
+	SequenceKey             string
+	Sequence                uint64
 	Boundary                bool
 	PreservePriorGeneration bool
 	CoalesceGroup           string
@@ -38,6 +40,7 @@ type deliverySubscription struct {
 	pendingLimit      int
 	generation        uint64
 	hasGeneration     bool
+	sequences         map[string]uint64
 	nextID            uint64
 	generationChanged chan struct{}
 	closed            bool
@@ -82,6 +85,7 @@ func (b *DeliveryBroker) SubscribeForPublication(publicationID, streamID string)
 func (b *DeliveryBroker) subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
 	subscription := &deliverySubscription{
 		pendingLimit:      b.pendingLimit,
+		sequences:         map[string]uint64{},
 		out:               make(chan pagestream.SignalPatch),
 		wake:              make(chan struct{}, 1),
 		done:              make(chan struct{}),
@@ -138,9 +142,34 @@ func (s *deliverySubscription) enqueue(envelope Envelope) {
 		return
 	}
 	generation := envelope.Delivery.Generation
+	sequenceKey := envelope.Delivery.SequenceKey
+	sequence := envelope.Delivery.Sequence
 	if generation > 0 && s.hasGeneration && generation < s.generation {
 		s.mu.Unlock()
 		return
+	}
+	if sequenceKey != "" {
+		if sequence == 0 {
+			s.mu.Unlock()
+			return
+		}
+		if current, exists := s.sequences[sequenceKey]; exists && sequence < current {
+			s.mu.Unlock()
+			return
+		}
+		if current := s.sequences[sequenceKey]; sequence > current {
+			s.sequences[sequenceKey] = sequence
+			kept := s.pending[:0]
+			for _, pending := range s.pending {
+				metadata := pending.envelope.Delivery
+				if metadata.SequenceKey == sequenceKey && metadata.Sequence < sequence {
+					close(pending.changed)
+					continue
+				}
+				kept = append(kept, pending)
+			}
+			s.pending = kept
+		}
 	}
 	if generation > 0 && (!s.hasGeneration || generation > s.generation) {
 		hadGeneration := s.hasGeneration
@@ -190,6 +219,9 @@ func shouldCoalesce(current, next Envelope) bool {
 		return false
 	}
 	if current.Delivery.Generation != next.Delivery.Generation {
+		return false
+	}
+	if current.Delivery.SequenceKey != next.Delivery.SequenceKey || current.Delivery.Sequence != next.Delivery.Sequence {
 		return false
 	}
 	return current.Delivery.CoalesceGroup != "" && current.Delivery.CoalesceGroup == next.Delivery.CoalesceGroup
