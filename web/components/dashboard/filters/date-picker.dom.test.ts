@@ -234,6 +234,12 @@ test('open multi-select refreshes invalidated choices so another value can be se
     await page.waitForFunction(() => (document.querySelector('lv-filter-leaf') as any).requests === 2, undefined, { timeout: 2000 })
     await page.getByRole('checkbox', { name: 'RJ', exact: true }).check()
     expect(await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.expression.values.map((value: any) => value.value))).toEqual(['SP', 'RJ'])
+    await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => {
+      leaf.showClearAction = true
+      await leaf.updateComplete
+    })
+    expect(await page.getByRole('button', { name: 'Clear State filter' }).count()).toBe(0)
+    expect(await page.locator('.dropdown-toolbar').count()).toBe(0)
     await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => { await leaf.updateComplete; leaf.optionContext = 'new-dependency'; await leaf.updateComplete })
     await page.waitForFunction(() => (document.querySelector('lv-filter-leaf') as any).requests === 4, undefined, { timeout: 2000 })
     expect(await page.getByRole('checkbox', { name: 'SP', exact: true }).isChecked()).toBe(true)
@@ -525,4 +531,57 @@ test('auto-height range slicers settle without resizing between stacked and inli
   } finally {
     await page.close()
   }
+})
+
+test('date filter cards show complete placeholders and dates at panel widths', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-pane-card'))
+    await page.evaluate(async () => {
+      const card = document.createElement('lv-filter-pane-card') as any
+      card.definition = { id: 'period', label: 'Reporting period', valueKind: 'date', predicates: [{ kind: 'range', operators: [] }], options: { kind: 'none', limit: 0, values: [] } }
+      card.binding = { key: 'period', readerEditable: true, default: { kind: 'unfiltered' } }
+      card.style.cssText = 'width:294px;--lv-space-control:10px;--lv-border-muted:1px solid #ccc;--lv-type-body-compact:400 16px/1.25 system-ui'
+      document.body.append(card)
+      await card.updateComplete
+    })
+    for (const width of [294, 250, 366]) {
+      await page.locator('lv-filter-pane-card').evaluate((card: any, width) => { card.style.width = `${width}px` }, width)
+      for (const selected of [false, true]) {
+        await page.locator('lv-filter-pane-card').evaluate((card: any, selected) => {
+          card.expression = selected ? { kind: 'range', lower: { value: { kind: 'date', value: '2026-09-14' }, inclusive: true }, upper: { value: { kind: 'date', value: '2026-12-31' }, inclusive: true } } : { kind: 'unfiltered' }
+        }, selected)
+        await page.waitForTimeout(60)
+        const fits = await page.locator('lv-date-picker .date-value').evaluateAll(values => values.map(value => value.scrollWidth <= value.clientWidth))
+        expect(fits).toEqual([true, true])
+      }
+    }
+  } finally { await page.close() }
+})
+
+test('Escape dismisses filter choices before reaching the containing panel', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = { id: 'country', label: 'Country', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in'] }], options: { kind: 'static', limit: 0, values: [] } }
+      leaf.binding = { key: 'country', readerEditable: true, selectionMode: 'multiple', default: { kind: 'unfiltered' } }
+      leaf.presentation = { style: 'dropdown', search: false, selectAll: false, showCounts: false, showSummary: false, compact: false }
+      document.body.append(leaf)
+      ;(window as any).panelEscapes = 0
+      document.body.addEventListener('keydown', event => { if (event.key === 'Escape') (window as any).panelEscapes++ })
+      await leaf.updateComplete
+    })
+    const trigger = page.getByRole('button', { name: 'Country: All' })
+    await trigger.click()
+    await page.keyboard.press('Escape')
+    expect(await page.getByRole('dialog', { name: 'Country filter options' }).isVisible()).toBe(false)
+    expect(await page.evaluate(() => (window as any).panelEscapes)).toBe(0)
+    expect(await trigger.evaluate(element => element.matches(':focus'))).toBe(true)
+    await page.keyboard.press('Escape')
+    expect(await page.evaluate(() => (window as any).panelEscapes)).toBe(1)
+  } finally { await page.close() }
 })

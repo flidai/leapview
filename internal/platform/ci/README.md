@@ -38,16 +38,17 @@ Execution categories and their duration samples are separate:
 | Category | Evidence |
 |---|---|
 | `selective` | `ci.yml` PR with supported non-full, non-audit plan |
-| `full_pr` | `ci.yml` PR with supported full plan or audit |
+| `full_pr` | `ci.yml` PR with supported full plan or audit, or a supported manual full run |
 | `merge` | `merge-validation.yml` and `merge_group` |
 | `nightly` | `nightly.yml` schedule or manual dispatch |
 | `deferred` | PR gate success and complete observed stack-deferral job pattern |
 | `unknown` | Missing/incompatible workflow metadata or PR planning evidence |
 
 A known execution category does not imply complete evidence or successful checks.
-For example, a merge run with no plan remains a merge latency sample but its
-selection confidence is unknown. Failed or cancelled runs with complete timestamps
-remain in their category's latency samples and their own conclusion counts.
+For example, a merge or nightly run with no `ci-plan` artifact remains a latency
+sample and can have verified selection confidence from the exhaustive workflow
+registry. Failed or cancelled runs with complete timestamps remain in their
+category's latency samples and their own conclusion counts.
 Deferred stack runs are excluded from latency and rerun denominators.
 
 `HealthReport.version` is 2. The existing JSON `full` field remains an alias for
@@ -71,9 +72,12 @@ Each JSON run includes:
 - `skipped_jobs`: observed skipped conclusions. A skip alone does not prove intent.
 - `unknown_jobs`: missing expected jobs, unrecognized display names, or unknown
   conclusions. An unfamiliar name can count as executed and unknown simultaneously.
-- `selection_confidence`: `unknown` without supported planning evidence;
-  `verified` when supported planning evidence and expected results agree;
-  `incomplete` when that evidence has mismatches or missing results.
+- `selection_confidence`: `unknown` when neither supported planning evidence nor
+  exhaustive workflow registry evidence applies; `verified` when a supported
+  plan or the exhaustive registry establishes the expected selection and every
+  expected result is present; `incomplete` when that evidence has selection
+  mismatches or missing results, or a supported plan cannot establish a
+  recognized category.
 - `problems`: expected-job failures/skips, missing/unknown evidence, timestamp and
   metadata limitations. `results` retains individual matrix results.
 
@@ -87,9 +91,17 @@ is never consumed by a workflow gate.
 Conclusions have separate success/failure/cancelled/skipped/unknown counters.
 Timeout, startup failure and action-required conclusions count as failures. Unknown
 conclusions, including neutral, remain unknown. `incomplete` is an overlapping
-reporting-evidence/problem count, not an alternative to the failure count. The
-report preserves GitHub's run conclusion even when job evidence contradicts it;
-that contradiction appears in problems rather than rewriting GitHub's history.
+reporting-evidence count, not an alternative to the failure count. A known failed
+or cancelled expected job is complete failure evidence and does not by itself make
+the run's reporting evidence incomplete. The report preserves GitHub's run
+conclusion even when job evidence contradicts it; that contradiction appears in
+problems rather than rewriting GitHub's history.
+
+Planner selection rates use supported `pull_request` plans only. Supported full
+manual CI runs remain full-validation latency samples; other manual plans remain
+unclassified and do not inflate PR selection rates.
+Merge and nightly workflows use the exhaustive workflow registry and do not need a
+`ci-plan` artifact; missing plans are evidence gaps only for planner-driven PR CI.
 
 ## Time and thresholds
 

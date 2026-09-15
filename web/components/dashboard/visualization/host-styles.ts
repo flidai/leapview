@@ -11,7 +11,7 @@ export const visualizationHostStyles = css`
     font-family: var(--fontStack-system);
   }
   :host([slot='focus-visual']) { --lv-visual-expand-display: none; --lv-visual-focus-close-space: var(--base-size-48); }
-  .surface { position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
+  .surface { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); background: var(--lv-chart-surface); }
   .surface.headerless { grid-template-rows: minmax(0, 1fr); }
   .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
   .renderer { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
@@ -198,20 +198,7 @@ export const visualizationHostStyles = css`
     inset: var(--base-size-6) var(--base-size-8) auto auto;
     z-index: var(--zIndex-sticky);
   }
-  .headerless-actions[data-table-actions] {
-    /* The table owns its persistent Focus and More controls. Place the
-       transient Ask action immediately before them without reserving room
-       in the table toolbar when Ask is hidden. */
-    inset-inline-end: calc(
-      var(--base-size-8)
-      + var(--lv-button-height, var(--control-medium-size))
-      + var(--base-size-4)
-      + var(--lv-button-height, var(--control-medium-size))
-      + var(--borderWidth-default, var(--lv-border-width))
-      + var(--borderWidth-default, var(--lv-border-width))
-      + var(--base-size-4)
-    );
-  }
+
   h2 {
     min-width: 0;
     margin: 0;

@@ -32,6 +32,21 @@ func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
 	}
 }
 
+func TestPMTilesRateLimitClassificationIsExact(t *testing.T) {
+	if !isPMTilesRateLimit("Failed to extract, HTTP error: 429") {
+		t.Fatal("HTTP 429 was not classified as a retryable PMTiles rate limit")
+	}
+	for _, message := range []string{
+		"Failed to extract, HTTP error: 404",
+		"unexpected archive digest",
+		"HTTP 429 returned by an unrelated message",
+	} {
+		if isPMTilesRateLimit(message) {
+			t.Fatalf("classified non-PMTiles rate limit %q as retryable", message)
+		}
+	}
+}
+
 func TestVerifyFileFailsClosedOnDigestMismatch(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "asset")
 	if err := os.WriteFile(name, []byte("map"), 0o644); err != nil {
@@ -47,7 +62,7 @@ func TestVerifyFileFailsClosedOnDigestMismatch(t *testing.T) {
 }
 
 func TestGlyphPackageCoversBasemapScriptsObservedAtRuntime(t *testing.T) {
-	want := []string{"0-255", "256-511", "512-767", "768-1023", "1024-1279", "1280-1535", "1536-1791", "3840-4095", "4096-4351", "11520-11775"}
+	want := []string{"0-255", "256-511", "512-767", "768-1023", "1024-1279", "1280-1535", "1536-1791", "3840-4095", "4096-4351", "11520-11775", "65024-65279"}
 	present := make(map[string]bool, len(glyphRanges))
 	for _, value := range glyphRanges {
 		present[value] = true

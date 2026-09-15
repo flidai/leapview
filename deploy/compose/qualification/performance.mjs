@@ -279,8 +279,8 @@ async function runWorkload(path) {
 async function loginAndResolveDashboard(page, credentials) {
   await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(credentials.email)
-  await page.getByLabel('Password').fill(credentials.qualificationPassword)
-  await page.getByLabel('Password').press('Enter')
+  await page.locator('input[name="password"]').fill(credentials.qualificationPassword)
+  await page.locator('input[name="password"]').press('Enter')
   const dashboard = page.getByRole('link', { name: /Five-minute Sales Evaluation/i })
   await dashboard.waitFor({ state: 'visible', timeout: 60_000 })
   const href = await dashboard.getAttribute('href')

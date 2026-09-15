@@ -53,6 +53,7 @@ export class DashboardFilterLeaf extends LitElement {
   @property({ type: Boolean, reflect: true }) stale = false
   @property({ type: Boolean }) showTitle = true
   @property({ type: Boolean }) showClearAction = false
+  @property({ type: Boolean }) clearActionProvided = false
   @property({ type: Boolean }) parentRangeCommitBoundary = false
   @property({ type: Boolean }) autoHeight = false
 
@@ -191,6 +192,7 @@ export class DashboardFilterLeaf extends LitElement {
         ?disabled=${!binding.readerEditable}
         aria-busy=${String(this.pending || this.optionLoading)}
         @focusout=${this.onFilterFocusOut}
+        @keydown=${this.onDropdownEscape}
       >
         <legend class="visually-hidden">${label}</legend>
         ${this.showTitle || operationalStatus || this.showClearAction ? html`
@@ -268,6 +270,7 @@ export class DashboardFilterLeaf extends LitElement {
     const label = this.presentation?.ariaLabel || this.definition?.label || 'Filter'
     const multiple = this.binding?.selectionMode !== 'single'
     const summary = this.dropdownSummary(selected)
+    const showDropdownClear = !this.showClearAction && !this.clearActionProvided
     return html`
       <button
         class="dropdown-trigger"
@@ -283,13 +286,13 @@ export class DashboardFilterLeaf extends LitElement {
       </button>
       <div
         class="dropdown-popover"
-        data-toolbar=${String(Boolean(this.presentation?.search || selected.size > 0))}
+        data-toolbar=${String(Boolean(this.presentation?.search || (showDropdownClear && selected.size > 0)))}
         popover="auto"
         role="dialog"
         aria-label=${`${label} filter options`}
         @toggle=${this.onDropdownToggle}
       >
-        ${this.presentation?.search || selected.size > 0 ? html`<div class="dropdown-toolbar">
+        ${this.presentation?.search || (showDropdownClear && selected.size > 0) ? html`<div class="dropdown-toolbar">
           ${this.presentation?.search ? html`
             <label class="dropdown-search">
               ${lucideIcon(Search)}
@@ -302,13 +305,13 @@ export class DashboardFilterLeaf extends LitElement {
               >
             </label>
           ` : nothing}
-          <button
+          ${showDropdownClear ? html`<button
             class="dropdown-clear"
             type="button"
             aria-label=${`Clear ${label} filter`}
             ?disabled=${selected.size === 0}
             @click=${this.clearDropdownSelection}
-          >Clear filter</button>
+          >Clear filter</button>` : nothing}
         </div>` : nothing}
         <div class="dropdown-options" role="group" aria-label=${`${label} options`}>
           ${items.map((option) => html`
@@ -362,6 +365,18 @@ export class DashboardFilterLeaf extends LitElement {
     if (!this.dropdownOpen) return
     this.requestOptions()
     queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.dropdown-search input')?.focus())
+  }
+
+  private onDropdownEscape = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return
+    const popover = this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')
+    if (!popover?.matches(':popover-open')) return
+    // Dismiss the nested choices before Escape reaches the surrounding filter panel.
+    event.preventDefault()
+    event.stopPropagation()
+    popover.hidePopover()
+    this.dropdownOpen = false
+    this.renderRoot.querySelector<HTMLElement>('.dropdown-trigger')?.focus({ preventScroll: true })
   }
 
   private onDropdownTriggerPointerDown = (event: PointerEvent) => {
@@ -853,6 +868,7 @@ abstract class FilterShell extends LitElement {
       .stale=${this.stale}
       .showTitle=${showTitle}
       .showClearAction=${showClearAction}
+      .clearActionProvided=${!showTitle}
       .parentRangeCommitBoundary=${parentRangeCommitBoundary}
       .autoHeight=${autoHeight}
     ></lv-filter-leaf>`

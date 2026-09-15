@@ -12,13 +12,11 @@
       "properties": [
         {
           "name": "amount",
-          "logicalType": "number",
-          "required": false
+          "logicalType": "number"
         },
         {
           "name": "email",
           "logicalType": "string",
-          "required": false,
           "unique": true,
           "quality": [
             {
@@ -92,7 +90,7 @@
         "namespace": "leapview.dev/odcs-extension/v1",
         "resourceKind": "Model",
         "projectionProfile": "leapview.contract/v1",
-        "projectionDigest": "sha256:d62d04a999e042ce08d1dcad6b9ce70b02f12693c727f5b88405263e7ffb5e14"
+        "projectionDigest": "sha256:d793b3430739fc961c415bdfcb7b787bf3fd03cca84e5808f91278f189a359f6"
       },
       "description": "Immutable LeapView publication provenance; not executable contract semantics."
     }

@@ -327,3 +327,65 @@ for (const start of [50, 950]) {
     } finally { await page.close() }
   })
 }
+
+test('phone headers keep page actions below the title and default table values readable', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot))
+    await page.locator('lv-report-table .table-scrollport').first().waitFor()
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const title = root.querySelector('.dashboard-heading')!.getBoundingClientRect()
+      const actions = root.querySelector('.actions')!.getBoundingClientRect()
+      const host = [...root.querySelectorAll('lv-visualization-host')].find((h: any) => h.envelope?.visualID === 'orders') as any
+      const table = host.shadowRoot.querySelector('lv-report-table') as any
+      table.table = { ...table.table, columns: table.table.columns.map((column: any) => ({ ...column, width: undefined })) }
+      await table.updateComplete
+      // Allow ResizeObserver to measure the mounted narrow scrollport.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      return { actionsBelowTitle: actions.top >= title.bottom, defaultWidths: table.columns.map((column: any) => table.columnPixelWidth(column)) }
+    })
+    expect(result.actionsBelowTitle).toBe(true)
+    expect(result.defaultWidths.length).toBeGreaterThan(0)
+    expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
+        id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
+      })) } })
+    })
+    await page.locator('.mobile-page-menu summary').click()
+    // Exercise hit testing: chart/table stacking must not intercept the last option.
+    await page.locator('.mobile-page-menu a').last().click({ trial: true })
+  } finally { await page.close() }
+})
+
+test('table data updates preserve desktop canvas positions', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 940 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('[data-visual-id="orders"]')?.getAttribute('style')?.includes('left:')))
+    const results = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const frame = root.querySelector('[data-visual-id="orders"]') as HTMLElement
+      const geometry = () => ['left', 'top', 'width', 'height'].map(key => frame.style.getPropertyValue(key))
+      const before = geometry()
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const envelope = structuredClone(dashboard.visuals.orders)
+      envelope.dataRevision++
+      envelope.dataState.availableRows = 2
+      envelope.dataState.cardinality = { kind: 'exact', count: 2 }
+      envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, 2)
+      envelope.dataState.dataRevision = envelope.dataRevision
+      mergePatch({ visuals: { orders: { dataRevision: envelope.dataRevision, dataState: {
+        dataRevision: envelope.dataRevision, payload: JSON.stringify(envelope.dataState),
+      } } } })
+      await dashboard.updateComplete
+      return { before, after: geometry(), mobileHeight: frame.style.getPropertyValue('--lv-mobile-table-height') }
+    })
+    expect(results.before.every(Boolean)).toBe(true)
+    expect(results.after).toEqual(results.before)
+    expect(results.mobileHeight).not.toBe('')
+  } finally { await page.close() }
+})

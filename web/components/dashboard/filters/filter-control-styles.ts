@@ -154,6 +154,10 @@ export const filterControlStyles = css`
     .buttons button:disabled { opacity: .55; cursor: default; }
     .range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
     :host([data-layout-variant='stacked']) .range { grid-template-columns: minmax(0, 1fr); }
+    /* Content-sized cards can stack without clipping full dates or their calendar icons. */
+    .date_range.auto-height .range {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+    }
     .range label { display: grid; min-width: 0; gap: var(--base-size-4); }
     .range-error {
       grid-column: 1 / -1;

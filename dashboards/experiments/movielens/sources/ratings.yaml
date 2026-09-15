@@ -12,8 +12,8 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
-      movieId: {datatype: Integer, description: MovieLens movie identifier.}
-      rating: {datatype: Float, description: Five-star rating in half-star increments.}
-      timestamp: {datatype: Integer, description: Rating timestamp as Unix epoch seconds.}
+  fields:
+    userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
+    movieId: {datatype: Integer, description: MovieLens movie identifier.}
+    rating: {datatype: Float, description: Five-star rating in half-star increments.}
+    timestamp: {datatype: Integer, description: Rating timestamp as Unix epoch seconds.}

@@ -535,7 +535,8 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	}
 	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
-	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
+	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis, MaxRows: c.bounds.MaxRows})
+	physicalContext = analyticsmaterialize.WithSourceCheckEvaluator(physicalContext, sourceCheckEvaluator)
 	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native candidate managed-data roots: %w", releaseErr)))

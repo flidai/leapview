@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
 
 type Executor interface {
@@ -39,9 +40,8 @@ type PreparedSources interface {
 // SourceObservation is captured from the resolved source session before that
 // session (and its credentials) is closed. Runtime gate evaluation consumes
 // this value after detachment; it never re-opens authored paths or relations.
-// For revision freshness, RevisionObserved is the canonical UTC timestamp
-// selected by the authored revision contract; adapters may replace it with
-// target metadata when a connector exposes a stronger equivalent.
+// Authored revision freshness is currently rejected by the compiler until a
+// connector can provide authoritative target revision evidence.
 type SourceObservation struct {
 	ID                 string
 	Schema             []semanticmodel.ColumnSchema
@@ -54,6 +54,34 @@ type SourceObservation struct {
 	ObservationQueries int
 	ObservationRows    int64
 	ObservationMillis  int64
+	CheckEvidence      []SourceCheckEvidence
+}
+
+type SourceCheckEvidence struct {
+	Identity          string
+	Kind              string
+	ResourceID        string
+	Outcome           string
+	Severity          string
+	ObservedRows      int64
+	Queries           int
+	ObservationDigest string
+}
+
+type SourceCheckEvaluator func(context.Context, string, string, []semanticmodel.ModelCheck, map[string]string, ObservationBudget, func(context.Context, semanticquery.Plan) (semanticquery.Rows, error)) ([]SourceCheckEvidence, error)
+
+type sourceCheckEvaluatorKey struct{}
+
+func WithSourceCheckEvaluator(ctx context.Context, evaluator SourceCheckEvaluator) context.Context {
+	return context.WithValue(ctx, sourceCheckEvaluatorKey{}, evaluator)
+}
+
+func SourceCheckEvaluatorFromContext(ctx context.Context) SourceCheckEvaluator {
+	if ctx == nil {
+		return nil
+	}
+	evaluator, _ := ctx.Value(sourceCheckEvaluatorKey{}).(SourceCheckEvaluator)
+	return evaluator
 }
 
 type ObservationFailure string
@@ -71,6 +99,7 @@ type observationBudgetKey struct{}
 type ObservationBudget struct {
 	MaxQueries int
 	MaxMillis  int64
+	MaxRows    int64
 }
 
 func WithObservationBudget(ctx context.Context, budget ObservationBudget) context.Context {

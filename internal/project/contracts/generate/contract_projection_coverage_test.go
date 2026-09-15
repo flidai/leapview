@@ -46,11 +46,11 @@ func TestContractProjectionCoverageRejectsSourceShapeDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schemaField := doc.Schemas["SourceSchemaField"]
+	schemaField := doc.Schemas["DatasetField"]
 	description := schemaField.Properties["description"]
 	description.Schema.Type = "integer"
 	schemaField.Properties["description"] = description
-	doc.Schemas["SourceSchemaField"] = schemaField
+	doc.Schemas["DatasetField"] = schemaField
 	err = verifyContractProjectionCoverage(doc, "../../contractprojection/exclusions.json")
 	if err == nil || !strings.Contains(err.Error(), "Source exclusion group") || !strings.Contains(err.Error(), "source shape changed") {
 		t.Fatalf("source shape drift error = %v", err)
@@ -129,13 +129,13 @@ func TestContractProjectionCoverageRejectsBothProjectedAndExcluded(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw = []byte(strings.Replace(string(raw), `"spec.schema.fields.*.description"`, `"spec.schema.fields.*.datatype"`, 1))
+	raw = []byte(strings.Replace(string(raw), `"spec.fields.*.description"`, `"spec.fields.*.datatype"`, 1))
 	manifestPath := filepath.Join(t.TempDir(), "exclusions.json")
 	if err := os.WriteFile(manifestPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err = verifyContractProjectionCoverage(doc, manifestPath)
-	if err == nil || !strings.Contains(err.Error(), "both projected and excluded") || !strings.Contains(err.Error(), "spec.schema.fields.*.datatype") {
+	if err == nil || !strings.Contains(err.Error(), "both projected and excluded") || !strings.Contains(err.Error(), "spec.fields.*.datatype") {
 		t.Fatalf("overlap error = %v", err)
 	}
 }

@@ -111,6 +111,12 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
       label: {
         show: true,
         position: 'insideEndTop',
+        color: context.colors.foreground,
+        backgroundColor: context.colors.surface,
+        textBorderWidth: 0,
+        textShadowBlur: 0,
+        padding: [2, 4],
+        borderRadius: 2,
         // A function keeps authored braces literal (ECharts string
         // formatters treat `{value}` as a template). Preserve the native
         // numeric/text value for an intentionally unnamed reference.

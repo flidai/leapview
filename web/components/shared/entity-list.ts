@@ -578,7 +578,7 @@ const entityListStyles = `
 
   .entity-list-favorite:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
   .entity-list-favorite:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-  .entity-list-favorite[aria-pressed='true'] { color: var(--display-yellow-fgColor); }
+  .entity-list-favorite[aria-pressed='true'] { color: var(--lv-fg-warning); }
   .entity-list-favorite[aria-pressed='true'] svg { fill: currentColor; }
 
   .entity-list-copy {

@@ -28,7 +28,7 @@ func TestProjectionIdentifierValidationMatchesGeneratedPatterns(t *testing.T) {
 		validate             func(string) bool
 	}{
 		{"ResourceMetadata", "name", validProjectionName},
-		{"ContractProjectionField", "classification", validProjectionIdentifier},
+		{"ContractProjectionModelField", "classification", validProjectionIdentifier},
 	} {
 		pattern := schema.Definitions[test.definition].Properties[test.property].Pattern
 		if pattern == "" {

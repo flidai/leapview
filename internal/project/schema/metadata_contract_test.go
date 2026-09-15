@@ -20,20 +20,21 @@ spec:
   location: {type: path, path: orders.csv, format: csv}
   schema:
     mode: strict
-    fields:
-      order_id:
-        datatype: String
-        nullable: false
-        tags: [identifier]
-        criticalDataElement: true
-        classification: pii
-        authoritativeDefinitions:
-          - type: businessDefinition
-            url: https://example.test/definitions/order-id
-        deprecation:
-          since: 1.2.0
-          reason: use order_key instead
-          replacement: order_key
+  fields:
+    order_id:
+      datatype: String
+      tags: [identifier]
+      criticalDataElement: true
+      classification: pii
+      authoritativeDefinitions:
+        - type: businessDefinition
+          url: https://example.test/definitions/order-id
+      deprecation:
+        since: 1.2.0
+        reason: use order_key instead
+        replacement: order_key
+  checks:
+    - {id: order_id_present, type: non_null, field: order_id}
 `
 
 const metadataModelDocument = `apiVersion: leapview.dev/v1
@@ -52,7 +53,6 @@ spec:
   fields:
     order_id:
       datatype: String
-      nullable: false
       tags: [identifier]
       criticalDataElement: true
       classification: pii
@@ -125,12 +125,11 @@ func TestDecodeResourceRetainsTypedMetadataAndGovernance(t *testing.T) {
 	if source.Metadata.Contract == nil || source.Metadata.Contract.Version != "1.2.3-rc.1+build.5" || source.Metadata.Contract.Compatibility != "backward" {
 		t.Fatalf("decoded source contract = %#v", source.Metadata.Contract)
 	}
-	strict, ok := source.Spec.Schema.Value.(*projectcontracts.SourceSchemaStrictVariant)
-	if !ok {
-		t.Fatalf("decoded source schema variant = %T, want strict", source.Spec.Schema.Value)
+	if source.Spec.Schema == nil || source.Spec.Schema.Mode != "strict" {
+		t.Fatalf("decoded source schema = %#v", source.Spec.Schema)
 	}
-	field := strict.Fields["order_id"]
-	if field.Nullable == nil || *field.Nullable || field.CriticalDataElement == nil || !*field.CriticalDataElement || field.AuthoritativeDefinitions == nil || len(*field.AuthoritativeDefinitions) != 1 || field.Deprecation == nil {
+	field := (*source.Spec.Fields)["order_id"]
+	if field.CriticalDataElement == nil || !*field.CriticalDataElement || field.AuthoritativeDefinitions == nil || len(*field.AuthoritativeDefinitions) != 1 || field.Deprecation == nil {
 		t.Fatalf("decoded source governance field = %#v", field)
 	}
 
@@ -142,14 +141,14 @@ func TestDecodeResourceRetainsTypedMetadataAndGovernance(t *testing.T) {
 		t.Fatalf("decoded model contract = %#v", model.Metadata.Contract)
 	}
 	modelField := (*model.Spec.Fields)["order_id"]
-	if modelField.Nullable == nil || *modelField.Nullable || modelField.Tags == nil || len(*modelField.Tags) != 1 || modelField.Deprecation == nil {
+	if modelField.Tags == nil || len(*modelField.Tags) != 1 || modelField.Deprecation == nil {
 		t.Fatalf("decoded model governance field = %#v", modelField)
 	}
 	checks := *model.Spec.Checks
 	if len(checks) != 5 {
 		t.Fatalf("decoded model checks = %d, want 5", len(checks))
 	}
-	if variant, ok := checks[0].Value.(*projectcontracts.ModelCheckNonNullVariant); !ok || variant.ID != "order_id_not_null" || variant.Description == nil || variant.Tags == nil {
+	if variant, ok := checks[0].Value.(*projectcontracts.DatasetCheckNonNullVariant); !ok || variant.ID != "order_id_not_null" || variant.Description == nil || variant.Tags == nil {
 		t.Fatalf("decoded model check = %#v (%T)", checks[0].Value, checks[0].Value)
 	}
 }
