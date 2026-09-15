@@ -18,6 +18,13 @@ import (
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
+func navigationPatchEnvelope(patch pagestream.SignalPatch) dashboardstream.Envelope {
+	return dashboardstream.Envelope{
+		Signals:  patch,
+		Delivery: dashboardstream.DeliveryMetadata{Boundary: true},
+	}
+}
+
 func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
@@ -153,12 +160,10 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if broker == nil {
 		broker = dashboardstream.NewDeliveryBroker()
 	}
-	broker.PublishEnvelope(sourceStreamID, dashboardstream.Envelope{
-		Signals: patch,
-		Delivery: dashboardstream.DeliveryMetadata{
-			Generation: result.StreamGeneration, Boundary: true,
-		},
-	})
+	// Page identity is durable stream state, independent of analytical refresh
+	// generations. Window scrolling may advance the coordinator many times;
+	// keeping this patch unscoped prevents those reads from discarding navigation.
+	broker.PublishEnvelope(sourceStreamID, navigationPatchEnvelope(patch))
 	if result.Duplicate {
 		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": targetPage.ID, "duplicate": true})
 		return

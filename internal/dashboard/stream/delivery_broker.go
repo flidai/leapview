@@ -17,10 +17,11 @@ type Envelope struct {
 // DeliveryMetadata defines dashboard refresh ordering and coalescing.
 // Generation zero means the message is not generation scoped.
 type DeliveryMetadata struct {
-	Generation    uint64
-	Boundary      bool
-	CoalesceGroup string
-	MergeRoots    []string
+	Generation              uint64
+	Boundary                bool
+	PreservePriorGeneration bool
+	CoalesceGroup           string
+	MergeRoots              []string
 }
 
 // DeliveryBroker fans dashboard refresh envelopes out to subscribers while
@@ -149,7 +150,8 @@ func (s *deliverySubscription) enqueue(envelope Envelope) {
 		for _, pending := range s.pending {
 			// Generation-zero status envelopes are durable metadata (for
 			// example lastUpdated), not stale result payloads.
-			if pending.envelope.Delivery.Generation == 0 || pending.envelope.Delivery.Generation >= generation {
+			pendingGeneration := pending.envelope.Delivery.Generation
+			if pendingGeneration == 0 || pendingGeneration >= generation || (envelope.Delivery.PreservePriorGeneration && hadGeneration && pendingGeneration > 0 && pendingGeneration < generation) {
 				kept = append(kept, pending)
 			}
 		}

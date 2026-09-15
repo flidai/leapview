@@ -224,6 +224,50 @@ func TestUpdatesPreservesDrawerAgentStateOnReconnect(t *testing.T) {
 	}
 }
 
+type initialRefreshOrderingWriter struct {
+	*httptest.ResponseRecorder
+	started              <-chan dashboardstream.Refresh
+	bootstrapGeneration  uint64
+	bootstrapBeforeStart bool
+	writes               int
+}
+
+func (w *initialRefreshOrderingWriter) Write(body []byte) (int, error) {
+	if w.writes == 0 {
+		select {
+		case refresh := <-w.started:
+			w.bootstrapGeneration = refresh.Generation
+		default:
+			w.bootstrapBeforeStart = true
+		}
+	}
+	w.writes++
+	return w.ResponseRecorder.Write(body)
+}
+
+func TestUpdatesEstablishesInitialRefreshBeforeBootstrap(t *testing.T) {
+	registry := dashboardstream.NewRegistry()
+	defer registry.Close()
+	started := make(chan dashboardstream.Refresh, 1)
+	handler := Handler{
+		Metrics: fakeMetrics{}, ProjectID: "workspace", Coordinators: registry,
+		RefreshStarted: func(refresh dashboardstream.Refresh) { started <- refresh },
+	}
+	recorder := &initialRefreshOrderingWriter{ResponseRecorder: httptest.NewRecorder(), started: started}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequestWithContext(ctx, nethttp.MethodGet, "/updates?dashboard=dash&page=overview&clientId=client&streamInstance=instance", nil)
+
+	handler.Updates(recorder, request)
+
+	if recorder.bootstrapBeforeStart || recorder.bootstrapGeneration != 1 {
+		t.Fatalf("bootstrap ordering: beforeStart=%t generation=%d", recorder.bootstrapBeforeStart, recorder.bootstrapGeneration)
+	}
+	if recorder.writes == 0 {
+		t.Fatal("updates did not write bootstrap")
+	}
+}
+
 func TestUpdatesReturnsServiceUnavailableBeforeSSEBootstrapWhenRegistryIsFull(t *testing.T) {
 	registry := dashboardstream.NewRegistryWithLimits(time.Minute, 1)
 	defer registry.Close()

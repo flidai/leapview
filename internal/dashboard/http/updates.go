@@ -168,9 +168,6 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		status["lastUpdated"] = h.DataRefreshedAt(r.Context(), projectID.String(), environment, request.ModelID)
 	}
 	bootstrap["status"] = status
-	if err := updates.Patch(bootstrap); err != nil {
-		return
-	}
 
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
@@ -206,6 +203,12 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			CacheObservationObserved: h.CacheObservationObserved,
 		})
 	})
+	// Establish the initial refresh before exposing bootstrap state. A table
+	// can emit its first window request as soon as bootstrap mounts; publishing
+	// bootstrap first lets the later initial plan cancel that window request.
+	if patchErr := updates.Patch(bootstrap); patchErr != nil {
+		return
+	}
 	if err != nil {
 		return
 	}

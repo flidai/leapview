@@ -18,10 +18,12 @@ import (
 type commandPrepare func(command.Service, command.Request, dashboard.Filters) (command.PreparedRefresh, error)
 
 func (h Handler) VisualWindow(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.handleCommand(w, r, func(service command.Service, request command.Request, current dashboard.Filters) (command.PreparedRefresh, error) {
+	h.handleCommandForActivePage(w, r, func(service command.Service, request command.Request, current dashboard.Filters) (command.PreparedRefresh, error) {
 		return service.PrepareVisualWindow(request, current)
 	})
 }
+
+var errInactiveCommandPage = errors.New("dashboard command page is no longer active")
 
 func (h Handler) Select(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.handleCommand(w, r, func(service command.Service, request command.Request, current dashboard.Filters) (command.PreparedRefresh, error) {
@@ -42,10 +44,18 @@ func (h Handler) ClearSelection(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) handleCommand(w nethttp.ResponseWriter, r *nethttp.Request, prepare commandPrepare) {
-	h.handleCommandWithBefore(w, r, prepare, nil)
+	h.handleCommandWithOptions(w, r, prepare, nil, false)
+}
+
+func (h Handler) handleCommandForActivePage(w nethttp.ResponseWriter, r *nethttp.Request, prepare commandPrepare) {
+	h.handleCommandWithOptions(w, r, prepare, nil, true)
 }
 
 func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Request, prepare commandPrepare, before func(Metrics, command.Request) func(context.Context) error) {
+	h.handleCommandWithOptions(w, r, prepare, before, false)
+}
+
+func (h Handler) handleCommandWithOptions(w nethttp.ResponseWriter, r *nethttp.Request, prepare commandPrepare, before func(Metrics, command.Request) func(context.Context) error, requireActivePage bool) {
 	metrics, ok := h.metricsForRequest(r)
 	if !ok {
 		nethttp.NotFound(w, r)
@@ -85,6 +95,21 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 		nethttp.NotFound(w, r)
 		return
 	}
+	var activePageKey *dashboardsession.Key
+	if requireActivePage && h.SessionStore != nil {
+		resolved, resolveErr := resolveDashboard(metrics, dashboardID)
+		if resolveErr != nil {
+			nethttp.NotFound(w, r)
+			return
+		}
+		clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
+		key, keyErr := h.dashboardSessionKey(r, resolved.Definition, clientID, signals.Runtime.StreamInstanceID)
+		if keyErr != nil {
+			nethttp.NotFound(w, r)
+			return
+		}
+		activePageKey = &key
+	}
 
 	registry := h.Coordinators
 	if registry == nil {
@@ -104,6 +129,9 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	h.observeRefreshes(coordinator, dashboardID, pageID)
 	_, err := coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
+		if activePageKey != nil && !commandPageIsActive(r.Context(), h.SessionStore, *activePageKey, pageID) {
+			return dashboardstream.RefreshPreparation{}, errInactiveCommandPage
+		}
 		if h.SharedCommandPrepare != nil {
 			prepared, generation, err := h.SharedCommandPrepare(r, request, signals, func(shared dashboard.Filters) (command.PreparedRefresh, error) {
 				shared.DataRevisions = current.DataRevisions
@@ -138,6 +166,10 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 		}
 		return dashboardstream.TargetWork(metrics, workRequest)
 	})
+	if errors.Is(err, errInactiveCommandPage) {
+		writeJSON(w, nethttp.StatusOK, map[string]any{})
+		return
+	}
 	if errors.Is(err, dashboardstream.ErrStalePreparation) {
 		writeJSON(w, nethttp.StatusOK, map[string]any{})
 		return
@@ -235,6 +267,14 @@ func streamPreparation(prepared command.PreparedRefresh) dashboardstream.Refresh
 		preparation.SequenceEpoch = int64(request.ResetVersion)
 	}
 	return preparation
+}
+
+func commandPageIsActive(ctx context.Context, store dashboardsession.Store, key dashboardsession.Key, pageID string) bool {
+	if store == nil {
+		return true
+	}
+	record, err := store.Load(ctx, key)
+	return err == nil && record.State.ActivePage == pageID
 }
 
 func (h Handler) readSignals(w nethttp.ResponseWriter, r *nethttp.Request) (dashboard.Signals, bool) {

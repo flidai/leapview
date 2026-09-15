@@ -187,6 +187,9 @@ func TestCanonicalTableEnvelopeOmitsUnknownCardinalityCount(t *testing.T) {
 	if !ok || state.Cardinality.Count != nil {
 		t.Fatalf("state=%#v", envelope.DataState)
 	}
+	if state.RowCap != int64(table.RowCap) {
+		t.Fatalf("row cap = %d, want %d", state.RowCap, table.RowCap)
+	}
 }
 
 func TestCanonicalPivotColumnsPreserveCompiledMetricFormats(t *testing.T) {

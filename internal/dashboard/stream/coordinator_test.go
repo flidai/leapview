@@ -12,6 +12,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/command"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
@@ -336,6 +337,76 @@ func TestCoordinatorLatestGenerationSuppressesCanceledResultsAndCompletion(t *te
 		if event.Target == "stale" {
 			t.Fatalf("stale result published: %#v", events)
 		}
+	}
+}
+
+func TestCoordinatorCarriesUnfinishedTargetsIntoVisualWindow(t *testing.T) {
+	for _, previousCommand := range []string{"visual_window", "initial", "filter_change"} {
+		t.Run(previousCommand, func(t *testing.T) {
+			events := make(chan RefreshEvent, 16)
+			coordinator := NewCoordinator(context.Background(), func(event RefreshEvent) { events <- event })
+			t.Cleanup(coordinator.Close)
+			firstStarted := make(chan struct{})
+			firstResultPublished := make(chan struct{})
+			firstCanceled := make(chan struct{})
+			orders := command.Target{Kind: command.TargetWindow, ID: "orders"}
+			remaining := command.Target{Kind: command.TargetWindow, ID: "remaining"}
+			compact := command.Target{Kind: command.TargetWindow, ID: "orders_compact"}
+			if _, err := coordinator.BeginPrepared(func(current dashboard.Filters) (RefreshPreparation, error) {
+				return RefreshPreparation{Command: previousCommand, Filters: current, Targets: []string{orders.Key(), remaining.Key()}, Plan: command.RefreshPlan{Command: previousCommand, Targets: []command.Target{orders, remaining}}}, nil
+			}, func(RefreshPreparation) RefreshWork {
+				return func(ctx context.Context, publish RefreshPublisher) {
+					close(firstStarted)
+					publish(testVisualizationEvent(RefreshEventVisual, orders.ID))
+					close(firstResultPublished)
+					<-ctx.Done()
+					close(firstCanceled)
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			<-firstStarted
+			<-firstResultPublished
+			second, err := coordinator.BeginPrepared(func(current dashboard.Filters) (RefreshPreparation, error) {
+				return RefreshPreparation{Command: "visual_window", Filters: current, Targets: []string{compact.Key()}, Plan: command.RefreshPlan{Command: "visual_window", Targets: []command.Target{compact}}}, nil
+			}, func(preparation RefreshPreparation) RefreshWork {
+				return func(_ context.Context, publish RefreshPublisher) {
+					plan, ok := preparation.Plan.(command.RefreshPlan)
+					if !ok || len(plan.Targets) != 2 || plan.Targets[0].Key() != compact.Key() || plan.Targets[1].Key() != remaining.Key() {
+						t.Errorf("carried plan = %#v", preparation.Plan)
+						return
+					}
+					publish(testVisualizationEvent(RefreshEventVisual, remaining.ID))
+					publish(testVisualizationEvent(RefreshEventVisual, compact.ID))
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			<-firstCanceled
+			if second.Generation != 2 {
+				t.Fatalf("second generation = %d, want 2", second.Generation)
+			}
+			seen := map[string]bool{}
+			for {
+				select {
+				case event := <-events:
+					if event.Generation != second.Generation || event.Type != RefreshEventVisual {
+						if event.Type == RefreshEventComplete && event.Generation == second.Generation {
+							if len(seen) != 2 || seen[orders.ID] {
+								t.Fatalf("carried visual events = %#v", seen)
+							}
+							return
+						}
+						continue
+					}
+					seen[event.Target] = true
+				case <-time.After(time.Second):
+					t.Fatalf("timed out waiting for carried visual events: %#v", seen)
+				}
+			}
+
+		})
 	}
 }
 

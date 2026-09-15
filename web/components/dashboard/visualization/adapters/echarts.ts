@@ -169,8 +169,12 @@ export class EChartsHandle implements RendererHandle {
   }
 
   resize(width: number, height: number): void {
-    this.chart.resize({ width, height, silent: true })
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    // Deferred hosts can report their initial 0×0 layout before the renderer
+    // frame has entered the document. ECharts' hierarchy layouts assume a
+    // positive viewport and can dereference a missing layout slot during that
+    // resize. Keep the pending observer resize for the next valid frame.
+    this.chart.resize({ width, height, silent: true })
     this.lastWidth = width
     this.lastHeight = height
     this.applyResponsiveLayout(false)
