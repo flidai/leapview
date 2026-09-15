@@ -1,4 +1,6 @@
 import { LitElement, html } from 'lit'
+import { EllipsisVertical } from 'lucide'
+import { lucideIcon } from '../../shared/lucide-icons'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import validateGeneratedEnvelope from '../../../generated/visualization/validate'
@@ -201,7 +203,7 @@ export class VisualizationHost extends LitElement {
     const tableActions = this.hasTableActions()
     const showInitialLoading = !this.presented && !error
     const loadingLabel = `Loading ${header ?? 'visualization'}…`
-    return html`<div class=${showHeader ? 'surface' : 'surface headerless'} style=${`--lv-table-agent-action-space:${this.querySelector('[slot="agent-action"]') ? '64px' : '0px'}`}>
+    return html`<div class=${showHeader ? 'surface' : 'surface headerless'}>
       ${showHeader ? html`
         <header class="toolbar">
           <div class="toolbar-title">
@@ -216,7 +218,7 @@ export class VisualizationHost extends LitElement {
             ${this.visualActions()}
           </div>
         </header>
-      ` : html`<div class="headerless-actions" ?data-table-actions=${tableActions}><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}</div></div>`}
+      ` : tableActions ? null : html`<div class="headerless-actions"><div class="visual-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}${tableActions ? null : this.visualActions()}</div></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -349,7 +351,7 @@ export class VisualizationHost extends LitElement {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return null
     return html`<details class="visual-options">
-      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${visualMenuIcon('show-data')}</summary>
+      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
       <div class="menu" role="menu">
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>

@@ -247,7 +247,6 @@ export class ReportTable extends LitElement {
       z-index: calc(var(--zIndex-default) + 2);
       flex: 1 1 auto;
       min-width: 0;
-      padding-inline-end: var(--lv-table-agent-action-space, 0px);
     }
 
     h2 {
@@ -274,9 +273,9 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
-      width: var(--lv-button-height, var(--control-medium-size));
-      height: var(--lv-button-height, var(--control-medium-size));
-      min-height: var(--lv-button-height, var(--control-medium-size));
+      width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
     }
 
     .visual-options summary {
