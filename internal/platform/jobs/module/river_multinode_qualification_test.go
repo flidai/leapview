@@ -200,6 +200,110 @@ func TestPostgreSQL18MultiNodeRiverQualification(t *testing.T) {
 	}
 }
 
+func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_approval_activation_orphan")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+
+	poolA, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(poolA.Close)
+	poolB, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(poolB.Close)
+	if err := migrations.ApplyRiver(ctx, poolA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := poolA.Exec(ctx, jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repositoryA := jobpostgres.NewRepository(poolA)
+	repositoryB := jobpostgres.NewRepository(poolB)
+	nodeA := buildRiverMultiNodeModule(t, repositoryA, riverMultiNodeOwnerA)
+	nodeB := buildRiverMultiNodeModule(t, repositoryB, riverMultiNodeOwnerB)
+	started := make(chan riverMultiNodeInvocation, 1)
+	handler := jobs.HandlerFunc{
+		JobKind:               approvalActivationKind,
+		ExecutionLeaseTimeout: time.Minute,
+		Run: func(_ context.Context, job jobs.Job) error {
+			started <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
+			return nil
+		},
+	}
+	if err := nodeA.RegisterHandlers([]jobs.Handler{handler}); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeB.RegisterHandlers([]jobs.Handler{handler}); err != nil {
+		t.Fatal(err)
+	}
+
+	input := testJobInput("river-approval-activation-orphan", "publication-orphan")
+	input.Kind = approvalActivationKind
+	input.PartitionKey = "delivery-target:orphan"
+	input.ResourceKind = "delivery_publication"
+	job, err := nodeA.Enqueue(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var riverID int64
+	if err := poolA.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	// Model the exact durable state left by SIGKILL: River and product history
+	// both record attempt one as running, but no live client owns the claim and
+	// no retryable result was returned. Backdating attempted_at makes the row
+	// immediately eligible for the production two-minute rescue scan.
+	if _, err := poolA.Exec(ctx, `
+		UPDATE public.river_job
+		SET state='running', attempt=1, attempted_by=ARRAY[$2],
+		    attempted_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, riverID, riverMultiNodeOwnerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := poolA.Exec(ctx, `
+		UPDATE jobs.job_history
+		SET status='running', attempt_count=1,
+		    started_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	orphan, err := nodeA.Get(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orphan.Status != jobs.StatusRunning || orphan.Attempts != 1 {
+		t.Fatalf("orphaned product job = %q/%d, want running/1", orphan.Status, orphan.Attempts)
+	}
+	assertRiverMultiNodeEvidence(t, ctx, poolA, job.ID, rivertype.JobStateRunning, 1, 1)
+	var orphanOwners []string
+	if err := poolA.QueryRow(ctx, `SELECT attempted_by FROM public.river_job WHERE id=$1`, riverID).Scan(&orphanOwners); err != nil {
+		t.Fatal(err)
+	}
+	if len(orphanOwners) != 1 || orphanOwners[0] != riverMultiNodeOwnerA {
+		t.Fatalf("orphaned River owners = %#v, want only dead owner", orphanOwners)
+	}
+
+	if err := nodeB.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nodeB.Stop(context.Background()) })
+	invocation := waitRiverMultiNodeInvocation(t, ctx, started)
+	if invocation.owner != riverMultiNodeOwnerB || invocation.attempt != 2 {
+		t.Fatalf("reclaimed invocation = %#v, want attempt 2 on replacement node", invocation)
+	}
+	recovered := waitRiverMultiNodeProduct(t, ctx, nodeB, job.ID, jobs.StatusSucceeded)
+	if recovered.ID != job.ID || recovered.Attempts != 2 {
+		t.Fatalf("recovered product job = %q/%d, want same job %q at attempt 2", recovered.ID, recovered.Attempts, job.ID)
+	}
+	assertRiverMultiNodeEvidence(t, ctx, poolB, job.ID, rivertype.JobStateCompleted, 2, 1)
+}
+
 func buildRiverMultiNodeModule(t *testing.T, repository *jobpostgres.Repository, owner string) *Module {
 	t.Helper()
 	persistence, err := NewPostgresPersistence(repository)
