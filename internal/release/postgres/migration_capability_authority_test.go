@@ -14,6 +14,41 @@ import (
 	"github.com/flidai/leapview/internal/release/migrationcapability"
 )
 
+func TestMigrationCapabilityAuthorityMaintenanceRoleUsesLockCapability(t *testing.T) {
+	maintenance := testMaintenanceConn(t)
+	repository := New(maintenance)
+	authority := migrationCapabilityAuthority(t, repository)
+	admission := artifactAdmission("maintenance", "a", "1")
+	identity, err := repository.PublishArtifactAdmission(t.Context(), admission)
+	if err != nil {
+		t.Fatalf("maintenance publish admission: %v", err)
+	}
+	capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
+	if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, capability)); err != nil {
+		t.Fatalf("maintenance publish signed capability: %v", err)
+	}
+
+	for name, statement := range map[string]string{
+		"admission update": `UPDATE release.oci_artifact_admission SET admission_version = 'oci-artifact-admission/v2'`,
+		"admission delete": `DELETE FROM release.oci_artifact_admission`,
+		"direct lock":      `SELECT artifact_reference FROM release.oci_artifact_admission FOR UPDATE`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := maintenance.Exec(t.Context(), statement); err == nil {
+				t.Fatalf("maintenance %s unexpectedly succeeded", name)
+			}
+		})
+	}
+
+	if err := repository.RevokeArtifactAdmission(t.Context(), admission.Release.Image, "security decision revoked", time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("maintenance revoke admission: %v", err)
+	}
+	revoked := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("c"), "16")[0]
+	if _, err := authority.Publish(t.Context(), signedMigrationCapability(t, revoked)); !errors.Is(err, ErrMigrationCapabilityArtifact) || !errors.Is(err, ErrArtifactAdmissionRevoked) {
+		t.Fatalf("publication after maintenance revocation error = %v", err)
+	}
+}
+
 func TestMigrationCapabilityAuthorityPublishesExactArtifactCapabilities(t *testing.T) {
 	repository := New(testDB(t))
 	authority := migrationCapabilityAuthority(t, repository)
@@ -278,29 +313,36 @@ func TestMigrationCapabilityAuthorityFreezesTrustedOwnerKeys(t *testing.T) {
 func TestMigrationCapabilityPublicationIsFencedAgainstRevocation(t *testing.T) {
 	t.Run("publication wins before revocation", func(t *testing.T) {
 		pool := testDB(t)
-		repository := New(pool)
-		authority := migrationCapabilityAuthority(t, repository)
+		adminRepository := New(pool)
+		publishConn := testMaintenanceConnForPool(t, pool)
+		revokeConn := testMaintenanceConnForPool(t, pool)
+		authority := migrationCapabilityAuthority(t, New(publishConn))
+		revocationRepository := New(revokeConn)
 		admission := artifactAdmission("candidate", "a", "1")
-		identity, err := repository.PublishArtifactAdmission(t.Context(), admission)
+		identity, err := adminRepository.PublishArtifactAdmission(t.Context(), admission)
 		if err != nil {
 			t.Fatal(err)
 		}
 		capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("b"), "16")[0]
 		evidence := signedMigrationCapability(t, capability)
 
-		publishTx, err := pool.Begin(t.Context())
+		publishTx, err := publishConn.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer publishTx.Rollback(t.Context())
-		if _, err := publishTx.Exec(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1 FOR UPDATE`, identity.ArtifactAdmissionDigest); err != nil {
+		var reference string
+		if err := publishTx.QueryRow(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1`, identity.ArtifactAdmissionDigest).Scan(&reference); err != nil {
+			t.Fatal(err)
+		}
+		if err := publishTx.QueryRow(t.Context(), `SELECT artifact_reference FROM release.lock_oci_artifact_admission($1)`, reference).Scan(&reference); err != nil {
 			t.Fatal(err)
 		}
 		revocationStarted := make(chan struct{})
 		revocationDone := make(chan error, 1)
 		go func() {
 			close(revocationStarted)
-			revocationDone <- repository.RevokeArtifactAdmission(t.Context(), admission.Release.Image, "security decision revoked", time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC))
+			revocationDone <- revocationRepository.RevokeArtifactAdmission(t.Context(), admission.Release.Image, "security decision revoked", time.Date(2026, 9, 14, 13, 0, 0, 0, time.UTC))
 		}()
 		<-revocationStarted
 		if _, err := publishMigrationCapability(t.Context(), publishTx, evidence, migrationCapabilityOwnerRegistry()); err != nil {
@@ -323,22 +365,28 @@ func TestMigrationCapabilityPublicationIsFencedAgainstRevocation(t *testing.T) {
 
 	t.Run("revocation wins before publication", func(t *testing.T) {
 		pool := testDB(t)
-		repository := New(pool)
-		authority := migrationCapabilityAuthority(t, repository)
+		adminRepository := New(pool)
+		publishConn := testMaintenanceConnForPool(t, pool)
+		revokeConn := testMaintenanceConnForPool(t, pool)
+		authority := migrationCapabilityAuthority(t, New(publishConn))
 		admission := artifactAdmission("candidate", "c", "2")
-		identity, err := repository.PublishArtifactAdmission(t.Context(), admission)
+		identity, err := adminRepository.PublishArtifactAdmission(t.Context(), admission)
 		if err != nil {
 			t.Fatal(err)
 		}
 		capability := migrationCapabilities(t, identity.ArtifactAdmissionDigest, digest("d"), "16")[0]
 		evidence := signedMigrationCapability(t, capability)
 
-		revokeTx, err := pool.Begin(t.Context())
+		revokeTx, err := revokeConn.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer revokeTx.Rollback(t.Context())
-		if _, err := revokeTx.Exec(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1 FOR UPDATE`, identity.ArtifactAdmissionDigest); err != nil {
+		var reference string
+		if err := revokeTx.QueryRow(t.Context(), `SELECT artifact_reference FROM release.oci_artifact_admission WHERE admission_digest=$1`, identity.ArtifactAdmissionDigest).Scan(&reference); err != nil {
+			t.Fatal(err)
+		}
+		if err := revokeTx.QueryRow(t.Context(), `SELECT artifact_reference FROM release.lock_oci_artifact_admission($1)`, reference).Scan(&reference); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := revokeTx.Exec(t.Context(), `INSERT INTO release.oci_artifact_admission_revocation (artifact_reference, admission_digest, revoked_at, reason) VALUES ($1,$2,$3,$4)`, admission.Release.Image, identity.ArtifactAdmissionDigest, time.Date(2026, 9, 14, 13, 5, 0, 0, time.UTC), "security decision revoked"); err != nil {

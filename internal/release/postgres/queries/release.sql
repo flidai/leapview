@@ -197,17 +197,9 @@ SELECT artifact_reference
 FROM release.oci_artifact_admission
 WHERE admission_digest = $1;
 
--- name: LockOCIArtifactAdmissionByDigest :one
-SELECT artifact_reference
-FROM release.oci_artifact_admission
-WHERE admission_digest = $1
-FOR UPDATE;
-
 -- name: LockOCIArtifactAdmissionByReference :one
-SELECT artifact_reference
-FROM release.oci_artifact_admission
-WHERE artifact_reference = $1
-FOR UPDATE;
+SELECT l.artifact_reference
+FROM release.lock_oci_artifact_admission($1) AS l(artifact_reference);
 
 -- name: InsertMigrationCapability :execrows
 INSERT INTO release.migration_capability

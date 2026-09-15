@@ -192,12 +192,22 @@ func readMigrationCapabilityRow(row releasedb.ReleaseMigrationCapability, regist
 }
 
 func verifyCapabilityArtifactLocked(ctx context.Context, q *releasedb.Queries, admissionDigest string) error {
-	reference, err := q.LockOCIArtifactAdmissionByDigest(ctx, admissionDigest)
+	reference, err := q.GetOCIArtifactReferenceByAdmissionDigest(ctx, admissionDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, ErrArtifactAdmissionNotFound)
 	}
 	if err != nil {
 		return err
+	}
+	lockedReference, err := q.LockOCIArtifactAdmissionByReference(ctx, reference)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: %w", ErrMigrationCapabilityArtifact, ErrArtifactAdmissionNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	if lockedReference != reference {
+		return fmt.Errorf("%w: admission reference mismatch", ErrMigrationCapabilityArtifact)
 	}
 	return verifyCapabilityArtifactReference(ctx, q, reference, admissionDigest)
 }

@@ -42,6 +42,25 @@ CREATE TABLE IF NOT EXISTS release.migration_capability (
     )
 );
 
+-- Identity reads that participate in migration-capability publication and
+-- OCI-admission revocation use this narrow SECURITY DEFINER capability.
+-- Maintenance intentionally has no direct UPDATE privilege (and therefore
+-- cannot acquire row locks itself); the owner-controlled function keeps the
+-- admission row locked until the caller's transaction commits.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION release.lock_oci_artifact_admission(p_artifact_reference text)
+RETURNS TABLE (artifact_reference text)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, release
+AS $$
+    SELECT a.artifact_reference
+      FROM release.oci_artifact_admission AS a
+     WHERE a.artifact_reference = p_artifact_reference
+     FOR UPDATE;
+$$;
+-- +goose StatementEnd
+
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION release.reject_migration_capability_mutation()
 RETURNS trigger LANGUAGE plpgsql
@@ -63,6 +82,7 @@ CREATE TRIGGER migration_capability_no_truncate
     FOR EACH STATEMENT EXECUTE FUNCTION release.reject_migration_capability_mutation();
 
 REVOKE ALL ON TABLE release.migration_capability FROM PUBLIC;
+REVOKE ALL ON FUNCTION release.lock_oci_artifact_admission(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION release.reject_migration_capability_mutation() FROM PUBLIC;
 
 -- +goose StatementBegin
@@ -71,11 +91,13 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_owner;
         GRANT ALL ON release.migration_capability TO leapview_control_owner;
+        GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_owner;
         GRANT EXECUTE ON FUNCTION release.reject_migration_capability_mutation() TO leapview_control_owner;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_migrator;
         GRANT ALL ON release.migration_capability TO leapview_control_migrator;
+        GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_migrator;
         GRANT EXECUTE ON FUNCTION release.reject_migration_capability_mutation() TO leapview_control_migrator;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
@@ -87,6 +109,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA release TO leapview_control_maintenance;
         GRANT SELECT, INSERT ON release.migration_capability TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_maintenance;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.migration_capability FROM leapview_control_maintenance;
     END IF;
