@@ -55,6 +55,22 @@ type fakeRunner struct {
 	responses    map[string][]byte
 }
 
+func TestInstalledRuntimePackageFollowsAuthoringExecutableSymlink(t *testing.T) {
+	root := t.TempDir()
+	installation := filepath.Join(root, "lib", "leapview", "v1")
+	require.NoError(t, os.MkdirAll(filepath.Join(installation, "local-runtime"), 0o755))
+	executable := filepath.Join(installation, "leapview")
+	require.NoError(t, os.WriteFile(executable, []byte("binary"), 0o755))
+	bin := filepath.Join(root, "bin")
+	require.NoError(t, os.MkdirAll(bin, 0o755))
+	link := filepath.Join(bin, "leapview")
+	require.NoError(t, os.Symlink(executable, link))
+
+	got, err := installedRuntimePackageRoot(link)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(installation, "local-runtime"), got)
+}
+
 func (runner *fakeRunner) Run(_ context.Context, environment []string, arguments ...string) ([]byte, error) {
 	runner.mu.Lock()
 	defer runner.mu.Unlock()
