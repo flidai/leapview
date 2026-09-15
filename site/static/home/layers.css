@@ -81,6 +81,8 @@
   .architecture-callout[data-detail="postgres"], .architecture-callout[data-detail="ducklake"] { top: 405px; }
   .architecture-callout h3 { font-size: 16px; }
   .architecture-callout > p:not(.architecture-callout-kicker) { font-size: 11px; }
+  .architecture-callout-tags { gap: 4px; }
+  .architecture-callout-tags span { padding-inline: 5px; }
   .slab-face { font-size: clamp(8px, 1.25vw, 11px); }
 }
 @media (max-width: 800px) {
