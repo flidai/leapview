@@ -451,12 +451,3 @@ func (r *Repository) UpsertAuthorizationRoleBinding(ctx context.Context, input a
 	}
 	return result, nil
 }
-
-// UpsertAuthorizationRoleBindingTx composes the policy mutation into a
-// caller-owned transaction, preserving the same CAS/idempotency boundary.
-func UpsertAuthorizationRoleBindingTx(ctx context.Context, tx Tx, input access.AuthorizationRoleBindingInput) (access.AuthorizationPolicy, error) {
-	if tx == nil {
-		return access.AuthorizationPolicy{}, errors.New("authorization policy PostgreSQL transaction is required")
-	}
-	return (&Repository{db: tx}).upsertAuthorizationRoleBindingCore(ctx, tx, input)
-}

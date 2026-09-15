@@ -91,11 +91,6 @@ type AuthorizationPolicyWriter interface {
 	UpsertAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingInput) (AuthorizationPolicy, error)
 }
 
-type AuthorizationPolicyRepository interface {
-	AuthorizationPolicyReader
-	AuthorizationPolicyWriter
-}
-
 // ValidateAuthorizationRoleBinding applies the same role and capability
 // validation used by serving snapshots without requiring a project graph.
 func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
