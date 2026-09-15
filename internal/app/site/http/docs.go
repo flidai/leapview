@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -273,9 +272,21 @@ func siteDocsArticle(document siteDocument) g.Node {
 	return h.Article(
 		h.ID("main-content"),
 		h.Class("site-docs-article"),
-		h.Div(h.Class("site-docs-article-actions"), g.El("lv-site-markdown-copy", g.Attr("markdown", document.markdown))),
+		siteDocsPageActions(document),
 		g.Raw(renderedHTML),
 		siteDocsArticleFooter(document),
+	)
+}
+
+func siteDocsPageActions(document siteDocument) g.Node {
+	sourceLabel, sourceHref := documentationSourceLink(document)
+	return h.Div(h.Class("site-docs-article-actions"),
+		g.El("lv-site-docs-page-actions",
+			g.Attr("markdown", document.markdown),
+			g.Attr("markdown-href", documentationMarkdownLink(document)),
+			g.Attr("source-href", sourceHref),
+			g.Attr("source-label", sourceLabel),
+		),
 	)
 }
 
@@ -374,17 +385,12 @@ func renderSiteNode(node g.Node) string {
 }
 
 func siteDocsArticleFooter(document siteDocument) g.Node {
-	sourceLabel, sourceHref := documentationSourceLink(document)
+	pagination := siteDocsPagination(document)
+	if pagination == nil {
+		return nil
+	}
 	return h.Footer(h.Class("site-docs-article-footer"),
-		siteDocsPagination(document),
-		h.Section(h.Class("site-docs-page-meta"), g.Attr("aria-labelledby", "site-docs-about-this-page"),
-			h.H2(h.ID("site-docs-about-this-page"), g.Text("About this page")),
-			h.Ul(
-				h.Li(h.A(h.Href(documentationIssueLink(document)), g.Attr("rel", "external"), g.Text("Report content issue"))),
-				h.Li(h.A(h.Href(documentationMarkdownLink(document)), g.Attr("rel", "external"), g.Text("See this page as Markdown"))),
-				h.Li(h.A(h.Href(sourceHref), g.Attr("rel", "external"), g.Text(sourceLabel))),
-			),
-		),
+		pagination,
 	)
 }
 
@@ -434,14 +440,6 @@ func siteDocsPaginationCard(document *siteDocument, direction string) g.Node {
 		h.Span(h.Class("site-docs-pagination-direction"), g.Group(directionNodes)),
 		h.Span(h.Class("site-docs-pagination-title"), g.Text(document.title)),
 	)
-}
-
-func documentationIssueLink(document siteDocument) string {
-	query := url.Values{}
-	query.Set("title", "Docs: "+document.title)
-	query.Set("labels", "documentation")
-	query.Set("body", "Page: /docs/"+document.slug+"\n\nDescribe the content issue or suggested improvement.")
-	return "https://github.com/flidai/leapview/issues/new?" + query.Encode()
 }
 
 func documentationMarkdownLink(document siteDocument) string {

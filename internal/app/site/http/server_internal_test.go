@@ -762,7 +762,7 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 		"<title>Get started with LeapView</title>",
 		`<lv-site-docs-drawer-toggle></lv-site-docs-drawer-toggle>`,
 		`<button class="site-docs-drawer-backdrop" type="button" aria-label="Close documentation menu" aria-hidden="true" tabindex="-1" data-site-docs-drawer-close="true"></button>`,
-		`<lv-site-markdown-copy`,
+		`<lv-site-docs-page-actions`,
 		`<article id="main-content" class="site-docs-article">`,
 		`<aside class="site-docs-sidebar" id="site-docs-sidebar">`,
 		`<a class="site-docs-link site-docs-link-current" href="/docs/getting-started" title="Get started with LeapView" aria-current="page">Get started with LeapView</a>`,
@@ -931,7 +931,7 @@ func TestSiteDocumentationSupportsNestedArticleSlugs(t *testing.T) {
 		t.Fatalf("nested documentation status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, response)
-	for _, want := range []string{`<h1 id="query-and-interaction-lifecycle">Query and interaction lifecycle</h1>`, "Core concepts", "Datastar signal flow", "About this page", "Edit this page"} {
+	for _, want := range []string{`<h1 id="query-and-interaction-lifecycle">Query and interaction lifecycle</h1>`, "Core concepts", "Datastar signal flow", `source-label="Edit this page on GitHub"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("nested documentation missing %q", want)
 		}
@@ -1374,9 +1374,8 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 	}
 	stepped := strings.Index(body, `<h2 id="stepped-line">Stepped line</h2>`)
 	api := strings.Index(body, `<h2 id="site-visual-api-reference">API reference</h2>`)
-	about := strings.Index(body, `<h2 id="site-docs-about-this-page">About this page</h2>`)
-	if stepped < 0 || api < stepped || about < api {
-		t.Errorf("article order = stepped %d, API %d, about %d; want examples, API reference, footer", stepped, api, about)
+	if stepped < 0 || api < stepped || strings.Contains(body, "site-docs-about-this-page") {
+		t.Errorf("article order = stepped %d, API %d; want examples then API reference without page meta", stepped, api)
 	}
 }
 

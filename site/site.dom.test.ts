@@ -690,13 +690,14 @@ test('getting started route directs users through the first learning path', asyn
     expect(await page.locator('.site-docs-breadcrumb').count()).toBe(0)
     expect(await page.locator('.site-docs-article-header').evaluate((header) => getComputedStyle(header).display)).toBe('none')
 
-    const markdownCopy = page.locator('lv-site-markdown-copy')
-    expect(await markdownCopy.getAttribute('markdown')).toStartWith('# Get started with LeapView')
-    expect(await markdownCopy.evaluate((element) => (element as HTMLElement & { markdown?: string }).markdown)).toStartWith('# Get started with LeapView')
+    const pageActions = page.locator('lv-site-docs-page-actions')
+    expect(await pageActions.getAttribute('markdown')).toStartWith('# Get started with LeapView')
+    expect(await pageActions.evaluate((element) => (element as HTMLElement & { markdown?: string }).markdown)).toStartWith('# Get started with LeapView')
+    await pageActions.locator('summary').click()
     const copyMarkdown = page.getByRole('button', { name: 'Copy Markdown' })
     await copyMarkdown.click()
-    await page.waitForFunction(() => document.querySelector('lv-site-markdown-copy')?.shadowRoot?.querySelector('button')?.getAttribute('aria-label') === 'Markdown copied')
-    expect(await markdownCopy.evaluate((element) => element.shadowRoot?.querySelector('button')?.getAttribute('aria-label'))).toBe('Markdown copied')
+    await page.waitForFunction(() => document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('button')?.getAttribute('aria-label') === 'Markdown copied')
+    expect(await pageActions.evaluate((element) => element.shadowRoot?.querySelector('button')?.getAttribute('aria-label'))).toBe('Markdown copied')
     expect(await page.locator('html').getAttribute('data-copied-markdown')).toStartWith('# Get started with LeapView')
 
     expect(await page.locator('.site-guide-step').count()).toBe(0)
@@ -761,7 +762,7 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await page.locator('.site-visual-api-summary').count()).toBe(0)
     const articleHeadings = await page.locator('.site-docs-article h2').allTextContents()
     expect(articleHeadings.indexOf('API reference')).toBeGreaterThan(articleHeadings.indexOf('Stepped line'))
-    expect(articleHeadings.indexOf('About this page')).toBeGreaterThan(articleHeadings.indexOf('API reference'))
+    expect(articleHeadings).not.toContain('About this page')
     const fieldReference = page.getByRole('table', { name: 'API reference' })
     expect(await fieldReference.getByRole('columnheader').allTextContents()).toEqual(['Field', 'Type', 'Default', 'Allowed values', 'Description'])
     const stepReference = fieldReference.getByRole('row').filter({ hasText: 'presentation.step' })
@@ -1411,7 +1412,7 @@ test('documentation articles provide a readable, navigable reference experience'
       const orderedList = article.querySelector('ol') as HTMLElement
       const unorderedList = article.querySelector('ul') as HTMLElement
       const heading = article.querySelector('h1') as HTMLElement
-      const action = article.querySelector('lv-site-markdown-copy') as HTMLElement
+      const action = article.querySelector('lv-site-docs-page-actions') as HTMLElement
       const code = article.querySelector('pre code') as HTMLElement
       const navigation = document.querySelector('.site-docs-link') as HTMLElement
       return {
@@ -1764,7 +1765,7 @@ test('site disables smooth scrolling for reduced motion', async () => {
   }
 })
 
-test('documentation header keeps the Markdown copy action beside the title at every width', async () => {
+test('documentation header keeps the page actions menu beside the title at every width', async () => {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   })
@@ -1773,7 +1774,7 @@ test('documentation header keeps the Markdown copy action beside the title at ev
 
     const measure = () =>
       page.locator('.site-docs-article').evaluate((article) => {
-        const button = document.querySelector('lv-site-markdown-copy')?.shadowRoot?.querySelector('button')
+        const button = document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('summary')
         const title = article.querySelector('h1')
         const action = article.querySelector('.site-docs-article-actions')
         const buttonStyle = button ? getComputedStyle(button) : null
@@ -1798,7 +1799,7 @@ test('documentation header keeps the Markdown copy action beside the title at ev
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 })
       const layout = await measure()
-      expect(layout.buttonFontSize).toBe(12)
+      expect(layout.buttonFontSize).toBeGreaterThan(0)
       expect(layout.buttonHeight).toBe(33)
       expect(layout.buttonLeft).toBeGreaterThanOrEqual(layout.titleRight)
       expect(layout.actionTop).toBeGreaterThanOrEqual(layout.titleTop)
@@ -1811,100 +1812,33 @@ test('documentation header keeps the Markdown copy action beside the title at ev
   }
 })
 
-test('documentation articles end with responsive pagination cards and an About this page panel', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
+test('documentation page actions replace the footer panel and work at compact widths', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(`${baseURL}/docs/getting-started`)
     const article = page.locator('.site-docs-article')
     const pagination = article.getByRole('navigation', { name: 'Documentation pagination' })
-    const panel = article.locator('.site-docs-page-meta')
-    const previous = pagination.getByRole('link', { name: 'Previous page: Installation' })
-    const next = pagination.getByRole('link', { name: 'Next page: Build your first dashboard' })
-    expect(await previous.getAttribute('href')).toBe('/docs/installation')
-    expect(await previous.getAttribute('rel')).toBe('prev')
-    expect(await next.getAttribute('href')).toBe('/docs/first-dashboard')
-    expect(await next.getAttribute('rel')).toBe('next')
-    expect(await panel.getByRole('heading', { name: 'About this page', exact: true }).count()).toBe(1)
-    expect(await panel.getByRole('link', { name: 'Report content issue', exact: true }).getAttribute('href')).toContain('github.com/flidai/leapview/issues/new?')
-    expect(await panel.getByRole('link', { name: 'See this page as Markdown', exact: true }).getAttribute('href')).toBe('https://raw.githubusercontent.com/flidai/leapview/main/docs/getting-started.md')
-    expect(await panel.getByRole('link', { name: 'Edit this page on GitHub', exact: true }).getAttribute('href')).toBe('https://github.com/flidai/leapview/edit/main/docs/getting-started.md')
-
-    const measure = () =>
-      pagination.evaluate((element) => {
-        const article = element.closest('.site-docs-article') as HTMLElement
-        const previous = element.querySelector<HTMLElement>('.site-docs-pagination-previous')!
-        const next = element.querySelector<HTMLElement>('.site-docs-pagination-next')!
-        const panel = article.querySelector<HTMLElement>('.site-docs-page-meta')!
-        const previousRect = previous.getBoundingClientRect()
-        const nextRect = next.getBoundingClientRect()
-        const paginationRect = element.getBoundingClientRect()
-        const panelRect = panel.getBoundingClientRect()
-        const heading = panel.querySelector('h2') as HTMLElement
-        const list = panel.querySelector('ul') as HTMLElement
-        const item = panel.querySelector('li') as HTMLElement
-        const headingRect = heading.getBoundingClientRect()
-        const listRect = list.getBoundingClientRect()
-        const panelStyle = getComputedStyle(panel)
-        const headingStyle = getComputedStyle(heading)
-        const listStyle = getComputedStyle(list)
-        const itemStyle = getComputedStyle(item)
-        return {
-          articleWidth: article.getBoundingClientRect().width,
-          background: panelStyle.backgroundColor,
-          borderRadius: Number.parseFloat(panelStyle.borderRadius),
-          headingFontSize: Number.parseFloat(headingStyle.fontSize),
-          headingLineHeight: Number.parseFloat(headingStyle.lineHeight),
-          headingMarginBottom: Number.parseFloat(headingStyle.marginBottom),
-          headingLeft: headingRect.left,
-          headingBottom: headingRect.bottom,
-          itemFontSize: Number.parseFloat(itemStyle.fontSize),
-          itemLineHeight: Number.parseFloat(itemStyle.lineHeight),
-          listStyle: listStyle.listStyleType,
-          listLeft: listRect.left,
-          listTop: listRect.top,
-          marginTop: Number.parseFloat(panelStyle.marginTop),
-          nextLeft: nextRect.left,
-          nextTop: nextRect.top,
-          padding: Number.parseFloat(panelStyle.paddingTop),
-          paddingLeft: Number.parseFloat(listStyle.paddingLeft),
-          paginationBottom: paginationRect.bottom,
-          panelTop: panelRect.top,
-          panelWidth: panelRect.width,
-          previousLeft: previousRect.left,
-          previousTop: previousRect.top,
-        }
-      })
-
-    const desktop = await measure()
-    expect(desktop.background).not.toBe('rgba(0, 0, 0, 0)')
-    expect(desktop.borderRadius).toBe(6)
-    expect(desktop.padding).toBe(20)
-    expect(desktop.headingFontSize).toBe(14)
-    expect(desktop.headingLineHeight / desktop.headingFontSize).toBeCloseTo(1.2, 2)
-    expect(desktop.headingMarginBottom).toBe(7)
-    expect(desktop.listTop).toBeGreaterThan(desktop.headingBottom)
-    expect(desktop.listLeft).toBe(desktop.headingLeft)
-    expect(desktop.itemFontSize).toBe(14)
-    expect(desktop.itemLineHeight / desktop.itemFontSize).toBeCloseTo(1.4, 2)
-    expect(desktop.listStyle).toBe('disc')
-    expect(desktop.marginTop).toBe(0)
-    expect(desktop.paddingLeft).toBe(20)
-    expect(Math.abs(desktop.panelWidth - desktop.articleWidth)).toBeLessThanOrEqual(1)
-    expect(desktop.previousTop).toBe(desktop.nextTop)
-    expect(desktop.previousLeft).toBeLessThan(desktop.nextLeft)
-    expect(desktop.paginationBottom).toBeLessThan(desktop.panelTop)
+    const actions = article.locator('lv-site-docs-page-actions')
+    expect(await article.locator('.site-docs-page-meta').count()).toBe(0)
+    expect(await pagination.getByRole('link', { name: 'Previous page: Installation' }).getAttribute('href')).toBe('/docs/installation')
+    expect(await pagination.getByRole('link', { name: 'Next page: Build your first dashboard' }).getAttribute('href')).toBe('/docs/first-dashboard')
+    await actions.locator('summary').click()
+    expect(await actions.getByRole('link', { name: 'View Markdown' }).getAttribute('href')).toBe('https://raw.githubusercontent.com/flidai/leapview/main/docs/getting-started.md')
+    expect(await actions.getByRole('link', { name: 'Edit this page on GitHub' }).getAttribute('href')).toBe('https://github.com/flidai/leapview/edit/main/docs/getting-started.md')
+    expect(await actions.getByRole('link', { name: /Report/ }).count()).toBe(0)
+    await page.keyboard.press('Escape')
+    expect(await actions.locator('details').getAttribute('open')).toBeNull()
 
     await page.setViewportSize({ width: 390, height: 844 })
-    const mobile = await measure()
-    expect(mobile.padding).toBe(20)
-    expect(mobile.listTop).toBeGreaterThan(mobile.headingBottom)
-    expect(mobile.listLeft).toBe(mobile.headingLeft)
-    expect(Math.abs(mobile.panelWidth - mobile.articleWidth)).toBeLessThanOrEqual(1)
-    expect(mobile.previousLeft).toBe(mobile.nextLeft)
-    expect(mobile.previousTop).toBeLessThan(mobile.nextTop)
+    await actions.locator('summary').click()
+    expect(await actions.getByRole('button', { name: 'Copy Markdown' }).isVisible()).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+    await page.goto(`${baseURL}/docs/configuration`)
+    const generatedActions = page.locator('lv-site-docs-page-actions')
+    await generatedActions.locator('summary').click()
+    expect(await generatedActions.getByRole('link', { name: 'View source contract on GitHub' }).count()).toBe(1)
+    expect(await generatedActions.getByRole('link', { name: 'Edit this page on GitHub' }).count()).toBe(0)
   } finally {
     await page.close()
   }

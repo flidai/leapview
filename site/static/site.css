@@ -1090,7 +1090,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--base-size-16);
-  margin-bottom: var(--base-size-32);
+  margin-bottom: 0;
 }
 
 .site-docs-article .site-docs-pagination-card {
@@ -1147,50 +1147,6 @@ lv-site-search:not(:defined) > .site-search-active-input {
 .site-docs-pagination-arrow {
   font-size: var(--text-body-size-medium);
   line-height: 1;
-}
-
-.site-docs-page-meta {
-  display: grid;
-  width: 100%;
-  margin-top: 0;
-  border-radius: var(--lv-radius-default);
-  background: var(--lv-bg-control);
-  padding: var(--base-size-20);
-}
-
-.site-docs-page-meta h2 {
-  margin: 0 0 0.5em;
-  font-size: var(--text-body-size-medium);
-  font-weight: var(--base-text-weight-semibold);
-  letter-spacing: 0.001em;
-  line-height: 1.2;
-}
-
-.site-docs-page-meta ul {
-  margin: 0;
-  padding: 0 0 0 var(--base-size-20);
-  font-size: var(--text-body-size-medium);
-  list-style: disc;
-}
-
-.site-docs-page-meta li {
-  font-size: var(--text-body-size-medium);
-  font-weight: var(--base-text-weight-normal);
-  letter-spacing: 0.005em;
-  line-height: 1.4;
-}
-
-.site-docs-page-meta li + li {
-  margin-top: 0;
-}
-
-.site-docs-page-meta a {
-  color: var(--lv-fg-muted);
-}
-
-.site-docs-page-meta a:hover,
-.site-docs-page-meta a:focus-visible {
-  color: var(--lv-fg-default);
 }
 
 @media (max-width: 40rem) {
