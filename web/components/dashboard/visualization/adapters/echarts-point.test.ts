@@ -39,6 +39,36 @@ test('ECharts point axis visibility hides axes and restores native defaults with
   }
 })
 
+test('ECharts reserves boundary room for point symbols on continuous axes', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.xAxis.boundaryGap).toEqual(['5%', '5%'])
+  expect(option.yAxis.boundaryGap).toEqual(['5%', '5%'])
+})
+
+test('ECharts keeps explicit point axis bounds alongside symbol room', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+  envelope.spec.axes = [
+    { id: 'x', minimum: 1, maximum: 4 },
+    { id: 'primary_y', minimum: 1, maximum: 4 },
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.xAxis).toMatchObject({ min: 1, max: 4, boundaryGap: ['5%', '5%'] })
+  expect(option.yAxis).toMatchObject({ min: 1, max: 4, boundaryGap: ['5%', '5%'] })
+})
+
 test('ECharts renders deterministic categorical scatter legends without changing source rows', () => {
   const envelope = pointCategoricalFixture([
     ['p-empty', '', 2, 20],
@@ -146,6 +176,50 @@ test('ECharts disables large scatter mode when conditional fill needs per-point 
   expect(option.series[0].itemStyle.color({ value: ['p-1', 'ok', 1, 10] })).toBe('rgb(147 65 76)')
 })
 
+test('ECharts disables large scatter mode when variable colors, sizes, labels, or highlights need datum styling', () => {
+  const cases: Array<{ configure: (envelope: any) => void; reason: string }> = [
+    {
+      reason: 'quantitative colors',
+      configure: (envelope) => {
+        envelope.spec.color = { dataset: 'primary', field: 'y' }
+        envelope.spec.colorScale = { kind: 'quantitative' }
+      },
+    },
+    {
+      reason: 'bubble sizes',
+      configure: (envelope) => {
+        envelope.spec.size = { dataset: 'primary', field: 'x' }
+        envelope.spec.sizeScale = { minimumPixels: 4, maximumPixels: 16 }
+      },
+    },
+    {
+      reason: 'labels',
+      configure: (envelope) => {
+        envelope.spec.label = { dataset: 'primary', field: 'id' }
+        envelope.spec.presentation.labelPolicy = { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }
+      },
+    },
+    {
+      reason: 'highlights',
+      configure: (envelope) => {
+        envelope.highlights = [{
+          sourceVisualID: 'source', interactionID: 'selection', label: 'A',
+          entries: [{ label: 'A', mappings: [{ targetFieldID: 'id', targetDatasetID: 'primary', value: 'p-1', label: 'p-1' }] }],
+        }]
+      },
+    },
+  ]
+
+  for (const testCase of cases) {
+    const envelope = pointCategoricalFixture([['p-1', 'ok', 1, 10], ['p-2', 'ok', 2, 20]]) as any
+    envelope.spec.presentation.brush = []
+    envelope.spec.presentation.largeMode = 'always'
+    testCase.configure(envelope)
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series[0].large, testCase.reason).toBe(false)
+  }
+})
+
 test('ECharts partitions large categorical scatter frames without losing source identity', () => {
   const rows = Array.from({ length: 5_000 }, (_, index) => [`p-${index}`, `category-${index % 5}`, index, index * 2])
   const envelope = pointCategoricalFixture(rows) as any
@@ -158,6 +232,15 @@ test('ECharts partitions large categorical scatter frames without losing source 
   expect(option.series.every((series: any) => series.large === true)).toBe(true)
   expect(option.series.flatMap((series: any) => series.__lv_source_row_indices).sort((a: number, b: number) => a - b)).toEqual(Array.from({ length: 5_000 }, (_, index) => index))
   expect(option.dataset[0].source).toHaveLength(5_001)
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    const model = (chart as any).getModel()
+    expect(Array.from({ length: 5 }, (_, index) => model.getSeriesByIndex(index).pipelineContext.large)).toEqual([true, true, true, true, true])
+  } finally {
+    chart.dispose()
+  }
 })
 
 test('ECharts accepts canonical decimal strings for quantitative point color domains and size', () => {
@@ -253,6 +336,44 @@ test('ECharts reports field-specific diagnostics for out-of-range canonical deci
     const envelope = pointCategoricalFixture(testCase.rows) as any
     testCase.configure(envelope)
     expect(() => echartsOption(envelope, defaultRendererContext)).toThrow(testCase.expected)
+  }
+})
+
+test('ECharts keeps point symbols inside the grid when continuous values reach both extents', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    const rawOption = { ...option, xAxis: { ...option.xAxis, boundaryGap: undefined }, yAxis: { ...option.yAxis, boundaryGap: undefined } }
+    const bounds = (current: any) => {
+      chart.setOption(current, { notMerge: true, lazyUpdate: false })
+      chart.renderToSVGString()
+      const list = chart.getZr().storage.getDisplayList()
+      const rect = (chart as any).getModel().getComponent('grid').coordinateSystem.getRect()
+      const symbols = list
+        .filter((item: any) => item.type === 'path' && item.shape?.symbolType === 'circle' && item.shape.width <= 2)
+        .map((item: any) => {
+          const [scaleX, , scaleY, , translateX, translateY] = item.transform
+          const left = translateX + item.shape.x * scaleX
+          const right = translateX + (item.shape.x + item.shape.width) * scaleX
+          const top = translateY + item.shape.y * scaleY
+          const bottom = translateY + (item.shape.y + item.shape.height) * scaleY
+          return { left: Math.min(left, right), right: Math.max(left, right), top: Math.min(top, bottom), bottom: Math.max(top, bottom) }
+        })
+      return { rect, symbols }
+    }
+    const raw = bounds(rawOption)
+    expect(raw.symbols.some((symbol: any) => symbol.left < raw.rect.x || symbol.right > raw.rect.x + raw.rect.width || symbol.top < raw.rect.y || symbol.bottom > raw.rect.y + raw.rect.height)).toBe(true)
+
+    const padded = bounds(option)
+    expect(padded.symbols).toHaveLength(2)
+    expect(padded.symbols.every((symbol: any) => symbol.left >= padded.rect.x && symbol.right <= padded.rect.x + padded.rect.width && symbol.top >= padded.rect.y && symbol.bottom <= padded.rect.y + padded.rect.height)).toBe(true)
+  } finally {
+    chart.dispose()
   }
 })
 

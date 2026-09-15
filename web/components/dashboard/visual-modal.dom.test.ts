@@ -222,3 +222,25 @@ test('show-data mode captures, traps, and restores focus', async () => {
     await page.close()
   }
 })
+
+test('show-data dialog fits short viewports and keeps its close control reachable', async () => {
+  const page = await setupPage()
+  try {
+    await page.setViewportSize({ width: 844, height: 390 })
+    await page.addStyleTag({ content: ':root { --base-size-28: 28px; }' })
+    await dispatchVisualAction(page, 'first', 'show-data')
+    const bounds = await page.getByRole('dialog').boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.y).toBeGreaterThanOrEqual(28)
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(390 - 28)
+    const close = page.getByRole('button', { name: 'Close visual modal' })
+    const closeBounds = await close.boundingBox()
+    expect(closeBounds).not.toBeNull()
+    expect(closeBounds!.y).toBeGreaterThanOrEqual(0)
+    expect(closeBounds!.y + closeBounds!.height).toBeLessThanOrEqual(390)
+    await close.click()
+    expect(await page.getByRole('dialog').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})

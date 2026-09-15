@@ -7,7 +7,7 @@ import { brushSelectionCommands, createEChartsRendererFrame, echartsOption, echa
 import { echartsLabelPolicy, truncateVisualizationLabel } from './echarts/label-policy'
 import { CategoryColorRegistry } from './echarts/category-colors'
 import { completenessAccessibilitySummary } from './echarts/common'
-import { cartesianFixture, proportionalFixture } from './echarts-test-fixtures'
+import { cartesianFixture, hierarchyFixture, networkFixture, proportionalFixture } from './echarts-test-fixtures'
 import { proportionalCenterText } from './echarts/proportional'
 
 test('ECharts label policy truncates by grapheme and preserves selected and threshold labels', () => {
@@ -1396,28 +1396,6 @@ test('ECharts renders a visible diagnostic instead of clipping an out-of-domain 
   expect(option.series).toEqual([])
   expect(option.graphic[0].style.text).toContain('outside configured gauge domain 0.0%–100.0%')
 })
-
-function hierarchyFixture(mark: 'tree' | 'treemap' | 'sunburst'): VisualizationEnvelope {
-  const envelope = cartesianFixture('line') as any
-  envelope.visualID = mark
-  envelope.spec = { kind: 'hierarchy', title: mark, mark, datasets: [{ id: 'primary', fields: [{ id: 'node', role: 'identity', dataType: 'string', nullable: false, label: 'Node' }, { id: 'parent', role: 'dimension', dataType: 'string', nullable: true, label: 'Parent' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }] }], dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: mark, description: mark }, interactions: [], node: { dataset: 'primary', field: 'node' }, parent: { dataset: 'primary', field: 'parent' }, value: { dataset: 'primary', field: 'value' }, presentation: { legend: 'hidden', labelPolicy: { density: 'automatic', priority: ['selected', 'anomaly', 'threshold'], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true }, orientation: 'vertical', initialDepth: 2, roam: true, layout: 'standard', breadcrumb: true } }
-  ;(envelope.dataState as InlineVisualizationDataState).datasets[0] = { ...(envelope.dataState as InlineVisualizationDataState).datasets[0], columns: ['node', 'parent', 'value'], rows: [['root', null, 10], ['child', 'root', 4]] }
-  return envelope
-}
-
-function networkFixture(mark: 'graph' | 'sankey'): VisualizationEnvelope {
-  const envelope = hierarchyFixture('tree') as any
-  envelope.visualID = mark
-  envelope.spec.mark = mark
-  envelope.spec.node = { dataset: 'primary', field: 'source' }
-  envelope.spec.parent = undefined
-  envelope.spec.source = { dataset: 'primary', field: 'source' }
-  envelope.spec.target = { dataset: 'primary', field: 'target' }
-  envelope.spec.presentation = { ...envelope.spec.presentation, orientation: 'vertical', layout: 'circular', nodeGap: 18, curveness: 0.3, focus: 'adjacency' }
-  envelope.spec.datasets[0].fields = [{ id: 'source', role: 'dimension', dataType: 'string', nullable: false, label: 'Source' }, { id: 'target', role: 'dimension', dataType: 'string', nullable: false, label: 'Target' }, { id: 'value', role: 'metric', dataType: 'decimal', nullable: false, label: 'Value' }]
-  ;(envelope.dataState as InlineVisualizationDataState).datasets[0] = { ...(envelope.dataState as InlineVisualizationDataState).datasets[0], columns: ['source', 'target', 'value'], rows: [['A', 'B', 4]] }
-  return envelope
-}
 
 function gaugeFixture(): VisualizationEnvelope {
   return {

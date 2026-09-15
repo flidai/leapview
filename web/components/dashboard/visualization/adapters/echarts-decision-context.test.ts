@@ -31,7 +31,7 @@ test('ECharts translates semantic axes and decision context from the current fra
   const context = { ...defaultRendererContext, colors: { ...defaultRendererContext.colors, success: '#00aa00', attention: '#ffaa00' } }
   const option = echartsOption(envelope, context) as any
   expect(option.xAxis).toMatchObject({ name: 'Month', axisLabel: { interval: 2 } })
-  expect(option.yAxis).toMatchObject({ name: 'Revenue (USD)', type: 'value', min: 10, max: 100, scale: true, splitNumber: 8 })
+  expect(option.yAxis).toMatchObject({ name: 'Revenue (USD)', type: 'value', min: 10, max: 100, scale: true, boundaryGap: ['5%', '5%'], splitNumber: 8 })
   expect(option.series[0].markLine.data).toEqual([
     { id: 'reference-line:target', name: 'Target', yAxis: 80, lineStyle: { color: '#00aa00' } },
     { id: 'reference-line:average', name: 'Average', yAxis: 40, lineStyle: { color: '#ffaa00' } },

@@ -170,6 +170,9 @@ func RefreshEventEnvelope(event dashboardstream.RefreshEvent) dashboardstream.En
 	switch event.Type {
 	case dashboardstream.RefreshEventStart, dashboardstream.RefreshEventProgress, dashboardstream.RefreshEventComplete:
 		delivery.Boundary = true
+		if event.Type == dashboardstream.RefreshEventStart && event.Command == "visual_window" {
+			delivery.PreservePriorGeneration = true
+		}
 	case dashboardstream.RefreshEventTargetError:
 		if event.Target == "refresh" {
 			delivery.Boundary = true

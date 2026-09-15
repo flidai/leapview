@@ -17,10 +17,13 @@ type Envelope struct {
 // DeliveryMetadata defines dashboard refresh ordering and coalescing.
 // Generation zero means the message is not generation scoped.
 type DeliveryMetadata struct {
-	Generation    uint64
-	Boundary      bool
-	CoalesceGroup string
-	MergeRoots    []string
+	Generation              uint64
+	SequenceKey             string
+	Sequence                uint64
+	Boundary                bool
+	PreservePriorGeneration bool
+	CoalesceGroup           string
+	MergeRoots              []string
 }
 
 // DeliveryBroker fans dashboard refresh envelopes out to subscribers while
@@ -37,6 +40,7 @@ type deliverySubscription struct {
 	pendingLimit      int
 	generation        uint64
 	hasGeneration     bool
+	sequences         map[string]uint64
 	nextID            uint64
 	generationChanged chan struct{}
 	closed            bool
@@ -81,6 +85,7 @@ func (b *DeliveryBroker) SubscribeForPublication(publicationID, streamID string)
 func (b *DeliveryBroker) subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
 	subscription := &deliverySubscription{
 		pendingLimit:      b.pendingLimit,
+		sequences:         map[string]uint64{},
 		out:               make(chan pagestream.SignalPatch),
 		wake:              make(chan struct{}, 1),
 		done:              make(chan struct{}),
@@ -137,9 +142,34 @@ func (s *deliverySubscription) enqueue(envelope Envelope) {
 		return
 	}
 	generation := envelope.Delivery.Generation
+	sequenceKey := envelope.Delivery.SequenceKey
+	sequence := envelope.Delivery.Sequence
 	if generation > 0 && s.hasGeneration && generation < s.generation {
 		s.mu.Unlock()
 		return
+	}
+	if sequenceKey != "" {
+		if sequence == 0 {
+			s.mu.Unlock()
+			return
+		}
+		if current, exists := s.sequences[sequenceKey]; exists && sequence < current {
+			s.mu.Unlock()
+			return
+		}
+		if current := s.sequences[sequenceKey]; sequence > current {
+			s.sequences[sequenceKey] = sequence
+			kept := s.pending[:0]
+			for _, pending := range s.pending {
+				metadata := pending.envelope.Delivery
+				if metadata.SequenceKey == sequenceKey && metadata.Sequence < sequence {
+					close(pending.changed)
+					continue
+				}
+				kept = append(kept, pending)
+			}
+			s.pending = kept
+		}
 	}
 	if generation > 0 && (!s.hasGeneration || generation > s.generation) {
 		hadGeneration := s.hasGeneration
@@ -149,7 +179,8 @@ func (s *deliverySubscription) enqueue(envelope Envelope) {
 		for _, pending := range s.pending {
 			// Generation-zero status envelopes are durable metadata (for
 			// example lastUpdated), not stale result payloads.
-			if pending.envelope.Delivery.Generation == 0 || pending.envelope.Delivery.Generation >= generation {
+			pendingGeneration := pending.envelope.Delivery.Generation
+			if pendingGeneration == 0 || pendingGeneration >= generation || (envelope.Delivery.PreservePriorGeneration && hadGeneration && pendingGeneration > 0 && pendingGeneration < generation) {
 				kept = append(kept, pending)
 			}
 		}
@@ -188,6 +219,9 @@ func shouldCoalesce(current, next Envelope) bool {
 		return false
 	}
 	if current.Delivery.Generation != next.Delivery.Generation {
+		return false
+	}
+	if current.Delivery.SequenceKey != next.Delivery.SequenceKey || current.Delivery.Sequence != next.Delivery.Sequence {
 		return false
 	}
 	return current.Delivery.CoalesceGroup != "" && current.Delivery.CoalesceGroup == next.Delivery.CoalesceGroup
