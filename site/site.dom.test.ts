@@ -61,6 +61,7 @@ test('homepage presents the new sections inside the shared site shell', async ()
       return image?.complete && image.naturalWidth === 1440
     })
     expect(await page.locator('.orbit-node').count()).toBe(17)
+    expect(await page.locator('.orbit-track .orbit-node').count()).toBe(17)
     await page.locator('#connections').scrollIntoViewIfNeeded()
     await page.waitForFunction(() => document.querySelector('#orbit-stage')?.classList.contains('is-in-view'))
     expect(await page.locator('.orbit-rotor').first().evaluate((element) => getComputedStyle(element).animationPlayState)).toBe('running')
@@ -497,7 +498,7 @@ test('site header follows homepage section colors on scroll', async () => {
     expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
 
     const sectionFills: string[] = []
-    for (const id of ['enterprise', 'openness']) {
+    for (const id of ['enterprise', 'layers']) {
       const section = page.locator(`#${id}`)
       const color = await section.evaluate((element) => getComputedStyle(element).backgroundColor)
       await section.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 180))

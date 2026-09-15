@@ -1,7 +1,0 @@
-/* Homepage study, scoped to preserve the shared site shell. */
-@scope (.site-home) {
-.enterprise.openness {
-  background: var(--bg);
-}
-
-}

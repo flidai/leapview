@@ -9,6 +9,31 @@ spec:
     sales_orders:
       model: sales_orders
       defaultTimeDimension: purchase_date
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          empty: zero
+          label: Revenue
+          format: currency
+          agg: sum
+      dimensions:
+        purchase_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        category:
+          datatype: String
     sales_customers:
       model: sales_customers
   relationships:
@@ -20,48 +45,14 @@ spec:
         dataset: sales_customers
         entity: customer
   dimensions:
-    purchase_date:
-      datatype: Date
-      bindings:
-        sales_orders:
-          field: sales_orders.purchase_date
-      time:
-        nativeGrain: day
-        grains:
-        - day
-        - week
-        - month
-        calendar: iso8601
     state:
       datatype: String
       bindings:
         sales_orders:
           field: sales_customers.state
           path:
-          - orders_customers
-    category:
-      datatype: String
-      bindings:
-        sales_orders:
-          field: sales_orders.category
+            - orders_customers
   metrics:
-    order_count:
-      type: aggregate
-      dataset: sales_orders
-      aggregation: count_distinct
-      input:
-        field: sales_orders.order_id
-      empty: zero
-      label: Orders
-    revenue:
-      type: aggregate
-      dataset: sales_orders
-      aggregation: sum
-      input:
-        field: sales_orders.revenue
-      empty: zero
-      label: Revenue
-      format: currency
     aov:
       type: ratio
       numerator: revenue
