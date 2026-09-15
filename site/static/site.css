@@ -2430,6 +2430,10 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding: var(--base-size-64) var(--base-size-32) var(--base-size-32);
 }
 
+.site-home + .site-footer {
+  background: var(--lv-bg-page);
+}
+
 .site-footer-content,
 .site-footer-bottom {
   width: min(100%, var(--site-layout-width));
