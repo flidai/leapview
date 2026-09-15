@@ -6,22 +6,16 @@ package releasemigrationowners
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
-	"github.com/flidai/leapview/internal/analytics/physicalpool"
-	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
-	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
-	postgresmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
+	"github.com/flidai/leapview/internal/release/migrationcapability"
 	"github.com/flidai/leapview/internal/release/migrationcompatibility"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	"github.com/flidai/leapview/internal/release/transitionpreflight"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -38,12 +32,12 @@ type SelectionV2 struct {
 	PredecessorArtifactReference string
 	CandidateArtifactReference   string
 	TargetID                     string
-	PhysicalPoolID               string
 }
 
 type bindingOwner struct {
-	artifacts *releasepostgres.Repository
-	targets   *deploymentpostgres.Repository
+	artifacts    *releasepostgres.Repository
+	targets      *deploymentpostgres.Repository
+	capabilities *releasepostgres.MigrationCapabilityAuthority
 }
 
 type resolvedBinding struct {
@@ -51,122 +45,104 @@ type resolvedBinding struct {
 	target  deploymentpostgres.DeliveryTarget
 }
 
-type GooseOwnerV2 struct {
-	binding bindingOwner
-	control *sql.DB
-}
+type GooseOwnerV2 struct{ binding bindingOwner }
+type RiverJobsOwnerV2 struct{ binding bindingOwner }
+type DuckLakeOwnerV2 struct{ binding bindingOwner }
+type PhysicalPoolOwnerV2 struct{ binding bindingOwner }
 
-type RiverJobsOwnerV2 struct {
-	binding bindingOwner
-	control *sql.DB
-	river   *pgxpool.Pool
-}
-
-type poolOwners struct {
-	binding  bindingOwner
-	duckLake *ducklakepostgres.Repository
-	pools    *physicalpoolpostgres.Repository
-	supply   *extensionsupply.Supply
-}
-
-type DuckLakeOwnerV2 struct{ owners poolOwners }
-type PhysicalPoolOwnerV2 struct{ owners poolOwners }
-
-func NewGooseOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, control *sql.DB) (*GooseOwnerV2, error) {
-	if artifacts == nil || targets == nil || control == nil {
-		return nil, ErrOwnerUnavailable
-	}
-	return &GooseOwnerV2{binding: bindingOwner{artifacts: artifacts, targets: targets}, control: control}, nil
-}
-
-func NewRiverJobsOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, control *sql.DB, river *pgxpool.Pool) (*RiverJobsOwnerV2, error) {
-	if artifacts == nil || targets == nil || control == nil || river == nil {
-		return nil, ErrOwnerUnavailable
-	}
-	return &RiverJobsOwnerV2{binding: bindingOwner{artifacts: artifacts, targets: targets}, control: control, river: river}, nil
-}
-
-func NewDuckLakeOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, duckLake *ducklakepostgres.Repository, pools *physicalpoolpostgres.Repository, supply *extensionsupply.Supply) (*DuckLakeOwnerV2, error) {
-	owners, err := newPoolOwners(artifacts, targets, duckLake, pools, supply)
+func NewGooseOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*GooseOwnerV2, error) {
+	binding, err := newBindingOwner(artifacts, targets, capabilities)
 	if err != nil {
 		return nil, err
 	}
-	return &DuckLakeOwnerV2{owners: owners}, nil
+	return &GooseOwnerV2{binding: binding}, nil
 }
 
-func NewPhysicalPoolOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, duckLake *ducklakepostgres.Repository, pools *physicalpoolpostgres.Repository, supply *extensionsupply.Supply) (*PhysicalPoolOwnerV2, error) {
-	owners, err := newPoolOwners(artifacts, targets, duckLake, pools, supply)
+func NewRiverJobsOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*RiverJobsOwnerV2, error) {
+	binding, err := newBindingOwner(artifacts, targets, capabilities)
 	if err != nil {
 		return nil, err
 	}
-	return &PhysicalPoolOwnerV2{owners: owners}, nil
+	return &RiverJobsOwnerV2{binding: binding}, nil
 }
 
-func newPoolOwners(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, duckLake *ducklakepostgres.Repository, pools *physicalpoolpostgres.Repository, supply *extensionsupply.Supply) (poolOwners, error) {
-	if artifacts == nil || targets == nil || duckLake == nil || pools == nil || supply == nil {
-		return poolOwners{}, ErrOwnerUnavailable
+func NewDuckLakeOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*DuckLakeOwnerV2, error) {
+	binding, err := newBindingOwner(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
 	}
-	return poolOwners{binding: bindingOwner{artifacts: artifacts, targets: targets}, duckLake: duckLake, pools: pools, supply: supply}, nil
+	return &DuckLakeOwnerV2{binding: binding}, nil
+}
+
+func NewPhysicalPoolOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*PhysicalPoolOwnerV2, error) {
+	binding, err := newBindingOwner(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	return &PhysicalPoolOwnerV2{binding: binding}, nil
+}
+
+func newBindingOwner(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (bindingOwner, error) {
+	if artifacts == nil || targets == nil || capabilities == nil {
+		return bindingOwner{}, ErrOwnerUnavailable
+	}
+	return bindingOwner{artifacts: artifacts, targets: targets, capabilities: capabilities}, nil
 }
 
 func (owner *GooseOwnerV2) Resolve(ctx context.Context, selection SelectionV2) (migrationcompatibility.GooseOwnerEvidenceV2, error) {
-	if owner == nil || owner.control == nil {
+	if owner == nil {
 		return migrationcompatibility.GooseOwnerEvidenceV2{}, ErrOwnerUnavailable
 	}
 	resolved, err := owner.binding.resolve(ctx, selection)
 	if err != nil {
 		return migrationcompatibility.GooseOwnerEvidenceV2{}, err
 	}
-	state, err := postgresmigrations.ReadControlCompatibilityState(ctx, owner.control)
+	pair, err := owner.binding.resolveCapabilities(ctx, resolved, migrationcapability.SubsystemGoose)
 	if err != nil {
-		return migrationcompatibility.GooseOwnerEvidenceV2{}, fmt.Errorf("%w: Goose: %v", ErrOwnerState, err)
+		return migrationcompatibility.GooseOwnerEvidenceV2{}, err
 	}
-	compatibility := compatibilityFor(state.InstalledRevision == state.EmbeddedRevision)
-	evidence, err := migrationcompatibility.NewGooseOwnerEvidenceV2(resolved.binding, compatibility, migrationcompatibility.GooseStateV2{
-		PredecessorSchemaVersion: fmt.Sprintf("goose/v%d", state.InstalledRevision),
-		CandidateSchemaVersion:   fmt.Sprintf("goose/v%d", state.EmbeddedRevision),
+	predecessor, candidate := pair.predecessor.Goose, pair.candidate.Goose
+	evidence, err := migrationcompatibility.NewGooseOwnerEvidenceV2(resolved.binding, compatibilityFor(
+		bidirectionallyRunnable(predecessor.SchemaVersion, predecessor.RunnableSchemaVersions, candidate.SchemaVersion, candidate.RunnableSchemaVersions),
+	), migrationcompatibility.GooseStateV2{
+		PredecessorSchemaVersion: predecessor.SchemaVersion,
+		CandidateSchemaVersion:   candidate.SchemaVersion,
 	})
 	if err != nil {
 		return migrationcompatibility.GooseOwnerEvidenceV2{}, err
 	}
-	if err := owner.binding.confirm(ctx, selection, resolved); err != nil {
+	if err := owner.binding.confirm(ctx, selection, resolved, migrationcapability.SubsystemGoose, pair); err != nil {
 		return migrationcompatibility.GooseOwnerEvidenceV2{}, err
 	}
 	return evidence, nil
 }
 
 func (owner *RiverJobsOwnerV2) Resolve(ctx context.Context, selection SelectionV2) (migrationcompatibility.RiverJobsOwnerEvidenceV2, error) {
-	if owner == nil || owner.control == nil || owner.river == nil {
+	if owner == nil {
 		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, ErrOwnerUnavailable
 	}
 	resolved, err := owner.binding.resolve(ctx, selection)
 	if err != nil {
 		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, err
 	}
-	state, err := postgresmigrations.ReadRiverJobsCompatibilityState(ctx, owner.river, owner.control)
-	if err != nil {
-		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, fmt.Errorf("%w: River/jobs: %v", ErrOwnerState, err)
-	}
-	installedRiver, err := postgresmigrations.CanonicalMigrationVersions("river", state.InstalledRiverVersions)
+	pair, err := owner.binding.resolveCapabilities(ctx, resolved, migrationcapability.SubsystemRiverJobs)
 	if err != nil {
 		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, err
 	}
-	embeddedRiver, err := postgresmigrations.CanonicalMigrationVersions("river", state.EmbeddedRiverVersions)
-	if err != nil {
-		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, err
-	}
+	predecessor, candidate := pair.predecessor.RiverJobs, pair.candidate.RiverJobs
 	evidence, err := migrationcompatibility.NewRiverJobsOwnerEvidenceV2(resolved.binding, compatibilityFor(
-		slices.Equal(state.InstalledRiverVersions, state.EmbeddedRiverVersions) && state.InstalledJobsRevision == state.EmbeddedJobsRevision,
+		bidirectionallyRunnable(predecessor.SchemaVersion, predecessor.RunnableSchemaVersions, candidate.SchemaVersion, candidate.RunnableSchemaVersions) &&
+			bidirectionallyRunnable(predecessor.JobHistoryVersion, predecessor.RunnableJobHistoryVersions, candidate.JobHistoryVersion, candidate.RunnableJobHistoryVersions),
 	), migrationcompatibility.RiverJobsStateV2{
-		PredecessorSchemaVersion:     installedRiver,
-		CandidateSchemaVersion:       embeddedRiver,
-		PredecessorJobHistoryVersion: fmt.Sprintf("jobs/goose/v%d", state.InstalledJobsRevision),
-		CandidateJobHistoryVersion:   fmt.Sprintf("jobs/goose/v%d", state.EmbeddedJobsRevision),
+		PredecessorSchemaVersion:     predecessor.SchemaVersion,
+		CandidateSchemaVersion:       candidate.SchemaVersion,
+		PredecessorJobHistoryVersion: predecessor.JobHistoryVersion,
+		CandidateJobHistoryVersion:   candidate.JobHistoryVersion,
 	})
 	if err != nil {
 		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, err
 	}
-	if err := owner.binding.confirm(ctx, selection, resolved); err != nil {
+	if err := owner.binding.confirm(ctx, selection, resolved, migrationcapability.SubsystemRiverJobs, pair); err != nil {
 		return migrationcompatibility.RiverJobsOwnerEvidenceV2{}, err
 	}
 	return evidence, nil
@@ -176,19 +152,26 @@ func (owner *DuckLakeOwnerV2) Resolve(ctx context.Context, selection SelectionV2
 	if owner == nil {
 		return migrationcompatibility.DuckLakeOwnerEvidenceV2{}, ErrOwnerUnavailable
 	}
-	resolved, state, err := owner.owners.resolve(ctx, selection)
+	resolved, err := owner.binding.resolve(ctx, selection)
 	if err != nil {
 		return migrationcompatibility.DuckLakeOwnerEvidenceV2{}, err
 	}
-	evidence, err := migrationcompatibility.NewDuckLakeOwnerEvidenceV2(resolved.binding, compatibilityFor(state.predecessor == state.candidate && state.predecessorCatalogSchema == state.candidateCatalogSchema), migrationcompatibility.DuckLakeStateV2{
-		Predecessor: state.predecessor, Candidate: state.candidate,
-		PredecessorCatalogSchemaVersion: state.predecessorCatalogSchema,
-		CandidateCatalogSchemaVersion:   state.candidateCatalogSchema,
+	pair, err := owner.binding.resolveCapabilities(ctx, resolved, migrationcapability.SubsystemDuckLake)
+	if err != nil {
+		return migrationcompatibility.DuckLakeOwnerEvidenceV2{}, err
+	}
+	predecessor, candidate := pair.predecessor.DuckLake, pair.candidate.DuckLake
+	evidence, err := migrationcompatibility.NewDuckLakeOwnerEvidenceV2(resolved.binding, compatibilityFor(
+		bidirectionallyRunnable(predecessor.CatalogSchemaVersion, predecessor.RunnableCatalogSchemaVersions, candidate.CatalogSchemaVersion, candidate.RunnableCatalogSchemaVersions),
+	), migrationcompatibility.DuckLakeStateV2{
+		Predecessor: predecessor.Compatibility, Candidate: candidate.Compatibility,
+		PredecessorCatalogSchemaVersion: predecessor.CatalogSchemaVersion,
+		CandidateCatalogSchemaVersion:   candidate.CatalogSchemaVersion,
 	})
 	if err != nil {
 		return migrationcompatibility.DuckLakeOwnerEvidenceV2{}, err
 	}
-	if err := owner.owners.binding.confirm(ctx, selection, resolved); err != nil {
+	if err := owner.binding.confirm(ctx, selection, resolved, migrationcapability.SubsystemDuckLake, pair); err != nil {
 		return migrationcompatibility.DuckLakeOwnerEvidenceV2{}, err
 	}
 	return evidence, nil
@@ -198,22 +181,37 @@ func (owner *PhysicalPoolOwnerV2) Resolve(ctx context.Context, selection Selecti
 	if owner == nil {
 		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, ErrOwnerUnavailable
 	}
-	resolved, state, err := owner.owners.resolve(ctx, selection)
+	resolved, err := owner.binding.resolve(ctx, selection)
 	if err != nil {
 		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, err
 	}
-	evidence, err := migrationcompatibility.NewPhysicalPoolOwnerEvidenceV2(resolved.binding, compatibilityFor(state.predecessor == state.candidate), migrationcompatibility.PhysicalPoolStateV2{Predecessor: state.predecessor, Candidate: state.candidate})
+	pair, err := owner.binding.resolveCapabilities(ctx, resolved, migrationcapability.SubsystemPhysicalPool)
 	if err != nil {
 		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, err
 	}
-	if err := owner.owners.binding.confirm(ctx, selection, resolved); err != nil {
+	predecessor, candidate := pair.predecessor.PhysicalPool, pair.candidate.PhysicalPool
+	predecessorTupleDigest, err := predecessor.Compatibility.Digest()
+	if err != nil {
+		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, fmt.Errorf("%w: predecessor PhysicalPool tuple", ErrOwnerState)
+	}
+	candidateTupleDigest, err := candidate.Compatibility.Digest()
+	if err != nil {
+		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, fmt.Errorf("%w: candidate PhysicalPool tuple", ErrOwnerState)
+	}
+	evidence, err := migrationcompatibility.NewPhysicalPoolOwnerEvidenceV2(resolved.binding, compatibilityFor(
+		slices.Contains(candidate.CompatibleTupleDigests, predecessorTupleDigest) && slices.Contains(predecessor.CompatibleTupleDigests, candidateTupleDigest),
+	), migrationcompatibility.PhysicalPoolStateV2{Predecessor: predecessor.Compatibility, Candidate: candidate.Compatibility})
+	if err != nil {
+		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, err
+	}
+	if err := owner.binding.confirm(ctx, selection, resolved, migrationcapability.SubsystemPhysicalPool, pair); err != nil {
 		return migrationcompatibility.PhysicalPoolOwnerEvidenceV2{}, err
 	}
 	return evidence, nil
 }
 
 func (owner bindingOwner) resolve(ctx context.Context, selection SelectionV2) (resolvedBinding, error) {
-	if owner.artifacts == nil || owner.targets == nil {
+	if owner.artifacts == nil || owner.targets == nil || owner.capabilities == nil {
 		return resolvedBinding{}, ErrOwnerUnavailable
 	}
 	if err := validateSelection(selection); err != nil {
@@ -249,7 +247,50 @@ func (owner bindingOwner) resolve(ctx context.Context, selection SelectionV2) (r
 	return resolvedBinding{binding: binding, target: target}, nil
 }
 
-func (owner bindingOwner) confirm(ctx context.Context, selection SelectionV2, before resolvedBinding) error {
+type resolvedCapabilities struct {
+	predecessor       migrationcapability.Capability
+	candidate         migrationcapability.Capability
+	predecessorDigest string
+	candidateDigest   string
+}
+
+func (owner bindingOwner) resolveCapabilities(ctx context.Context, binding resolvedBinding, subsystem migrationcapability.Subsystem) (resolvedCapabilities, error) {
+	if owner.capabilities == nil {
+		return resolvedCapabilities{}, ErrOwnerUnavailable
+	}
+	predecessor, predecessorDigest, err := owner.resolveCapability(ctx, binding.binding.PredecessorOCIAdmissionDigest, binding.binding.TargetIdentityDigest, subsystem)
+	if err != nil {
+		return resolvedCapabilities{}, fmt.Errorf("%w: predecessor %s capability: %v", ErrOwnerState, subsystem, err)
+	}
+	candidate, candidateDigest, err := owner.resolveCapability(ctx, binding.binding.CandidateOCIAdmissionDigest, binding.binding.TargetIdentityDigest, subsystem)
+	if err != nil {
+		return resolvedCapabilities{}, fmt.Errorf("%w: candidate %s capability: %v", ErrOwnerState, subsystem, err)
+	}
+	return resolvedCapabilities{
+		predecessor: predecessor, candidate: candidate,
+		predecessorDigest: predecessorDigest, candidateDigest: candidateDigest,
+	}, nil
+}
+
+func (owner bindingOwner) resolveCapability(ctx context.Context, artifactDigest, targetDigest string, subsystem migrationcapability.Subsystem) (migrationcapability.Capability, string, error) {
+	capability, err := owner.capabilities.ResolveMigrationCapability(ctx, artifactDigest, targetDigest, subsystem)
+	if err != nil {
+		return migrationcapability.Capability{}, "", err
+	}
+	if capability.ArtifactAdmissionDigest != artifactDigest || capability.TargetIdentityDigest != targetDigest || capability.Subsystem != subsystem {
+		return migrationcapability.Capability{}, "", ErrOwnerMismatch
+	}
+	if err := capability.Validate(); err != nil {
+		return migrationcapability.Capability{}, "", fmt.Errorf("%w: %v", ErrOwnerState, err)
+	}
+	digest, err := capability.Digest()
+	if err != nil {
+		return migrationcapability.Capability{}, "", fmt.Errorf("%w: capability digest: %v", ErrOwnerState, err)
+	}
+	return capability, digest, nil
+}
+
+func (owner bindingOwner) confirm(ctx context.Context, selection SelectionV2, before resolvedBinding, subsystem migrationcapability.Subsystem, capabilities resolvedCapabilities) error {
 	after, err := owner.resolve(ctx, selection)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrOwnerStale, err)
@@ -257,63 +298,14 @@ func (owner bindingOwner) confirm(ctx context.Context, selection SelectionV2, be
 	if after.binding != before.binding || after.target.TargetRevision != before.target.TargetRevision {
 		return ErrOwnerStale
 	}
+	confirmed, err := owner.resolveCapabilities(ctx, after, subsystem)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrOwnerStale, err)
+	}
+	if confirmed.predecessorDigest != capabilities.predecessorDigest || confirmed.candidateDigest != capabilities.candidateDigest {
+		return ErrOwnerStale
+	}
 	return nil
-}
-
-type resolvedPoolState struct {
-	predecessor, candidate                           physicalpool.Compatibility
-	predecessorCatalogSchema, candidateCatalogSchema string
-}
-
-func (owners poolOwners) resolve(ctx context.Context, selection SelectionV2) (resolvedBinding, resolvedPoolState, error) {
-	resolved, err := owners.binding.resolve(ctx, selection)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, err
-	}
-	if selection.PhysicalPoolID == "" || selection.PhysicalPoolID != strings.TrimSpace(selection.PhysicalPoolID) {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: physical pool selector", ErrOwnerMismatch)
-	}
-	current, err := owners.duckLake.LoadCatalogRuntimeCompatibility(ctx, selection.PhysicalPoolID)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: DuckLake runtime: %v", ErrOwnerState, err)
-	}
-	predecessorContract, err := owners.pools.LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(selection.PhysicalPoolID), current.CompatibilityDigest)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: predecessor PhysicalPool admission: %v", ErrOwnerState, err)
-	}
-	if predecessorContract.Pool.Identity.IsolationBoundary != resolved.target.TargetID || predecessorContract.Pool.ID.String() != selection.PhysicalPoolID ||
-		predecessorContract.Pool.Compatibility.DuckDBRuntime != current.DuckDBRuntime || predecessorContract.Pool.Compatibility.DuckLakeExtension != current.DuckLakeExtension || predecessorContract.Pool.Compatibility.CatalogFormat != current.CatalogFormat {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: target, DuckLake, and PhysicalPool predecessor", ErrOwnerMismatch)
-	}
-	admitted, err := owners.supply.AdmitExtension(ctx, "ducklake")
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: candidate DuckLake supply: %v", ErrOwnerState, err)
-	}
-	candidate := predecessorContract.Pool.Compatibility
-	candidate.DuckDBRuntime, err = runtimeComponent("duckdb", admitted.DuckDBVersion)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, err
-	}
-	candidate.DuckLakeExtension, err = runtimeComponent("ducklake", admitted.ExtensionVersion)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, err
-	}
-	candidateDigest, err := candidate.Digest()
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: candidate PhysicalPool tuple: %v", ErrOwnerState, err)
-	}
-	candidateContract, err := owners.pools.LoadAdmissionContractByCompatibilityDigest(ctx, physicalpool.PoolID(selection.PhysicalPoolID), candidateDigest)
-	if err != nil {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: candidate PhysicalPool admission: %v", ErrOwnerState, err)
-	}
-	if candidateContract.Pool.ID != predecessorContract.Pool.ID || candidateContract.Pool.Compatibility != candidate {
-		return resolvedBinding{}, resolvedPoolState{}, fmt.Errorf("%w: candidate PhysicalPool admission", ErrOwnerMismatch)
-	}
-	return resolved, resolvedPoolState{
-		predecessor: predecessorContract.Pool.Compatibility, candidate: candidateContract.Pool.Compatibility,
-		predecessorCatalogSchema: current.CatalogSchemaVersion,
-		candidateCatalogSchema:   current.CatalogSchemaVersion,
-	}, nil
 }
 
 func compatibilityFor(equal bool) transitionpreflight.CompatibilityState {
@@ -339,20 +331,6 @@ func validateSelection(selection SelectionV2) error {
 	return nil
 }
 
-func runtimeComponent(prefix, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.ContainsAny(value, "\x00\r\n/\\") {
-		return "", fmt.Errorf("%w: %s runtime component", ErrOwnerState, prefix)
-	}
-	if index := strings.IndexByte(value, ':'); index >= 0 {
-		if value[:index] != prefix {
-			return "", fmt.Errorf("%w: %s runtime prefix", ErrOwnerState, prefix)
-		}
-		value = value[index+1:]
-	}
-	value = strings.TrimPrefix(value, "v")
-	if value == "" {
-		return "", fmt.Errorf("%w: %s runtime version", ErrOwnerState, prefix)
-	}
-	return prefix + ":" + value, nil
+func bidirectionallyRunnable(predecessor string, predecessorRunnable []string, candidate string, candidateRunnable []string) bool {
+	return slices.Contains(candidateRunnable, predecessor) && slices.Contains(predecessorRunnable, candidate)
 }

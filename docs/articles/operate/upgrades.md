@@ -189,28 +189,30 @@ This provides authoritative per-artifact migration capability resolution. It doe
 ### Concrete migration compatibility owners
 
 The PostgreSQL-era owner adapters produce the four
-`migration-compatibility/v2` envelopes from subsystem-owned state. Their
-production input is a set of lookup selectors only: exact predecessor and
-candidate OCI references, a deployment-target ID, and a physical-pool ID.
+`migration-compatibility/v2` envelopes from authenticated, subsystem-owned
+`migration-capability/v1` records. Their production input is a set of lookup
+selectors only: exact predecessor and candidate OCI references and a
+deployment-target ID.
 There is no input field for an admission digest, target digest, compatibility
 verdict, version projection, or owner envelope.
 
 Each adapter independently resolves both immutable OCI admissions from the
 release authority and the exact target revision from the deployment authority.
-It then reads its own compatibility state:
+It then resolves the predecessor and candidate capability for its fixed
+subsystem, exact admission digests, and target digest through the concrete
+PostgreSQL capability authority:
 
-- Goose compares the installed control-schema revision with the migration set
-  embedded in the running candidate;
-- River/jobs compares River's installed ledger and the Goose-owned job-history
-  fence with their embedded candidate revisions;
-- DuckLake reads the current catalog tuple and catalog schema, then resolves
-  the candidate extension from the reviewed extension supply; and
-- PhysicalPool verifies the current and candidate tuples against exact,
-  immutable pool admissions for the target's isolation boundary.
+- Goose compares the two artifact-owned schema versions and runnable sets;
+- River/jobs compares the two artifact-owned River and job-history versions
+  and runnable sets;
+- DuckLake uses each artifact's catalog schema and runtime tuple, so candidate
+  schema is never copied from mutable current catalog state; and
+- PhysicalPool verifies that each artifact explicitly admits the other exact
+  tuple digest for rollback-safe compatibility.
 
-The artifact admissions and target revision are resolved again after the
-subsystem read. A changed or revoked authority record, missing admission,
-unadmitted candidate tuple, target mismatch, partial migration ledger, or
+The artifact admissions, target revision, and both capability digests are
+resolved again before the adapter returns. A changed or revoked authority
+record, missing capability, target mismatch, digest substitution, or
 unsupported owner state prevents the adapter from emitting an envelope.
 Compatibility differences remain explicit and fail the aggregate transition
 closed; the adapters do not infer or execute a migration.
