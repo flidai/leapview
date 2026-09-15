@@ -1,10 +1,10 @@
 const projectFiles = {
-  connection: { path: 'connections/olist.yaml', label: '01 / CONNECT', detail: 'Point LeapView at your data.' },
-  source: { path: 'sources/olist.payments.yaml', label: '02 / DEFINE SOURCES', detail: 'Name the files and fields.' },
-  model: { path: 'models/sales_orders.yaml', label: '03 / MODEL DATA', detail: 'Shape raw records into facts.' },
-  semantics: { path: 'semantic-models/sales.yaml', label: '04 / SEMANTIC MODEL', detail: 'Define shared metrics once.' },
-  pipeline: { path: 'pipelines/sales-refresh.yaml', label: '05 / PIPELINE', detail: 'Choose what gets refreshed.' },
-  dashboard: { path: 'dashboards/executive-sales.yaml', label: '06 / DASHBOARD', detail: 'Define the governed dashboard.' }
+  connection: { path: 'connections/olist.yaml', label: '01 / CONNECT', detail: 'Connect to your data.' },
+  source: { path: 'sources/olist.payments.yaml', label: '02 / DEFINE SOURCES', detail: 'Name the tables, files, and fields you need.' },
+  model: { path: 'models/sales_orders.yaml', label: '03 / MODEL DATA', detail: 'Transform raw data with SQL.' },
+  semantics: { path: 'semantic-models/sales.yaml', label: '04 / DEFINE METRICS', detail: 'Define the metrics and dimensions your team will use.' },
+  pipeline: { path: 'pipelines/sales-refresh.yaml', label: '05 / REFRESH DATA', detail: 'Choose which models to refresh.' },
+  dashboard: { path: 'dashboards/executive-sales.yaml', label: '06 / BUILD DASHBOARDS', detail: 'Turn your metrics into charts and tables.' }
 };
 const walkthrough = ['connection', 'source', 'model', 'semantics'];
 const phaseDuration = 5500;

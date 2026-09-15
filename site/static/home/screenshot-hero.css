@@ -117,8 +117,16 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
   .product-stage {
     left: calc(min(46vw - 78px, 584px) - var(--hero-inline-start));
     width: 1057px;
-    margin: clamp(-72px, calc(-3.5vw - 21.5px), -60px) 0 0;
+    margin: clamp(-112px, calc(-3.5vw - 61.5px), -100px) 0 0;
   }
+}
+
+@media (min-width: 1101px) and (max-width: 1299px) {
+  .product-stage { margin-top: clamp(-112px, calc(-3.5vw - 58.5px), -97px); }
+}
+
+@media (min-width: 1600px) {
+  .product-stage { margin-top: -128px; }
 }
 
 @media (min-width: 1024px) and (max-width: 1100px) {
@@ -150,7 +158,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 
 @media (max-width: 639px) {
   .hero-inner { padding-top: 44px; padding-bottom: 0; }
-  .product-stage { width: calc(100vw - 18px); max-width: none; margin: 120px 0 0; }
+  .product-stage { width: calc(100vw - 18px); max-width: none; margin: 70px 0 0; }
   .product-frame { width: 587px; border-radius: 13px 0 0 0; }
   .image-scroller img { width: 100%; }
 }

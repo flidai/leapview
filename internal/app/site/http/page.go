@@ -48,7 +48,7 @@ var siteStackGroups = []siteStackGroupSpec{
 		title: "Object storage",
 		integrations: []siteStackIntegration{
 			{label: "Amazon S3", registryKey: "s3", icon: "amazons3"},
-			{label: "Azure Blob", registryKey: "azure_blob", icon: "microsoftazure"},
+			{label: "Azure Blob Storage", registryKey: "azure_blob", icon: "microsoftazure"},
 			{label: "Google Cloud Storage", registryKey: "gcs", icon: "googlecloudstorage"},
 			{label: "Cloudflare R2", registryKey: "r2", icon: "cloudflare"},
 			{label: "Hetzner Object Storage", registryKey: "s3", icon: "hetzner"},
@@ -75,7 +75,7 @@ const siteBrandName = brand.Name
 
 func sitePage(metadata sitePageMetadata) g.Node {
 	head := siteHead(metadata)
-	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "openness", "involved"} {
+	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "openness", "involved", "closing-cta"} {
 		head = append(head, h.Link(h.Rel("stylesheet"), h.Href("/static/home/"+stylesheet+".css")))
 	}
 	head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-dark.png"), g.Attr("as", "image")))
@@ -702,21 +702,21 @@ func siteFooter() g.Node {
 		h.Div(h.Class("site-footer-content"),
 			h.Div(h.Class("site-footer-brand-block"),
 				siteBrandLink(),
-				h.P(g.Text("Open-source analytics as code for dashboards and AI agents.")),
+				h.P(g.Text("Open-source business intelligence for teams and AI agents.")),
 			),
-			siteFooterGroup("Explore", []siteFooterLink{
+			siteFooterGroup("Learn", []siteFooterLink{
 				{label: "Documentation", href: "/docs"},
-				{label: "Getting started", href: "/docs/getting-started"},
+				{label: "Get started", href: "/docs/getting-started"},
 			}),
 			siteFooterGroup("Project", []siteFooterLink{
 				{label: "GitHub", href: "https://github.com/flidai/leapview"},
-				{label: "Issues", href: "https://github.com/flidai/leapview/issues"},
+				{label: "Report an issue", href: "https://github.com/flidai/leapview/issues"},
 			}),
 		),
 		h.Div(h.Class("site-footer-bottom"), h.P(
-			g.Text("A project by the "),
+			g.Text("A project by "),
 			h.A(h.Href("https://flid.ai/"), g.Text("Flid AI")),
-			g.Text(" team"),
+			g.Text("."),
 		)),
 	)
 }

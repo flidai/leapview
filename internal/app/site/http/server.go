@@ -225,7 +225,7 @@ func (w *gzipResponseWriter) Write(contents []byte) (int, error) {
 }
 
 func (s *siteServer) home(w http.ResponseWriter, r *http.Request) {
-	metadata := s.metadata(r, siteBrandName+" — open-source business intelligence", "Build governed dashboards from models and metrics defined in code. Give your team and AI agents the same trusted answers.", "website", "")
+	metadata := s.metadata(r, siteBrandName+" — open-source business intelligence", "Define your business metrics once. Build dashboards and ask questions through an AI assistant, using the same metric definitions and access rules.", "website", "")
 	renderHTML(w, http.StatusOK, sitePage(metadata), "render site page")
 }
 

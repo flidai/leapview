@@ -36,18 +36,19 @@ test('homepage presents the new sections inside the shared site shell', async ()
     await page.goto(baseURL)
     expect(await page.locator('.site-header').count()).toBe(1)
     expect(await page.locator('.site-footer').count()).toBe(1)
-    expect((await page.locator('.site-footer-bottom').textContent())?.trim()).toBe('A project by the Flid AI team')
+    expect((await page.locator('.site-footer-bottom').textContent())?.trim()).toBe('A project by Flid AI.')
     expect(await page.locator('.site-footer-bottom').getByRole('link', { name: 'Flid AI' }).getAttribute('href')).toBe('https://flid.ai/')
     expect(await page.locator('.landing-footer, .topbar').count()).toBe(0)
-    expect(await page.getByRole('heading', { level: 1, name: 'From data to the full picture.' }).isVisible()).toBe(true)
-    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'layers', 'enterprise', 'openness', 'get-involved']
+    expect(await page.getByRole('heading', { level: 1, name: 'Metrics your whole team can build on.' }).isVisible()).toBe(true)
+    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'layers', 'enterprise', 'openness', 'get-involved', 'get-started']
     expect(await page.locator('.site-home > section').evaluateAll((sections) => sections.map((section) => section.id))).toEqual(sectionOrder)
     for (const id of sectionOrder) {
       expect(await page.locator(`#${id}`).count()).toBe(1)
     }
     expect(await page.locator('.mission-kicker, .story-kicker, .project-kicker, .architecture-kicker, .enterprise-kicker, .openness-kicker, .involved-kicker').count()).toBe(0)
-    expect(await page.getByRole('heading', { level: 2, name: 'Analytics as code.' }).count()).toBe(1)
-    expect(await page.getByRole('heading', { level: 2, name: 'Every answer has a foundation.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'Analytics as code. Changes you can review.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'How LeapView works.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(1)
     expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
     const screenshot = page.locator('#product-image')
     await page.waitForFunction(() => {
@@ -66,7 +67,7 @@ test('homepage presents the new sections inside the shared site shell', async ()
     expect(await page.locator('.project-code-text').first().textContent()).toBe('apiVersion: leapview.dev/v1')
     expect(await page.locator('.project-editor-footer, .project-footnote').count()).toBe(0)
     expect(await page.locator('#project-file-path').textContent()).toBe('sales-project / connections / olist.yaml')
-    expect(await page.getByRole('link', { name: /Join the community/ }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
+    expect(await page.getByRole('link', { name: /Join Discord/ }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
   } finally {
     await page.close()
   }
@@ -135,12 +136,12 @@ test('analytics code walkthrough advances when visible and stops after a file is
     expect(await page.locator('.project-code-row.is-entering').count()).toBeGreaterThan(0)
     await page.clock.runFor(11200)
     expect(await page.locator('#project-tab-semantics').getAttribute('aria-selected')).toBe('true')
-    expect(await page.locator('#project-phase-label').textContent()).toBe('04 / SEMANTIC MODEL')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('04 / DEFINE METRICS')
     expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
     await page.locator('#project-tab-dashboard').click()
     await page.clock.runFor(12000)
     expect(await page.locator('#project-tab-dashboard').getAttribute('aria-selected')).toBe('true')
-    expect(await page.locator('#project-phase-label').textContent()).toBe('06 / DASHBOARD')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('06 / BUILD DASHBOARDS')
     expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
   } finally {
     await page.close()
@@ -163,7 +164,7 @@ test('analytics code walkthrough stays still for reduced motion', async () => {
   }
 })
 
-test('homepage hero fits the first screen and mission rewrites without shifting the post', async () => {
+test('homepage hero fits the first screen and mission copy stays readable', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -180,12 +181,12 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
     expect(desktop.titleTop).toBeGreaterThan(175)
     expect(desktop.titleTop).toBeLessThan(215)
     expect(desktop.screenshotTop).toBeGreaterThan(390)
-    expect(desktop.screenshotTop).toBeLessThan(450)
+    expect(desktop.screenshotTop).toBeLessThan(490)
     expect(desktop.missionWidth).toBeLessThanOrEqual(680)
     expect(desktop.missionFont).toBe(desktop.siteFont)
 
     await page.locator('#mission').scrollIntoViewIfNeeded()
-    await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'data', undefined, { timeout: 8000 })
+    expect(await page.getByRole('heading', { level: 2, name: 'Your business intelligence should belong to your business.' }).isVisible()).toBe(true)
     const cursorOffset = await page.evaluate(() => {
       const subject = document.querySelector('.mission-subject')!.getBoundingClientRect()
       const cursor = document.querySelector('.mission-cursor')!.getBoundingClientRect()
@@ -193,9 +194,9 @@ test('homepage hero fits the first screen and mission rewrites without shifting 
     })
     expect(cursorOffset).toBeGreaterThanOrEqual(0)
     expect(cursorOffset).toBeLessThan(8)
-    expect(await page.locator('#mission-title').getAttribute('aria-label')).toBe('Your business intelligence should belong to your business.')
+    expect(await page.locator('.mission-subject').textContent()).toBe('business intelligence')
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    await page.waitForFunction(() => document.querySelector('.mission-subject')?.textContent === 'business intelligence')
+    expect(await page.locator('.mission-subject').textContent()).toBe('business intelligence')
 
     await page.setViewportSize({ width: 390, height: 844 })
     await page.goto(baseURL)

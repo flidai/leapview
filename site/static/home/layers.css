@@ -65,7 +65,7 @@
 .architecture-callout-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--accent); font-family: var(--fontStack-system); font-size: 10px; font-weight: 750; letter-spacing: .09em; }
 .architecture-callout-kicker i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
 .architecture-callout h3 { margin: 0; font-size: clamp(16px, 1.5vw, 20px); font-weight: 650; letter-spacing: -.035em; line-height: 1.2; }
-.architecture-callout > p:last-child:not(.architecture-callout-kicker) { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.architecture-callout > p:not(.architecture-callout-kicker) { margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
 .architecture-callout-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .architecture-callout-tags span { padding: 5px 7px; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; }
 
@@ -79,7 +79,7 @@
   .architecture-callout[data-layer="compute"] { top: 305px; }
   .architecture-callout[data-detail="postgres"], .architecture-callout[data-detail="ducklake"] { top: 445px; }
   .architecture-callout h3 { font-size: 16px; }
-  .architecture-callout > p:last-child:not(.architecture-callout-kicker) { font-size: 11px; }
+  .architecture-callout > p:not(.architecture-callout-kicker) { font-size: 11px; }
   .slab-face { font-size: clamp(8px, 1.25vw, 11px); }
 }
 @media (max-width: 800px) {
@@ -101,7 +101,7 @@
   .architecture-callout-kicker { gap: 5px; margin-bottom: 8px; font-size: 8px; letter-spacing: .025em; }
   .architecture-callout-kicker i { width: 5px; height: 5px; }
   .architecture-callout h3 { font-size: 15px; }
-  .architecture-callout > p:last-child:not(.architecture-callout-kicker) { margin-top: 7px; font-size: 10px; line-height: 1.35; }
+  .architecture-callout > p:not(.architecture-callout-kicker) { margin-top: 7px; font-size: 10px; line-height: 1.35; }
   .architecture-callout-tags { gap: 4px; margin-top: 9px; }
   .architecture-callout-tags span { padding: 4px 5px; font-size: 8px; }
 }
