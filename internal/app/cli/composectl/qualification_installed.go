@@ -1052,13 +1052,10 @@ func (c *Controller) qualificationDiskUsage(
 	appContainer string,
 	label string,
 ) (int64, error) {
+	const command = `find /var/lib/leapview -type f ! -name '*.db-wal' ! -name '*.db-shm' -exec du -b {} + | awk '{ total += $1 } END { print total + 0 }'`
 	output, err := c.qualificationContainers.Existing(appContainer).Exec(
 		ctx, nil,
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
-		"/var/lib/leapview",
+		"sh", "-ec", command,
 	)
 	if err != nil {
 		return 0, err

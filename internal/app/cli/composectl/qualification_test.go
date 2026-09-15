@@ -897,11 +897,8 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 	wantArguments := []string{
 		"exec",
 		"leapview-app",
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
-		"/var/lib/leapview",
+		"sh", "-ec",
+		`find /var/lib/leapview -type f ! -name '*.db-wal' ! -name '*.db-shm' -exec du -b {} + | awk '{ total += $1 } END { print total + 0 }'`,
 	}
 	if got != 39996109 || len(executor.requests) != 1 ||
 		!slices.Equal(executor.requests[0].Arguments, wantArguments) {
