@@ -22,19 +22,19 @@ spec:
       operators: [in, notIn]
       urlParameter: region
   visuals:
-    revenue:
+    - id: revenue
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [revenue]}
       presentation: {type: kpi, note: dbt-published revenue, tone: success}
-    orders:
+    - id: orders
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [order_count]}
       presentation: {type: kpi, note: Distinct orders, tone: ink}
-    average_order_value:
+    - id: average_order_value
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [average_order_value]}
       presentation: {type: kpi, note: Revenue per order, tone: warning}
-    revenue_by_month:
+    - id: revenue_by_month
       type: area
       title: Revenue by month
       query:
@@ -44,7 +44,7 @@ spec:
         metrics: [revenue]
         sort: [{field: order_month, direction: asc}]
       presentation: {type: cartesian}
-    revenue_by_region:
+    - id: revenue_by_region
       type: bar
       title: Revenue by customer region
       query:

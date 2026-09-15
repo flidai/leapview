@@ -10,6 +10,8 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
+Superseded by: [ADR-0024](0024-use-named-lists-for-authored-definitions.md), Source and Model field and entity collection syntax only
+
 Amends: [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md), Source
 and Model field placement, schema matching, freshness, and executable checks;
 [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md),

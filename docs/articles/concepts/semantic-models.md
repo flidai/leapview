@@ -30,10 +30,10 @@ Metrics define aggregations over a dataset:
 
 ```yaml
 datasets:
-  orders:
+  - name: orders
     model: sales_orders
     metrics:
-      revenue:
+      - name: revenue
         type: simple
         agg: sum
         field: revenue
@@ -52,7 +52,7 @@ Derived metrics compose other metrics and supported semantic expressions. Declar
 
 ```yaml
 metrics:
-  aov:
+  - name: aov
     type: ratio
     numerator: revenue
     denominator: order_count
@@ -70,7 +70,7 @@ Relationships connect compatible datasets using structured endpoints:
 
 ```yaml
 relationships:
-  orders_customers:
+  - name: orders_customers
     from: {dataset: orders, fields: [customer_id]}
     to: {dataset: customers, fields: [customer_id]}
 ```

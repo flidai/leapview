@@ -26,15 +26,15 @@ spec:
       FROM source."olist.orders"
       WHERE order_id IS NOT NULL
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
   grain:
     entity: order
   fields:
-    order_id: {datatype: String, label: Order ID}
-    purchase_date: {datatype: Date, label: Purchase date}
-    revenue: {datatype: Decimal, label: Revenue}
+    - {name: order_id, datatype: String, label: Order ID}
+    - {name: purchase_date, datatype: Date, label: Purchase date}
+    - {name: revenue, datatype: Decimal, label: Revenue}
   schema:
     mode: compatible
   checks:
@@ -76,10 +76,10 @@ The grain states what one row represents through `grain.entity`; identity entiti
 
 ```yaml
 entities:
-  order:
+  - name: order
     type: primary
     fields: [order_id]
-  order_line:
+  - name: order_line
     type: unique
     fields: [order_id, product_id]
 grain:

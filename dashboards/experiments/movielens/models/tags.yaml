@@ -7,31 +7,31 @@ metadata:
   description: User-generated tag events from MovieLens.
 spec:
   fields:
-    tag_id:
+    - name: tag_id
       datatype: String
       label: Tag ID
       description: Stable tag event identifier.
-    user_id:
+    - name: user_id
       datatype: Integer
       label: User ID
       description: Anonymized MovieLens user identifier.
-    movie_id:
+    - name: movie_id
       datatype: Integer
       label: Movie ID
       description: MovieLens movie identifier.
-    tag:
+    - name: tag
       datatype: String
       label: Tag
       description: User-generated tag text.
-    tagged_at:
+    - name: tagged_at
       datatype: DateTime
       label: Tagged at
       description: Timestamp when the tag was applied.
-    tag_date:
+    - name: tag_date
       datatype: Date
       label: Tag date
       description: Date when the tag was applied.
-    tag_month:
+    - name: tag_month
       datatype: String
       label: Tag month
       description: Calendar month when the tag was applied.
@@ -60,15 +60,15 @@ spec:
         AND tag IS NOT NULL
         AND timestamp IS NOT NULL
   entities:
-    tag:
+    - name: tag
       type: primary
       fields:
       - tag_id
-    movie:
+    - name: movie
       type: foreign
       fields:
       - movie_id
-    user:
+    - name: user
       type: foreign
       fields:
       - user_id

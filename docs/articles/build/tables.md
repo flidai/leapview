@@ -10,7 +10,7 @@ A records query selects fields from a Model grain:
 
 ```yaml
 visuals:
-  orders_table:
+  - id: orders_table
     type: table
     title: Orders
     description: Recent order records.
@@ -34,7 +34,7 @@ Matrices group semantic metrics by row and optional column dimensions:
 
 ```yaml
 visuals:
-  state_status_matrix:
+  - id: state_status_matrix
     type: matrix
     title: Orders and revenue by state and status
     query:
@@ -54,7 +54,7 @@ A pivot uses the same row, column, and metric concepts but emphasizes analytical
 
 ```yaml
 visuals:
-  category_status_pivot:
+  - id: category_status_pivot
     type: pivot
     title: Orders by category and status
     query:

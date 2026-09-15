@@ -71,7 +71,7 @@ spec:
   schema:
     mode: compatible
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       description: Raw order identifier.
   checks:

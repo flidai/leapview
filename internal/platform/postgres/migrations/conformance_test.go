@@ -753,8 +753,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 
 func assertContractPublicationMigrationChecks(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 	t.Helper()
-	fields := `"id":{"datatype":"Integer"}`
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{` + fields + `}}}`
+	fields := `{"name":"id","datatype":"Integer"}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[` + fields + `]}}`
 	var source projectcontracts.Source
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)

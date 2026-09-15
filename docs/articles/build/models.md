@@ -44,19 +44,19 @@ spec:
       FROM source."commerce.orders"
       WHERE order_id IS NOT NULL
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
-    customer:
+    - name: customer
       type: foreign
       fields: [customer_id]
   grain:
     entity: order
   fields:
-    order_id: {datatype: String, label: Order ID, description: Stable order identifier.}
-    customer_id: {datatype: String, label: Customer ID}
-    purchase_date: {datatype: Date, label: Purchase date}
-    revenue: {datatype: Decimal, label: Revenue}
+    - {name: order_id, datatype: String, label: Order ID, description: Stable order identifier.}
+    - {name: customer_id, datatype: String, label: Customer ID}
+    - {name: purchase_date, datatype: Date, label: Purchase date}
+    - {name: revenue, datatype: Decimal, label: Revenue}
 ```
 
 The quoted source name is important because logical source IDs can contain dots. The compiler derives lineage from the governed SQL definition. `spec.fields` is optional: declared entries annotate output fields and explicitly declared datatypes are validated, while unlisted fields are discovered and retained. Semantic models and dashboards may reference those unlisted fields during source validation; deployment discovers their physical types before activation, and runtime query planning uses that resolved schema. `fields` is not a substitute for selecting, renaming, or casting columns in SQL.

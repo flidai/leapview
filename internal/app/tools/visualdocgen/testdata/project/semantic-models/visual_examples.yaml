@@ -6,25 +6,25 @@ metadata:
   displayName: Visual documentation examples
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders
       defaultTimeDimension: purchase_date
       metrics:
-        order_count:
+        - name: order_count
           type: simple
           empty: zero
           label: Orders
           format: integer
           agg: count_distinct
           field: order_id
-        revenue:
+        - name: revenue
           type: simple
           empty: zero
           label: Revenue
           unit: USD
           format: currency
           agg: sum
-        revenue_min:
+        - name: revenue_min
           type: simple
           empty: 'null'
           label: Revenue minimum
@@ -32,7 +32,7 @@ spec:
           format: currency
           agg: min
           field: revenue
-        revenue_max:
+        - name: revenue_max
           type: simple
           empty: 'null'
           label: Revenue maximum
@@ -40,7 +40,7 @@ spec:
           format: currency
           agg: max
           field: revenue
-        missing_revenue:
+        - name: missing_revenue
           type: simple
           where:
             - missing_revenue_filter
@@ -50,26 +50,26 @@ spec:
           format: currency
           agg: sum
           field: revenue
-        review_score:
+        - name: review_score
           type: simple
           empty: 'null'
           label: Review score
           format: decimal
           agg: avg
-        delivery_days:
+        - name: delivery_days
           type: simple
           empty: 'null'
           label: Delivery days
           format: decimal
           agg: avg
-        delivery_days_min:
+        - name: delivery_days_min
           type: simple
           empty: 'null'
           label: Delivery minimum
           format: decimal
           agg: min
           field: delivery_days
-        delivery_days_max:
+        - name: delivery_days_max
           type: simple
           empty: 'null'
           label: Delivery maximum
@@ -77,9 +77,9 @@ spec:
           agg: max
           field: delivery_days
       dimensions:
-        order_id:
+        - name: order_id
           datatype: String
-        purchase_date:
+        - name: purchase_date
           datatype: Date
           time:
             nativeGrain: day
@@ -88,36 +88,36 @@ spec:
               - week
               - month
             calendar: iso8601
-        purchase_month:
+        - name: purchase_month
           datatype: String
-        status:
+        - name: status
           datatype: String
-        category:
+        - name: category
           datatype: String
-        state:
+        - name: state
           datatype: String
-        delivery_bucket:
+        - name: delivery_bucket
           datatype: String
-        latitude:
+        - name: latitude
           datatype: Float
-        longitude:
+        - name: longitude
           datatype: Float
-    conversion_stages:
+    - name: conversion_stages
       model: conversion_stages
       metrics:
-        conversions:
+        - name: conversions
           type: simple
           empty: zero
           label: Conversions
           format: integer
           agg: sum
       dimensions:
-        stage:
+        - name: stage
           datatype: String
-    revenue_bridge:
+    - name: revenue_bridge
       model: revenue_bridge
       metrics:
-        revenue_impact:
+        - name: revenue_impact
           type: simple
           empty: zero
           label: Revenue impact
@@ -126,33 +126,33 @@ spec:
           agg: sum
           field: amount
       dimensions:
-        component:
+        - name: component
           datatype: String
-    market_ohlc:
+    - name: market_ohlc
       model: market_ohlc
       metrics:
-        market_open:
+        - name: market_open
           type: simple
           empty: 'null'
           label: Open
           format: decimal
           agg: sum
           field: open
-        market_close:
+        - name: market_close
           type: simple
           empty: 'null'
           label: Close
           format: decimal
           agg: sum
           field: close
-        market_low:
+        - name: market_low
           type: simple
           empty: 'null'
           label: Low
           format: decimal
           agg: sum
           field: low
-        market_high:
+        - name: market_high
           type: simple
           empty: 'null'
           label: High
@@ -160,65 +160,66 @@ spec:
           agg: sum
           field: high
       dimensions:
-        month:
+        - name: month
           datatype: String
-    service_teams:
+    - name: service_teams
       model: service_teams
       metrics:
-        active_work_items:
+        - name: active_work_items
           type: simple
           empty: zero
           label: Active work items
           format: integer
           agg: sum
       dimensions:
-        division:
+        - name: division
           datatype: String
-        team:
+        - name: team
           datatype: String
   filters:
-    missing_revenue_filter:
-      field: orders.status
-      operator: equals
-      value: comparison_fixture_without_rows
+    - name: missing_revenue_filter
+      definition:
+        field: orders.status
+        operator: equals
+        value: comparison_fixture_without_rows
   metrics:
-    aov:
+    - name: aov
       type: ratio
       numerator: revenue
       denominator: order_count
       label: Average order value
       unit: USD
       format: currency
-    revenue_baseline:
+    - name: revenue_baseline
       type: derived
       label: Revenue baseline
       expression: ${revenue} * 0.9
       unit: USD
       format: currency
-    revenue_target:
+    - name: revenue_target
       type: derived
       label: Revenue target
       expression: ${revenue} * 1.1
       unit: USD
       format: currency
-    revenue_q1:
+    - name: revenue_q1
       type: derived
       label: Revenue open
       expression: ${revenue_min}
       unit: USD
       format: currency
-    revenue_q3:
+    - name: revenue_q3
       type: derived
       label: Revenue close
       expression: ${revenue_max}
       unit: USD
       format: currency
-    delivery_days_q1:
+    - name: delivery_days_q1
       type: derived
       label: Delivery open
       expression: ${delivery_days_min}
       format: decimal
-    delivery_days_q3:
+    - name: delivery_days_q3
       type: derived
       label: Delivery close
       expression: ${delivery_days_max}

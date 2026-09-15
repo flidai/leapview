@@ -81,6 +81,9 @@ func verifyContractProjectionCoverage(doc document, manifestPath string) error {
 }
 
 func projectionTarget(kind, path string) string {
+	if kind == "SemanticModel" && strings.HasPrefix(path, "spec.filters.*.definition.") {
+		return "contract.filters.*." + strings.TrimPrefix(path, "spec.filters.*.definition.")
+	}
 	if kind == "Model" && path == "spec.definition.sql" {
 		return "contract.definition.sqlAst"
 	}
@@ -124,13 +127,13 @@ var projectionAliases = map[string][]projectionAlias{
 			"contract.accessGrants.*.allowedValues.*.type",
 			"contract.accessGrants.*.allowedValues.*.value",
 		}},
-		{Authored: "spec.filters.*.value", Projected: []string{
+		{Authored: "spec.filters.*.definition.value", Projected: []string{
 			"contract.filters.*.value.type",
 			"contract.filters.*.value.value",
 			"contract.filters.*.values.*.type",
 			"contract.filters.*.values.*.value",
 		}},
-		{Authored: "spec.filters.*.value.*", Projected: []string{
+		{Authored: "spec.filters.*.definition.value.*", Projected: []string{
 			"contract.filters.*.value.type",
 			"contract.filters.*.value.value",
 			"contract.filters.*.values.*.type",
@@ -146,6 +149,13 @@ var projectionOnlyAllowlist = map[string][]string{
 }
 
 func authoredFieldProjected(kind, path, target string, projectionPaths []string) bool {
+	// Authored list identity is represented by the corresponding key in the
+	// canonical contract map. It is a projection, not an excluded annotation.
+	for _, identity := range authoredListIdentityPaths[kind] {
+		if path == identity {
+			return true
+		}
+	}
 	for _, projected := range projectionPaths {
 		if matchesAnyProjectionPath([]string{target}, projected) {
 			return true
@@ -164,6 +174,18 @@ func authoredFieldProjected(kind, path, target string, projectionPaths []string)
 		}
 	}
 	return false
+}
+
+var authoredListIdentityPaths = map[string][]string{
+	"Source": {"spec.fields.*.name"},
+	"Model": {"spec.entities.*.name", "spec.fields.*.name"},
+	"SemanticModel": {
+		"spec.datasets.*.name", "spec.datasets.*.dimensions.*.name",
+		"spec.datasets.*.metrics.*.name", "spec.accessGrants.*.name",
+		"spec.relationships.*.name", "spec.dimensions.*.name",
+		"spec.dimensions.*.bindings.*.dataset", "spec.filters.*.name",
+		"spec.metrics.*.name",
+	},
 }
 
 func projectionExtras(kind string, projectionPaths []string, sourceFields []sourceField) []string {

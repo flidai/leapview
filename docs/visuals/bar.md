@@ -12,7 +12,7 @@ Sort the metric descending to make the longest horizontal bar the leading catego
 
 ```yaml visual-example=categories
 visuals:
-  categories:
+  - id: categories
     title: Top product categories
     description: Ranks product categories by revenue.
     type: bar
@@ -38,7 +38,7 @@ Use a second ordered dimension for status and `presentation.stacking: normal` to
 
 ```yaml visual-example=categories_by_status_bar
 visuals:
-  categories_by_status_bar:
+  - id: categories_by_status_bar
     title: Category revenue by status
     type: bar
     presentation:
@@ -65,7 +65,7 @@ Keep the bar contract and replace the dimension with delivery buckets to compare
 
 ```yaml visual-example=delivery
 visuals:
-  delivery:
+  - id: delivery
     title: Delivery speed
     description: Compares order volume across delivery-speed buckets.
     type: bar

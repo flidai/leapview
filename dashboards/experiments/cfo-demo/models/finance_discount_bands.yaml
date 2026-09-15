@@ -7,7 +7,7 @@ metadata:
   description: Discount-band dimension used by the financial-performance fact.
 spec:
   fields:
-    discount_band: {datatype: String, label: Discount band}
+    - {name: discount_band, datatype: String, label: Discount band}
   definition:
     type: sql
     sql: |
@@ -15,7 +15,7 @@ spec:
       FROM source."finance.financials"
       WHERE discount_band IS NOT NULL AND trim(discount_band) <> ''
   entities:
-    discount_band:
+    - name: discount_band
       type: primary
       fields: [discount_band]
   grain:

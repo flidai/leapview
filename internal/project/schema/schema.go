@@ -432,6 +432,9 @@ func validateDashboardDocument(filename string, content []byte) error {
 	if err := checkResourceNode(filename, root); err != nil {
 		return err
 	}
+	if err := checkNamedListIdentities(KindDashboard, filename, root); err != nil {
+		return err
+	}
 	normalizedValue, err := normalizeResourceNode(filename, root)
 	if err != nil {
 		return err

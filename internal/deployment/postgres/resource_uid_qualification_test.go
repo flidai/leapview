@@ -960,8 +960,8 @@ func resourceUIDQualificationKindMismatchBundle(t *testing.T) (projectartifact.S
 func resourceUIDQualificationAuthoredSources() map[string]string {
 	return map[string]string{
 		"source:orders":  "apiVersion: leapview.dev/v1\nkind: Source\nmetadata:\n  id: source:orders\n  name: orders\nspec:\n  connection: connection:warehouse\n  location:\n    type: path\n    path: orders.csv\n    format: csv\n",
-		"model:orders":   "apiVersion: leapview.dev/v1\nkind: Model\nmetadata:\n  id: model:orders\n  name: orders_model\nspec:\n  definition:\n    type: sql\n    sql: SELECT 1 AS id\n  entities: {}\n  grain:\n    entity: id\n",
-		"semantic:sales": "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata:\n  id: semantic:sales\n  name: sales\nspec:\n  datasets:\n    orders:\n      model: orders_model\n  metrics: {}\n",
+		"model:orders":   "apiVersion: leapview.dev/v1\nkind: Model\nmetadata:\n  id: model:orders\n  name: orders_model\nspec:\n  definition:\n    type: sql\n    sql: SELECT 1 AS id\n  entities: []\n  grain:\n    entity: id\n",
+		"semantic:sales": "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata:\n  id: semantic:sales\n  name: sales\nspec:\n  datasets:\n  - name: orders\n    model: orders_model\n  metrics: []\n",
 	}
 }
 

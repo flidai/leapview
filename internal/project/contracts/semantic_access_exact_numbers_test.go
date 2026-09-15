@@ -15,14 +15,14 @@ func TestSemanticAccessAllowedValuesPreserveExactNumbersThroughResourceDecode(t 
   "kind": "SemanticModel",
   "metadata": {"id": "semantic-model:sales", "name": "sales"},
   "spec": {
-    "accessGrants": {
-      "numbers": {
+    "accessGrants": [
+      {"name": "numbers",
         "userAttribute": "accountNumber",
         "allowedValues": [7, 9007199254740993, 1.2300, 9007199254740993.125]
       }
-    },
-    "datasets": {"orders": {"model": "orders_model"}},
-    "metrics": {}
+    ],
+    "datasets": [{"name": "orders", "model": "orders_model"}],
+    "metrics": []
   }
 }`)
 

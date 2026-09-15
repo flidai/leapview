@@ -1150,11 +1150,13 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
       await table.updateComplete
       const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
       const request = new Promise((resolve, reject) => {
-        const timeout = window.setTimeout(() => reject(new Error('window request was not emitted')), 1_000)
-        dashboard.addEventListener('lv-visualization-window-request', (event: Event) => {
+        const timeout = window.setTimeout(() => reject(new Error('scrolled window request was not emitted')), 1_000)
+        dashboard.addEventListener('lv-visualization-window-request', function onRequest(event: Event) {
+          if ((event as CustomEvent).detail.start < 50) return
           window.clearTimeout(timeout)
+          dashboard.removeEventListener('lv-visualization-window-request', onRequest)
           resolve((event as CustomEvent).detail)
-        }, { once: true })
+        })
       })
       scrollport.scrollTop = 100 * 28
       scrollport.dispatchEvent(new Event('scroll'))
@@ -1167,16 +1169,14 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
         loadingVisible: (table.shadowRoot as ShadowRoot).textContent?.includes('loading'),
       }
     })
-    expect(result.detail).toMatchObject({
-      visualID: 'orders', specRevision: `sha256:${'3'.repeat(64)}`, dataRevision: 1,
-      resetVersion: 0, limit: 50,
+    expect(result).toMatchObject({
+      detail: { visualID: 'orders', specRevision: `sha256:${'3'.repeat(64)}`, dataRevision: 1, resetVersion: 0, limit: 50 },
+      totalRows: 250, loadingVisible: true,
     })
     expect(result.detail.requestSeq).toBeGreaterThan(0)
     expect(result.detail.start).toBeGreaterThanOrEqual(50)
     expect(['all', 'a', 'b', 'c']).toContain(result.detail.blockID)
     expect(result.renderedRows).toBeLessThan(40)
-    expect(result.totalRows).toBe(250)
-    expect(result.loadingVisible).toBe(true)
   } finally { await page.close() }
 })
 

@@ -40,18 +40,22 @@ func TestSourceFilesFromAssemblyIncludesDashboardFragments(t *testing.T) {
 	}
 	if err := os.WriteFile(dashboardPath, []byte(`apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales}
+metadata:
+  id: dashboard:sales
+  name: sales
 spec:
   semanticModel: sales
   filters: []
-  includes: {visuals: [fragments/visuals.yaml]}
-  visuals: {}
+  includes:
+    visuals:
+    - fragments/visuals.yaml
+  visuals: []
   pages: []
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(fragmentPath, []byte(`visuals:
-  revenue:
+  - id: revenue
     type: bar
     query: {type: aggregate, dimensions: [], metrics: [revenue]}
     presentation: {type: cartesian}

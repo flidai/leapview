@@ -10,6 +10,8 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
+Superseded by: [ADR-0024](0024-use-named-lists-for-authored-definitions.md), authored definition collection syntax and fragment composition by identity only
+
 Related: [ADR-0001](0001-semantic-model-first.md);
 [ADR-0002](0002-use-maplibre-for-geographic-rendering.md);
 [ADR-0005](0005-use-project-wide-resource-graph.md);

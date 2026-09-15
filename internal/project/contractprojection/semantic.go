@@ -268,7 +268,7 @@ func ProjectSemanticModel(value projectcontracts.SemanticModel, contract Contrac
 // compiler. Expand local authoring before projecting so nesting never drops a
 // member or changes its public name.
 func decodeNormalizedSemanticAuthoring(value projectcontracts.SemanticModel, resolver *ReferenceContext, output any) error {
-	data, err := json.Marshal(value)
+	data, err := projectcontracts.IndexedAuthoringJSON(value)
 	if err != nil {
 		return err
 	}
