@@ -1692,21 +1692,28 @@ test('documentation sidebar aligns with the centered header on wide screens', as
     for (const width of [1025, 1200, 1440, 1920, 2560]) {
       await page.setViewportSize({ width, height: 900 })
       const layout = await page.evaluate(() => {
+        const header = document.querySelector('.site-header') as HTMLElement
         const brand = document.querySelector('.site-header .site-brand') as HTMLElement
         const sidebar = document.querySelector('.site-docs-sidebar') as HTMLElement
         const docs = document.querySelector('.site-docs-layout') as HTMLElement
+        const headerRect = header.getBoundingClientRect()
         const brandRect = brand.getBoundingClientRect()
         const sidebarRect = sidebar.getBoundingClientRect()
         const docsRect = docs.getBoundingClientRect()
         return {
           brandLeft: brandRect.left,
           sidebarLeft: sidebarRect.left,
+          sidebarTop: sidebarRect.top,
+          headerBottom: headerRect.bottom,
+          navigationTop: sidebar.querySelector('nav')!.getBoundingClientRect().top,
           frameLeft: docsRect.left,
           frameRight: innerWidth - docsRect.right,
           horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
         }
       })
       expect(Math.abs(layout.brandLeft - layout.sidebarLeft)).toBeLessThanOrEqual(1)
+      expect(layout.sidebarTop - layout.headerBottom).toBeGreaterThanOrEqual(24)
+      expect(Math.abs(layout.navigationTop - layout.sidebarTop)).toBeLessThanOrEqual(1)
       expect(Math.abs(layout.frameLeft - layout.frameRight)).toBeLessThanOrEqual(1)
       expect(layout.horizontalOverflow).toBe(false)
     }

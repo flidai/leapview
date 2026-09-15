@@ -534,15 +534,16 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-sidebar {
   position: sticky;
-  top: var(--site-header-height);
+  top: calc(var(--site-header-height) + var(--base-size-32));
   align-self: start;
-  height: calc(100svh - var(--site-header-height));
+  height: calc(100svh - var(--site-header-height) - var(--base-size-32));
+  margin-top: var(--base-size-32);
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   border-right: var(--lv-border-muted);
   background: var(--lv-bg-panel);
-  padding: var(--base-size-32) var(--base-size-16) var(--base-size-16) 0;
+  padding: 0 var(--base-size-16) var(--base-size-16) 0;
 }
 
 .site-docs-drawer-actions {
@@ -2532,6 +2533,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
       calc(var(--base-size-128) + var(--base-size-128))
     );
     height: 100svh;
+    margin-top: 0;
     transform: translateX(-100%);
     transition: transform var(--site-motion-duration) var(--site-motion-easing);
     border-right: var(--lv-border-muted);
