@@ -230,7 +230,7 @@ export const visualizationHostStyles = css`
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .visual-options { position: relative; }
+  .visual-options { position: relative; flex: 0 0 auto; }
   .visual-options summary {
     display: grid;
     width: var(--lv-visual-action-target);
