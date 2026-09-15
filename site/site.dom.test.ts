@@ -86,6 +86,22 @@ test('architecture connections stay aligned with the layers across screen sizes'
       })
       expect(await page.locator('.architecture-wire').count()).toBe(6)
       expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+      const layerGap = await page.locator('#architecture-board').evaluate((board) => {
+        const layers = ['interfaces', 'serving', 'compute', 'foundation'].map((name) =>
+          [...board.querySelectorAll<HTMLElement>(`.layer-slab[data-layer="${name}"] .slab-piece`)]
+            .map((piece) => piece.getBoundingClientRect()))
+        return layers.slice(1).map((current, index) =>
+          Math.min(...current.map((rect) => rect.top)) - Math.max(...layers[index].map((rect) => rect.bottom)))
+      })
+      expect(Math.min(...layerGap)).toBeGreaterThan(2)
+      const cardOverlap = await page.locator('#architecture-board').evaluate((board) => {
+        const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
+          .map((card) => card.getBoundingClientRect())
+        return Math.max(0, ...cards.flatMap((a, index) => cards.slice(index + 1).map((b) =>
+          Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+          Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)))))
+      })
+      expect(cardOverlap).toBe(0)
       const overlap = await page.locator('#architecture-board').evaluate((board) => {
         const pieces = [...board.querySelectorAll<HTMLElement>('.slab-piece')]
         const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
