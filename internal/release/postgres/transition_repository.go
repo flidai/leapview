@@ -254,17 +254,6 @@ func (r *Repository) GetTransition(ctx context.Context, operationID string) (tra
 	return readTransitionOperation(ctx, r.db, transitionRow(dbrow))
 }
 
-func (r *Repository) GetTransitionByIdempotency(ctx context.Context, targetIdentityDigest, key string) (transitionoperation.Operation, error) {
-	if r == nil || r.db == nil {
-		return transitionoperation.Operation{}, transitionoperation.ErrInvalid
-	}
-	dbrow, err := releasedb.New(r.db).GetTransitionOperationByIdempotency(ctx, releasedb.GetTransitionOperationByIdempotencyParams{TargetIdentityDigest: targetIdentityDigest, IdempotencyKey: key})
-	if err != nil {
-		return transitionoperation.Operation{}, err
-	}
-	return readTransitionOperation(ctx, r.db, transitionRow(dbrow))
-}
-
 func (r *Repository) RecordTransitionPhase(ctx context.Context, fence transitionoperation.Fence, result transitionoperation.PhaseResult) (transitionoperation.Operation, error) {
 	if r == nil || r.db == nil {
 		return transitionoperation.Operation{}, transitionoperation.ErrInvalid

@@ -19,19 +19,6 @@ func QualificationActivate(paths Paths, generation string) error {
 	return activateGeneration(paths, generation)
 }
 
-// QualificationStageAndActivate is a convenience bridge for qualification
-// callers that do not need to inspect the staged-but-inactive generation.
-func QualificationStageAndActivate(paths Paths, image string, payload map[string][]byte) (string, error) {
-	generation, err := QualificationStage(paths, image, payload)
-	if err != nil {
-		return "", err
-	}
-	if err := QualificationActivate(paths, generation); err != nil {
-		return "", err
-	}
-	return generation, nil
-}
-
 // QualificationActiveGeneration reads the durable host-install activation
 // pointer through the production validation helper.
 func QualificationActiveGeneration(paths Paths) (string, error) {
