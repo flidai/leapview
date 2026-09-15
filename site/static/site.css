@@ -118,8 +118,43 @@ a {
   position: sticky;
   z-index: var(--zIndex-sticky);
   top: 0;
-  border-bottom: var(--lv-border-muted);
-  background: var(--lv-bg-panel);
+  isolation: isolate;
+  background: transparent;
+}
+
+.site-header::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: transparent;
+  -webkit-backdrop-filter: blur(0);
+  backdrop-filter: blur(0);
+  content: "";
+  pointer-events: none;
+  transition:
+    background-color var(--site-motion-duration-short) var(--site-motion-easing),
+    -webkit-backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing),
+    backdrop-filter var(--site-motion-duration-short) var(--site-motion-easing);
+}
+
+.site-header.is-scrolled::before {
+  background-color: var(
+    --site-header-fill,
+    color-mix(in srgb, var(--lv-bg-page) 88%, transparent)
+  );
+  background-image: var(--site-header-edge, none);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.site-header--docs {
+  background: var(--lv-bg-page);
+}
+
+.site-header--docs.is-scrolled::before {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .site-shell {
@@ -130,10 +165,12 @@ a {
 .site-nav {
   display: flex;
   width: 100%;
+  max-width: var(--site-layout-width);
   min-height: var(--site-header-height);
   align-items: center;
   justify-content: space-between;
   gap: var(--site-header-gap);
+  margin-inline: auto;
   padding-inline: var(--site-header-inline-space);
 }
 
@@ -145,6 +182,18 @@ a {
   font-size: var(--text-title-size-small);
   font-weight: var(--base-text-weight-semibold);
   text-decoration: none;
+}
+
+@keyframes site-brand-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .site-brand:is(:hover, :focus-visible) lv-brand-mark {
+    animation: site-brand-spin 800ms ease-in-out both;
+  }
 }
 
 .site-nav-links,
@@ -167,6 +216,47 @@ a {
   color: var(--lv-fg-accent);
   text-decoration: underline;
   text-underline-offset: var(--base-size-4);
+}
+
+.site-social-links {
+  display: flex;
+  align-items: center;
+  gap: var(--base-size-4);
+}
+
+.site-social-link {
+  display: inline-grid;
+  width: var(--site-interactive-target-size);
+  height: var(--site-interactive-target-size);
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--lv-fg-muted);
+  text-decoration: none;
+}
+
+.site-social-link:hover,
+.site-social-link:focus-visible {
+  background: var(--lv-button-bg-hover);
+  color: var(--lv-fg-default);
+}
+
+.site-social-link:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-outline-offset);
+}
+
+.site-social-link .site-github-mark,
+.site-discord-mark {
+  width: var(--base-size-20);
+  height: var(--base-size-20);
+  background: currentColor;
+}
+
+.site-discord-mark {
+  mask: url("/static/discord-mark.svg") center / contain no-repeat;
 }
 
 lv-site-search:not(:defined) > .site-search-active-input {
@@ -404,49 +494,38 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-reading-layout {
   display: grid;
-  width: 100%;
-  grid-template-columns:
-    minmax(0, 1fr)
-    minmax(
-      var(--base-size-128),
-      calc(var(--base-size-128) + var(--base-size-64))
-    );
-  gap: var(--base-size-32);
-}
-
-/* DuckDB keeps the article outline through 1201px and removes it at 1200px. */
-@media (max-width: 75rem) {
-  .site-docs-reading-layout {
-    width: min(100%, var(--site-docs-content-width));
-    grid-template-columns: minmax(0, 1fr);
-    margin: 0 auto;
-  }
-
-  .site-docs-reading-layout > lv-site-article-toc {
-    display: none;
-  }
+  width: min(
+    100%,
+    calc(var(--site-article-width) + var(--base-size-128))
+  );
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 auto;
 }
 
 .site-docs-layout {
   display: grid;
+  width: min(100%, var(--site-layout-width));
   min-height: calc(100svh - var(--site-header-height));
-  grid-template-columns: minmax(
-      var(--base-size-128),
-      calc(var(--base-size-128) + var(--base-size-128))
-    ) minmax(0, 1fr);
+  grid-template-columns:
+    calc(var(--base-size-128) + var(--base-size-96))
+    minmax(0, 1fr);
+  column-gap: var(--base-size-32);
+  margin-inline: auto;
+  padding-inline: var(--site-header-inline-space);
 }
 
 .site-docs-sidebar {
   position: sticky;
-  top: var(--site-header-height);
+  top: calc(var(--site-header-height) + var(--base-size-32));
   align-self: start;
-  height: calc(100svh - var(--site-header-height));
+  height: calc(100svh - var(--site-header-height) - var(--base-size-32));
+  margin-top: var(--base-size-32);
   overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   border-right: var(--lv-border-muted);
-  background: var(--lv-bg-panel);
-  padding: var(--stack-padding-normal);
+  background: var(--lv-bg-page);
+  padding: 0 var(--base-size-16) var(--base-size-16) 0;
 }
 
 .site-docs-drawer-actions {
@@ -499,6 +578,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   min-height: max(var(--control-small-size), var(--control-minTarget-auto));
   align-items: center;
   justify-content: space-between;
+  gap: var(--base-size-8);
   border-radius: var(--lv-radius-default);
   color: var(--lv-fg-muted);
   cursor: pointer;
@@ -566,74 +646,13 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-content {
   min-width: 0;
-  padding: var(--base-size-32) var(--base-size-32) var(--base-size-128);
+  background: var(--lv-bg-page);
+  padding: var(--base-size-32) 0 var(--base-size-128);
   container: site-docs-content / inline-size;
 }
 
 .site-docs-article-header {
-  display: flex;
-  align-items: center;
-  gap: var(--base-size-8);
-  margin-bottom: var(--base-size-8);
-}
-
-.site-docs-breadcrumb ol {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--base-size-8);
-  margin: 0;
-  padding: 0;
-  color: var(--lv-fg-muted);
-  font-size: var(--text-body-size-small);
-  list-style: none;
-}
-
-.site-docs-breadcrumb {
-  flex: 1;
-  min-width: 0;
-}
-
-.site-docs-breadcrumb ol {
-  overflow: hidden;
-}
-
-.site-docs-breadcrumb li:last-child {
-  min-width: 0;
-}
-
-.site-docs-breadcrumb [aria-current="page"] {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.site-docs-breadcrumb li {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--base-size-8);
-}
-
-.site-docs-breadcrumb li + li::before {
-  color: var(--lv-fg-muted);
-  content: "/";
-}
-
-.site-docs-breadcrumb a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.site-docs-breadcrumb a:hover,
-.site-docs-breadcrumb a:focus-visible {
-  color: var(--lv-fg-default);
-  text-decoration: underline;
-  text-underline-offset: var(--base-size-2);
-}
-
-.site-docs-breadcrumb [aria-current="page"] {
-  color: var(--lv-fg-default);
-  font-weight: var(--base-text-weight-medium);
+  display: none;
 }
 
 .site-docs-article {
@@ -665,6 +684,12 @@ lv-site-search:not(:defined) > .site-search-active-input {
   grid-column: 2 !important;
   grid-row: 1;
   align-self: center;
+}
+
+.site-docs-article-actions lv-site-docs-page-actions {
+  border: var(--lv-border-default);
+  border-radius: var(--lv-radius-default);
+  background: var(--lv-bg-control);
 }
 
 .site-docs-article > * {
@@ -1071,7 +1096,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--base-size-16);
-  margin-bottom: var(--base-size-32);
+  margin-bottom: 0;
 }
 
 .site-docs-article .site-docs-pagination-card {
@@ -1128,50 +1153,6 @@ lv-site-search:not(:defined) > .site-search-active-input {
 .site-docs-pagination-arrow {
   font-size: var(--text-body-size-medium);
   line-height: 1;
-}
-
-.site-docs-page-meta {
-  display: grid;
-  width: 100%;
-  margin-top: 0;
-  border-radius: var(--lv-radius-default);
-  background: var(--lv-bg-control);
-  padding: var(--base-size-20);
-}
-
-.site-docs-page-meta h2 {
-  margin: 0 0 0.5em;
-  font-size: var(--text-body-size-medium);
-  font-weight: var(--base-text-weight-semibold);
-  letter-spacing: 0.001em;
-  line-height: 1.2;
-}
-
-.site-docs-page-meta ul {
-  margin: 0;
-  padding: 0 0 0 var(--base-size-20);
-  font-size: var(--text-body-size-medium);
-  list-style: disc;
-}
-
-.site-docs-page-meta li {
-  font-size: var(--text-body-size-medium);
-  font-weight: var(--base-text-weight-normal);
-  letter-spacing: 0.005em;
-  line-height: 1.4;
-}
-
-.site-docs-page-meta li + li {
-  margin-top: 0;
-}
-
-.site-docs-page-meta a {
-  color: var(--lv-fg-muted);
-}
-
-.site-docs-page-meta a:hover,
-.site-docs-page-meta a:focus-visible {
-  color: var(--lv-fg-default);
 }
 
 @media (max-width: 40rem) {
@@ -2340,6 +2321,15 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding: var(--base-size-64) var(--base-size-32) var(--base-size-32);
 }
 
+.site-home + .site-footer {
+  background: var(--lv-bg-page);
+  padding-inline: 0;
+}
+
+.site-home + .site-footer :is(.site-footer-content, .site-footer-bottom) {
+  padding-inline: var(--site-header-inline-space);
+}
+
 .site-footer-content,
 .site-footer-bottom {
   width: min(100%, var(--site-layout-width));
@@ -2400,8 +2390,17 @@ lv-site-search:not(:defined) > .site-search-active-input {
   padding-top: var(--base-size-20);
 }
 
-/* DuckDB keeps the documentation tree docked through 901px. */
-@media (max-width: 56.25rem) {
+.site-footer-bottom a {
+  text-underline-offset: var(--base-size-4);
+}
+
+.site-footer-bottom a:hover,
+.site-footer-bottom a:focus-visible {
+  color: var(--lv-fg-accent);
+}
+
+/* Keep the article readable before docking the navigation. */
+@media (max-width: 64rem) {
   .site-docs-layout {
     grid-template-columns: 1fr;
   }
@@ -2417,6 +2416,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
       calc(var(--base-size-128) + var(--base-size-128))
     );
     height: 100svh;
+    margin-top: 0;
     transform: translateX(-100%);
     transition: transform var(--site-motion-duration) var(--site-motion-easing);
     border-right: var(--lv-border-muted);
@@ -2458,14 +2458,17 @@ lv-site-search:not(:defined) > .site-search-active-input {
   }
 
   .site-docs-content {
-    padding: var(--base-size-32) var(--base-size-16) var(--base-size-64);
+    padding-block: var(--base-size-32) var(--base-size-64);
   }
 
   .site-docs-article-header {
+    display: flex;
     align-items: center;
     margin-bottom: var(--base-size-24);
   }
+}
 
+@media (max-width: 56.25rem) {
   .site-stack-flow {
     --site-stack-flow-gap: var(--base-size-48);
 

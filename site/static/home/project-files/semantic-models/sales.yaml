@@ -1,0 +1,61 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:sales
+  name: sales
+  displayName: Sales Semantic Model
+spec:
+  datasets:
+    sales_orders:
+      model: sales_orders
+      defaultTimeDimension: purchase_date
+      metrics:
+        order_count:
+          type: simple
+          empty: zero
+          label: Orders
+          agg: count_distinct
+          field: order_id
+        revenue:
+          type: simple
+          empty: zero
+          label: Revenue
+          format: currency
+          agg: sum
+      dimensions:
+        purchase_date:
+          datatype: Date
+          time:
+            nativeGrain: day
+            grains:
+              - day
+              - week
+              - month
+            calendar: iso8601
+        category:
+          datatype: String
+    sales_customers:
+      model: sales_customers
+  relationships:
+    orders_customers:
+      from:
+        dataset: sales_orders
+        entity: customer
+      to:
+        dataset: sales_customers
+        entity: customer
+  dimensions:
+    state:
+      datatype: String
+      bindings:
+        sales_orders:
+          field: sales_customers.state
+          path:
+            - orders_customers
+  metrics:
+    aov:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
+      label: Average order value
+      format: currency

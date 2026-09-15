@@ -30,398 +30,331 @@ afterAll(async () => {
   }
 })
 
-test('site explains the product, its workflow, and where it fits in the data stack', async () => {
-  const page = await browser.newPage()
+test('homepage presents the new sections inside the shared site shell', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => Boolean(customElements.get('lv-site-flow-background')))
-    expect(await page.locator('lv-site-flow-background.site-hero-background').count()).toBe(1)
+    expect(await page.locator('.site-header').count()).toBe(1)
+    expect(await page.locator('.site-footer').count()).toBe(1)
+    expect((await page.locator('.site-footer-bottom').textContent())?.trim()).toBe('A project by Flid AI.')
+    expect(await page.locator('.site-footer-bottom').getByRole('link', { name: 'Flid AI' }).getAttribute('href')).toBe('https://flid.ai/')
+    expect(await page.locator('.landing-footer, .topbar').count()).toBe(0)
+    expect(await page.getByRole('heading', { level: 1, name: 'Metrics your whole team can build on.' }).isVisible()).toBe(true)
+    const sectionOrder = ['main-content', 'mission', 'connections', 'build', 'enterprise', 'layers', 'openness', 'get-involved']
+    expect(await page.locator('.site-home > section').evaluateAll((sections) => sections.map((section) => section.id))).toEqual(sectionOrder)
+    for (const id of sectionOrder) {
+      expect(await page.locator(`#${id}`).count()).toBe(1)
+    }
+    const sectionBackgrounds = await page.locator('#build, #enterprise, #layers, #openness').evaluateAll((sections) => sections.map((section) => getComputedStyle(section).backgroundColor))
+    expect(new Set(sectionBackgrounds).size).toBe(2)
+    for (let index = 1; index < sectionBackgrounds.length; index++) {
+      expect(sectionBackgrounds[index]).not.toBe(sectionBackgrounds[index - 1])
+    }
+    expect(await page.locator('.mission-kicker, .story-kicker, .project-kicker, .architecture-kicker, .enterprise-kicker, .openness-kicker, .involved-kicker').count()).toBe(0)
+    expect(await page.getByRole('heading', { level: 2, name: 'Analytics as code. Changes you can review.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'How LeapView works.' }).count()).toBe(1)
+    expect(await page.getByRole('heading', { level: 2, name: 'Build your first dashboard.' }).count()).toBe(0)
+    expect(await page.locator('.site-interfaces-section, .site-stack-section, .site-desktop-section').count()).toBe(0)
+    const screenshot = page.locator('#product-image')
     await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
+      const image = document.querySelector<HTMLImageElement>('#product-image')
+      return image?.complete && image.naturalWidth === 1440
     })
-    const flowBackground = page.locator('lv-site-flow-background')
-    const firstFlowFrame = await flowBackground.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    await page.waitForTimeout(100)
-    const secondFlowFrame = await flowBackground.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    expect(secondFlowFrame).not.toBe(firstFlowFrame)
-    const header = page.locator('.site-header')
-    expect(await header.isVisible()).toBe(true)
-    expect(await header.getAttribute('aria-hidden')).toBeNull()
-    expect(await header.evaluate((element) => getComputedStyle(element).position)).toBe('sticky')
-    const hero = await page.locator('.site-hero').evaluate((element) => ({
-      height: element.getBoundingClientRect().height,
-      width: element.getBoundingClientRect().width,
-      viewportHeight: window.innerHeight,
-      viewportWidth: window.innerWidth,
-    }))
-    const flowFrame = await flowBackground.evaluate((element) => {
-      const bounds = element.getBoundingClientRect()
-      return { height: bounds.height, top: bounds.top }
-    })
-    expect(hero.width).toBe(hero.viewportWidth)
-    expect(hero.height).toBeGreaterThan(hero.viewportHeight * 0.65)
-    expect(flowFrame.top).toBeCloseTo(await page.locator('.site-hero').evaluate((element) => element.getBoundingClientRect().top), 1)
-    expect(flowFrame.height).toBeLessThanOrEqual(992)
-    expect(flowFrame.height).toBeLessThan(hero.height)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'The agent-native BI platform.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    expect(await page.locator('.site-hero').getByText('Build dashboards as code, keep analytics in version control, and explore data with AI agents.').count()).toBe(1)
-    const githubLinks = page.getByRole('link', { name: 'View on GitHub' })
-    expect(await githubLinks.count()).toBe(2)
-    expect(await githubLinks.first().getAttribute('href')).toBe('https://github.com/flidai/leapview')
-    expect(await githubLinks.locator('.site-github-mark').count()).toBe(2)
-    expect(
-      await githubLinks
-        .first()
-        .locator('.site-github-mark')
-        .evaluate((element) => getComputedStyle(element).maskImage),
-    ).toContain('/static/vendor/github-mark.svg')
-    const productScreenshots = page.locator('img.site-product-screenshot')
-    expect(await productScreenshots.count()).toBe(2)
-    const lightProductScreenshot = page.locator('img.site-product-screenshot-light')
-    const darkProductScreenshot = page.locator('img.site-product-screenshot-dark')
-    expect(await lightProductScreenshot.getAttribute('alt')).toBe('LeapView Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table')
-    expect(await darkProductScreenshot.getAttribute('alt')).toBe('LeapView Visual Showcase overview with KPIs, line, donut, and bar charts, and an analytical table')
-    await page.waitForFunction(() => {
-      const images = Array.from(document.querySelectorAll<HTMLImageElement>('img.site-product-screenshot'))
-      return images.length === 2 && images.every((image) => image.complete && image.naturalWidth > 0)
-    })
-    expect(await lightProductScreenshot.isVisible()).toBe(true)
-    expect(await darkProductScreenshot.isVisible()).toBe(false)
-    expect(await page.locator('.site-product-caption').count()).toBe(0)
-    expect(await page.locator('.site-agent-preview').count()).toBe(0)
-    const productFrameCenter = await page.locator('.site-product-frame').evaluate((element) => {
-      const rect = element.getBoundingClientRect()
-      return { frame: rect.left + rect.width / 2, viewport: window.innerWidth / 2 }
-    })
-    expect(Math.abs(productFrameCenter.frame - productFrameCenter.viewport)).toBeLessThanOrEqual(1)
-    expect(await page.locator('.site-proof-strip .site-proof-item').count()).toBe(4)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'Ship analytics like software.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    const workflow = page.getByRole('list', {
-      name: 'Analytics delivery workflow',
-    })
-    expect(await page.locator('.site-workflow-artifact').count()).toBe(1)
-    expect(await page.locator('.site-workflow-artifact pre code').count()).toBe(1)
-    expect(await workflow.locator('.site-workflow-card').count()).toBe(3)
-    expect(await workflow.getByRole('heading', { name: 'Build in code' }).count()).toBe(1)
-    expect(await workflow.getByRole('heading', { name: 'Review in Git' }).count()).toBe(1)
-    expect(await workflow.getByRole('heading', { name: 'Deploy with confidence' }).count()).toBe(1)
-    expect(await workflow.locator('lv-site-feature-icon').evaluateAll((icons) => icons.map((icon) => icon.getAttribute('name')))).toEqual([
-      'blocks',
-      'git-branch',
-      'server',
-    ])
-    expect(await page.getByText('apiVersion: leapview.dev/v1', { exact: false }).count()).toBe(1)
-    expect(await page.getByText('agg: sum', { exact: false }).count()).toBe(1)
-    expect(
-      await page
-        .getByRole('heading', {
-          name: 'Keep your data stack. Add LeapView.',
-        })
-        .isVisible(),
-    ).toBe(true)
-    expect(
-      await page.locator('.site-stack-section').evaluate((element) => {
-        const style = getComputedStyle(element)
-        return {
-          background: style.backgroundColor,
-          borderWidth: style.borderWidth,
-          borderRadius: style.borderRadius,
-          boxShadow: style.boxShadow,
-          padding: style.padding,
-        }
-      }),
-    ).toEqual({
-      background: 'rgba(0, 0, 0, 0)',
-      borderWidth: '0px',
-      borderRadius: '0px',
-      boxShadow: 'none',
-      padding: '0px',
-    })
-    const stackFlow = page.getByRole('list', {
-      name: 'How LeapView connects to your data stack',
-    })
-    expect(await stackFlow.locator('.site-stack-stage').count()).toBe(2)
-    expect(await stackFlow.getByRole('heading', { name: 'LeapView' }).count()).toBe(1)
-    const compatibilityGroups = stackFlow.locator('.site-stack-group')
-    expect(await compatibilityGroups.count()).toBe(3)
-    expect(await stackFlow.locator('.site-stack-edges-desktop .site-stack-edge').count()).toBe(4)
-    expect(await stackFlow.locator('.site-stack-edges-mobile .site-stack-edge').count()).toBe(1)
-    const desktopFlowMarkers = stackFlow.locator('.site-stack-edges-desktop .site-stack-flow-marker')
-    expect(await desktopFlowMarkers.count()).toBe(3)
-    expect(
-      await desktopFlowMarkers.evaluateAll((markers) =>
-        markers.map((marker) => {
-          const style = getComputedStyle(marker)
-          return {
-            path: marker.getAttribute('data-flow-path'),
-            duration: style.animationDuration,
-            iterationCount: style.animationIterationCount,
-          }
-        }),
-      ),
-    ).toEqual([
-      { path: 'M0 50 C44 50 42 150 66 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-      { path: 'M0 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-      { path: 'M0 250 C44 250 42 150 66 150 H96', duration: '2.4s', iterationCount: 'infinite' },
-    ])
-    const initialFlowOffsets = await desktopFlowMarkers.evaluateAll((markers) =>
-      markers.map((marker) => getComputedStyle(marker).strokeDashoffset),
-    )
-    await page.waitForTimeout(300)
-    const advancedFlowOffsets = await desktopFlowMarkers.evaluateAll((markers) =>
-      markers.map((marker) => getComputedStyle(marker).strokeDashoffset),
-    )
-    expect(
-      advancedFlowOffsets.every((offset, index) => offset !== initialFlowOffsets[index]),
-    ).toBe(true)
-    const mobileFlowMarkers = stackFlow.locator('.site-stack-edges-mobile .site-stack-flow-marker')
-    expect(await mobileFlowMarkers.count()).toBe(1)
-    expect(await mobileFlowMarkers.getAttribute('data-flow-path')).toBe('M50 0 V96')
-    const productNode = stackFlow.locator('.site-stack-product-node')
-    expect(await productNode.count()).toBe(1)
-    expect(await productNode.locator('lv-brand-mark[large]').count()).toBe(1)
-    const clientInterfaces = productNode.getByRole('list', { name: 'LeapView interfaces' })
-    expect(await clientInterfaces.locator('.site-stack-client-interface').count()).toBe(4)
-    for (const [label, icon] of [
-      ['Web app', 'square-mouse-pointer'],
-      ['CLI', 'terminal'],
-      ['REST API', 'code-xml'],
-    ]) {
-      const clientInterface = clientInterfaces.locator(`.site-stack-client-interface[aria-label="${label}"]`)
-      expect(await clientInterface.count()).toBe(1)
-      expect(await clientInterface.getAttribute('tabindex')).toBe('0')
-      expect(await clientInterface.getAttribute('data-label')).toBe(label)
-      expect(await clientInterface.locator(`lv-site-feature-icon[name="${icon}"][plain]`).count()).toBe(1)
-      expect(await clientInterface.getByText(label, { exact: true }).count()).toBe(1)
-      expect(await clientInterface.evaluate((element) => element.childNodes.length)).toBe(2)
-    }
-    const mcpInterface = clientInterfaces.locator('.site-stack-client-interface[aria-label="MCP"]')
-    expect(await mcpInterface.locator('.site-stack-mcp-mark[aria-hidden="true"] > svg').count()).toBe(1)
-    expect(await mcpInterface.locator('lv-site-feature-icon').count()).toBe(0)
-    expect(await mcpInterface.getByText('MCP', { exact: true }).count()).toBe(1)
-    expect(await mcpInterface.evaluate((element) => element.childNodes.length)).toBe(2)
-    expect(await productNode.getByText('Planned', { exact: true }).count()).toBe(0)
-    expect(await productNode.getByText('Coming soon', { exact: true }).count()).toBe(0)
-    expect(
-      await productNode.evaluate((element) => {
-        const sourceNode = element.parentElement?.querySelector('.site-stack-group')
-        if (!sourceNode) return null
-        const sourceStyle = getComputedStyle(sourceNode)
-        const productStyle = getComputedStyle(element)
-        return {
-          backgroundMatches: sourceStyle.backgroundColor === productStyle.backgroundColor,
-          borderMatches: sourceStyle.borderColor === productStyle.borderColor,
-        }
-      }),
-    ).toEqual({ backgroundMatches: true, borderMatches: true })
-    expect(await stackFlow.getByRole('heading', { name: 'Databases' }).count()).toBe(1)
-    expect(await stackFlow.getByRole('heading', { name: 'Object storage' }).count()).toBe(1)
-    expect(await stackFlow.getByRole('heading', { name: 'Formats', exact: true }).count()).toBe(1)
-    for (const integration of [
-      'PostgreSQL',
-      'MySQL',
-      'SQLite',
-      'Amazon S3',
-      'Azure Blob',
-      'Google Cloud Storage',
-      'Cloudflare R2',
-      'Hetzner Object Storage',
-      'CSV',
-      'JSON',
-      'Parquet',
-      'Excel',
-      'Vortex',
-      'Delta Lake',
-      'Apache Iceberg',
-      'Lance',
-      'DuckLake',
-    ]) {
-      expect(await stackFlow.locator(`.site-stack-integration[aria-label="${integration}"]`).count()).toBe(1)
-    }
-    const integrationLogos = stackFlow.locator('.site-stack-group .site-stack-integration')
-    expect(await integrationLogos.count()).toBe(17)
-    expect(await stackFlow.locator('.site-stack-group .site-stack-integration-label').count()).toBe(17)
-    expect(await stackFlow.locator('.site-stack-integration[aria-label="Text"]').count()).toBe(0)
-    expect(await stackFlow.locator('.site-stack-integration[aria-label="Binary files"]').count()).toBe(0)
-    const postgresqlLogo = stackFlow.locator('.site-stack-integration[aria-label="PostgreSQL"]')
-    expect(await postgresqlLogo.count()).toBe(1)
-    expect(await postgresqlLogo.getAttribute('tabindex')).toBe('0')
-    const postgresqlMark = postgresqlLogo.locator('.site-stack-logo')
-    expect(await postgresqlMark.count()).toBe(1)
-    expect(await postgresqlMark.evaluate((element) => element.tagName)).toBe('SPAN')
-    expect(await postgresqlMark.locator('svg').count()).toBe(1)
-    expect(await postgresqlLogo.getByText('PostgreSQL', { exact: true }).count()).toBe(1)
-    const postgresqlMarkFill = await postgresqlMark.evaluate((element) =>
-      getComputedStyle(element.querySelector('svg path')!).fill,
-    )
-    expect(postgresqlMarkFill).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
-    const icebergMark = stackFlow.locator('.site-stack-integration[aria-label="Apache Iceberg"] .site-stack-logo')
-    const icebergFills = await icebergMark.evaluate((element) =>
-      Array.from(new Set(Array.from(element.querySelectorAll('path'), (path) => getComputedStyle(path).fill))),
-    )
-    expect(icebergFills).toHaveLength(3)
-    expect(icebergFills).toContain(postgresqlMarkFill)
-    expect(await stackFlow.locator('.site-stack-platforms').count()).toBe(0)
-    expect(await stackFlow.getByText('Databricks', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Microsoft Fabric', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Snowflake', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.getByText('Apps', { exact: true }).count()).toBe(0)
-    expect(await stackFlow.locator('.site-stack-connection-label').count()).toBe(0)
-    expect(await page.getByRole('link', { name: 'View all supported connections' }).count()).toBe(0)
-    const interfaces = page.locator('.site-interfaces-section')
-    expect(await interfaces.getByRole('heading', { name: 'One model. Two ways to explore.' }).count()).toBe(1)
-    expect(await interfaces.locator('.site-interface-card').count()).toBe(2)
-    expect(await interfaces.getByRole('heading', { name: 'Dashboards', exact: true }).count()).toBe(1)
-    expect(await interfaces.getByRole('heading', { name: 'AI agents', exact: true }).count()).toBe(1)
-    expect(await interfaces.getByRole('link', { name: 'Explore agent integrations' }).getAttribute('href')).toBe('/docs/guides/integrate/agent')
-    expect(await interfaces.locator('.site-interface-core').count()).toBe(1)
-    for (const redundantEyebrow of [
-      'One governed analytics layer',
-      'LeapView Desktop',
-      'Analytics as code',
-      'Works with your stack',
-      'Governed by default',
-      'Open-source BI',
-    ]) {
-      expect(await page.getByText(redundantEyebrow, { exact: true }).count()).toBe(0)
-    }
-    const trust = page.locator('.site-trust-section')
-    expect(await trust.getByRole('heading', { name: 'Governed from question to answer.' }).count()).toBe(1)
-    expect(await trust.locator('.site-trust-card').count()).toBe(3)
-    expect(await page.locator('.site-capabilities-section, .site-capabilities, .site-capability').count()).toBe(0)
-    expect(await page.locator('.site-shell').evaluate((element) => Array.from(element.children).map((child) => child.className))).toEqual([
-      'site-interfaces-section',
-      'site-desktop-section',
-      'site-workflow',
-      'site-stack-section',
-      'site-trust-section',
-      'site-cta',
-    ])
-    expect(await page.getByRole('contentinfo').count()).toBe(1)
-    expect(await page.locator('.site-product-proof, lv-site-chart-demo').count()).toBe(0)
-    expect(await page.getByRole('heading', { name: 'One model. Two ways to explore.' }).count()).toBe(1)
-    await page.evaluate(() => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 64)
-    })
-    expect(await header.isVisible()).toBe(true)
-    expect(await header.evaluate((element) => Math.round(element.getBoundingClientRect().top))).toBe(0)
+    expect(await page.locator('.orbit-node').count()).toBe(17)
+    expect(await page.locator('.orbit-track .orbit-node').count()).toBe(17)
+    await page.locator('#connections').scrollIntoViewIfNeeded()
+    await page.waitForFunction(() => document.querySelector('#orbit-stage')?.classList.contains('is-in-view'))
+    expect(await page.locator('.orbit-rotor').first().evaluate((element) => getComputedStyle(element).animationPlayState)).toBe('running')
+    await page.locator('[data-project-file="connection"]').click()
+    await page.waitForFunction(() => document.querySelector('#project-code')?.textContent?.includes('kind:'))
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-file-panel').getAttribute('aria-labelledby')).toBe('project-tab-connection')
+    expect(await page.locator('#project-tab-connection .project-tab-filename').textContent()).toBe('olist.yaml')
+    expect(await page.locator('.project-code-text').first().textContent()).toBe('apiVersion: leapview.dev/v1')
+    expect(await page.locator('.project-editor-footer, .project-footnote').count()).toBe(0)
+    expect(await page.locator('#project-file-path').textContent()).toBe('sales-project / connections / olist.yaml')
+    expect(await page.getByRole('link', { name: /Join Discord/ }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
   } finally {
     await page.close()
   }
-}, 30_000)
+})
 
-test('homepage flow background renders from design tokens and respects reduced motion', async () => {
-  const context = await browser.newContext({ reducedMotion: 'reduce', viewport: { width: 1280, height: 800 } })
-  const page = await context.newPage()
+test('homepage content aligns with the shared header and footer across screen sizes', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
-    })
-    const firstFrame = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const canvas = host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      if (!canvas) throw new Error('flow canvas is missing')
-      const style = getComputedStyle(host)
-      const rootStyle = getComputedStyle(document.documentElement)
-      const context = canvas.getContext('2d')
-      if (!context) throw new Error('flow canvas context is missing')
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-      const activeRows = new Set<number>()
-      let activeSamples = 0
-      let sampleCount = 0
-      let leftY = 0
-      let leftSamples = 0
-      let rightY = 0
-      let rightSamples = 0
-      for (let y = 0; y < canvas.height; y += 4) {
-        for (let x = 0; x < canvas.width; x += 4) {
-          sampleCount++
-          if (pixels[(y * canvas.width + x) * 4 + 3]! <= 2) continue
-          activeRows.add(y)
-          activeSamples++
-          if (x < canvas.width * 0.2) {
-            leftY += y
-            leftSamples++
-          }
-          if (x > canvas.width * 0.8) {
-            rightY += y
-            rightSamples++
-          }
-        }
-      }
-      return {
-        image: canvas.toDataURL(),
-        lineStart: style.getPropertyValue('--site-flow-line-start').trim(),
-        lineEnd: style.getPropertyValue('--site-flow-line-end').trim(),
-        data1: rootStyle.getPropertyValue('--lv-data-1').trim(),
-        data7: rootStyle.getPropertyValue('--lv-data-7').trim(),
-        activeRowRatio: activeRows.size / Math.ceil(canvas.height / 4),
-        activeSampleRatio: activeSamples / sampleCount,
-        directionalDelta: Math.abs(leftY / leftSamples - rightY / rightSamples) / canvas.height,
-      }
-    })
-    await page.waitForTimeout(150)
-    const secondFrame = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const canvas = host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      if (!canvas) throw new Error('flow canvas is missing')
-      return canvas.toDataURL()
-    })
-    expect(firstFrame.image).toBe(secondFrame)
-    expect(firstFrame.lineStart).toBe(firstFrame.data1)
-    expect(firstFrame.lineEnd).toBe(firstFrame.data7)
-    expect(firstFrame.activeRowRatio).toBeGreaterThan(0.65)
-    expect(firstFrame.activeSampleRatio).toBeGreaterThan(0.04)
-    expect(firstFrame.directionalDelta).toBeGreaterThan(0.32)
-    expect(await page.locator('.site-stack-flow-marker').count()).toBe(4)
-    expect(
-      await page.locator('.site-stack-flow-marker').evaluateAll((markers) =>
-        markers.every((marker) => getComputedStyle(marker).display === 'none'),
-      ),
-    ).toBe(true)
+    for (const width of [390, 801, 1281, 1920, 2560]) {
+      await page.setViewportSize({ width, height: 900 })
+      const edges = await page.evaluate(() => [
+        '.site-header .site-brand',
+        '.hero .eyebrow',
+        '.project-heading h2',
+        '#enterprise .enterprise-heading h2',
+        '.architecture-heading h2',
+        '#openness .enterprise-heading h2',
+        '.involved h2',
+        '.site-footer-brand-block',
+        '.site-footer-bottom p',
+      ].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left))
+      expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+    }
   } finally {
-    await context.close()
+    await page.close()
   }
 })
 
-test('homepage flow background stays centered and bounded on ultra-wide screens', async () => {
+test('architecture connections stay aligned with the layers across screen sizes', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [320, 390, 640, 800, 801, 820, 1000, 1001, 1440, 1920]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.waitForFunction(() => {
+        const board = document.querySelector('#architecture-board')
+        const canvas = board?.querySelector('svg.architecture-wires')
+        return board && canvas?.getAttribute('viewBox')?.split(' ')[2] === String(board.getBoundingClientRect().width)
+      })
+      expect(await page.locator('.architecture-wire').count()).toBe(6)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+      const layerSpacing = await page.locator('#architecture-board').evaluate((board) => {
+        const layers = ['interfaces', 'serving', 'compute', 'foundation'].map((name) =>
+          [...board.querySelectorAll<HTMLElement>(`.layer-slab[data-layer="${name}"] .slab-piece`)])
+        return {
+          gaps: layers.slice(1).map((current, index) =>
+            Math.min(...current.map((piece) => piece.getBoundingClientRect().top)) -
+            Math.max(...layers[index].map((piece) => piece.getBoundingClientRect().bottom))),
+          labelClearance: layers.slice(1).map((current, index) =>
+            Math.min(...current.flatMap((piece) =>
+              [...piece.querySelectorAll<HTMLElement>('.slab-face > span')]
+                .map((label) => label.getBoundingClientRect().top))) -
+            Math.max(...layers[index].map((piece) => piece.getBoundingClientRect().bottom))),
+        }
+      })
+      expect(Math.max(...layerSpacing.gaps)).toBeLessThan(-5)
+      expect(Math.min(...layerSpacing.labelClearance)).toBeGreaterThan(0)
+      const cardOverlap = await page.locator('#architecture-board').evaluate((board) => {
+        const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
+          .map((card) => card.getBoundingClientRect())
+        return Math.max(0, ...cards.flatMap((a, index) => cards.slice(index + 1).map((b) =>
+          Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+          Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)))))
+      })
+      expect(cardOverlap).toBe(0)
+      const overlap = await page.locator('#architecture-board').evaluate((board) => {
+        const pieces = [...board.querySelectorAll<HTMLElement>('.slab-piece')]
+        const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
+        return Math.max(...cards.flatMap((card) => pieces.map((piece) => {
+          const a = card.getBoundingClientRect()
+          const b = piece.getBoundingClientRect()
+          return Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+            Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
+        })))
+      })
+      expect(overlap).toBe(0)
+    }
+    await page.setViewportSize({ width: 820, height: 900 })
+    await page.locator('#architecture-postgres').hover()
+    expect(await page.locator('#architecture-postgres').evaluate((element) => element.classList.contains('is-active'))).toBe(true)
+    expect(await page.locator('.architecture-wire.is-active').count()).toBe(1)
+    await page.keyboard.press('Tab')
+    await page.locator('.slab-piece[data-detail="postgres"]').focus()
+    expect(await page.locator('.slab-piece[data-detail="postgres"]').evaluate((element) => element.matches(':focus-visible'))).toBe(true)
+    await page.setViewportSize({ width: 390, height: 900 })
+    await page.waitForFunction(() => document.querySelector('#architecture-board')?.querySelector('svg.architecture-wires')?.getAttribute('viewBox')?.split(' ')[2] === String(document.querySelector('#architecture-board')?.getBoundingClientRect().width))
+    expect(await page.locator('.architecture-wire.is-active').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.clock.install({ time: new Date('2026-09-14T12:00:00Z') })
+    await page.goto(baseURL)
+    await page.locator('#build').scrollIntoViewIfNeeded()
+    await page.clock.runFor(100)
+    const editor = await page.locator('#project-explorer').boundingBox()
+    if (!editor) throw new Error('project editor is not visible')
+    await page.mouse.move(editor.x + editor.width / 2, editor.y + 100)
+    expect(await page.locator('#project-explorer').evaluate((element) => element.matches(':hover'))).toBe(true)
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(true)
+    expect(await page.locator('#project-tab-connection').evaluate((element) => getComputedStyle(element, '::before').animationDuration)).toBe('4.5s')
+    await page.clock.runFor(4600)
+    expect(await page.locator('#project-tab-source').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('02 / DEFINE SOURCES')
+    expect(await page.locator('.project-phase-copy').evaluate((element) => element.classList.contains('is-changing'))).toBe(true)
+    expect(await page.locator('#project-phase-label').evaluate((element) => getComputedStyle(element).animationName)).toBe('project-phase-enter')
+    expect(await page.locator('.project-code-row.is-entering').count()).toBeGreaterThan(0)
+    await page.clock.runFor(9200)
+    expect(await page.locator('#project-tab-semantics').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('04 / DEFINE METRICS')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
+    await page.locator('#project-tab-dashboard').click()
+    await page.clock.runFor(12000)
+    expect(await page.locator('#project-tab-dashboard').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('06 / BUILD DASHBOARDS')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('analytics code walkthrough stays still for reduced motion', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' })
+  try {
+    await page.clock.install({ time: new Date('2026-09-14T12:00:00Z') })
+    await page.goto(baseURL)
+    await page.locator('#build').scrollIntoViewIfNeeded()
+    await page.clock.runFor(20000)
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    expect(await page.locator('#project-phase-label').textContent()).toBe('01 / CONNECT')
+    expect(await page.locator('#project-explorer').evaluate((element) => element.classList.contains('is-autoplay'))).toBe(false)
+    expect(await page.locator('.project-phase-copy').evaluate((element) => element.classList.contains('is-changing'))).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage hero fits the first screen and mission copy stays readable', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const desktop = await page.evaluate(() => ({
+      heroBottom: document.querySelector('.hero')!.getBoundingClientRect().bottom,
+      titleTop: document.querySelector('.hero h1')!.getBoundingClientRect().top,
+      screenshotTop: document.querySelector('.product-frame')!.getBoundingClientRect().top,
+      missionWidth: document.querySelector('.mission-inner')!.getBoundingClientRect().width,
+      missionFont: getComputedStyle(document.querySelector('.mission-copy')!).fontFamily,
+      siteFont: getComputedStyle(document.querySelector('.site-header')!).fontFamily,
+    }))
+    expect(desktop.heroBottom).toBeGreaterThan(1000)
+    expect(desktop.heroBottom).toBeLessThan(1110)
+    expect(desktop.titleTop).toBeGreaterThan(175)
+    expect(desktop.titleTop).toBeLessThan(215)
+    expect(desktop.screenshotTop).toBeGreaterThan(380)
+    expect(desktop.screenshotTop).toBeLessThan(490)
+    expect(desktop.missionWidth).toBeLessThanOrEqual(680)
+    expect(desktop.missionFont).toBe(desktop.siteFont)
+
+    await page.locator('#mission').scrollIntoViewIfNeeded()
+    expect(await page.getByRole('heading', { level: 2, name: 'Your business intelligence should belong to your business.' }).isVisible()).toBe(true)
+    expect(await page.locator('.mission-cursor').count()).toBe(0)
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(baseURL)
+    const mobile = await page.evaluate(() => ({
+      heroBottom: document.querySelector('.hero')!.getBoundingClientRect().bottom,
+      titleTop: document.querySelector('.hero h1')!.getBoundingClientRect().top,
+      screenshotTop: document.querySelector('.product-frame')!.getBoundingClientRect().top,
+    }))
+    expect(mobile.heroBottom).toBeLessThanOrEqual(900)
+    expect(mobile.titleTop).toBeGreaterThan(120)
+    expect(mobile.titleTop).toBeLessThan(165)
+    expect(mobile.screenshotTop).toBeGreaterThan(420)
+    expect(mobile.screenshotTop).toBeLessThan(470)
+  } finally {
+    await page.close()
+  }
+}, 10_000)
+
+test('homepage hero ends at the screenshot on wide screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } })
+  try {
+    await page.goto(baseURL)
+    for (const [width, height] of [[1920, 1080], [2560, 1440]]) {
+      await page.setViewportSize({ width, height })
+      const wide = await page.evaluate(() => {
+        const hero = document.querySelector('.hero')!.getBoundingClientRect()
+        const copy = document.querySelector('.hero-copy')!.getBoundingClientRect()
+        const screenshot = document.querySelector('.product-frame')!.getBoundingClientRect()
+        return { heroBottom: hero.bottom, screenshotBottom: screenshot.bottom, screenshotLeft: screenshot.left, screenshotRight: screenshot.right, copyLeft: copy.left }
+      })
+      expect(wide.heroBottom - wide.screenshotBottom).toBeLessThan(3)
+      expect(wide.heroBottom).toBeLessThan(1100)
+      expect(wide.screenshotRight).toBeLessThan(width - 20)
+      expect(wide.screenshotLeft - wide.copyLeft).toBeGreaterThan(400)
+      expect(wide.screenshotLeft - wide.copyLeft).toBeLessThan(430)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage preview stays large and horizontally explorable on small screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [390, 768, 1023]) {
+      await page.setViewportSize({ width, height: 900 })
+      const layout = await page.evaluate(() => {
+        const hero = document.querySelector('.hero')!.getBoundingClientRect()
+        const frame = document.querySelector('.product-frame')!.getBoundingClientRect()
+        const scroller = document.querySelector<HTMLElement>('#image-scroller')!
+        return {
+          heroBottom: hero.bottom,
+          frameBottom: frame.bottom,
+          frameRight: frame.right,
+          scrollerWidth: scroller.clientWidth,
+          scrollWidth: scroller.scrollWidth,
+          pageWidth: document.documentElement.scrollWidth,
+        }
+      })
+      expect(Math.abs(layout.heroBottom - layout.frameBottom)).toBeLessThan(3)
+      expect(layout.frameRight).toBeGreaterThan(width + 100)
+      expect(layout.scrollWidth).toBeGreaterThan(layout.scrollerWidth)
+      expect(layout.pageWidth).toBe(width)
+    }
+    const boundary: { left: number; bottom: number }[] = []
+    for (const width of [1100, 1101]) {
+      await page.setViewportSize({ width, height: 900 })
+      boundary.push(await page.locator('.product-frame').evaluate((frame) => {
+        const rect = frame.getBoundingClientRect()
+        return { left: rect.left, bottom: rect.bottom }
+      }))
+    }
+    expect(Math.abs(boundary[1].left - boundary[0].left)).toBeLessThan(10)
+    expect(Math.abs(boundary[1].bottom - boundary[0].bottom)).toBeLessThan(10)
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage flow field draws in and respects reduced motion', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(customElements.get('lv-site-flow-background')))
+    const flow = page.locator('lv-site-flow-background.site-flow-field[draw-in]')
+    await page.waitForFunction(() => {
+      const canvas = document.querySelector('lv-site-flow-background')?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
+      return Boolean(canvas && canvas.width > 0)
+    })
+    const first = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
+    await page.waitForTimeout(120)
+    const second = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
+    expect(second).not.toBe(first)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await flow.evaluate((host) => host.getBoundingClientRect().height)).toBeLessThanOrEqual(992)
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage flow field remains bounded on ultra-wide screens', async () => {
   const page = await browser.newPage({ viewport: { width: 2560, height: 1000 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => {
-      const host = document.querySelector('lv-site-flow-background')
-      const canvas = host?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
-      return Boolean(canvas && canvas.width > 0 && canvas.height > 0)
-    })
     const geometry = await page.locator('lv-site-flow-background').evaluate((host) => {
-      const bounds = host.getBoundingClientRect()
-      return {
-        center: bounds.left + bounds.width / 2,
-        viewportCenter: window.innerWidth / 2,
-        width: bounds.width,
-      }
+      const rect = host.getBoundingClientRect()
+      return { width: rect.width, left: rect.left, height: rect.height }
     })
     expect(geometry.width).toBeLessThanOrEqual(1920)
-    expect(Math.abs(geometry.center - geometry.viewportCenter)).toBeLessThanOrEqual(1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    expect(Math.abs(geometry.left - (2560 - geometry.width) / 2)).toBeLessThan(2)
+    expect(geometry.height).toBeLessThanOrEqual(992)
   } finally {
     await page.close()
   }
@@ -482,8 +415,8 @@ test('site brand pairs the LeapView wordmark with the Lucide Aperture ring mark'
       width: element.getBoundingClientRect().width,
       viewportWidth: window.innerWidth,
     }))
-    expect(navigation.left).toBe(0)
-    expect(navigation.width).toBe(navigation.viewportWidth)
+    expect(navigation.width).toBe(1152)
+    expect(navigation.left).toBe((navigation.viewportWidth - navigation.width) / 2)
   } finally {
     await page.close()
   }
@@ -507,152 +440,18 @@ test('desktop download page presents the same manifest-backed early preview', as
   }
 })
 
-test('homepage offers the attested unsigned desktop preview for all platforms', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+test('homepage navigation hides Desktop and Visuals while their pages remain available', async () => {
+  const page = await browser.newPage()
   try {
-    const releaseResponse = await page.request.get(`${baseURL}/desktop-release.json`)
-    const releaseManifest = await releaseResponse.json() as {
-      release: {
-        evidenceUrl: string
-        artifacts: Array<{
-          platform: string
-          architecture: string
-          downloadUrl: string
-        }>
-      }
-    }
-    const artifactURL = (platform: string, architecture: string) => {
-      const artifact = releaseManifest.release.artifacts.find(
-        (candidate) => candidate.platform === platform && candidate.architecture === architecture,
-      )
-      expect(artifact).toBeDefined()
-      return artifact!.downloadUrl
-    }
     await page.goto(baseURL)
-    const section = page.locator('.site-desktop-section')
-    expect(await section.getByRole('heading', { level: 2, name: 'Take LeapView to your desktop.' }).isVisible()).toBe(true)
-    expect(await section.getByText('Unsigned alpha', { exact: true }).count()).toBe(0)
-    expect(await section.locator('.site-desktop-release-meta, .site-desktop-badge').count()).toBe(0)
-    expect(await section.locator('.site-desktop-preview-note').count()).toBe(0)
-    const previewLabel = section.locator('.site-desktop-preview-label')
-    expect(await previewLabel.textContent()).toBe('Early preview')
-    expect(
-      await section.locator('.site-desktop-title-row').evaluate((element) => {
-        const heading = element.querySelector('h2')?.getBoundingClientRect()
-        const label = element.querySelector('.site-desktop-preview-label')?.getBoundingClientRect()
-        return Boolean(heading && label && Math.abs((heading.top + heading.bottom) / 2 - (label.top + label.bottom) / 2) < 1)
-      }),
-    ).toBe(true)
-    expect(
-      await previewLabel.evaluate((element) => {
-        const probe = document.createElement('span')
-        probe.style.color = 'var(--lv-fg-warning)'
-        document.body.append(probe)
-        const warning = getComputedStyle(probe).color
-        probe.remove()
-        const style = getComputedStyle(element)
-        return {
-          borderMatchesWarning: style.borderColor === warning,
-          colorMatchesWarning: style.color === warning,
-        }
-      }),
-    ).toEqual({
-      borderMatchesWarning: true,
-      colorMatchesWarning: true,
-    })
-    const desktopSubtitle = section.locator('.site-desktop-heading > p')
-    expect(await desktopSubtitle.textContent()).toBe(
-      'Open deployed dashboards in a dedicated, hardened app with the same server-side identity, access, and data controls. Installers are not yet code-signed, so macOS and Windows may show a publisher warning. Verify release evidence',
-    )
-    expect(
-      await section.evaluate((element) => {
-        const style = getComputedStyle(element)
-        return {
-          backgroundColor: style.backgroundColor,
-          borderTopWidth: style.borderTopWidth,
-          borderRadius: style.borderRadius,
-          boxShadow: style.boxShadow,
-          overflow: style.overflow,
-          padding: style.padding,
-        }
-      }),
-    ).toEqual({
-      backgroundColor: 'rgba(0, 0, 0, 0)',
-      borderTopWidth: '0px',
-      borderRadius: '0px',
-      boxShadow: 'none',
-      overflow: 'visible',
-      padding: '0px',
-    })
-    expect(await section.evaluate((element) => getComputedStyle(element).gap)).toBe('48px')
-    const downloadCluster = section.locator(':scope > .site-desktop-download-cluster')
-    expect(await downloadCluster.count()).toBe(1)
-    expect(
-      await downloadCluster.evaluate((element) =>
-        Array.from(element.children, (child) => child.className),
-      ),
-    ).toEqual([
-      'site-desktop-stage',
-      'site-desktop-platforms',
-    ])
-    expect(await downloadCluster.evaluate((element) => getComputedStyle(element).gap)).toBe('16px')
-
-    const screenshot = section.locator('img.site-desktop-screenshot')
-    expect(await screenshot.getAttribute('src')).toBe('/static/product-desktop.png')
-    expect(await screenshot.getAttribute('alt')).toBe('LeapView Desktop connection screen for opening a deployed LeapView instance')
-    const wallpaper = section.locator('img.site-desktop-wallpaper')
-    expect(await wallpaper.getAttribute('src')).toBe('/static/desktop-wallpaper.webp')
-    expect(await wallpaper.getAttribute('alt')).toBe('')
-    await page.waitForFunction(() => {
-      const image = document.querySelector<HTMLImageElement>('img.site-desktop-screenshot')
-      const wallpaper = document.querySelector<HTMLImageElement>('img.site-desktop-wallpaper')
-      return Boolean(
-        image?.complete && image.naturalWidth === 1440 && image.naturalHeight === 900
-        && wallpaper?.complete && wallpaper.naturalWidth === 1440 && wallpaper.naturalHeight === 900,
-      )
-    })
-
-    const cards = section.locator('.site-desktop-platform')
-    expect(await cards.count()).toBe(3)
-    for (const [platform, label, href] of [
-      ['macos', 'Download for macOS', artifactURL('darwin', 'arm64')],
-      ['windows', 'Download for Windows', artifactURL('win32', 'x64')],
-      ['linux', 'Download for Linux', artifactURL('linux', 'x64')],
-    ] as const) {
-      const card = section.locator(`.site-desktop-platform[data-desktop-platform="${platform}"]`)
-      expect(await card.count()).toBe(1)
-      const icon = card.locator('img.site-desktop-os-icon')
-      expect(await icon.getAttribute('src')).toBe(`/static/os-${platform === 'macos' ? 'apple' : platform}.svg`)
-      expect(await icon.getAttribute('alt')).toBe('')
-      const link = card.getByRole('link', { name: label })
-      expect(await link.getAttribute('href')).toBe(href)
-      expect(await link.getAttribute('rel')).toBe('noreferrer')
-    }
-    expect(
-      await section.getByRole('link', { name: 'Download for Intel Mac' }).getAttribute('href'),
-    ).toBe(artifactURL('darwin', 'x64'))
-    expect(await desktopSubtitle.getByRole('link', { name: 'Verify release evidence' }).getAttribute('href')).toBe(
-      releaseManifest.release.evidenceUrl,
-    )
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.reload()
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth),
-    ).toBe(true)
-    expect(
-      await page.locator('.site-desktop-platforms').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length),
-    ).toBe(1)
-    expect(
-      await page.locator('.site-desktop-platform > .site-button').evaluateAll((links) =>
-        links.every((link) => link.getBoundingClientRect().height >= 44),
-      ),
-    ).toBe(true)
+    expect(await page.locator('.site-header a[href="/download"], .site-header a[href="/visuals"], .site-footer a[href="/visuals"]').count()).toBe(0)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'Docs' }).count()).toBe(1)
   } finally {
     await page.close()
   }
 })
 
-test('site loads Inter and uses a readable marketing and documentation type scale', async () => {
+test('site loads Inter and keeps readable homepage and documentation type', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -661,22 +460,10 @@ test('site loads Inter and uses a readable marketing and documentation type scal
       return document.fonts.check('400 16px "Inter Variable"')
     })
     expect(fontLoaded).toBe(true)
-
-    const marketingType = await page.evaluate(() => {
-      const heading = getComputedStyle(document.querySelector<HTMLElement>('.site-hero h1')!)
-      const button = getComputedStyle(document.querySelector<HTMLElement>('.site-button')!)
-      return {
-        headingTracking: Number.parseFloat(heading.letterSpacing),
-        buttonSize: Number.parseFloat(button.fontSize),
-      }
-    })
-    expect(marketingType.headingTracking).toBeLessThan(0)
-    expect(marketingType.buttonSize).toBeGreaterThanOrEqual(14)
-
+    const heading = await page.locator('.site-home .hero h1').evaluate((element) => getComputedStyle(element))
+    expect(Number.parseFloat(heading.letterSpacing)).toBeLessThan(0)
     await page.goto(`${baseURL}/docs/introduction`)
-    expect(
-      await page.locator('.site-docs-article').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize)),
-    ).toBeGreaterThanOrEqual(16)
+    expect(await page.locator('.site-docs-article').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))).toBeGreaterThanOrEqual(16)
   } finally {
     await page.close()
   }
@@ -709,109 +496,146 @@ test('documentation header keeps only search and theme actions', async () => {
     await page.goto(baseURL)
     const siteActions = page.locator('.site-header .site-nav-actions')
     expect(await siteActions.getByRole('link', { name: 'Docs', exact: true }).count()).toBe(1)
+    expect(await siteActions.getByRole('link', { name: 'GitHub', exact: true }).getAttribute('href')).toBe('https://github.com/flidai/leapview')
+    expect(await siteActions.getByRole('link', { name: 'Discord', exact: true }).getAttribute('href')).toBe('https://discord.gg/pcfV4zAeRV')
     expect(await siteActions.getByRole('link', { name: 'Demo', exact: true }).count()).toBe(0)
-    expect(await siteActions.getByRole('link', { name: 'Visuals', exact: true }).count()).toBe(1)
+    expect(await siteActions.getByRole('link', { name: 'Visuals', exact: true }).count()).toBe(0)
   } finally {
     await page.close()
   }
 })
 
-test('site supports system, light, and dark color modes', async () => {
-  const page = await browser.newPage()
-  try {
-    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'system'))
-    await page.goto(baseURL)
-    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
+test('documentation header, sidebar, and article share the page background in both themes', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme })
+    try {
+      await page.goto(`${baseURL}/docs/guides/data/refresh`)
+      const colors = await page.evaluate(() => ({
+        page: getComputedStyle(document.body).backgroundColor,
+        header: getComputedStyle(document.querySelector('.site-header')!).backgroundColor,
+        sidebar: getComputedStyle(document.querySelector('.site-docs-sidebar')!).backgroundColor,
+        article: getComputedStyle(document.querySelector('.site-docs-content')!).backgroundColor,
+      }))
+      expect(colors.header).toBe(colors.page)
+      expect(colors.sidebar).toBe(colors.page)
+      expect(colors.article).toBe(colors.page)
+    } finally {
+      await page.close()
+    }
+  }
+})
 
-    await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
+test('site header follows homepage section colors on scroll', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    const header = page.locator('.site-header')
+    expect(await header.evaluate((element) => element.classList.contains('is-scrolled'))).toBe(false)
+    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
+
     await page.evaluate(() => {
       document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo(0, 64)
+      window.scrollTo(0, 600)
     })
-    const toggle = page.locator('lv-site-theme-toggle').locator('button[data-theme-toggle]')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('system')
-    expect(await page.locator('lv-site-theme-toggle').evaluate((element) => element.shadowRoot?.querySelectorAll('svg[data-lucide="icon"]').length)).toBe(3)
-    await toggle.click()
-    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('light')
-    expect(await page.locator('img.site-product-screenshot-light').isVisible()).toBe(true)
-    expect(await page.locator('img.site-product-screenshot-dark').isVisible()).toBe(false)
-    const integrationLogo = page.locator('.site-stack-logo[aria-hidden="true"]')
-    expect(await integrationLogo.count()).toBe(17)
-    const lightLogoColors = await integrationLogo.evaluateAll((logos) =>
-      logos.map((logo) => getComputedStyle(logo.querySelector('svg path')!).fill),
-    )
-    const lightLogoColor = lightLogoColors[0]
-    expect(lightLogoColor).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
+    await page.waitForFunction(() => document.querySelector('.site-header')?.classList.contains('is-scrolled'))
+    expect(await header.evaluate((element) => getComputedStyle(element).borderBottomWidth)).toBe('0px')
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backdropFilter === 'blur(12px)')
+    expect(await header.evaluate((element) => getComputedStyle(element, '::before').backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
 
-    await toggle.click()
-    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'dark')
-    expect(await toggle.getAttribute('data-theme-mode')).toBe('dark')
-    expect(await page.locator('html').evaluate((element) => getComputedStyle(element).colorScheme)).toBe('dark')
-    expect(await page.locator('img.site-product-screenshot-light').isVisible()).toBe(false)
-    expect(await page.locator('img.site-product-screenshot-dark').isVisible()).toBe(true)
-    const darkLogoColors = await integrationLogo.evaluateAll((logos) =>
-      logos.map((logo) => getComputedStyle(logo.querySelector('svg path')!).fill),
-    )
-    const darkLogoColor = darkLogoColors[0]
-    expect(darkLogoColor).toBe(
-      await page.locator('.site-stack-heading > p:not(.site-eyebrow)').evaluate((element) => getComputedStyle(element).color),
-    )
-    expect(darkLogoColor).not.toBe(lightLogoColor)
+    const sectionFills: string[] = []
+    for (const id of ['enterprise', 'layers']) {
+      const section = page.locator(`#${id}`)
+      const color = await section.evaluate((element) => getComputedStyle(element).backgroundColor)
+      await section.evaluate((element) => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 180))
+      await page.waitForFunction((expected) => document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(expected), color)
+      sectionFills.push(await header.evaluate((element) => element.style.getPropertyValue('--site-header-fill')))
+    }
+    expect(sectionFills[0]).not.toBe(sectionFills[1])
+
+    await page.evaluate(() => {
+      const section = document.querySelector('#openness')!
+      const header = document.querySelector<HTMLElement>('.site-header')!
+      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY - header.offsetHeight / 2)
+    })
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.site-header')!, '::before').backgroundImage.includes('linear-gradient'))
+
+    await page.setViewportSize({ width: 390, height: 844 })
+    const menu = page.locator('lv-site-mobile-menu')
+    await menu.getByRole('button').click()
+    expect(await menu.getByRole('link', { name: 'Docs' }).isVisible()).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+    await page.evaluate(() => window.scrollTo(0, 0))
+    await page.waitForFunction(() => !document.querySelector('.site-header')?.classList.contains('is-scrolled'))
   } finally {
     await page.close()
   }
 })
 
-test('mobile landing page keeps the product story compact and ordered', async () => {
-  const context = await browser.newContext({
-    hasTouch: true,
-    viewport: { width: 320, height: 900 },
-  })
+test('site theme control updates the homepage screenshot and colors', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(customElements.get('lv-site-theme-toggle')))
+    const toggle = page.locator('lv-site-theme-toggle button[data-theme-toggle]')
+    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+    await page.evaluate(() => {
+      document.documentElement.style.scrollBehavior = 'auto'
+      const section = document.querySelector('#enterprise')!
+      window.scrollTo(0, section.getBoundingClientRect().top + window.scrollY + 180)
+    })
+    await page.waitForFunction(() => {
+      const section = document.querySelector('#enterprise')!
+      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
+    })
+    const darkHeaderFill = await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))
+    await toggle.click()
+    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'auto')
+    await toggle.click()
+    await page.waitForFunction(() => document.documentElement.dataset.colorMode === 'light')
+    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-light.png')
+    expect(await page.locator('.site-home').evaluate((element) => element.classList.contains('is-light'))).toBe(true)
+    await page.waitForFunction(() => {
+      const section = document.querySelector('#enterprise')!
+      return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
+    })
+    expect(await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))).not.toBe(darkHeaderFill)
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile homepage keeps the shared navigation and all sections usable', async () => {
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 320, height: 900 } })
   const page = await context.newPage()
   try {
     await page.goto(baseURL)
-
-    expect(await page.locator('.site-nav-links').evaluate((element) => getComputedStyle(element).display)).toBe('none')
-    const headerHeight = await page.locator('.site-header').evaluate((element) => element.getBoundingClientRect().height)
-    expect(headerHeight).toBeLessThanOrEqual(45)
     const menu = page.locator('lv-site-mobile-menu')
-    const menuButton = menu.locator('button')
-    expect(await menuButton.count()).toBe(1)
-    expect(await menuButton.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
-
-    expect(await page.locator('.site-interfaces-grid').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.getByRole('list', { name: 'Analytics delivery workflow' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.locator('.site-stack-section').evaluate((element) => getComputedStyle(element).padding)).toBe('0px')
-    expect(await menuButton.getAttribute('aria-expanded')).toBe('false')
-
-    await menuButton.click()
-    expect(await menuButton.getAttribute('aria-expanded')).toBe('true')
-    const docsLink = menu.getByRole('link', { name: 'Docs' })
-    expect(await docsLink.count()).toBe(1)
-    expect(await docsLink.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44)
-
-    const proofHeights = await page.locator('.site-proof-strip .site-proof-item').evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height))
-    expect(proofHeights).toHaveLength(4)
-    expect(Math.max(...proofHeights)).toBeLessThan(180)
-
-    expect(await page.getByRole('list', { name: 'How LeapView connects to your data stack' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    const screenshot = page.locator('img.site-product-screenshot-light')
-    expect(await screenshot.evaluate((element) => element.getBoundingClientRect().width <= element.parentElement!.getBoundingClientRect().width)).toBe(true)
-    expect(await page.locator('lv-site-flow-background').evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(800)
-
-    await page.setViewportSize({ width: 533, height: 900 })
-    const mobileHeroTitleSize = await page.locator('.site-hero h1').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
-    expect(mobileHeroTitleSize).toBeLessThanOrEqual(40)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-
-    await page.setViewportSize({ width: 768, height: 900 })
-    expect(await page.getByRole('list', { name: 'How LeapView connects to your data stack' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.locator('.site-interfaces-grid').evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2)
-    expect(await page.getByRole('list', { name: 'Analytics delivery workflow' }).evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1)
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    const button = menu.locator('button')
+    expect(await button.count()).toBe(1)
+    await button.click()
+    expect(await button.getAttribute('aria-expanded')).toBe('true')
+    expect(await menu.getByRole('link', { name: 'Docs' }).count()).toBe(1)
+    expect(await menu.getByRole('link', { name: 'Visuals' }).count()).toBe(0)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'GitHub' }).isVisible()).toBe(true)
+    expect(await page.locator('.site-header').getByRole('link', { name: 'Discord' }).isVisible()).toBe(true)
+    expect(await page.locator('.orbit-node').count()).toBe(17)
+    expect(await page.locator('[data-project-file]').count()).toBe(6)
+    const tabList = page.getByRole('tablist', { name: 'Sales example files' })
+    expect(await tabList.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
+    expect(await page.locator('#project-tab-connection').getAttribute('aria-selected')).toBe('true')
+    await page.locator('#project-tab-dashboard').click()
+    await page.waitForFunction(() => document.querySelector('#project-code')?.textContent?.includes('kind: Dashboard'))
+    expect(await page.locator('#project-file-path').textContent()).toBe('sales-project / dashboards / executive-sales.yaml')
+    expect(await page.locator('#project-tab-dashboard').getAttribute('aria-selected')).toBe('true')
+    await page.keyboard.press('ArrowLeft')
+    expect(await page.locator('#project-tab-pipeline').getAttribute('aria-selected')).toBe('true')
+    await page.waitForFunction(() => document.querySelector('#project-code')?.textContent?.includes('kind: Pipeline'))
+    for (const width of [320, 390, 768]) {
+      await page.setViewportSize({ width, height: 900 })
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    }
   } finally {
     await context.close()
   }
@@ -863,19 +687,18 @@ test('getting started route directs users through the first learning path', asyn
     expect(await apiGroup.count()).toBe(1)
     expect(await apiGroup.locator('a[href="/docs/api"]').getAttribute('href')).toBe('/docs/api')
     expect(await apiGroup.locator('a[href="/docs/api/projects"]').count()).toBe(1)
-    const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' })
-    expect(await breadcrumb.getByRole('link', { name: 'Start here' }).getAttribute('href')).toBe('/docs/introduction')
-    expect(await breadcrumb.getByRole('link', { name: 'Documentation' }).count()).toBe(0)
-    expect(await breadcrumb.getByRole('link', { name: 'LeapView' }).count()).toBe(0)
-    expect(await breadcrumb.getByText('Getting started', { exact: true }).getAttribute('aria-current')).toBe('page')
+    expect(await page.locator('.site-docs-breadcrumb').count()).toBe(0)
+    expect(await page.locator('.site-docs-article-header').evaluate((header) => getComputedStyle(header).display)).toBe('none')
 
-    const markdownCopy = page.locator('lv-site-markdown-copy')
-    expect(await markdownCopy.getAttribute('markdown')).toStartWith('# Get started with LeapView')
-    expect(await markdownCopy.evaluate((element) => (element as HTMLElement & { markdown?: string }).markdown)).toStartWith('# Get started with LeapView')
+    const pageActions = page.locator('lv-site-docs-page-actions')
+    expect(await pageActions.getAttribute('markdown')).toStartWith('# Get started with LeapView')
+    expect(await pageActions.evaluate((element) => (element as HTMLElement & { markdown?: string }).markdown)).toStartWith('# Get started with LeapView')
+    expect(await pageActions.locator('details').getAttribute('open')).toBeNull()
     const copyMarkdown = page.getByRole('button', { name: 'Copy Markdown' })
+    expect(await copyMarkdown.isVisible()).toBe(true)
     await copyMarkdown.click()
-    await page.waitForFunction(() => document.querySelector('lv-site-markdown-copy')?.shadowRoot?.querySelector('button')?.getAttribute('aria-label') === 'Markdown copied')
-    expect(await markdownCopy.evaluate((element) => element.shadowRoot?.querySelector('button')?.getAttribute('aria-label'))).toBe('Markdown copied')
+    await page.waitForFunction(() => document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('button')?.getAttribute('aria-label') === 'Markdown copied')
+    expect(await pageActions.evaluate((element) => element.shadowRoot?.querySelector('button')?.getAttribute('aria-label'))).toBe('Markdown copied')
     expect(await page.locator('html').getAttribute('data-copied-markdown')).toStartWith('# Get started with LeapView')
 
     expect(await page.locator('.site-guide-step').count()).toBe(0)
@@ -934,15 +757,13 @@ test('chart documentation renders every executable variation from its YAML', asy
     expect(await referenceGroup.getAttribute('open')).not.toBeNull()
     expect(await chartGroup.getAttribute('open')).not.toBeNull()
     expect(await apiGroup.getAttribute('open')).toBeNull()
-    const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' })
-    expect(await breadcrumb.getByRole('link', { name: 'Visuals' }).getAttribute('href')).toBe('/docs/visuals/overview')
-    expect(await breadcrumb.getByRole('link', { name: 'Documentation' }).count()).toBe(0)
+    expect(await page.locator('.site-docs-breadcrumb').count()).toBe(0)
     expect(await page.getByRole('heading', { name: 'Line chart' }).isVisible()).toBe(true)
     expect(await page.getByRole('heading', { name: 'API reference' }).isVisible()).toBe(true)
     expect(await page.locator('.site-visual-api-summary').count()).toBe(0)
     const articleHeadings = await page.locator('.site-docs-article h2').allTextContents()
     expect(articleHeadings.indexOf('API reference')).toBeGreaterThan(articleHeadings.indexOf('Stepped line'))
-    expect(articleHeadings.indexOf('About this page')).toBeGreaterThan(articleHeadings.indexOf('API reference'))
+    expect(articleHeadings).not.toContain('About this page')
     const fieldReference = page.getByRole('table', { name: 'API reference' })
     expect(await fieldReference.getByRole('columnheader').allTextContents()).toEqual(['Field', 'Type', 'Default', 'Allowed values', 'Description'])
     const stepReference = fieldReference.getByRole('row').filter({ hasText: 'presentation.step' })
@@ -1592,7 +1413,7 @@ test('documentation articles provide a readable, navigable reference experience'
       const orderedList = article.querySelector('ol') as HTMLElement
       const unorderedList = article.querySelector('ul') as HTMLElement
       const heading = article.querySelector('h1') as HTMLElement
-      const action = article.querySelector('lv-site-markdown-copy') as HTMLElement
+      const action = article.querySelector('lv-site-docs-page-actions') as HTMLElement
       const code = article.querySelector('pre code') as HTMLElement
       const navigation = document.querySelector('.site-docs-link') as HTMLElement
       return {
@@ -1694,16 +1515,17 @@ test('documentation articles provide a readable, navigable reference experience'
   }
 })
 
-test('documentation navigation follows DuckDBs 900px drawer breakpoint', async () => {
-  const page = await browser.newPage({ viewport: { width: 901, height: 900 } })
+test('documentation navigation becomes a drawer before narrowing the reading column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1025, height: 900 } })
   try {
     await page.goto(`${baseURL}/docs/guides/build`)
     const sidebar = page.locator('.site-docs-sidebar')
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('sticky')
     expect(await sidebar.getAttribute('aria-hidden')).toBe('false')
     expect(await page.getByRole('button', { name: 'Open documentation menu' }).isVisible()).toBe(false)
+    expect(await page.locator('.site-docs-article').evaluate((article) => article.getBoundingClientRect().width)).toBeGreaterThanOrEqual(700)
 
-    await page.setViewportSize({ width: 900, height: 900 })
+    await page.setViewportSize({ width: 1024, height: 900 })
     await page.waitForFunction(() => document.querySelector('.site-docs-sidebar')?.getAttribute('aria-hidden') === 'true')
     expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('fixed')
     expect(await sidebar.getAttribute('aria-hidden')).toBe('true')
@@ -1713,6 +1535,7 @@ test('documentation navigation follows DuckDBs 900px drawer breakpoint', async (
       shell: shell.getBoundingClientRect().width,
     }))
     expect(Math.abs(widths.shell - widths.article)).toBeLessThanOrEqual(1)
+    expect(widths.article).toBeGreaterThanOrEqual(700)
 
     await page.setViewportSize({ width: 390, height: 844 })
     const hierarchy = await page.locator('.site-docs-article').evaluate((article) => ({
@@ -1787,7 +1610,7 @@ test('documentation navigation uses compact rows and Overview labels', async () 
   }
 })
 
-test('documentation reading columns stay centered and readable at every layout tier', async () => {
+test('documentation reading column stays centered and readable at every layout tier', async () => {
   const page = await browser.newPage({
     viewport: { width: 1600, height: 900 },
   })
@@ -1800,22 +1623,18 @@ test('documentation reading columns stay centered and readable at every layout t
         const shell = reading.querySelector('.site-guide-shell') as HTMLElement
         const article = reading.querySelector('.site-docs-article') as HTMLElement
         const paragraph = article.querySelector('p') as HTMLElement
-        const outline = reading.querySelector('lv-site-article-toc') as HTMLElement
         const contentRect = content.getBoundingClientRect()
         const contentStyle = getComputedStyle(content)
         const readingRect = reading.getBoundingClientRect()
         const articleRect = article.getBoundingClientRect()
         const paragraphRect = paragraph.getBoundingClientRect()
         const shellRect = shell.getBoundingClientRect()
-        const outlineRect = outline.getBoundingClientRect()
         const sectionHeading = article.querySelector('h2') as HTMLElement
         const precedingBlock = sectionHeading.previousElementSibling as HTMLElement
         return {
           articleLeftSpace: articleRect.left - shellRect.left,
           articleRightSpace: shellRect.right - articleRect.right,
           articleWidth: articleRect.width,
-          outlineVisible: getComputedStyle(outline).display !== 'none',
-          outlineRightSpace: contentRect.right - Number.parseFloat(contentStyle.paddingRight) - outlineRect.right,
           paragraphWidth: paragraphRect.width,
           readingLeftSpace: readingRect.left - (contentRect.left + Number.parseFloat(contentStyle.paddingLeft)),
           readingRightSpace: contentRect.right - Number.parseFloat(contentStyle.paddingRight) - readingRect.right,
@@ -1825,45 +1644,84 @@ test('documentation reading columns stay centered and readable at every layout t
       })
 
     const wide = await measure()
-    expect(wide.outlineVisible).toBe(true)
-    expect(Math.abs(wide.outlineRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(wide.readingLeftSpace - wide.readingRightSpace)).toBeLessThanOrEqual(1)
-    expect(wide.articleWidth).toBeGreaterThanOrEqual(1000)
-    expect(wide.articleWidth).toBeLessThanOrEqual(1024)
+    expect(wide.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(wide.articleWidth).toBeLessThanOrEqual(800)
     expect(Math.abs(wide.paragraphWidth - wide.articleWidth)).toBeLessThanOrEqual(1)
     expect(wide.sectionGap).toBeGreaterThanOrEqual(40)
     expect(wide.sectionGap).toBeLessThanOrEqual(60)
 
     await page.setViewportSize({ width: 1201, height: 900 })
-    const withOutline = await measure()
-    expect(withOutline.outlineVisible).toBe(true)
-    expect(Math.abs(withOutline.outlineRightSpace)).toBeLessThanOrEqual(1)
-    expect(Math.abs(withOutline.readingLeftSpace - withOutline.readingRightSpace)).toBeLessThanOrEqual(1)
-    expect(withOutline.articleWidth).toBeGreaterThan(600)
-    expect(withOutline.articleWidth).toBeLessThan(800)
-    expect(Math.abs(withOutline.paragraphWidth - withOutline.articleWidth)).toBeLessThanOrEqual(1)
+    const midwide = await measure()
+    expect(Math.abs(midwide.articleLeftSpace - midwide.articleRightSpace)).toBeLessThanOrEqual(1)
+    expect(Math.abs(midwide.readingLeftSpace - midwide.readingRightSpace)).toBeLessThanOrEqual(1)
+    expect(midwide.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(midwide.articleWidth).toBeLessThanOrEqual(800)
+    expect(Math.abs(midwide.paragraphWidth - midwide.articleWidth)).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 1200, height: 900 })
     const desktop = await measure()
-    expect(desktop.outlineVisible).toBe(false)
     expect(Math.abs(desktop.articleLeftSpace - desktop.articleRightSpace)).toBeLessThanOrEqual(1)
-    expect(desktop.articleWidth).toBeGreaterThan(816)
-    expect(desktop.articleWidth).toBeLessThanOrEqual(1024)
+    expect(desktop.articleWidth).toBeGreaterThanOrEqual(740)
+    expect(desktop.articleWidth).toBeLessThanOrEqual(800)
     expect(Math.abs(desktop.paragraphWidth - desktop.articleWidth)).toBeLessThanOrEqual(1)
+
+    await page.setViewportSize({ width: 1025, height: 900 })
+    const docked = await measure()
+    expect(docked.articleWidth).toBeGreaterThanOrEqual(700)
+
+    await page.setViewportSize({ width: 1024, height: 900 })
+    const drawer = await measure()
+    expect(drawer.articleWidth).toBeGreaterThanOrEqual(740)
 
     await page.setViewportSize({ width: 768, height: 900 })
     const tablet = await measure()
-    expect(tablet.outlineVisible).toBe(false)
     expect(Math.abs(tablet.articleLeftSpace - tablet.articleRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(tablet.articleWidth - tablet.shellWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(tablet.paragraphWidth - tablet.articleWidth)).toBeLessThanOrEqual(1)
 
     await page.setViewportSize({ width: 390, height: 844 })
     const mobile = await measure()
-    expect(mobile.outlineVisible).toBe(false)
     expect(Math.abs(mobile.articleLeftSpace - mobile.articleRightSpace)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.articleWidth - mobile.shellWidth)).toBeLessThanOrEqual(1)
     expect(Math.abs(mobile.paragraphWidth - mobile.articleWidth)).toBeLessThanOrEqual(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('documentation sidebar aligns with the centered header on wide screens', async () => {
+  const page = await browser.newPage({ viewport: { width: 1025, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/docs/concepts`)
+    for (const width of [1025, 1200, 1440, 1920, 2560]) {
+      await page.setViewportSize({ width, height: 900 })
+      const layout = await page.evaluate(() => {
+        const header = document.querySelector('.site-header') as HTMLElement
+        const brand = document.querySelector('.site-header .site-brand') as HTMLElement
+        const sidebar = document.querySelector('.site-docs-sidebar') as HTMLElement
+        const docs = document.querySelector('.site-docs-layout') as HTMLElement
+        const headerRect = header.getBoundingClientRect()
+        const brandRect = brand.getBoundingClientRect()
+        const sidebarRect = sidebar.getBoundingClientRect()
+        const docsRect = docs.getBoundingClientRect()
+        return {
+          brandLeft: brandRect.left,
+          sidebarLeft: sidebarRect.left,
+          sidebarTop: sidebarRect.top,
+          headerBottom: headerRect.bottom,
+          navigationTop: sidebar.querySelector('nav')!.getBoundingClientRect().top,
+          frameLeft: docsRect.left,
+          frameRight: innerWidth - docsRect.right,
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+        }
+      })
+      expect(Math.abs(layout.brandLeft - layout.sidebarLeft)).toBeLessThanOrEqual(1)
+      expect(layout.sidebarTop - layout.headerBottom).toBeGreaterThanOrEqual(24)
+      expect(Math.abs(layout.navigationTop - layout.sidebarTop)).toBeLessThanOrEqual(1)
+      expect(Math.abs(layout.frameLeft - layout.frameRight)).toBeLessThanOrEqual(1)
+      expect(layout.horizontalOverflow).toBe(false)
+    }
   } finally {
     await page.close()
   }
@@ -1884,7 +1742,8 @@ test('documentation CSS keeps site tokens available and fragment targets below t
     expect(Math.abs(runtimeStyles.articleWidth - runtimeStyles.shellWidth)).toBeLessThanOrEqual(1)
     expect(runtimeStyles.articleWidth).toBeLessThanOrEqual(1024)
 
-    await page.getByRole('navigation', { name: 'In this article' }).getByRole('link', { name: 'What you will learn' }).click()
+    expect(await page.locator('lv-site-article-toc').count()).toBe(0)
+    await page.goto(`${baseURL}/docs/getting-started#what-you-will-learn`)
     await page.waitForFunction(() => location.hash === '#what-you-will-learn')
     const anchorPosition = await page.locator('#what-you-will-learn').evaluate((heading) => ({
       headingTop: heading.getBoundingClientRect().top,
@@ -1907,7 +1766,7 @@ test('site disables smooth scrolling for reduced motion', async () => {
   }
 })
 
-test('documentation header keeps the Markdown copy action beside the title at every width', async () => {
+test('documentation header keeps the compact copy and more controls beside the title', async () => {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   })
@@ -1916,19 +1775,23 @@ test('documentation header keeps the Markdown copy action beside the title at ev
 
     const measure = () =>
       page.locator('.site-docs-article').evaluate((article) => {
-        const button = document.querySelector('lv-site-markdown-copy')?.shadowRoot?.querySelector('button')
+        const button = document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('summary')
         const title = article.querySelector('h1')
         const action = article.querySelector('.site-docs-article-actions')
         const buttonStyle = button ? getComputedStyle(button) : null
         const titleRect = title?.getBoundingClientRect()
         const actionRect = action?.getBoundingClientRect()
         const buttonRect = button?.getBoundingClientRect()
+        const copyRect = document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('.copy')?.getBoundingClientRect()
         return {
+          actionsWidth: actionRect?.width ?? 0,
           actionTop: actionRect?.top ?? 0,
           buttonFontSize: Number.parseFloat(buttonStyle?.fontSize ?? '0'),
           buttonHeight: buttonRect?.height ?? 0,
           buttonLeft: buttonRect?.left ?? 0,
           buttonRight: buttonRect?.right ?? 0,
+          copyLeft: copyRect?.left ?? 0,
+          copyRight: copyRect?.right ?? 0,
           pageWidth: document.documentElement.scrollWidth,
           titleBottom: titleRect?.bottom ?? 0,
           titleLeft: titleRect?.left ?? 0,
@@ -1941,9 +1804,11 @@ test('documentation header keeps the Markdown copy action beside the title at ev
     for (const width of [1440, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 900 })
       const layout = await measure()
-      expect(layout.buttonFontSize).toBe(12)
-      expect(layout.buttonHeight).toBe(33)
-      expect(layout.buttonLeft).toBeGreaterThanOrEqual(layout.titleRight)
+      expect(layout.buttonFontSize).toBeGreaterThan(0)
+      expect(layout.buttonHeight).toBe(32)
+      expect(layout.actionsWidth).toBeLessThanOrEqual(70)
+      expect(layout.copyRight).toBeLessThanOrEqual(layout.buttonLeft)
+      expect(layout.copyLeft).toBeGreaterThanOrEqual(layout.titleRight)
       expect(layout.actionTop).toBeGreaterThanOrEqual(layout.titleTop)
       expect(layout.actionTop).toBeLessThan(layout.titleBottom)
       expect(layout.buttonRight).toBeLessThanOrEqual(layout.viewportWidth)
@@ -1954,100 +1819,34 @@ test('documentation header keeps the Markdown copy action beside the title at ev
   }
 })
 
-test('documentation articles end with responsive pagination cards and an About this page panel', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
+test('documentation page actions replace the footer panel and work at compact widths', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
     await page.goto(`${baseURL}/docs/getting-started`)
     const article = page.locator('.site-docs-article')
     const pagination = article.getByRole('navigation', { name: 'Documentation pagination' })
-    const panel = article.locator('.site-docs-page-meta')
-    const previous = pagination.getByRole('link', { name: 'Previous page: Installation' })
-    const next = pagination.getByRole('link', { name: 'Next page: Build your first dashboard' })
-    expect(await previous.getAttribute('href')).toBe('/docs/installation')
-    expect(await previous.getAttribute('rel')).toBe('prev')
-    expect(await next.getAttribute('href')).toBe('/docs/first-dashboard')
-    expect(await next.getAttribute('rel')).toBe('next')
-    expect(await panel.getByRole('heading', { name: 'About this page', exact: true }).count()).toBe(1)
-    expect(await panel.getByRole('link', { name: 'Report content issue', exact: true }).getAttribute('href')).toContain('github.com/flidai/leapview/issues/new?')
-    expect(await panel.getByRole('link', { name: 'See this page as Markdown', exact: true }).getAttribute('href')).toBe('https://raw.githubusercontent.com/flidai/leapview/main/docs/getting-started.md')
-    expect(await panel.getByRole('link', { name: 'Edit this page on GitHub', exact: true }).getAttribute('href')).toBe('https://github.com/flidai/leapview/edit/main/docs/getting-started.md')
-
-    const measure = () =>
-      pagination.evaluate((element) => {
-        const article = element.closest('.site-docs-article') as HTMLElement
-        const previous = element.querySelector<HTMLElement>('.site-docs-pagination-previous')!
-        const next = element.querySelector<HTMLElement>('.site-docs-pagination-next')!
-        const panel = article.querySelector<HTMLElement>('.site-docs-page-meta')!
-        const previousRect = previous.getBoundingClientRect()
-        const nextRect = next.getBoundingClientRect()
-        const paginationRect = element.getBoundingClientRect()
-        const panelRect = panel.getBoundingClientRect()
-        const heading = panel.querySelector('h2') as HTMLElement
-        const list = panel.querySelector('ul') as HTMLElement
-        const item = panel.querySelector('li') as HTMLElement
-        const headingRect = heading.getBoundingClientRect()
-        const listRect = list.getBoundingClientRect()
-        const panelStyle = getComputedStyle(panel)
-        const headingStyle = getComputedStyle(heading)
-        const listStyle = getComputedStyle(list)
-        const itemStyle = getComputedStyle(item)
-        return {
-          articleWidth: article.getBoundingClientRect().width,
-          background: panelStyle.backgroundColor,
-          borderRadius: Number.parseFloat(panelStyle.borderRadius),
-          headingFontSize: Number.parseFloat(headingStyle.fontSize),
-          headingLineHeight: Number.parseFloat(headingStyle.lineHeight),
-          headingMarginBottom: Number.parseFloat(headingStyle.marginBottom),
-          headingLeft: headingRect.left,
-          headingBottom: headingRect.bottom,
-          itemFontSize: Number.parseFloat(itemStyle.fontSize),
-          itemLineHeight: Number.parseFloat(itemStyle.lineHeight),
-          listStyle: listStyle.listStyleType,
-          listLeft: listRect.left,
-          listTop: listRect.top,
-          marginTop: Number.parseFloat(panelStyle.marginTop),
-          nextLeft: nextRect.left,
-          nextTop: nextRect.top,
-          padding: Number.parseFloat(panelStyle.paddingTop),
-          paddingLeft: Number.parseFloat(listStyle.paddingLeft),
-          paginationBottom: paginationRect.bottom,
-          panelTop: panelRect.top,
-          panelWidth: panelRect.width,
-          previousLeft: previousRect.left,
-          previousTop: previousRect.top,
-        }
-      })
-
-    const desktop = await measure()
-    expect(desktop.background).not.toBe('rgba(0, 0, 0, 0)')
-    expect(desktop.borderRadius).toBe(6)
-    expect(desktop.padding).toBe(20)
-    expect(desktop.headingFontSize).toBe(14)
-    expect(desktop.headingLineHeight / desktop.headingFontSize).toBeCloseTo(1.2, 2)
-    expect(desktop.headingMarginBottom).toBe(7)
-    expect(desktop.listTop).toBeGreaterThan(desktop.headingBottom)
-    expect(desktop.listLeft).toBe(desktop.headingLeft)
-    expect(desktop.itemFontSize).toBe(14)
-    expect(desktop.itemLineHeight / desktop.itemFontSize).toBeCloseTo(1.4, 2)
-    expect(desktop.listStyle).toBe('disc')
-    expect(desktop.marginTop).toBe(0)
-    expect(desktop.paddingLeft).toBe(20)
-    expect(Math.abs(desktop.panelWidth - desktop.articleWidth)).toBeLessThanOrEqual(1)
-    expect(desktop.previousTop).toBe(desktop.nextTop)
-    expect(desktop.previousLeft).toBeLessThan(desktop.nextLeft)
-    expect(desktop.paginationBottom).toBeLessThan(desktop.panelTop)
+    const actions = article.locator('lv-site-docs-page-actions')
+    expect(await article.locator('.site-docs-page-meta').count()).toBe(0)
+    expect(await pagination.getByRole('link', { name: 'Previous page: Installation' }).getAttribute('href')).toBe('/docs/installation')
+    expect(await pagination.getByRole('link', { name: 'Next page: Build your first dashboard' }).getAttribute('href')).toBe('/docs/first-dashboard')
+    await actions.locator('summary').click()
+    expect(await actions.getByRole('link', { name: 'View Markdown' }).getAttribute('href')).toBe('https://raw.githubusercontent.com/flidai/leapview/main/docs/getting-started.md')
+    expect(await actions.getByRole('link', { name: 'Edit this page on GitHub' }).getAttribute('href')).toBe('https://github.com/flidai/leapview/edit/main/docs/getting-started.md')
+    expect(await actions.getByRole('link', { name: 'Report an issue' }).getAttribute('href')).toContain('github.com/flidai/leapview/issues/new?')
+    await page.keyboard.press('Escape')
+    expect(await actions.locator('details').getAttribute('open')).toBeNull()
 
     await page.setViewportSize({ width: 390, height: 844 })
-    const mobile = await measure()
-    expect(mobile.padding).toBe(20)
-    expect(mobile.listTop).toBeGreaterThan(mobile.headingBottom)
-    expect(mobile.listLeft).toBe(mobile.headingLeft)
-    expect(Math.abs(mobile.panelWidth - mobile.articleWidth)).toBeLessThanOrEqual(1)
-    expect(mobile.previousLeft).toBe(mobile.nextLeft)
-    expect(mobile.previousTop).toBeLessThan(mobile.nextTop)
+    await actions.locator('summary').click()
+    expect(await actions.getByRole('button', { name: 'Copy Markdown' }).isVisible()).toBe(true)
+    expect(await actions.locator('summary').getAttribute('aria-label')).toBe('More page actions')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+
+    await page.goto(`${baseURL}/docs/configuration`)
+    const generatedActions = page.locator('lv-site-docs-page-actions')
+    await generatedActions.locator('summary').click()
+    expect(await generatedActions.getByRole('link', { name: 'View source contract on GitHub' }).count()).toBe(1)
+    expect(await generatedActions.getByRole('link', { name: 'Edit this page on GitHub' }).count()).toBe(0)
   } finally {
     await page.close()
   }
@@ -2189,193 +1988,27 @@ test('documentation navigation preserves sidebar context within the current tab'
   }
 })
 
-test('documentation outlines match the compact DuckDB article navigation treatment', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
+test('generated documentation headings remain linkable without an article rail', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
-    await page.goto(`${baseURL}/docs/guides/build/models`)
-    const toc = page.locator('lv-site-article-toc')
-    expect(await toc.locator('a[data-level="2"]').count()).toBeGreaterThanOrEqual(2)
-    expect(await toc.locator('a[data-level="3"]').count()).toBeGreaterThanOrEqual(2)
-    const tocTreatment = await toc.evaluate((element) => {
-      const root = element.shadowRoot?.querySelector<HTMLElement>('ul#toc')
-      const nested = root?.querySelector<HTMLElement>(':scope > li > ul')
-      const heading = element.shadowRoot?.querySelector<HTMLElement>('nav > h2')
-      const major = root?.querySelector<HTMLElement>(':scope > li > a[data-level="2"]')
-      const subsection = nested?.querySelector<HTMLElement>(':scope > li > a[data-level="3"]')
-      const active = root?.querySelector<HTMLElement>('a.active')
-      const inactive = root?.querySelector<HTMLElement>('a:not(.active)')
-      const headingStyle = heading ? getComputedStyle(heading) : null
-      const rootStyle = root ? getComputedStyle(root) : null
-      const nestedStyle = nested ? getComputedStyle(nested) : null
-      const majorStyle = major ? getComputedStyle(major) : null
-      const subsectionStyle = subsection ? getComputedStyle(subsection) : null
-      const activeStyle = active ? getComputedStyle(active) : null
-      const inactiveStyle = inactive ? getComputedStyle(inactive) : null
-      return {
-        activeColor: activeStyle?.color,
-        activeWeight: activeStyle?.fontWeight,
-        headingFontSize: Number.parseFloat(headingStyle?.fontSize ?? '0'),
-        headingLetterSpacing: Number.parseFloat(headingStyle?.letterSpacing ?? '0'),
-        headingLineHeight: Number.parseFloat(headingStyle?.lineHeight ?? '0'),
-        headingMarginLeft: Number.parseFloat(headingStyle?.marginLeft ?? '0'),
-        headingTransform: headingStyle?.textTransform,
-        hostOverflow: getComputedStyle(element).overflow,
-        hostPosition: getComputedStyle(element).position,
-        inactiveColor: inactiveStyle?.color,
-        inactiveWeight: inactiveStyle?.fontWeight,
-        majorBorderRadius: Number.parseFloat(majorStyle?.borderRadius ?? '0'),
-        majorFontSize: Number.parseFloat(majorStyle?.fontSize ?? '0'),
-        majorLineHeight: Number.parseFloat(majorStyle?.lineHeight ?? '0'),
-        majorPaddingBlock: Number.parseFloat(majorStyle?.paddingTop ?? '0'),
-        majorPaddingInline: Number.parseFloat(majorStyle?.paddingLeft ?? '0'),
-        nestedBorderLeftWidth: nestedStyle?.borderLeftWidth,
-        nestedIndent: nested && root ? nested.getBoundingClientRect().left - root.getBoundingClientRect().left : 0,
-        rootListStyle: rootStyle?.listStyleType,
-        rootMarginTop: Number.parseFloat(rootStyle?.marginTop ?? '0'),
-        subsectionFontSize: Number.parseFloat(subsectionStyle?.fontSize ?? '0'),
-        subsectionOffset: subsection && major ? subsection.getBoundingClientRect().left - major.getBoundingClientRect().left : 0,
-      }
-    })
-    expect(tocTreatment.hostPosition).toBe('sticky')
-    expect(tocTreatment.hostOverflow).toBe('auto')
-    expect(tocTreatment.headingFontSize).toBe(12)
-    expect(tocTreatment.headingLineHeight / tocTreatment.headingFontSize).toBeCloseTo(1.2, 2)
-    expect(tocTreatment.headingLetterSpacing).toBeCloseTo(0.36, 2)
-    expect(tocTreatment.headingMarginLeft).toBe(12)
-    expect(tocTreatment.headingTransform).toBe('uppercase')
-    expect(tocTreatment.rootListStyle).toBe('none')
-    expect(tocTreatment.rootMarginTop).toBe(15)
-    expect(tocTreatment.majorFontSize).toBe(12)
-    expect(tocTreatment.subsectionFontSize).toBe(12)
-    expect(tocTreatment.majorLineHeight).toBe(12)
-    expect(tocTreatment.majorPaddingBlock).toBe(6)
-    expect(tocTreatment.majorPaddingInline).toBe(12)
-    expect(tocTreatment.majorBorderRadius).toBeGreaterThan(1000)
-    expect(tocTreatment.nestedBorderLeftWidth).toBe('1px')
-    expect(tocTreatment.nestedIndent).toBe(15)
-    expect(tocTreatment.subsectionOffset).toBe(16)
-    expect(tocTreatment.activeColor).not.toBe(tocTreatment.inactiveColor)
-    expect(tocTreatment.activeWeight).toBe(tocTreatment.inactiveWeight)
-
-    const articleHierarchy = await page.locator('.site-docs-article').evaluate((article) => {
-      const generatedHeadings = ['h4', 'h5', 'h6'].map((tagName) => {
-        const heading = document.createElement(tagName)
-        heading.textContent = tagName
-        article.append(heading)
-        return heading
-      })
-      const sizes = {
-        h2: Number.parseFloat(getComputedStyle(article.querySelector('h2') as Element).fontSize),
-        h3: Number.parseFloat(getComputedStyle(article.querySelector('h3') as Element).fontSize),
-        h4: Number.parseFloat(getComputedStyle(generatedHeadings[0]).fontSize),
-        h5: Number.parseFloat(getComputedStyle(generatedHeadings[1]).fontSize),
-        h6: Number.parseFloat(getComputedStyle(generatedHeadings[2]).fontSize),
-      }
-      generatedHeadings.forEach((heading) => heading.remove())
-      return sizes
-    })
-    expect(articleHierarchy.h2).toBe(28)
-    expect(articleHierarchy.h3).toBe(24)
-    expect(articleHierarchy.h4).toBe(18)
-    expect(articleHierarchy.h5).toBe(16)
-    expect(articleHierarchy.h6).toBe(14)
+    for (const { route, heading } of [
+      { route: '/docs/cli/semantic-models#dataset', heading: 'h3#dataset' },
+      { route: '/docs/api/access#list-principals', heading: 'h3#list-principals' },
+    ]) {
+      await page.goto(`${baseURL}${route}`)
+      expect(await page.locator('lv-site-article-toc').count()).toBe(0)
+      const target = page.locator(heading)
+      expect(await target.count()).toBe(1)
+      const position = await target.evaluate((element) => ({
+        headingTop: element.getBoundingClientRect().top,
+        headerBottom: document.querySelector('.site-header')?.getBoundingClientRect().bottom ?? 0,
+      }))
+      expect(position.headingTop).toBeGreaterThan(position.headerBottom)
+    }
   } finally {
     await page.close()
   }
 })
-
-test('generated CLI outlines keep subcommands and omit repeated details and footer metadata', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
-  try {
-    await page.goto(`${baseURL}/docs/cli/semantic-models`)
-    const article = page.locator('.site-docs-article')
-    const toc = page.locator('lv-site-article-toc')
-    await page.waitForFunction(() => Boolean(document.querySelector('lv-site-article-toc')?.shadowRoot?.querySelector('a')))
-
-    expect(await article.locator('h3#dataset').count()).toBe(1)
-    expect(await article.locator('h3#dataset ~ h4').first().textContent()).toBe('Usage')
-    expect(await article.locator('.site-docs-page-meta h2').textContent()).toBe('About this page')
-
-    const visibleOutlineLabels = await toc.evaluate((element) =>
-      Array.from(element.shadowRoot?.querySelectorAll<HTMLAnchorElement>('a') ?? [])
-        .filter((link) => link.getClientRects().length > 0)
-        .map((link) => link.textContent?.trim() ?? ''),
-    )
-    expect(visibleOutlineLabels.filter((label) => label === 'Usage')).toHaveLength(1)
-    expect(visibleOutlineLabels.filter((label) => label === 'Options')).toHaveLength(0)
-    expect(visibleOutlineLabels).toContain('Subcommands')
-    expect(visibleOutlineLabels).toContain('dataset')
-    expect(visibleOutlineLabels).toContain('datasets')
-    expect(visibleOutlineLabels).toContain('describe')
-    expect(visibleOutlineLabels).not.toContain('Behavior')
-    expect(visibleOutlineLabels).not.toContain('Inherited options')
-    expect(visibleOutlineLabels).not.toContain('About this page')
-    expect(await toc.getByRole('link', { name: 'About this page', exact: true }).count()).toBe(0)
-  } finally {
-    await page.close()
-  }
-})
-
-test('generated API outlines keep operations and omit repeated operation details', async () => {
-  const page = await browser.newPage({
-    viewport: { width: 1440, height: 900 },
-  })
-  try {
-    await page.goto(`${baseURL}/docs/api/access`)
-    const article = page.locator('.site-docs-article')
-    const toc = page.locator('lv-site-article-toc')
-    await page.waitForFunction(() => Boolean(document.querySelector('lv-site-article-toc')?.shadowRoot?.querySelector('a')))
-
-    expect(await article.locator('h2#operations').count()).toBe(1)
-    const listPrincipals = article.locator('h3#list-principals')
-    expect(await listPrincipals.textContent()).toBe('List principals')
-    expect(await listPrincipals.locator('xpath=following-sibling::h4[1]').textContent()).toBe('Parameters')
-
-    const visibleOutlineLabels = await toc.evaluate((element) =>
-      Array.from(element.shadowRoot?.querySelectorAll<HTMLAnchorElement>('a') ?? [])
-        .filter((link) => link.getClientRects().length > 0)
-        .map((link) => link.textContent?.trim() ?? ''),
-    )
-    expect(visibleOutlineLabels[0]).toBe('Operations')
-    expect(visibleOutlineLabels).toContain('List principals')
-    expect(visibleOutlineLabels).toContain('Create a local principal')
-    expect(visibleOutlineLabels).not.toContain('Parameters')
-    expect(visibleOutlineLabels).not.toContain('Request body')
-    expect(visibleOutlineLabels).not.toContain('Responses')
-
-    const listProjectRoles = article.locator('h3#list-project-roles')
-    const listProjectRolesDetail = listProjectRoles.locator('xpath=following-sibling::h4[1]')
-    await listProjectRolesDetail.evaluate((heading) => {
-      document.documentElement.style.scrollBehavior = 'auto'
-      window.scrollTo({ top: heading.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.2 })
-    })
-    await page.waitForFunction(() => {
-      const toc = document.querySelector<HTMLElement>('lv-site-article-toc')
-      const active = toc?.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && (toc?.scrollTop ?? 0) > 0
-    })
-    const activeOutline = await toc.evaluate((element) => {
-      const active = element.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      if (!active) throw new Error('active article outline link is missing')
-      const hostRect = element.getBoundingClientRect()
-      const activeRect = active.getBoundingClientRect()
-      return {
-        label: active.textContent?.trim(),
-        scrollTop: element.scrollTop,
-        visible: activeRect.top >= hostRect.top && activeRect.bottom <= hostRect.bottom,
-      }
-    })
-    expect(activeOutline.label).toBe('List project roles')
-    expect(activeOutline.scrollTop).toBeGreaterThan(0)
-    expect(activeOutline.visible).toBe(true)
-  } finally {
-    await page.close()
-  }
-}, 10_000)
 
 test('visual showcase renders every supported visual type', async () => {
   const page = await browser.newPage()
