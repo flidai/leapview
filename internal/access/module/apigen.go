@@ -634,7 +634,8 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 
 func isAuthoringBootstrapOperation(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource":
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"listProjectRoleBindings", "createProjectRoleBinding":
 		return true
 	default:
 		return false
