@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_release_transition_operation.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -79,6 +79,40 @@ func TestTargetAuthorizationPolicyMigrationIsAdditiveAndImmutable(t *testing.T) 
 	down := migration[strings.Index(migration, "-- +goose Down"):]
 	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
 		t.Error("target authorization policy Down must refuse instead of deleting evidence")
+	}
+}
+
+func TestReleaseTransitionOperationMigrationIsTargetFencedAndMonotonic(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "018_release_transition_operation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"release.release_transition_operation",
+		"release.release_transition_phase_result",
+		"release.release_transition_fence",
+		"target_identity_digest text PRIMARY KEY",
+		"candidate-staged",
+		"candidate-activated",
+		"candidate-restarted",
+		"post-validated",
+		"release transition operation identity or phase is immutable/non-monotonic",
+		"release transition phase result is immutable",
+		"release transition fence identity or generation rewound",
+		"REVOKE ALL ON release.release_transition_operation",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("release transition operation migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("release transition operation Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("release transition operation migration must restore the migrator role")
 	}
 }
 

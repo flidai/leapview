@@ -1329,8 +1329,23 @@ tasks:
       - >-
         go test -race -tags='fai518qualification'
         ./internal/recoveryset/postgres
-        -run '^TestFAI518'
+        -run '^(TestFAI518AuthoritativeTransitionPreflightQualification|TestFAI518PublishedRecoveryFrontierRejectsTargetAndTamperedValidation|TestFAI518ProductionPreflightCompositionUsesAuthoritativeV2Evidence)$'
         -count=1 -timeout=10m -v
+
+  qualify:ubdr:release-transition:
+    desc: Qualify the forward-only PostgreSQL-era transition, restart, and durable readback contract
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+      LEAPVIEW_TEST_FAI518_RELEASE_TRANSITION_EVIDENCE_DIR: "{{.ROOT_DIR}}/.tmp/qualification/ubdr/release-transition"
+    cmds:
+      - rm -rf "{{.ROOT_DIR}}/.tmp/qualification/ubdr/release-transition"
+      - >-
+        go test -race -tags='duckdb_arrow fai518qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI518ForwardOnlyReleaseTransitionQualification$'
+        -count=1 -timeout=30m -v
 
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
