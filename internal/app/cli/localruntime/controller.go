@@ -109,11 +109,11 @@ func New(options Options) (*Controller, error) {
 	}
 	packageRoot := strings.TrimSpace(options.RuntimePackage)
 	if packageRoot == "" {
-		executable, err := os.Executable()
+		var err error
+		packageRoot, err = defaultRuntimePackageRoot()
 		if err != nil {
-			return nil, fmt.Errorf("locate released local runtime package: %w", err)
+			return nil, err
 		}
-		packageRoot = filepath.Join(filepath.Dir(executable), "local-runtime")
 	}
 	stateRoot := strings.TrimSpace(options.StateRoot)
 	if stateRoot == "" {
@@ -180,6 +180,22 @@ func New(options Options) (*Controller, error) {
 		developmentProfile:          options.DevelopmentProfile,
 		attachmentHeartbeatInterval: heartbeatInterval, attachmentStaleAfter: staleAfter,
 	}, nil
+}
+
+func defaultRuntimePackageRoot() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate released local runtime package: %w", err)
+	}
+	return installedRuntimePackageRoot(executable)
+}
+
+func installedRuntimePackageRoot(executable string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		return "", fmt.Errorf("resolve installed authoring executable: %w", err)
+	}
+	return filepath.Join(filepath.Dir(resolved), "local-runtime"), nil
 }
 
 // Start validates immutable intent before mutation, then reconciles every
