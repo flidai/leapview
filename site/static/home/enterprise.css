@@ -8,7 +8,7 @@
 }
 
 .enterprise-inner { width: min(100%, 1300px); margin: 0 auto; }
-.enterprise-heading h2 { margin: 0; font-size: clamp(40px, 3.8vw, 52px); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; }
+.enterprise-heading h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; }
 .enterprise-heading > p:last-child { max-width: 690px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
 .enterprise-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(26px, 3vw, 52px); margin-top: 68px; }
@@ -30,7 +30,6 @@
 
 @media (max-width: 620px) {
   .enterprise { padding: 72px 18px 78px; }
-  .enterprise-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .enterprise-heading > p:last-child { max-width: 380px; margin-top: 14px; font-size: 14px; }
   .enterprise-grid { gap: 39px; margin-top: 46px; }
   .enterprise-feature { display: flex; padding-top: 23px; }

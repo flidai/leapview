@@ -8,7 +8,7 @@
 }
 
 .involved-inner { width: min(100%, 1300px); margin: 0 auto; }
-.involved h2 { margin: 0; font-size: clamp(40px, 3.8vw, 52px); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; text-wrap: balance; }
+.involved h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; text-wrap: balance; }
 .involved-intro { margin: 22px 0 0; color: var(--muted); font: 17px/1.6 var(--fontStack-system); }
 
 .involved-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 62px; }
@@ -23,7 +23,6 @@
 
 @media (max-width: 700px) {
   .involved { padding: 74px 18px 80px; }
-  .involved h2 { font-size: clamp(34px, 9vw, 40px); }
   .involved-intro { margin-top: 16px; font-size: 15px; }
   .involved-grid { grid-template-columns: 1fr; gap: 13px; margin-top: 40px; }
   .involved-card { min-height: 250px; padding: 26px; }

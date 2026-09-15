@@ -11,7 +11,7 @@
 }
 .architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
 .architecture-heading { max-width: 850px; margin: 0 0 48px; }
-.architecture-heading h2 { margin: 0; font-size: clamp(38px, 3.6vw, 50px); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
+.architecture-heading h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
 .architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
 
 .architecture-board { position: relative; min-height: 590px; isolation: isolate; }
@@ -87,7 +87,6 @@
 @media (max-width: 800px) {
   .architecture { padding: 70px 17px 72px; }
   .architecture-heading { margin-bottom: 32px; }
-  .architecture-heading h2 { font-size: clamp(34px, 9vw, 40px); }
   .architecture-heading > p:last-child { max-width: 380px; margin-top: 16px; font-size: 13px; }
   .architecture-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-height: 0; }
   .architecture-wires { z-index: 0; }

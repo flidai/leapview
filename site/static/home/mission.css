@@ -16,7 +16,7 @@
   .mission h2 {
     margin: 0 0 29px;
     color: var(--ink);
-    font: 650 clamp(28px, 3vw, 36px)/1.2 var(--fontStack-system);
+    font: 650 var(--mission-title-size)/1.2 var(--fontStack-system);
     letter-spacing: -.045em;
     text-wrap: pretty;
   }
@@ -42,7 +42,7 @@
 
   @media (max-width: 620px) {
     .mission { padding: 68px 22px 74px; }
-    .mission h2 { margin-bottom: 24px; font-size: clamp(26px, 7.2vw, 31px); line-height: 1.17; }
+    .mission h2 { margin-bottom: 24px; line-height: 1.17; }
     .mission-copy { font-size: 15px; line-height: 1.7; }
     .mission-copy p + p { margin-top: 20px; }
   }
