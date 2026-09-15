@@ -236,6 +236,9 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("%s qualification must target the password input without matching its visibility control", name)
 		}
 	}
+	if !strings.Contains(browser, `getByRole('heading', { name: 'Welcome back', exact: true })`) {
+		t.Error("browser qualification must assert the rendered login heading after invalid authentication")
+	}
 
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",

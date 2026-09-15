@@ -23,7 +23,7 @@ try {
   await page.locator('input[name="password"]').fill(`${credentials.qualificationPassword}-invalid`)
   await page.locator('input[name="password"]').press('Enter')
   await page.waitForURL(/\/login\?error=invalid_credentials(?:$|&)/, { timeout: 30_000 })
-  await page.getByRole('heading', { name: /LeapView/i }).waitFor({ state: 'visible', timeout: 30_000 })
+  await page.getByRole('heading', { name: 'Welcome back', exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
   await page.getByRole('alert').filter({ hasText: /Invalid email or password/i }).waitFor({ state: 'visible', timeout: 30_000 })
 
   await page.getByLabel('Email').fill(credentials.email)
