@@ -8,16 +8,13 @@ import (
 	"fmt"
 
 	"github.com/flidai/leapview/internal/project/developmentsession"
+	sessiondb "github.com/flidai/leapview/internal/project/developmentsession/postgres/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type DBTX interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
+type DBTX = sessiondb.DBTX
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -30,15 +27,6 @@ func NewRepository(db DBTX) *Repository    { return New(db) }
 func (r *Repository) PostgreSQLAuthority() {}
 func (r *Repository) Configured() bool     { return r != nil && r.db != nil }
 
-const selectSession = `
-	SELECT id, owner_id, checkout_id, worktree_id, project_id, target_id, environment,
-	       attempted_candidate_id, attempted_artifact_digest, attempted_graph_digest,
-	       attempted_preview_url, last_valid_candidate_id, last_valid_artifact_digest, last_valid_graph_digest,
-	       last_valid_preview_url,
-       diagnostics_json, revision, created_at, updated_at
-  FROM project.development_session
- WHERE owner_id = $1 AND checkout_id = $2 AND worktree_id = $3 AND project_id = $4 AND target_id = $5 AND environment = $6`
-
 func (r *Repository) Resolve(ctx context.Context, key developmentsession.Key) (developmentsession.Record, error) {
 	if r == nil || r.db == nil {
 		return developmentsession.Record{}, developmentsession.ErrInvalid
@@ -46,7 +34,11 @@ func (r *Repository) Resolve(ctx context.Context, key developmentsession.Key) (d
 	if err := key.Validate(); err != nil {
 		return developmentsession.Record{}, err
 	}
-	return scan(r.db.QueryRow(ctx, selectSession, key.OwnerID, key.CheckoutID, key.WorktreeID, key.ProjectID.String(), key.TargetID, key.Environment), key)
+	row, err := sessiondb.New(r.db).GetDevelopmentSession(ctx, getParams(key))
+	if err != nil {
+		return developmentsession.Record{}, readError(err)
+	}
+	return scan(row, key)
 }
 
 // Load is an expressive alias retained for non-HTTP callers.
@@ -73,28 +65,37 @@ func (r *Repository) Save(ctx context.Context, input developmentsession.Record, 
 		return developmentsession.Record{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	current, loadErr := scan(tx.QueryRow(ctx, selectSession+" FOR UPDATE", record.Key.OwnerID, record.Key.CheckoutID, record.Key.WorktreeID, record.Key.ProjectID.String(), record.Key.TargetID, record.Key.Environment), record.Key)
-	if errors.Is(loadErr, developmentsession.ErrNotFound) {
+	queries := sessiondb.New(tx)
+	currentRow, loadErr := queries.GetDevelopmentSessionForUpdate(ctx, getForUpdateParams(record.Key))
+	if errors.Is(loadErr, pgx.ErrNoRows) {
 		if expectedRevision != 0 {
 			return developmentsession.Record{}, developmentsession.ErrConflict
 		}
-		if err := insert(ctx, tx, record); err != nil {
+		if err := insert(ctx, queries, record); err != nil {
 			if isUniqueViolation(err) {
 				return developmentsession.Record{}, developmentsession.ErrConflict
 			}
 			return developmentsession.Record{}, err
 		}
 	} else if loadErr != nil {
-		return developmentsession.Record{}, loadErr
+		return developmentsession.Record{}, readError(loadErr)
 	} else {
+		current, scanErr := scan(currentRow, record.Key)
+		if scanErr != nil {
+			return developmentsession.Record{}, scanErr
+		}
 		if current.Revision != expectedRevision {
 			return developmentsession.Record{}, developmentsession.ErrConflict
 		}
-		if err := update(ctx, tx, record, expectedRevision); err != nil {
+		if err := update(ctx, queries, record, expectedRevision); err != nil {
 			return developmentsession.Record{}, err
 		}
 	}
-	result, err := scan(tx.QueryRow(ctx, selectSession, record.Key.OwnerID, record.Key.CheckoutID, record.Key.WorktreeID, record.Key.ProjectID.String(), record.Key.TargetID, record.Key.Environment), record.Key)
+	resultRow, err := queries.GetDevelopmentSession(ctx, getParams(record.Key))
+	if err != nil {
+		return developmentsession.Record{}, readError(err)
+	}
+	result, err := scan(resultRow, record.Key)
 	if err != nil {
 		return developmentsession.Record{}, err
 	}
@@ -104,85 +105,95 @@ func (r *Repository) Save(ctx context.Context, input developmentsession.Record, 
 	return result, nil
 }
 
-func insert(ctx context.Context, tx DBTX, record developmentsession.Record) error {
+func insert(ctx context.Context, queries *sessiondb.Queries, record developmentsession.Record) error {
 	diagnostics, err := json.Marshal(record.Diagnostics)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO project.development_session
- (id, owner_id, checkout_id, worktree_id, project_id, target_id, environment,
-  attempted_candidate_id, attempted_artifact_digest, attempted_graph_digest,
-  attempted_preview_url, last_valid_candidate_id, last_valid_artifact_digest, last_valid_graph_digest,
-  last_valid_preview_url,
-  diagnostics_json, revision, created_at, updated_at)
-	 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1,clock_timestamp(),clock_timestamp())`,
-		record.ID, record.Key.OwnerID, record.Key.CheckoutID, record.Key.WorktreeID, record.Key.ProjectID.String(), record.Key.TargetID, record.Key.Environment,
-		record.Attempted.CandidateID, record.Attempted.ArtifactDigest, record.Attempted.GraphDigest, record.Attempted.PreviewURL,
-		record.LastValid.CandidateID, record.LastValid.ArtifactDigest, record.LastValid.GraphDigest, record.LastValid.PreviewURL, diagnostics)
-	return err
-}
-
-func update(ctx context.Context, tx DBTX, record developmentsession.Record, expected int64) error {
-	diagnostics, err := json.Marshal(record.Diagnostics)
+	rows, err := queries.InsertDevelopmentSession(ctx, sessiondb.InsertDevelopmentSessionParams{
+		ID: record.ID, OwnerID: record.Key.OwnerID, CheckoutID: record.Key.CheckoutID, WorktreeID: record.Key.WorktreeID,
+		ProjectID: record.Key.ProjectID.String(), TargetID: record.Key.TargetID, Environment: record.Key.Environment,
+		AttemptedCandidateID: record.Attempted.CandidateID, AttemptedArtifactDigest: record.Attempted.ArtifactDigest,
+		AttemptedGraphDigest: record.Attempted.GraphDigest, AttemptedPreviewUrl: record.Attempted.PreviewURL,
+		LastValidCandidateID: record.LastValid.CandidateID, LastValidArtifactDigest: record.LastValid.ArtifactDigest,
+		LastValidGraphDigest: record.LastValid.GraphDigest, LastValidPreviewUrl: record.LastValid.PreviewURL,
+		DiagnosticsJson: diagnostics,
+	})
 	if err != nil {
 		return err
 	}
-	command, err := tx.Exec(ctx, `UPDATE project.development_session SET
- attempted_candidate_id=$1, attempted_artifact_digest=$2, attempted_graph_digest=$3, attempted_preview_url=$4,
- last_valid_candidate_id=$5, last_valid_artifact_digest=$6, last_valid_graph_digest=$7, last_valid_preview_url=$8,
- diagnostics_json=$9, revision=revision+1, updated_at=clock_timestamp()
- WHERE id=$10 AND owner_id=$11 AND checkout_id=$12 AND worktree_id=$13 AND revision=$14`,
-		record.Attempted.CandidateID, record.Attempted.ArtifactDigest, record.Attempted.GraphDigest, record.Attempted.PreviewURL,
-		record.LastValid.CandidateID, record.LastValid.ArtifactDigest, record.LastValid.GraphDigest, record.LastValid.PreviewURL,
-		diagnostics, record.ID, record.Key.OwnerID, record.Key.CheckoutID, record.Key.WorktreeID, expected)
-	if err != nil {
-		return err
-	}
-	if command.RowsAffected() != 1 {
+	if rows != 1 {
 		return developmentsession.ErrConflict
 	}
 	return nil
 }
 
-func scan(row pgx.Row, key developmentsession.Key) (developmentsession.Record, error) {
-	var record developmentsession.Record
-	var owner, checkoutID, worktreeID, projectID, target, environment string
-	var attempted, lastValid developmentsession.Identity
-	var diagnosticsJSON []byte
-	if err := row.Scan(&record.ID, &owner, &checkoutID, &worktreeID, &projectID, &target, &environment,
-		&attempted.CandidateID, &attempted.ArtifactDigest, &attempted.GraphDigest, &attempted.PreviewURL,
-		&lastValid.CandidateID, &lastValid.ArtifactDigest, &lastValid.GraphDigest, &lastValid.PreviewURL,
-		&diagnosticsJSON, &record.Revision, &record.CreatedAt, &record.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return developmentsession.Record{}, developmentsession.ErrNotFound
-		}
-		return developmentsession.Record{}, err
+func update(ctx context.Context, queries *sessiondb.Queries, record developmentsession.Record, expected int64) error {
+	diagnostics, err := json.Marshal(record.Diagnostics)
+	if err != nil {
+		return err
 	}
-	if owner != key.OwnerID {
+	rows, err := queries.UpdateDevelopmentSession(ctx, sessiondb.UpdateDevelopmentSessionParams{
+		AttemptedCandidateID: record.Attempted.CandidateID, AttemptedArtifactDigest: record.Attempted.ArtifactDigest,
+		AttemptedGraphDigest: record.Attempted.GraphDigest, AttemptedPreviewUrl: record.Attempted.PreviewURL,
+		LastValidCandidateID: record.LastValid.CandidateID, LastValidArtifactDigest: record.LastValid.ArtifactDigest,
+		LastValidGraphDigest: record.LastValid.GraphDigest, LastValidPreviewUrl: record.LastValid.PreviewURL,
+		DiagnosticsJson: diagnostics, ID: record.ID, OwnerID: record.Key.OwnerID,
+		CheckoutID: record.Key.CheckoutID, WorktreeID: record.Key.WorktreeID, ExpectedRevision: expected,
+	})
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return developmentsession.ErrConflict
+	}
+	return nil
+}
+
+func scan(row sessiondb.ProjectDevelopmentSession, key developmentsession.Key) (developmentsession.Record, error) {
+	if row.OwnerID != key.OwnerID {
 		return developmentsession.Record{}, developmentsession.ErrOwnerMismatch
 	}
-	if checkoutID != key.CheckoutID || worktreeID != key.WorktreeID {
+	if row.CheckoutID != key.CheckoutID || row.WorktreeID != key.WorktreeID {
 		return developmentsession.Record{}, developmentsession.ErrOwnerMismatch
 	}
-	parsedProject, err := projectIDValue(projectID)
+	parsedProject, err := projectIDValue(row.ProjectID)
 	if err != nil {
 		return developmentsession.Record{}, err
 	}
-	if parsedProject != key.ProjectID || target != key.TargetID || environment != key.Environment {
+	if parsedProject != key.ProjectID || row.TargetID != key.TargetID || row.Environment != key.Environment {
 		return developmentsession.Record{}, developmentsession.ErrOwnerMismatch
 	}
-	if len(diagnosticsJSON) != 0 {
-		if err := json.Unmarshal(diagnosticsJSON, &record.Diagnostics); err != nil {
+	record := developmentsession.Record{
+		ID: row.ID, Key: key, Revision: row.Revision, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		Attempted: developmentsession.Identity{CandidateID: row.AttemptedCandidateID, ArtifactDigest: row.AttemptedArtifactDigest, GraphDigest: row.AttemptedGraphDigest, PreviewURL: row.AttemptedPreviewUrl},
+		LastValid: developmentsession.Identity{CandidateID: row.LastValidCandidateID, ArtifactDigest: row.LastValidArtifactDigest, GraphDigest: row.LastValidGraphDigest, PreviewURL: row.LastValidPreviewUrl},
+	}
+	if len(row.DiagnosticsJson) != 0 {
+		if err := json.Unmarshal(row.DiagnosticsJson, &record.Diagnostics); err != nil {
 			return developmentsession.Record{}, fmt.Errorf("decode development session diagnostics: %w", err)
 		}
 	}
-	record.Key = key
-	record.Attempted, record.LastValid = attempted, lastValid
 	normalized, err := record.Normalize()
 	if err != nil {
 		return developmentsession.Record{}, err
 	}
 	return normalized, nil
+}
+
+func getParams(key developmentsession.Key) sessiondb.GetDevelopmentSessionParams {
+	return sessiondb.GetDevelopmentSessionParams{OwnerID: key.OwnerID, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID, ProjectID: key.ProjectID.String(), TargetID: key.TargetID, Environment: key.Environment}
+}
+
+func getForUpdateParams(key developmentsession.Key) sessiondb.GetDevelopmentSessionForUpdateParams {
+	return sessiondb.GetDevelopmentSessionForUpdateParams{OwnerID: key.OwnerID, CheckoutID: key.CheckoutID, WorktreeID: key.WorktreeID, ProjectID: key.ProjectID.String(), TargetID: key.TargetID, Environment: key.Environment}
+}
+
+func readError(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return developmentsession.ErrNotFound
+	}
+	return err
 }
 
 func projectIDValue(value string) (projectgraph.ResourceID, error) {
