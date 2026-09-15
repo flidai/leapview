@@ -39,7 +39,7 @@
 .layer-slab[data-layer="interfaces"] { z-index: 4; top: 16.3%; }
 .layer-slab[data-layer="serving"] { z-index: 3; top: 32.2%; }
 .layer-slab[data-layer="compute"] { z-index: 2; top: 51.9%; }
-.layer-slab[data-layer="foundation"] { z-index: 1; top: 61%; width: 84%; }
+.layer-slab[data-layer="foundation"] { z-index: 1; top: 65%; width: 84%; }
 .slab-piece { position: relative; display: block; width: 100%; height: 100%; cursor: default; user-select: none; transition: transform .28s, filter .28s; }
 .slab-piece svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .slab-piece svg path { stroke: var(--slab-stroke); stroke-width: 2; stroke-linejoin: round; transition: fill .28s, stroke .28s; }
@@ -109,7 +109,6 @@
 @media (max-width: 360px) {
   .architecture-board { grid-template-columns: 1fr; }
   .architecture-callout { min-height: 0; }
-  .layer-slab[data-layer="foundation"] { top: 64%; }
   .architecture-callout[data-detail="dashboards"] { grid-column: 1; grid-row: 1; }
   .architecture-callout[data-detail="agents"] { grid-column: 1; grid-row: 2; }
   .architecture-callout[data-layer="serving"] { grid-column: 1; grid-row: 3; }
