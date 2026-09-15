@@ -101,7 +101,7 @@ func rewriteAt(current any, segments []string, collection Collection, toLists bo
 				if !ok {
 					return fmt.Errorf("%s.%s: definition must be an object", collection.Path, name)
 				}
-				entry = make(map[string]any, len(source)+1)
+				entry = make(map[string]any)
 				for key, value := range source {
 					entry[key] = value
 				}
