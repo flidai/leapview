@@ -193,7 +193,7 @@ func projectRouteUpdatesURL(routeKind uisignals.RouteKind, catalog catalog.Catal
 		pairs := []string{"surface", "pipelines", "view", typed.ActiveTab, "environment", typed.Environment}
 		if monitor := typed.RunMonitor; monitor != nil {
 			pairs = append(pairs, "q", monitor.Query, "range", monitor.Range, "status", monitor.Status,
-				"trigger", monitor.Trigger, "page", strconv.Itoa(int(monitor.Page)))
+				"trigger", monitor.Trigger, "page", strconv.FormatInt(monitor.Page, 10))
 		}
 		return updatesURL(routeKind, pairs...)
 	default:

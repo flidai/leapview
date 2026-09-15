@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"math"
+	"net/url"
 	"testing"
 
 	projectview "github.com/flidai/leapview/internal/project"
+	catalog "github.com/flidai/leapview/internal/project/navigation"
+	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
 )
 
 func TestPipelineMonitorSignalUsesCanonicalAssetIDForActionsAndRuns(t *testing.T) {
@@ -85,5 +89,20 @@ func TestPipelineRunMonitorUsesServerPageAndScopedCounts(t *testing.T) {
 	}
 	if len(page.Metrics) != 3 || page.Metrics[0].Label != "Active now" || page.Metrics[0].Value != "1" || page.Metrics[1].Value != "2" || page.Metrics[2].Value != "4" {
 		t.Fatalf("metrics = %#v", page.Metrics)
+	}
+}
+
+func TestPipelineRunMonitorUpdatesURLPreservesInt64Page(t *testing.T) {
+	updates, err := url.Parse(projectRouteUpdatesURL(uisignals.RouteKindPipelines, catalog.Catalog{}, uisignals.PipelinePageSignal{
+		ActiveTab: "runs",
+		RunMonitor: &uisignals.PipelineRunMonitorSignal{
+			Page: math.MaxInt64,
+		},
+	}, projectDocumentExtras{}))
+	if err != nil {
+		t.Fatalf("parse updates URL: %v", err)
+	}
+	if got, want := updates.Query().Get("page"), "9223372036854775807"; got != want {
+		t.Fatalf("page = %q, want %q", got, want)
 	}
 }
