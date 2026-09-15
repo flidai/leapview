@@ -854,6 +854,7 @@ func buildApplicationSurfaces(
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
+		routes.projectBrowser.RunMonitor = routes.refreshModule
 	}
 	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)

@@ -87,8 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	// Recomputed after adding the two authenticated target-policy routes.
-	const expectedRouteContractDigest = "ab565706192792ecb8737e7fe537e18baca99e52224e10209bf10dd1e6742444"
+	const expectedRouteContractDigest = "128aa4dd4f1c560d0332e54bedfc91760dfdb244c6abe8ec5a24f0364eb0188e"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -191,7 +190,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 		authenticated.privilege = "RESOURCE_MANAGE"
 	case path == "/" || path == "/search" || path == "/catalog/search" || path == "/sources" || strings.HasPrefix(path, "/sources/") ||
 		path == "/models" || strings.HasPrefix(path, "/models/") || path == "/semantic-models" || strings.HasPrefix(path, "/semantic-models/") ||
-		path == "/pipelines" || strings.HasPrefix(path, "/pipelines/") || path == "/connections" || strings.HasPrefix(path, "/connections/"):
+		path == "/pipelines" || strings.HasPrefix(path, "/pipelines/") || path == "/runs" || path == "/connections" || strings.HasPrefix(path, "/connections/"):
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_READ"
 	case path == "/updates":
@@ -322,6 +321,7 @@ GET /models
 GET /models/{asset}/{section}
 GET /pipelines
 GET /pipelines/{asset}/{section}
+GET /runs
 POST /pipelines/command
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}

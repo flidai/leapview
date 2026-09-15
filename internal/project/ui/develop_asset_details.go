@@ -45,7 +45,7 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 		modelDetailModel(&model, project, asset, assets)
 	case "dashboard":
 		dashboardDetailModel(&model, asset, assets)
-	case "refresh_pipeline":
+	case "refresh_pipeline", "pipeline":
 		refreshPipelineDetailModel(&model, asset, refresh)
 	case "connection":
 		connectionDetailModel(&model, project, asset, assets, edges)
@@ -123,6 +123,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 	meta := asset.Payload
 	datasetMeta := metaMap(meta, "Datasets")
 	datasets := sortedMapKeys(datasetMeta)
+	dimensions := sortedMapKeys(metaMap(meta, "Dimensions"))
 	metrics := sortedMapKeys(metaMap(meta, "Metrics"))
 	relationships := metaSlice(meta, "Relationships")
 	model.SemanticModelGraph = semanticModelGraphSignal(meta)
@@ -132,6 +133,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 	)
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Datasets (%d)", len(datasets)), Signal: "assetDetailsSemanticDatasetsTable", Table: semanticDatasetsTable(project.ID, asset, assets, meta, refresh)},
+		assetDetailSection{Title: fmt.Sprintf("Dimensions (%d)", len(dimensions)), Signal: "assetDetailsSemanticDimensionsTable", Table: semanticDimensionsTable(meta)},
 		assetDetailSection{Title: fmt.Sprintf("Metrics (%d)", len(metrics)), Signal: "assetDetailsSemanticMetricsTable", Table: semanticMetricsTable(project.ID, asset, assets, meta)},
 		assetDetailSection{Title: fmt.Sprintf("Relationships (%d)", len(relationships)), Signal: "assetDetailsSemanticRelationshipsTable", Table: semanticRelationshipsTable(project.ID, asset, assets, meta)},
 	)
@@ -939,10 +941,6 @@ func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAsse
 		assetDetailSection{Title: fmt.Sprintf("Filters (%d)", len(filters)), Signal: "assetDetailsFiltersTable", Table: dashboardFiltersTable(asset, filters)},
 		assetDetailSection{Title: fmt.Sprintf("Visuals (%d)", len(visuals)), Signal: "assetDetailsVisualsTable", Table: dashboardVisualsTable(asset, visuals)},
 	)
-	publications := dashboardPayloadChildren(asset, "publication")
-	model.Sections = append(model.Sections,
-		assetDetailSection{Title: fmt.Sprintf("Publications (%d)", len(publications)), Signal: "assetDetailsPublicationsTable", Table: dashboardPublicationsTable(publications)},
-	)
 }
 
 func dashboardPagesTable(parent projectview.DevelopAssetView, pages []projectview.DevelopAssetView) recordTable {
@@ -1024,17 +1022,8 @@ func dashboardVisualsTable(parent projectview.DevelopAssetView, visuals []projec
 	}
 }
 
-func connectionDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) {
-	sources := sourcesUsingConnection(asset.ID, assets, edges)
+func connectionDetailModel(model *assetDetailModel, _ projectview.DevelopView, asset projectview.DevelopAssetView, _ []projectview.DevelopAssetView, _ []projectview.DevelopEdgeView) {
 	model.Overview = append(model.Overview, connectionFacts(asset)...)
-	model.Overview = append(model.Overview, definitionFact{Label: "Sources", Value: fmt.Sprint(len(sources))})
-	model.Sections = append(model.Sections,
-		assetDetailSection{
-			Title:  fmt.Sprintf("Sources (%d)", len(sources)),
-			Signal: "assetDetailsConnectionSourcesTable",
-			Table:  connectionSourcesGrid(project.ID, sources, edges),
-		},
-	)
 }
 
 func connectionSourcesGrid(projectID string, sources []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) recordTable {
@@ -1529,7 +1518,7 @@ func assetTypeLabel(typ string) string {
 		return "Model"
 	case "page_item":
 		return "Page item"
-	case "refresh_pipeline":
+	case "refresh_pipeline", "pipeline":
 		return "Refresh pipeline"
 	default:
 		return strings.Title(strings.ReplaceAll(typ, "_", " "))
@@ -1638,37 +1627,9 @@ func dashboardPayloadChildren(parent projectview.DevelopAssetView, typ string) [
 		for key, value := range metaMap(parent.Payload, "Visualizations", "visualizations") {
 			appendValue(key, value)
 		}
-	case "publication":
-		for _, value := range metaSlice(parent.Payload, "Publications", "publications") {
-			entry := asMap(value)
-			appendValue(metaString(entry, "Name", "name"), entry)
-		}
 	}
 	sortAssetChildren(parent, values)
 	return values
-}
-
-func dashboardPublicationsTable(publications []projectview.DevelopAssetView) recordTable {
-	rows := make([]map[string]any, 0, len(publications))
-	for _, publication := range publications {
-		rows = append(rows, map[string]any{
-			"publication":  publication.Title,
-			"dashboard":    emptyDash(metaString(publication.Payload, "Dashboard", "dashboard")),
-			"default_page": emptyDash(metaString(publication.Payload, "DefaultPage", "defaultPage")),
-			"origins":      emptyDash(strings.Join(stringSlice(metaValue(publication.Payload, "AllowedOrigins", "allowedOrigins")), ", ")),
-			"config_hash":  emptyDash(metaString(publication.Payload, "ConfigurationDigest", "configurationDigest")),
-		})
-	}
-	return recordTable{
-		Columns: []recordTableColumn{
-			{ID: "publication", Header: "Publication", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
-			{ID: "dashboard", Header: "Dashboard", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
-			{ID: "default_page", Header: "Default page", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
-			{ID: "origins", Header: "Allowed origins", Width: uisignals.Pointer("260px")},
-			{ID: "config_hash", Header: "Config digest", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
-		},
-		Rows: rows, Empty: "No dashboard publications are configured.", MinWidth: uisignals.Pointer("1060px"),
-	}
 }
 
 func metaInt64(meta map[string]any, keys ...string) int64 {

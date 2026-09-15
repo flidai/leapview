@@ -781,6 +781,21 @@ func (p *postgresRunPersistence) ListRuns(ctx context.Context, scope refreshrun.
 	return mapPostgresRuns(runs)
 }
 
+func (p *postgresRunPersistence) MonitorRuns(ctx context.Context, scope refreshrun.ReadScope, filter refreshrun.MonitorFilter) (refreshrun.MonitorPage, error) {
+	page, err := p.repository.MonitorRuns(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, refreshpostgres.MonitorFilter{
+		Since: filter.Since, Until: filter.Until, Search: filter.Search, Status: filter.Status,
+		Trigger: filter.Trigger, PipelineIDs: filter.PipelineIDs, AllowedPipelineIDs: filter.AllowedPipelineIDs, Limit: filter.Limit, Offset: filter.Offset,
+	})
+	if err != nil {
+		return refreshrun.MonitorPage{}, err
+	}
+	runs, err := mapPostgresRuns(page.Runs)
+	if err != nil {
+		return refreshrun.MonitorPage{}, err
+	}
+	return refreshrun.MonitorPage{Runs: runs, Total: page.Total, Failed: page.Failed, Completed: page.Completed, Active: page.Active}, nil
+}
+
 func mapPostgresRuns(runs []refreshpostgres.Run) ([]refreshrun.RunRecord, error) {
 	out := make([]refreshrun.RunRecord, 0, len(runs))
 	for _, run := range runs {

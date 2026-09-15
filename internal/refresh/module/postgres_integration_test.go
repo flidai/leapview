@@ -1825,6 +1825,66 @@ func TestPostgresWorkerSupersedeTerminalizesRefreshTreeAndJobAtomically(t *testi
 	}
 }
 
+func TestPostgresWorkerFailsStaleManualRefreshTreeAtomically(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-worker-stale-manual", "catalog-worker-stale-manual"), SchedulerOwner: "scheduler-worker-stale-manual", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-stale-manual", catalogID: "catalog-worker-stale-manual"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_worker_stale_manual", Environment: "prod", GenerationID: "generation_worker_stale_manual"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_worker_stale_manual", PipelineID: "pipeline_daily", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_sales", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64),
+		MaterializationScope: []string{"model_orders"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, children, err := persistence.Runs.CreateRunTree(t.Context(), refreshrun.RunTreeInput{
+		Root:              refreshrun.RunInput{RunID: "worker-stale-manual-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "manual", PrincipalID: "principal:worker-stale-manual", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`},
+		DependencyTargets: []projectgraph.ResourceID{"model_orders"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := listRiverRefreshJobs(persistence.Runs, t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := claimRiverRefreshTest(t.Context(), queue, candidates[0], "worker-stale-manual", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistence.Runs.(refreshrun.LeaseFencedRunRepository).MarkRunTreeFailedClaimed(t.Context(), claimed, "stale base"); err != nil {
+		t.Fatal(err)
+	}
+	for _, runID := range append([]string{root.ID}, childRunIDs(children)...) {
+		state, err := refreshRepo.LookupRun(t.Context(), runID)
+		if err != nil || state.Status != refreshrun.RunStatusFailed {
+			t.Fatalf("run %q status=%q err=%v, want failed", runID, state.Status, err)
+		}
+	}
+	job, err := jobsRepo.Get(t.Context(), claimed.ID)
+	if err != nil || job.Status != "failed" {
+		t.Fatalf("job status=%q err=%v, want failed", job.Status, err)
+	}
+}
+
+func childRunIDs(children []refreshrun.RunRecord) []string {
+	ids := make([]string, 0, len(children))
+	for _, child := range children {
+		ids = append(ids, child.ID)
+	}
+	return ids
+}
+
 func TestPostgresWorkerSupersedeRollbackKeepsRefreshAndJobLive(t *testing.T) {
 	db := modulePostgresTestDB(t)
 	refreshRepo := refreshpostgres.New(db)
