@@ -172,7 +172,9 @@ func classifyHealthRun(run HealthRun) HealthRun {
 		}
 	}
 	if run.Workflow == "ci.yml" && run.Event == "workflow_dispatch" && supported {
-		run.Category = "full_pr"
+		if reflect.DeepEqual(run.Plan.Effective, FullJobs()) || (run.Plan.PR != nil && reflect.DeepEqual(run.Plan.PR.Effective, FullPRJobs())) {
+			run.Category = "full_pr"
+		}
 	}
 	if supported {
 		run.ExpectedSource = "plan"

@@ -225,16 +225,22 @@ func TestPlanningMetricsOnlyUsePullRequestPlans(t *testing.T) {
 
 	jobs := Jobs{Docs: true}
 	plan := Plan{Version: PlanVersion, Nominal: jobs, Effective: jobs}
+	full := FullJobs()
+	fullPlan := Plan{Version: PlanVersion, Nominal: full, Effective: full}
 	results := healthSuccessfulResults(jobs)
 	report := AnalyzeHealth([]HealthRun{
 		{Workflow: "ci.yml", Event: "pull_request", Conclusion: "success", DurationSeconds: 100, QueueSeconds: 1, Plan: plan, Results: results},
-		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: plan, Results: results},
+		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 110, QueueSeconds: 1, Plan: fullPlan, Results: healthSuccessfulResults(full)},
+		{Workflow: "ci.yml", Event: "workflow_dispatch", Conclusion: "success", DurationSeconds: 120, QueueSeconds: 1, Plan: plan, Results: results},
 	})
 	if report.PlannedRuns != 1 || report.UnknownSelection != 0 || report.Selection["docs"].Selected != 1 {
 		t.Fatalf("manual full run polluted PR selection metrics: %+v", report)
 	}
 	if report.FullPR.Count != 1 || report.Runs[1].Category != "full_pr" {
 		t.Fatalf("manual full validation was not classified: %+v", report.Runs)
+	}
+	if report.Unknown.Count != 1 || report.Runs[2].Category != "unknown" {
+		t.Fatalf("manual selective validation was classified as full: %+v", report.Runs)
 	}
 }
 
