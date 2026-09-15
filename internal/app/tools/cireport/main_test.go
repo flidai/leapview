@@ -336,6 +336,7 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 	const base = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	const head = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	const merge = "cccccccccccccccccccccccccccccccccccccccc"
+	const advancedBase = "dddddddddddddddddddddddddddddddddddddddd"
 	for _, tc := range []struct {
 		name, event, runHead, planHead, planBase, planRun, planAttempt string
 		parents                                                        []string
@@ -345,11 +346,12 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 		{name: "PR merge commit", event: "pull_request", parents: []string{base, head}, wantTrusted: true},
 		{name: "historical v2 PR merge commit", event: "pull_request", historical: true, parents: []string{base, head}, wantTrusted: true},
 		{name: "stack cumulative diff base differs from merge parent", event: "pull_request", planBase: "stack-ancestor", parents: []string{base, head}, wantTrusted: true},
+		{name: "target branch advanced beyond event base", event: "pull_request", parents: []string{advancedBase, head}, wantTrusted: true},
 		{name: "wrong PR head", event: "pull_request", parents: []string{base, base}},
 		{name: "wrong target base", event: "pull_request", parents: []string{merge, head}},
 		{name: "reversed parents", event: "pull_request", parents: []string{head, base}},
 		{name: "single parent", event: "pull_request", parents: []string{head}},
-		{name: "missing PR metadata", event: "pull_request", missingPR: true, parents: []string{base, head}},
+		{name: "missing mutable PR metadata", event: "pull_request", missingPR: true, parents: []string{base, head}, wantTrusted: true},
 		{name: "unavailable merge commit", event: "pull_request", unavailable: true},
 		{name: "wrong resolved commit", event: "pull_request", wrongCommit: true, parents: []string{base, head}},
 		{name: "stale run", event: "pull_request", planRun: "122", parents: []string{base, head}},
@@ -398,6 +400,16 @@ func TestHostedTestedMergeCandidateProvenance(t *testing.T) {
 					return jsonResponse(`{"artifacts":[{"name":"ci-plan","archive_download_url":"https://api.github.com/archive"}]}`)
 				case r.URL.Path == "/archive":
 					return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(archive.Bytes()))}, nil
+				case strings.Contains(r.URL.Path, "/compare/"):
+					ancestor := plan.PR.Base
+					descendant := ""
+					if len(tc.parents) > 0 {
+						descendant = tc.parents[0]
+					}
+					if (ancestor == "stack-ancestor" && descendant == base) || (ancestor == base && descendant == advancedBase) {
+						return jsonResponse(fmt.Sprintf(`{"status":"ahead","merge_base_commit":{"sha":%q}}`, ancestor))
+					}
+					return jsonResponse(`{"status":"diverged","merge_base_commit":{"sha":"other"}}`)
 				case strings.Contains(r.URL.Path, "/commits/"):
 					if tc.event != "pull_request" {
 						t.Fatal("non-PR candidate attempted merge-parent fallback")
