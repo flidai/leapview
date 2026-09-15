@@ -59,7 +59,7 @@ spec:
     urlParameter: discount
     targets: [drivers_net_sales_kpi, drivers_gross_profit_kpi, drivers_margin_kpi, drivers_discount_kpi, drivers_profit_by_product, drivers_country_performance, drivers_segment_product_matrix, drivers_discount_analysis]
   visuals:
-    revenue_kpi:
+    - id: revenue_kpi
       type: kpi
       title: Net revenue
       description: Actual revenue compared with the filter-aligned budget.
@@ -80,7 +80,7 @@ spec:
         delta: relative
         favorableDirection: increase
         missingComparison: show_unavailable
-    gross_margin_kpi:
+    - id: gross_margin_kpi
       type: kpi
       title: Gross margin
       query: {type: aggregate, dimensions: [], metrics: [gross_margin]}
@@ -92,7 +92,7 @@ spec:
         comparison: {dataset: comparison, field: budget_gross_margin, reducer: first, label: Budget}
         delta: absolute
         favorableDirection: increase
-    ebitda_kpi:
+    - id: ebitda_kpi
       type: kpi
       title: EBITDA
       query: {type: aggregate, dimensions: [], metrics: [ebitda]}
@@ -104,13 +104,13 @@ spec:
         comparison: {dataset: comparison, field: budget_ebitda, reducer: first, label: Budget}
         delta: absolute
         favorableDirection: increase
-    current_cash_kpi:
+    - id: current_cash_kpi
       type: kpi
       title: Current cash
       description: Fictional opening cash for the 13-week planning scenario.
       query: {type: aggregate, dimensions: [], metrics: [current_cash]}
       presentation: {type: kpi, mode: compact, note: Before forecast movements, tone: ink}
-    monthly_plan:
+    - id: monthly_plan
       type: combo
       interactions:
       - type: selection
@@ -134,7 +134,7 @@ spec:
         - {field: budget_sales, mark: line, axis: primary}
         - {field: forecast_sales, mark: line, axis: primary}
         labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
-    variance_by_segment:
+    - id: variance_by_segment
       type: bar
       interactions:
       - type: selection
@@ -160,7 +160,7 @@ spec:
         - {value: revenue_below_budget, color: danger}
         axes:
         - {id: primary_y, scale: automatic, zero: automatic, maximum: 1000000, tickDensity: normal}
-    product_scorecard:
+    - id: product_scorecard
       type: matrix
       interactions:
       - type: selection
@@ -176,7 +176,7 @@ spec:
         columns: [scorecard_group]
         metrics: [net_sales, gross_margin, ebitda]
       presentation: {type: table, rowHeight: 34, showHeader: true, striped: true}
-    pnl_ebitda_kpi:
+    - id: pnl_ebitda_kpi
       type: kpi
       title: EBITDA versus budget
       query: {type: aggregate, dimensions: [], metrics: [ebitda]}
@@ -187,7 +187,7 @@ spec:
         comparison: {dataset: comparison, field: budget_ebitda, reducer: first, label: Budget}
         delta: absolute
         favorableDirection: increase
-    pnl_matrix:
+    - id: pnl_matrix
       type: matrix
       title: Profit and loss statement
       description: Positive F/(U) is favorable; negative F/(U) is unfavorable.
@@ -212,7 +212,7 @@ spec:
             - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
             nullStyle: {color: neutral, icon: square}
             defaultStyle: {color: neutral, icon: circle}
-    pnl_ebitda_bridge:
+    - id: pnl_ebitda_bridge
       type: bar
       title: EBITDA variance drivers
       description: Signed contributions reconcile actual EBITDA to budget EBITDA. Green increases EBITDA; red decreases EBITDA. Toggle either legend entry to isolate its contributions.
@@ -230,7 +230,7 @@ spec:
         seriesIntent:
         - {value: ebitda_positive_impact, color: success}
         - {value: ebitda_negative_impact, color: danger}
-    pnl_monthly_ebitda:
+    - id: pnl_monthly_ebitda
       type: combo
       interactions:
       - type: selection
@@ -253,12 +253,12 @@ spec:
         - {field: budget_ebitda, mark: line, axis: primary}
         - {field: forecast_ebitda, mark: line, axis: primary}
         labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
-    cash_current_kpi:
+    - id: cash_current_kpi
       type: kpi
       title: Current cash
       query: {type: aggregate, dimensions: [], metrics: [current_cash]}
       presentation: {type: kpi, mode: compact, note: Opening position, tone: ink}
-    cash_ending_kpi:
+    - id: cash_ending_kpi
       type: kpi
       title: Base ending cash
       query: {type: aggregate, dimensions: [], metrics: [base_ending_cash]}
@@ -270,22 +270,22 @@ spec:
         comparison: {dataset: comparison, field: current_cash, reducer: first, label: Current}
         delta: absolute
         favorableDirection: increase
-    cash_overdue_ar_kpi:
+    - id: cash_overdue_ar_kpi
       type: kpi
       title: Overdue receivables
       query: {type: aggregate, dimensions: [], metrics: [overdue_receivables]}
       presentation: {type: kpi, mode: compact, note: Fictional planning assumption, tone: warning}
-    cash_dso_kpi:
+    - id: cash_dso_kpi
       type: kpi
       title: Days sales outstanding
       query: {type: aggregate, dimensions: [], metrics: [dso_days]}
       presentation: {type: kpi, mode: compact, note: "Target: 38 days", tone: danger}
-    cash_headroom_kpi:
+    - id: cash_headroom_kpi
       type: kpi
       title: Liquidity headroom
       query: {type: aggregate, dimensions: [], metrics: [base_headroom]}
       presentation: {type: kpi, mode: compact, note: Above the $5.14M management floor, tone: success}
-    cash_scenarios:
+    - id: cash_scenarios
       type: line
       interactions:
       - type: selection
@@ -313,7 +313,7 @@ spec:
           value: {kind: number, value: 5140000}
           label: 'Minimum cash: $5.14M'
           tone: danger
-    cash_scenario_summary:
+    - id: cash_scenario_summary
       type: matrix
       interactions:
       - type: selection
@@ -329,7 +329,7 @@ spec:
         columns: [scenario_group]
         metrics: [scenario_ending_cash, scenario_headroom, scenario_cumulative_net_cash_flow]
       presentation: {type: table, rowHeight: 38, showHeader: true, striped: true}
-    cash_movements:
+    - id: cash_movements
       type: combo
       title: Weekly base-case cash movements
       query:
@@ -345,17 +345,17 @@ spec:
         - {field: base_supplier_payments, mark: column, axis: primary}
         - {field: base_net_cash_flow, mark: line, axis: primary}
         labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
-    drivers_net_sales_kpi:
+    - id: drivers_net_sales_kpi
       type: kpi
       title: Net revenue
       query: {type: aggregate, dimensions: [], metrics: [net_sales]}
       presentation: {type: kpi, mode: compact, note: After discounts, tone: success}
-    drivers_gross_profit_kpi:
+    - id: drivers_gross_profit_kpi
       type: kpi
       title: Gross profit
       query: {type: aggregate, dimensions: [], metrics: [gross_profit]}
       presentation: {type: kpi, mode: compact, note: Revenue less COGS, tone: success}
-    drivers_margin_kpi:
+    - id: drivers_margin_kpi
       type: kpi
       title: Gross margin
       query: {type: aggregate, dimensions: [], metrics: [gross_margin]}
@@ -367,12 +367,12 @@ spec:
         comparison: {dataset: comparison, field: budget_gross_margin, reducer: first, label: Budget}
         delta: absolute
         favorableDirection: increase
-    drivers_discount_kpi:
+    - id: drivers_discount_kpi
       type: kpi
       title: Discount rate
       query: {type: aggregate, dimensions: [], metrics: [discount_rate]}
       presentation: {type: kpi, mode: compact, note: Discounts / gross sales, tone: warning}
-    drivers_profit_by_product:
+    - id: drivers_profit_by_product
       type: bar
       interactions:
       - type: selection
@@ -389,7 +389,7 @@ spec:
         sort: [{field: gross_profit, direction: desc}]
         limit: 10
       presentation: {type: cartesian}
-    drivers_country_performance:
+    - id: drivers_country_performance
       type: combo
       interactions:
       - type: selection
@@ -413,7 +413,7 @@ spec:
         - {field: net_sales, mark: column, axis: primary}
         - {field: gross_margin, mark: line, axis: secondary}
         labels: {density: hidden, priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true}
-    drivers_segment_product_matrix:
+    - id: drivers_segment_product_matrix
       type: matrix
       interactions:
       - type: selection
@@ -429,7 +429,7 @@ spec:
         columns: [scorecard_group]
         metrics: [net_sales, ebitda, revenue_variance]
       presentation: {type: table, rowHeight: 36, showHeader: true, striped: true}
-    drivers_discount_analysis:
+    - id: drivers_discount_analysis
       type: combo
       interactions:
       - type: selection

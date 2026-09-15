@@ -72,9 +72,12 @@ profile; provider admission remains outside it.
 - **CHG-01:** Editorial clarification, new non-normative examples, added test
   cases, and evidence links may update this document without changing the
   profile when accepted documents and authorization decisions are unchanged.
-- **CHG-02:** Any change to public shape, attribute normalization, matching,
-  list bounds, composition, planner placement, discovery, denial, or cache
-  identity requires a new semantic-access profile version.
+- **CHG-02:** Any change to public access-policy meaning, attribute
+  normalization, matching, list bounds, composition, planner placement,
+  discovery, denial, or cache identity requires a new semantic-access profile
+  version. [ADR-0024](../0024-use-named-lists-for-authored-definitions.md)
+  coordinates the pre-release named-list authoring conversion while preserving
+  the compiled access policy and `leapview.semantic-access/v1` behavior.
 - **CHG-03:** A change that adds a policy concept, target, bypass, expression
   language, precedence model, or masking behavior also requires a new ADR that
   amends or supersedes ADR-0017.
@@ -92,17 +95,17 @@ metadata:
   name: sales
 spec:
   accessGrants:
-    canViewSales:
+    - name: canViewSales
       userAttribute: department
       allowedValues:
         - sales
         - finance
-    canViewPII:
+    - name: canViewPII
       userAttribute: piiAccess
       allowedValues:
         - full
   datasets:
-    orders:
+    - name: orders
       model: orders
       requiredAccessGrants:
         - canViewSales
@@ -110,22 +113,22 @@ spec:
         - field: region
           userAttribute: allowedRegions
       metrics:
-        revenue:
+        - name: revenue
           type: simple
           agg: sum
-        cost:
+        - name: cost
           type: simple
           agg: sum
       dimensions:
-        region:
+        - name: region
           datatype: String
-        customerEmail:
+        - name: customerEmail
           datatype: String
           requiredAccessGrants:
             - canViewPII
           field: customer_email
   metrics:
-    grossMargin:
+    - name: grossMargin
       type: derived
       expression: revenue - cost
       requiredAccessGrants:
@@ -135,8 +138,8 @@ spec:
 
 ## Public structure
 
-- **STR-01:** `spec.accessGrants` is an optional identifier-keyed map. Keys are
-  unique by construction and use the canonical SemanticModel identifier rules.
+- **STR-01:** `spec.accessGrants` is an optional list of named definitions.
+  Names are unique and use the canonical SemanticModel identifier rules.
 - **STR-02:** Each access grant is closed and requires exactly
   `userAttribute` and a non-empty `allowedValues` list.
 - **STR-03:** `userAttribute` is a canonical control-plane attribute name. It

@@ -7,11 +7,11 @@ metadata:
   description: Rich Olist semantic model used for visual renderer and table QA coverage.
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders
       defaultTimeDimension: purchase_date
       metrics:
-        order_count:
+        - name: order_count
           type: simple
           empty: zero
           label: Orders
@@ -19,7 +19,7 @@ spec:
           format: integer
           agg: count_distinct
           field: order_id
-        revenue:
+        - name: revenue
           type: simple
           empty: zero
           label: Revenue
@@ -27,7 +27,7 @@ spec:
           unit: BRL
           format: currency
           agg: sum
-        revenue_min:
+        - name: revenue_min
           type: simple
           empty: 'null'
           label: Revenue min
@@ -36,7 +36,7 @@ spec:
           format: currency
           agg: min
           field: revenue
-        revenue_max:
+        - name: revenue_max
           type: simple
           empty: 'null'
           label: Revenue max
@@ -45,7 +45,7 @@ spec:
           format: currency
           agg: max
           field: revenue
-        missing_revenue:
+        - name: missing_revenue
           type: simple
           where:
             - missing_revenue_filter
@@ -56,21 +56,21 @@ spec:
           format: currency
           agg: sum
           field: revenue
-        review_score:
+        - name: review_score
           type: simple
           empty: 'null'
           label: Review
           description: Average order review score.
           format: decimal
           agg: avg
-        delivery_days:
+        - name: delivery_days
           type: simple
           empty: 'null'
           label: Delivery days
           description: Average delivery duration in days.
           format: decimal
           agg: avg
-        delivery_days_min:
+        - name: delivery_days_min
           type: simple
           empty: 'null'
           label: Delivery min
@@ -78,7 +78,7 @@ spec:
           format: decimal
           agg: min
           field: delivery_days
-        delivery_days_max:
+        - name: delivery_days_max
           type: simple
           empty: 'null'
           label: Delivery max
@@ -87,7 +87,7 @@ spec:
           agg: max
           field: delivery_days
       dimensions:
-        purchase_timestamp:
+        - name: purchase_timestamp
           datatype: DateTime
           time:
             nativeGrain: second
@@ -101,7 +101,7 @@ spec:
               - quarter
               - year
             calendar: iso8601
-        purchase_date:
+        - name: purchase_date
           datatype: Date
           time:
             nativeGrain: day
@@ -110,33 +110,33 @@ spec:
               - week
               - month
             calendar: iso8601
-        purchase_month:
+        - name: purchase_month
           datatype: String
-        delivery_bucket:
+        - name: delivery_bucket
           datatype: String
-        order_id:
+        - name: order_id
           datatype: String
-        order_status:
+        - name: order_status
           datatype: String
           field: status
-        category:
+        - name: category
           datatype: String
-        delivered:
+        - name: delivered
           datatype: Boolean
           field: is_delivered
-        delivery_days:
+        - name: delivery_days
           datatype: Integer
-        revenue_amount:
+        - name: revenue_amount
           datatype: Decimal
           field: revenue
-    customers:
+    - name: customers
       model: customers
-    zip_geolocations:
+    - name: zip_geolocations
       model: zip_geolocations
-    delivery_routes:
+    - name: delivery_routes
       model: delivery_routes
       metrics:
-        route_orders:
+        - name: route_orders
           type: simple
           empty: zero
           label: Route orders
@@ -144,7 +144,7 @@ spec:
           format: integer
           agg: count_distinct
           field: order_id
-        route_revenue:
+        - name: route_revenue
           type: simple
           empty: zero
           label: Route revenue
@@ -153,16 +153,16 @@ spec:
           format: currency
           agg: sum
       dimensions:
-        route_id:
+        - name: route_id
           datatype: String
-        point_order:
+        - name: point_order
           datatype: String
-        route_label:
+        - name: route_label
           datatype: String
-    spatial_load_points:
+    - name: spatial_load_points
       model: spatial_load_points
       metrics:
-        fixture_points:
+        - name: fixture_points
           type: simple
           empty: zero
           label: Fixture points
@@ -171,10 +171,10 @@ spec:
           agg: count
           field: point_id
       dimensions:
-        point_id:
+        - name: point_id
           datatype: String
   relationships:
-    orders_customers:
+    - name: orders_customers
       from:
         dataset: orders
         entity: customer
@@ -182,7 +182,7 @@ spec:
         dataset: customers
         entity: customer
       description: Links each order to the customer who placed it.
-    delivery_routes_orders:
+    - name: delivery_routes_orders
       from:
         dataset: delivery_routes
         entity: order
@@ -191,69 +191,70 @@ spec:
         entity: order
       description: Applies governed order and customer filters to delivery-route vertices.
   filters:
-    missing_revenue_filter:
-      field: orders.status
-      operator: equals
-      value: comparison_fixture_without_rows
+    - name: missing_revenue_filter
+      definition:
+        field: orders.status
+        operator: equals
+        value: comparison_fixture_without_rows
   dimensions:
-    state:
+    - name: state
       datatype: String
       bindings:
-        orders:
+        - dataset: orders
           field: customers.state
           path:
             - orders_customers
-        delivery_routes:
+        - dataset: delivery_routes
           field: customers.state
           path:
             - delivery_routes_orders
             - orders_customers
-        spatial_load_points:
+        - dataset: spatial_load_points
           field: spatial_load_points.state
-    zip_prefix:
+    - name: zip_prefix
       datatype: String
       bindings:
-        orders:
+        - dataset: orders
           field: customers.zip_prefix
           path:
             - orders_customers
-        spatial_load_points:
+        - dataset: spatial_load_points
           field: spatial_load_points.point_id
-    city:
+    - name: city
       datatype: String
       bindings:
-        orders:
+        - dataset: orders
           field: customers.city
           path:
             - orders_customers
-        delivery_routes:
+        - dataset: delivery_routes
           field: delivery_routes.route_label
-        spatial_load_points:
+        - dataset: spatial_load_points
           field: spatial_load_points.city
-    latitude:
+    - name: latitude
       datatype: Float
       bindings:
-        orders:
+        - dataset: orders
           field: customers.latitude
           path:
             - orders_customers
-        delivery_routes:
+        - dataset: delivery_routes
           field: delivery_routes.latitude
-        spatial_load_points:
+        - dataset: spatial_load_points
           field: spatial_load_points.latitude
-    longitude:
+    - name: longitude
       datatype: Float
       bindings:
-        orders:
+        - dataset: orders
           field: customers.longitude
           path:
             - orders_customers
-        delivery_routes:
+        - dataset: delivery_routes
           field: delivery_routes.longitude
-        spatial_load_points:
+        - dataset: spatial_load_points
           field: spatial_load_points.longitude
   metrics:
-    aov:
+    - name: aov
       type: ratio
       numerator: revenue
       denominator: order_count
@@ -261,41 +262,41 @@ spec:
       description: Average order value.
       unit: BRL
       format: currency
-    revenue_baseline:
+    - name: revenue_baseline
       type: derived
       label: Revenue baseline
       description: Filter-aligned baseline used by KPI comparison examples.
       expression: ${revenue} * 0.9
       unit: BRL
       format: currency
-    revenue_target:
+    - name: revenue_target
       type: derived
       label: Revenue target
       description: Filter-aligned target used by KPI goal examples.
       expression: ${revenue} * 1.1
       unit: BRL
       format: currency
-    revenue_q1:
+    - name: revenue_q1
       type: derived
       label: Revenue lower bound
       description: Minimum order revenue used as the lower showcase bound.
       expression: ${revenue_min}
       unit: BRL
       format: currency
-    revenue_q3:
+    - name: revenue_q3
       type: derived
       label: Revenue upper bound
       description: Maximum order revenue used as the upper showcase bound.
       expression: ${revenue_max}
       unit: BRL
       format: currency
-    delivery_days_q1:
+    - name: delivery_days_q1
       type: derived
       label: Delivery lower bound
       description: Minimum delivery duration used as the lower showcase bound.
       expression: ${delivery_days_min}
       format: decimal
-    delivery_days_q3:
+    - name: delivery_days_q3
       type: derived
       label: Delivery upper bound
       description: Maximum delivery duration used as the upper showcase bound.

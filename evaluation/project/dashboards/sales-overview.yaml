@@ -43,7 +43,7 @@ spec:
     - notContains
     urlParameter: category
   visuals:
-    revenue_kpi:
+    - id: revenue_kpi
       type: kpi
       query:
         type: aggregate
@@ -54,7 +54,7 @@ spec:
         type: kpi
         note: Governed revenue
         tone: success
-    total_orders:
+    - id: total_orders
       type: kpi
       query:
         type: aggregate
@@ -65,7 +65,7 @@ spec:
         type: kpi
         note: Filtered orders
         tone: ink
-    category_revenue:
+    - id: category_revenue
       type: bar
       query:
         type: aggregate
@@ -80,7 +80,7 @@ spec:
       title: Revenue by category
       presentation:
         type: cartesian
-    orders_table:
+    - id: orders_table
       type: table
       query:
         type: records

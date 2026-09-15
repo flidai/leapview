@@ -7,18 +7,18 @@ metadata:
   description: Governed BI semantics over dbt-published marts.
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders
       defaultTimeDimension: order_date
       metrics:
-        revenue:
+        - name: revenue
           type: simple
           empty: zero
           label: Revenue
           description: Revenue produced at order grain by dbt.
           format: currency
           agg: sum
-        order_count:
+        - name: order_count
           type: simple
           empty: zero
           label: Orders
@@ -26,33 +26,33 @@ spec:
           agg: count_distinct
           field: order_id
       dimensions:
-        order_date:
+        - name: order_date
           datatype: Date
           label: Order date
           time:
             nativeGrain: day
             grains: [ day, week, month, quarter, year ]
             calendar: iso8601
-        order_status:
+        - name: order_status
           datatype: String
           label: Order status
-    customers:
+    - name: customers
       model: customers
   relationships:
-    orders_customers:
+    - name: orders_customers
       from: { dataset: orders, entity: customer }
       to: { dataset: customers, entity: customer }
       description: Joins each order to its dbt-published customer row.
   dimensions:
-    customer_region:
+    - name: customer_region
       datatype: String
       label: Customer region
       bindings:
-        orders:
+        - dataset: orders
           field: customers.region
           path: [ orders_customers ]
   metrics:
-    average_order_value:
+    - name: average_order_value
       type: ratio
       numerator: revenue
       denominator: order_count

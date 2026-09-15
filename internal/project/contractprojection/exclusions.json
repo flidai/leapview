@@ -174,7 +174,7 @@
           "spec.relationships.*.aiContext.synonyms.*",
           "spec.relationships.*.description"
         ],
-        "sourceShapeFingerprint": "sha256:4da1b5f8196fb1850544f2158d66f434e6c25180858e1a525868d57f3bc7d7bd",
+        "sourceShapeFingerprint": "sha256:5fa0ed081e299b3a32912585097e3ed336ec0d8a0c0f2693ec86769e831fa9c4",
         "reason": "Display, discovery, visibility, and AI annotations do not change the executable semantic or access contract.",
         "securityPrivacyImplications": "Exclusion avoids publishing free-form semantic documentation and AI context; authored access grant names and conditions remain included.",
         "compatibilityImplications": "Annotation and presentation visibility changes are contract-neutral; bindings, filters, metrics, formats, units, and access requirements remain projected."

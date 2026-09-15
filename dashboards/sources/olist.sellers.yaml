@@ -13,7 +13,7 @@ spec:
   schema:
     mode: compatible
   fields:
-    seller_id: {datatype: String, description: Stable seller identifier used by order items.}
-    seller_zip_code_prefix: {datatype: String, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
-    seller_city: {datatype: String, description: Seller city supplied by Olist.}
-    seller_state: {datatype: String, description: Brazilian state abbreviation for the seller.}
+    - {name: seller_id, datatype: String, description: Stable seller identifier used by order items.}
+    - {name: seller_zip_code_prefix, datatype: String, description: Five-digit Brazilian ZIP-code prefix used for geographic joins.}
+    - {name: seller_city, datatype: String, description: Seller city supplied by Olist.}
+    - {name: seller_state, datatype: String, description: Brazilian state abbreviation for the seller.}

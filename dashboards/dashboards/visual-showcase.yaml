@@ -189,7 +189,7 @@ spec:
     - categories
     - orders_table
   visuals:
-    total_orders:
+    - id: total_orders
       type: kpi
       query:
         type: aggregate
@@ -201,7 +201,7 @@ spec:
         type: kpi
         note: Filtered order count
         tone: ink
-    revenue_kpi:
+    - id: revenue_kpi
       type: kpi
       query:
         type: aggregate
@@ -242,7 +242,7 @@ spec:
         delta: relative
         favorableDirection: increase
         missingComparison: show_unavailable
-    revenue_kpi_unfavorable:
+    - id: revenue_kpi_unfavorable
       type: kpi
       query:
         type: aggregate
@@ -267,7 +267,7 @@ spec:
           label: Baseline
         delta: relative
         favorableDirection: decrease
-    revenue_kpi_bullet:
+    - id: revenue_kpi_bullet
       type: kpi
       query:
         type: aggregate
@@ -302,7 +302,7 @@ spec:
         - minimum: 20000000
           label: Ahead
           tone: ink
-    revenue_kpi_out_of_range:
+    - id: revenue_kpi_out_of_range
       type: kpi
       query:
         type: aggregate
@@ -331,7 +331,7 @@ spec:
         - maximum: 100
           label: Operating band
           tone: neutral
-    revenue_kpi_missing_comparison:
+    - id: revenue_kpi_missing_comparison
       type: kpi
       query:
         type: aggregate
@@ -357,7 +357,7 @@ spec:
         delta: absolute
         favorableDirection: neutral
         missingComparison: show_unavailable
-    aov_kpi:
+    - id: aov_kpi
       type: kpi
       query:
         type: aggregate
@@ -369,7 +369,7 @@ spec:
         type: kpi
         note: Revenue per order
         tone: warning
-    review_kpi:
+    - id: review_kpi
       type: kpi
       query:
         type: aggregate
@@ -381,7 +381,7 @@ spec:
         type: kpi
         note: Average score
         tone: danger
-    revenue:
+    - id: revenue
       type: area
       query:
         type: aggregate
@@ -416,7 +416,7 @@ spec:
         - categories
         - delivery
         - orders_table
-    orders:
+    - id: orders
       type: donut
       query:
         type: aggregate
@@ -462,7 +462,7 @@ spec:
         - categories
         - delivery
         - orders_table
-    orders_by_month_status:
+    - id: orders_by_month_status
       type: column
       query:
         type: aggregate
@@ -511,7 +511,7 @@ spec:
         - categories
         - delivery
         - orders_table
-    categories:
+    - id: categories
       type: bar
       query:
         type: aggregate
@@ -540,7 +540,7 @@ spec:
         - orders
         - delivery
         - orders_table
-    delivery:
+    - id: delivery
       type: bar
       query:
         type: aggregate
@@ -568,7 +568,7 @@ spec:
         - orders
         - categories
         - orders_table
-    state_status_heatmap:
+    - id: state_status_heatmap
       type: heatmap
       query:
         type: aggregate
@@ -594,7 +594,7 @@ spec:
           maxCharacters: 12
           minimumSpacing: 2
           tooltipFallback: true
-    state_status_column:
+    - id: state_status_column
       type: column
       query:
         type: aggregate
@@ -631,7 +631,7 @@ spec:
               unavailable: {color: data_4, icon: warning}
             nullStyle: {color: neutral, icon: square}
             defaultStyle: {color: neutral, icon: square}
-    status_delivery_flow:
+    - id: status_delivery_flow
       type: sankey
       query:
         type: aggregate
@@ -649,7 +649,7 @@ spec:
       presentation:
         type: hierarchy
         nodeGap: 18
-    delivery_distribution:
+    - id: delivery_distribution
       type: boxplot
       query:
         type: distribution
@@ -665,7 +665,7 @@ spec:
       description: Summarizes delivery-day distribution by speed bucket.
       presentation:
         type: cartesian
-    state_order_map:
+    - id: state_order_map
       type: map
       query:
         type: aggregate
@@ -710,7 +710,7 @@ spec:
         - customer_point_map
         - customer_revenue_heat_map
         - customer_density_map
-    interaction_state_order_map:
+    - id: interaction_state_order_map
       type: map
       query:
         type: aggregate
@@ -759,7 +759,7 @@ spec:
         - state_status_column
         - customer_point_map
         - total_orders
-    status_delivery_graph:
+    - id: status_delivery_graph
       type: graph
       query:
         type: aggregate
@@ -776,7 +776,7 @@ spec:
       description: Shows status and delivery-speed relationships as a network.
       presentation:
         type: hierarchy
-    revenue_orders_combo:
+    - id: revenue_orders_combo
       type: combo
       query:
         type: aggregate
@@ -806,7 +806,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    revenue_waterfall:
+    - id: revenue_waterfall
       type: waterfall
       query:
         type: aggregate
@@ -828,7 +828,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    delivery_histogram:
+    - id: delivery_histogram
       type: histogram
       query:
         type: histogram
@@ -846,7 +846,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    status_radar:
+    - id: status_radar
       type: radar
       query:
         type: aggregate
@@ -863,7 +863,7 @@ spec:
       presentation:
         type: polar
         area: true
-    category_status_sunburst:
+    - id: category_status_sunburst
       type: sunburst
       query:
         type: aggregate
@@ -886,7 +886,7 @@ spec:
           maxCharacters: 12
           minimumSpacing: 6
           tooltipFallback: true
-    state_status_tree:
+    - id: state_status_tree
       type: tree
       query:
         type: aggregate
@@ -903,7 +903,7 @@ spec:
       description: Shows customer state and order status as a hierarchy.
       presentation:
         type: hierarchy
-    revenue_line:
+    - id: revenue_line
       type: line
       query:
         type: aggregate
@@ -924,7 +924,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    revenue_line_status:
+    - id: revenue_line_status
       type: line
       query:
         type: aggregate
@@ -940,7 +940,7 @@ spec:
       title: Revenue line by status
       presentation:
         type: cartesian
-    revenue_line_step:
+    - id: revenue_line_step
       type: line
       query:
         type: aggregate
@@ -958,7 +958,7 @@ spec:
         step: true
         showSymbols: false
         dataZoom: true
-    revenue_area_status:
+    - id: revenue_area_status
       type: area
       query:
         type: aggregate
@@ -975,7 +975,7 @@ spec:
       presentation:
         type: cartesian
         stacking: normal
-    revenue_area_smooth:
+    - id: revenue_area_smooth
       type: area
       query:
         type: aggregate
@@ -993,7 +993,7 @@ spec:
         smooth: true
         showSymbols: false
         dataZoom: true
-    categories_by_status_bar:
+    - id: categories_by_status_bar
       type: bar
       query:
         type: aggregate
@@ -1010,7 +1010,7 @@ spec:
       presentation:
         type: cartesian
         stacking: normal
-    orders_by_month_column:
+    - id: orders_by_month_column
       type: column
       query:
         type: aggregate
@@ -1025,7 +1025,7 @@ spec:
       title: Orders by month
       presentation:
         type: cartesian
-    orders_by_month_status_grouped:
+    - id: orders_by_month_status_grouped
       type: column
       query:
         type: aggregate
@@ -1042,7 +1042,7 @@ spec:
       presentation:
         type: cartesian
         legend: bottom
-    status_pie:
+    - id: status_pie
       type: pie
       query:
         type: aggregate
@@ -1056,7 +1056,7 @@ spec:
       title: Orders by status pie
       presentation:
         type: proportional
-    category_pie:
+    - id: category_pie
       type: pie
       query:
         type: aggregate
@@ -1071,7 +1071,7 @@ spec:
       title: Revenue by category pie
       presentation:
         type: proportional
-    status_pie_rose:
+    - id: status_pie_rose
       type: pie
       query:
         type: aggregate
@@ -1092,7 +1092,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 6
           tooltipFallback: true
-    category_pie_inside:
+    - id: category_pie_inside
       type: pie
       query:
         type: aggregate
@@ -1114,7 +1114,7 @@ spec:
           maxCharacters: 18
           minimumSpacing: 6
           tooltipFallback: true
-    category_donut:
+    - id: category_donut
       type: donut
       query:
         type: aggregate
@@ -1129,7 +1129,7 @@ spec:
       title: Revenue by category donut
       presentation:
         type: proportional
-    orders_donut_center:
+    - id: orders_donut_center
       type: donut
       query:
         type: aggregate
@@ -1146,7 +1146,7 @@ spec:
         centerLabel: Orders
         innerRadius: 0.54
         outerRadius: 0.76
-    delivery_scatter:
+    - id: delivery_scatter
       type: scatter
       query:
         type: aggregate
@@ -1175,7 +1175,7 @@ spec:
           opacity: 0.58
           largeMode: automatic
           largeThreshold: 2000
-    delivery_scatter_status:
+    - id: delivery_scatter_status
       type: scatter
       query:
         type: aggregate
@@ -1207,7 +1207,7 @@ spec:
         overplot:
           strategy: opacity
           opacity: 0.52
-    delivery_scatter_labeled:
+    - id: delivery_scatter_labeled
       type: scatter
       query:
         type: aggregate
@@ -1239,7 +1239,7 @@ spec:
         overplot:
           strategy: show_all
           largeMode: never
-    status_funnel:
+    - id: status_funnel
       type: funnel
       query:
         type: aggregate
@@ -1253,7 +1253,7 @@ spec:
       title: Orders by status funnel
       presentation:
         type: proportional
-    delivery_funnel:
+    - id: delivery_funnel
       type: funnel
       query:
         type: aggregate
@@ -1267,7 +1267,7 @@ spec:
       title: Delivery speed funnel
       presentation:
         type: proportional
-    status_funnel_left:
+    - id: status_funnel_left
       type: funnel
       query:
         type: aggregate
@@ -1289,7 +1289,7 @@ spec:
           maxCharacters: 20
           minimumSpacing: 6
           tooltipFallback: true
-    category_treemap:
+    - id: category_treemap
       type: treemap
       query:
         type: aggregate
@@ -1304,7 +1304,7 @@ spec:
       title: Category revenue treemap
       presentation:
         type: hierarchy
-    state_treemap:
+    - id: state_treemap
       type: treemap
       query:
         type: aggregate
@@ -1319,7 +1319,7 @@ spec:
       title: State order treemap
       presentation:
         type: hierarchy
-    category_treemap_roam:
+    - id: category_treemap_roam
       type: treemap
       query:
         type: aggregate
@@ -1337,7 +1337,7 @@ spec:
         type: hierarchy
         roam: true
         breadcrumb: true
-    total_orders_gauge:
+    - id: total_orders_gauge
       type: gauge
       query:
         type: aggregate
@@ -1350,7 +1350,7 @@ spec:
         minimum: 0
         maximum: 120000
         target: 100000
-    review_gauge:
+    - id: review_gauge
       type: gauge
       query:
         type: aggregate
@@ -1363,7 +1363,7 @@ spec:
         minimum: 0
         maximum: 5
         target: 4.5
-    review_gauge_thresholds:
+    - id: review_gauge_thresholds
       type: gauge
       query:
         type: aggregate
@@ -1384,7 +1384,7 @@ spec:
           tone: warning
         - value: 5
           tone: success
-    category_status_heatmap:
+    - id: category_status_heatmap
       type: heatmap
       query:
         type: aggregate
@@ -1409,7 +1409,7 @@ spec:
           maxCharacters: 12
           minimumSpacing: 2
           tooltipFallback: true
-    category_status_heatmap_labels:
+    - id: category_status_heatmap_labels
       type: heatmap
       query:
         type: aggregate
@@ -1434,7 +1434,7 @@ spec:
           maxCharacters: 12
           minimumSpacing: 2
           tooltipFallback: true
-    category_status_flow:
+    - id: category_status_flow
       type: sankey
       query:
         type: aggregate
@@ -1450,7 +1450,7 @@ spec:
       title: Category to status flow
       presentation:
         type: hierarchy
-    category_status_flow_spacious:
+    - id: category_status_flow_spacious
       type: sankey
       query:
         type: aggregate
@@ -1468,7 +1468,7 @@ spec:
         type: hierarchy
         nodeGap: 18
         curveness: 0.32
-    category_status_graph:
+    - id: category_status_graph
       type: graph
       query:
         type: aggregate
@@ -1484,7 +1484,7 @@ spec:
       title: Category and status network
       presentation:
         type: hierarchy
-    category_status_graph_circular:
+    - id: category_status_graph_circular
       type: graph
       query:
         type: aggregate
@@ -1503,7 +1503,7 @@ spec:
         layout: circular
         curveness: 0.28
         focus: adjacency
-    state_revenue_map:
+    - id: state_revenue_map
       type: map
       query:
         type: aggregate
@@ -1524,7 +1524,7 @@ spec:
           geometryAsset: brazil_states
           join: state
           value: revenue
-    state_revenue_map_labeled:
+    - id: state_revenue_map_labeled
       type: map
       query:
         type: aggregate
@@ -1549,7 +1549,7 @@ spec:
           geometryAsset: brazil_states
           join: state
           value: revenue
-    customer_point_map:
+    - id: customer_point_map
       type: map
       query:
         type: aggregate
@@ -1617,7 +1617,7 @@ spec:
         - state_order_map
         - customer_revenue_heat_map
         - customer_density_map
-    customer_revenue_heat_map:
+    - id: customer_revenue_heat_map
       type: map
       query:
         type: aggregate
@@ -1651,7 +1651,7 @@ spec:
           heat:
             radius: 28
             intensity: 1.15
-    customer_density_map:
+    - id: customer_density_map
       type: map
       query:
         type: aggregate
@@ -1684,7 +1684,7 @@ spec:
           heat:
             radius: 22
             intensity: 1.35
-    state_reference_map:
+    - id: state_reference_map
       type: map
       query:
         type: aggregate
@@ -1707,7 +1707,7 @@ spec:
             width: 1.5
             opacity: 1
           opacity: 0.12
-    million_point_map:
+    - id: million_point_map
       type: map
       query:
         type: aggregate
@@ -1750,7 +1750,7 @@ spec:
           color:
             kind: sequential
             palette: blue
-    customer_path_map:
+    - id: customer_path_map
       type: map
       query:
         type: aggregate
@@ -1795,7 +1795,7 @@ spec:
           line:
             width: 3
           opacity: 0.9
-    delivery_candlestick:
+    - id: delivery_candlestick
       type: candlestick
       query:
         type: aggregate
@@ -1813,7 +1813,7 @@ spec:
       title: Delivery day candlestick by month
       presentation:
         type: cartesian
-    revenue_candlestick:
+    - id: revenue_candlestick
       type: candlestick
       query:
         type: aggregate
@@ -1832,7 +1832,7 @@ spec:
       presentation:
         type: cartesian
         dataZoom: true
-    review_distribution:
+    - id: review_distribution
       type: boxplot
       query:
         type: distribution
@@ -1847,7 +1847,7 @@ spec:
       title: Review score distribution
       presentation:
         type: cartesian
-    revenue_distribution:
+    - id: revenue_distribution
       type: boxplot
       query:
         type: distribution
@@ -1864,7 +1864,7 @@ spec:
       presentation:
         type: cartesian
         dataZoom: true
-    review_delivery_combo:
+    - id: review_delivery_combo
       type: combo
       query:
         type: aggregate
@@ -1892,7 +1892,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    revenue_orders_dual_axis_combo:
+    - id: revenue_orders_dual_axis_combo
       type: combo
       query:
         type: aggregate
@@ -1921,7 +1921,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    orders_waterfall:
+    - id: orders_waterfall
       type: waterfall
       query:
         type: aggregate
@@ -1942,7 +1942,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    revenue_waterfall_labeled:
+    - id: revenue_waterfall_labeled
       type: waterfall
       query:
         type: aggregate
@@ -1964,7 +1964,7 @@ spec:
           minimumSpacing: 6
           tooltipFallback: true
         dataZoom: true
-    revenue_histogram:
+    - id: revenue_histogram
       type: histogram
       query:
         type: histogram
@@ -1981,7 +1981,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    review_histogram:
+    - id: review_histogram
       type: histogram
       query:
         type: histogram
@@ -1998,7 +1998,7 @@ spec:
           maxCharacters: 24
           minimumSpacing: 0
           tooltipFallback: true
-    delivery_radar:
+    - id: delivery_radar
       type: radar
       query:
         type: aggregate
@@ -2012,7 +2012,7 @@ spec:
       title: Delivery speed radar
       presentation:
         type: polar
-    state_radar:
+    - id: state_radar
       type: radar
       query:
         type: aggregate
@@ -2028,7 +2028,7 @@ spec:
       presentation:
         type: polar
         area: false
-    category_status_tree:
+    - id: category_status_tree
       type: tree
       query:
         type: aggregate
@@ -2044,7 +2044,7 @@ spec:
       title: Category and status tree
       presentation:
         type: hierarchy
-    category_state_status_tree:
+    - id: category_state_status_tree
       type: tree
       query:
         type: aggregate
@@ -2069,7 +2069,7 @@ spec:
           maxCharacters: 16
           minimumSpacing: 6
           tooltipFallback: true
-    state_status_sunburst:
+    - id: state_status_sunburst
       type: sunburst
       query:
         type: aggregate
@@ -2085,7 +2085,7 @@ spec:
       title: State and status sunburst
       presentation:
         type: hierarchy
-    category_state_status_sunburst:
+    - id: category_state_status_sunburst
       type: sunburst
       query:
         type: aggregate
@@ -2103,7 +2103,7 @@ spec:
       presentation:
         type: hierarchy
         roam: true
-    orders_table:
+    - id: orders_table
       type: table
       query:
         type: records
@@ -2143,7 +2143,7 @@ spec:
         - orders
         - delivery
         - categories
-    orders_compact:
+    - id: orders_compact
       type: table
       query:
         type: records
@@ -2163,7 +2163,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: false
-    orders_spacious:
+    - id: orders_spacious
       type: table
       query:
         type: records
@@ -2184,7 +2184,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: true
-    orders_full_grid:
+    - id: orders_full_grid
       type: table
       query:
         type: records
@@ -2205,7 +2205,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: true
-    orders_conditional:
+    - id: orders_conditional
       type: table
       query:
         type: records
@@ -2274,7 +2274,7 @@ spec:
             low: {color: neutral}
             high: {color: danger}
             nullStyle: {color: neutral}
-    state_status_matrix:
+    - id: state_status_matrix
       type: matrix
       query:
         type: pivot
@@ -2295,7 +2295,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: false
-    category_status_pivot:
+    - id: category_status_pivot
       type: pivot
       query:
         type: pivot
@@ -2315,7 +2315,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: false
-    state_status_matrix_formatted:
+    - id: state_status_matrix_formatted
       type: matrix
       dataBudget:
         maxRows: 5000
@@ -2339,7 +2339,7 @@ spec:
         rowHeight: 32
         showHeader: true
         striped: true
-    category_status_pivot_heat:
+    - id: category_status_pivot_heat
       type: pivot
       query:
         type: pivot

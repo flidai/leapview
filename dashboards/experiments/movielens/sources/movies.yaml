@@ -13,6 +13,6 @@ spec:
   schema:
     mode: compatible
   fields:
-    movieId: {datatype: Integer, description: MovieLens movie identifier.}
-    title: {datatype: String, description: Movie title with release year suffix when available.}
-    genres: {datatype: String, description: Pipe-separated genre list.}
+    - {name: movieId, datatype: Integer, description: MovieLens movie identifier.}
+    - {name: title, datatype: String, description: Movie title with release year suffix when available.}
+    - {name: genres, datatype: String, description: Pipe-separated genre list.}

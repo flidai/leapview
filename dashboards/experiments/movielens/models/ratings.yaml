@@ -7,39 +7,39 @@ metadata:
   description: Rating-grain Model from MovieLens 32M ratings.
 spec:
   fields:
-    rating_id:
+    - name: rating_id
       datatype: String
       label: Rating ID
       description: Stable rating-grain identifier.
-    user_id:
+    - name: user_id
       datatype: Integer
       label: User ID
       description: Anonymized MovieLens user identifier.
-    movie_id:
+    - name: movie_id
       datatype: Integer
       label: Movie ID
       description: MovieLens movie identifier.
-    rating:
+    - name: rating
       datatype: Float
       label: Rating
       description: Rating value on the MovieLens 0.5 to 5.0 scale.
-    rating_bucket:
+    - name: rating_bucket
       datatype: String
       label: Rating bucket
       description: Rounded rating bucket for distribution charts.
-    rated_at:
+    - name: rated_at
       datatype: DateTime
       label: Rated at
       description: Timestamp when the rating was applied.
-    rating_date:
+    - name: rating_date
       datatype: Date
       label: Rating date
       description: Date when the rating was applied.
-    rating_month:
+    - name: rating_month
       datatype: String
       label: Rating month
       description: Calendar month when the rating was applied.
-    rating_year:
+    - name: rating_year
       datatype: Integer
       label: Rating year
       description: Calendar year when the rating was applied.
@@ -68,15 +68,15 @@ spec:
         AND rating IS NOT NULL
         AND timestamp IS NOT NULL
   entities:
-    rating:
+    - name: rating
       type: primary
       fields:
       - rating_id
-    movie:
+    - name: movie
       type: foreign
       fields:
       - movie_id
-    user:
+    - name: user
       type: foreign
       fields:
       - user_id

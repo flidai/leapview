@@ -6,10 +6,10 @@ metadata:
   displayName: Revenue bridge
 spec:
   fields:
-    component:
+    - name: component
       datatype: String
       label: Driver
-    amount:
+    - name: amount
       datatype: Float
       label: Revenue impact
   definition:
@@ -18,7 +18,7 @@ spec:
       SELECT component, CAST(amount AS DOUBLE) AS amount
       FROM source."docs.revenue_bridge"
   entities:
-    component:
+    - name: component
       type: primary
       fields:
       - component

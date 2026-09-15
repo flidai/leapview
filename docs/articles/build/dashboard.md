@@ -41,7 +41,7 @@ spec:
     padding: 16
   filters: []
   visuals:
-    revenue-by-month:
+    - id: revenue-by-month
       title: Revenue by month
       type: area
       query:
@@ -54,7 +54,7 @@ spec:
         limit: 30
       presentation:
         type: cartesian
-    total-revenue:
+    - id: total-revenue
       title: Total revenue
       type: kpi
       query:
@@ -118,7 +118,7 @@ KPI visuals use one metric and a typed KPI presentation:
 
 ```yaml
 visuals:
-  total-orders:
+  - id: total-orders
     type: kpi
     query:
       type: aggregate

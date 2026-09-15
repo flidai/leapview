@@ -24,7 +24,7 @@ func TestExpandDashboardFragmentsCanonicalEquivalenceAndLayout(t *testing.T) {
 		}
 		return name
 	}
-	visualPath := write("visuals.yaml", "visuals:\n  revenue:\n    type: bar\n    query:\n      type: aggregate\n      dimensions: []\n      metrics: [revenue]\n    presentation: {type: cartesian}\n")
+	visualPath := write("visuals.yaml", "visuals:\n  - id: revenue\n    type: bar\n    query:\n      type: aggregate\n      dimensions: []\n      metrics: [revenue]\n    presentation: {type: cartesian}\n")
 	pagePath := write("pages.yaml", "pages:\n  - id: overview\n    title: Overview\n    components: []\n")
 	componentPath := write("components.yaml", "components:\n  overview:\n    - type: visual\n      id: revenue-component\n      placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 3}\n      visual: revenue\n")
 
@@ -103,7 +103,7 @@ func TestExpandDashboardFragmentsRejectsUnsafePathsCyclesAndDuplicates(t *testin
 	if err := os.WriteFile(dashboardPath, []byte("dashboard"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "fragment.yaml"), []byte("visuals: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "fragment.yaml"), []byte("visuals: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct{ name, pattern, want string }{
@@ -121,7 +121,7 @@ func TestExpandDashboardFragmentsRejectsUnsafePathsCyclesAndDuplicates(t *testin
 		})
 	}
 	cycle := filepath.Join(root, "cycle.yaml")
-	if err := os.WriteFile(cycle, []byte("includes:\n  visuals: [cycle.yaml]\nvisuals: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(cycle, []byte("includes:\n  visuals: [cycle.yaml]\nvisuals: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ExpandDashboardFragments(fragmentTestDocument(&DashboardIncludes{Visuals: ptrSlice("cycle.yaml")}), dashboardPath, root)
@@ -129,12 +129,19 @@ func TestExpandDashboardFragmentsRejectsUnsafePathsCyclesAndDuplicates(t *testin
 		t.Fatalf("cycle accepted: %v", err)
 	}
 	duplicate := filepath.Join(root, "duplicate.yaml")
-	if err := os.WriteFile(duplicate, []byte("visuals:\n  local:\n    type: bar\n    query: {type: aggregate, dimensions: [], metrics: [revenue]}\n    presentation: {type: cartesian}\n"), 0o644); err != nil {
+	if err := os.WriteFile(duplicate, []byte("visuals:\n  - id: local\n    type: bar\n    query: {type: aggregate, dimensions: [], metrics: [revenue]}\n    presentation: {type: cartesian}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err = ExpandDashboardFragments(fragmentTestDocument(&DashboardIncludes{Visuals: ptrSlice("duplicate.yaml")}), dashboardPath, root)
 	if err == nil || (!strings.Contains(err.Error(), "defined more than once") && !strings.Contains(err.Error(), "redefined")) {
 		t.Fatalf("duplicate visual accepted: %v", err)
+	}
+	if err := os.WriteFile(duplicate, []byte("visuals:\n  - id: repeated\n    type: bar\n    query: {type: aggregate, dimensions: [], metrics: [revenue]}\n    presentation: {type: cartesian}\n  - id: repeated\n    type: bar\n    query: {type: aggregate, dimensions: [], metrics: [revenue]}\n    presentation: {type: cartesian}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ExpandDashboardFragments(fragmentTestDocument(&DashboardIncludes{Visuals: ptrSlice("duplicate.yaml")}), dashboardPath, root)
+	if err == nil || !strings.Contains(err.Error(), "duplicate.yaml:6") || !strings.Contains(err.Error(), "first defined at duplicate.yaml:2") {
+		t.Fatalf("duplicate list identity diagnostic = %v", err)
 	}
 	identity := filepath.Join(root, "identity.yaml")
 	if err := os.WriteFile(identity, []byte("apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata: {id: dashboard:fragment, name: fragment}\nspec: {}\n"), 0o644); err != nil {
@@ -147,7 +154,7 @@ func TestExpandDashboardFragmentsRejectsUnsafePathsCyclesAndDuplicates(t *testin
 
 	outside := t.TempDir()
 	outsideFragment := filepath.Join(outside, "outside.yaml")
-	if err := os.WriteFile(outsideFragment, []byte("visuals: {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(outsideFragment, []byte("visuals: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outsideFragment, filepath.Join(root, "escaped.yaml")); err != nil {
@@ -165,7 +172,7 @@ func TestExpandDashboardFragmentsReportsFragmentLine(t *testing.T) {
 	if err := os.WriteFile(dashboardPath, []byte("dashboard"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "bad.yaml"), []byte("visuals:\n  broken:\n    type: bar\n    unexpected: true\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "bad.yaml"), []byte("visuals:\n  - id: broken\n    type: bar\n    unexpected: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := ExpandDashboardFragments(fragmentTestDocument(&DashboardIncludes{Visuals: ptrSlice("bad.yaml")}), dashboardPath, root)
@@ -190,7 +197,7 @@ func TestExpandDashboardFragmentsUsesStrictJSONBoundary(t *testing.T) {
 		{"anchor", "visuals: &visuals {}\n", "schema.alias"},
 		{"alias", "visuals: &visuals {}\nother: *visuals\n", "schema.alias"},
 		{"explicit tag", "visuals: !!map {}\n", "schema.tag"},
-		{"multiple documents", "visuals: {}\n---\nvisuals: {}\n", "schema.document"},
+		{"multiple documents", "visuals: []\n---\nvisuals: []\n", "schema.document"},
 		{"non-string key", "visuals:\n  ? [revenue]\n  : {}\n", "schema.key"},
 		{"non-finite number", "visuals:\n  revenue: {value: .nan}\n", "schema.number"},
 		{"overflow number", "visuals:\n  revenue: {value: 1e400}\n", "schema.number"},

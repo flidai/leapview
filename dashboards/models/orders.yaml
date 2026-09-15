@@ -7,51 +7,51 @@ metadata:
   description: Order-grain Model with deliberately grain-aligned category, revenue, review, and delivery fields.
 spec:
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       label: Order ID
       description: Stable order identifier from the Olist orders dataset.
-    customer_id:
+    - name: customer_id
       datatype: String
       label: Customer ID
       description: Customer identifier associated with the order.
-    purchase_month:
+    - name: purchase_month
       datatype: String
       label: Purchase month
       description: Calendar month when the order was purchased.
-    purchase_timestamp:
+    - name: purchase_timestamp
       datatype: DateTime
       label: Purchase timestamp
       description: Timestamp when the customer placed the order.
-    purchase_date:
+    - name: purchase_date
       datatype: Date
       label: Purchase date
       description: Calendar date when the customer placed the order.
-    status:
+    - name: status
       datatype: String
       label: Status
       description: Current order lifecycle status.
-    category:
+    - name: category
       datatype: String
       label: Category
       description: English product category associated with the order.
-    revenue:
+    - name: revenue
       datatype: Decimal
       label: Revenue
       description: Total payment revenue attributed to the order.
-    review_score:
+    - name: review_score
       datatype: Float
       label: Review
       description: Average customer review score for the order.
-    delivery_days:
+    - name: delivery_days
       datatype: Integer
       label: Delivery days
       description: Days between purchase and customer delivery.
-    is_delivered:
+    - name: is_delivered
       datatype: Boolean
       label: Delivered
       description: Whether the order has a customer delivery timestamp.
-    delivery_bucket:
+    - name: delivery_bucket
       datatype: String
       label: Delivery speed
       description: Delivery speed bucket derived from delivery days.
@@ -105,11 +105,11 @@ spec:
       LEFT JOIN review ON review.order_id = o.order_id
       LEFT JOIN category ON category.order_id = o.order_id
   entities:
-    order:
+    - name: order
       type: primary
       fields:
       - order_id
-    customer:
+    - name: customer
       type: foreign
       fields:
       - customer_id

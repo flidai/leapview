@@ -6,7 +6,7 @@ Use a matrix for grouped rows and metrics, optionally split across a column dime
 
 ```yaml visual-example=status_matrix
 visuals:
-  status_matrix:
+  - id: status_matrix
     type: matrix
     title: Orders by category and status
     query:

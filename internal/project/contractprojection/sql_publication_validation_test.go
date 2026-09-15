@@ -100,7 +100,7 @@ func sqlModelPublication(t *testing.T, sqlText string) []byte {
 		t.Fatal(err)
 	}
 	var input projectcontracts.Model
-	raw := fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"sql","sql":%q},"entities":{"row":{"type":"primary","fields":["id"]}},"grain":{"entity":"row"},"fields":{"id":{"datatype":"Integer"}}}}`, sqlText)
+	raw := fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"sql","sql":%q},"entities":[{"name":"row","type":"primary","fields":["id"]}],"grain":{"entity":"row"},"fields":[{"name":"id","datatype":"Integer"}]}}`, sqlText)
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &input); err != nil {
 		t.Fatal(err)
 	}

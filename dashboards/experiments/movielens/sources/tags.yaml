@@ -13,7 +13,7 @@ spec:
   schema:
     mode: compatible
   fields:
-    userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
-    movieId: {datatype: Integer, description: MovieLens movie identifier.}
-    tag: {datatype: String, description: User-generated movie tag.}
-    timestamp: {datatype: Integer, description: Tag timestamp as Unix epoch seconds.}
+    - {name: userId, datatype: Integer, description: Anonymized MovieLens user identifier.}
+    - {name: movieId, datatype: Integer, description: MovieLens movie identifier.}
+    - {name: tag, datatype: String, description: User-generated movie tag.}
+    - {name: timestamp, datatype: Integer, description: Tag timestamp as Unix epoch seconds.}

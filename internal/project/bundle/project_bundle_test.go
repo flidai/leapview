@@ -185,16 +185,20 @@ func TestPackSourceBundleIncludesDashboardFragments(t *testing.T) {
 		"semantic-models/sales.yaml": "semantic model",
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales}
+metadata:
+  id: dashboard:sales
+  name: sales
 spec:
   semanticModel: sales
   filters: []
-  includes: {visuals: [fragments/visuals.yaml]}
-  visuals: {}
+  includes:
+    visuals:
+    - fragments/visuals.yaml
+  visuals: []
   pages: []
 `,
 		"dashboards/fragments/visuals.yaml": `visuals:
-  revenue:
+  - id: revenue
     type: bar
     query: {type: aggregate, dimensions: [], metrics: [revenue]}
     presentation: {type: cartesian}
