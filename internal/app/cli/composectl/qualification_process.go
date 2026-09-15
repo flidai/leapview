@@ -271,6 +271,20 @@ func startQualificationJSONWorker(
 	return worker, nil
 }
 
+func (c *Controller) startQualificationDockerJSONWorker(
+	ctx context.Context,
+	environment []string,
+	args ...string,
+) (*qualificationJSONWorker, error) {
+	if err := c.verifyDockerEndpoint(ctx); err != nil {
+		return nil, err
+	}
+	return startQualificationJSONWorker(
+		ctx, c.root, c.dockerEnvironment(environment), c.dockerBin,
+		c.dockerArguments(args...)...,
+	)
+}
+
 func (w *qualificationJSONWorker) Call(
 	method string,
 	params any,

@@ -2,13 +2,16 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"runtime"
 	"strings"
 
 	accesscli "github.com/flidai/leapview/internal/access/cli"
+	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/securestore"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -45,6 +48,71 @@ func defaultAuthoringAuthenticator(client *http.Client) (*accesscli.Authenticato
 		Secrets:     secrets,
 		OpenBrowser: openSystemBrowser,
 	}, nil
+}
+
+func resolveLocalProjectAuthority() (localruntime.ProjectAuthority, error) {
+	authority, err := cliapi.NewProfileStore(clientConfigPath()).ResolveProjectAuthority("", validateProjectAuthorityResourceID)
+	if err != nil {
+		return localruntime.ProjectAuthority{}, err
+	}
+	return localruntime.ProjectAuthority{IssuerID: authority.IssuerID, ProjectUID: authority.ProjectUID}, nil
+}
+
+func establishLocalAuthoringSessions(ctx context.Context, request localruntime.SessionRequest, out io.Writer) (localruntime.SessionResult, error) {
+	authenticator, err := defaultAuthoringAuthenticator(http.DefaultClient)
+	if err != nil {
+		return localruntime.SessionResult{}, err
+	}
+	return establishLocalAuthoringSessionsWith(ctx, localSessionAuthority{Authenticator: authenticator}, request, out)
+}
+
+type localSessionAuthentication interface {
+	Profile(string) (cliapi.TargetProfile, error)
+	RebindLoopbackOrigin(string, cliapi.TargetProfile, string) error
+	Resolve(context.Context, string) (accesscli.ResolvedCredential, error)
+	Login(context.Context, accesscli.LoginRequest, func(accesscli.DeviceChallenge)) (accesscli.LoginResult, error)
+}
+
+type localSessionAuthority struct{ *accesscli.Authenticator }
+
+func (authority localSessionAuthority) Profile(name string) (cliapi.TargetProfile, error) {
+	return authority.Profiles.Get(name)
+}
+
+func (authority localSessionAuthority) RebindLoopbackOrigin(name string, expected cliapi.TargetProfile, origin string) error {
+	return authority.Profiles.RebindLoopbackOrigin(name, expected, origin)
+}
+
+func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator localSessionAuthentication, request localruntime.SessionRequest, out io.Writer) (localruntime.SessionResult, error) {
+	if authenticator == nil {
+		return localruntime.SessionResult{}, errors.New("local authoring session authority is required")
+	}
+	if existing, profileErr := authenticator.Profile(request.TargetName); profileErr == nil {
+		if existing.InstanceID != request.InstanceID || existing.Environment != request.Environment || existing.ProjectID != request.ProjectID {
+			return localruntime.SessionResult{}, fmt.Errorf("local authoring target %q identifies a different runtime; log it out before replacement", request.TargetName)
+		}
+		if existing.Origin != request.Origin {
+			if err := authenticator.RebindLoopbackOrigin(request.TargetName, existing, request.Origin); err != nil {
+				return localruntime.SessionResult{}, fmt.Errorf("rebind local authoring target after port change: %w", err)
+			}
+		}
+		if resolved, resolveErr := authenticator.Resolve(ctx, request.TargetName); resolveErr == nil {
+			return localruntime.SessionResult{TargetName: request.TargetName, SessionID: resolved.SessionID}, nil
+		}
+	} else if !errors.Is(profileErr, cliapi.ErrProfileNotFound) {
+		return localruntime.SessionResult{}, profileErr
+	}
+	result, err := authenticator.Login(ctx, accesscli.LoginRequest{
+		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
+		Environment: request.Environment, ProjectID: request.ProjectID,
+		Capabilities: []string{"RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH"},
+	}, func(challenge accesscli.DeviceChallenge) {
+		fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
+	})
+	if err != nil {
+		return localruntime.SessionResult{}, err
+	}
+	return localruntime.SessionResult{TargetName: request.TargetName, SessionID: result.SessionID}, nil
 }
 
 type applicationTargetDiscovery struct{}

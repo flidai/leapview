@@ -138,6 +138,28 @@ func TestBootstrapProjectClaimPostgresCompletesGeneratedCommandGuard(t *testing.
 	require.Equal(t, "success", audits[0].Outcome)
 }
 
+func TestBootstrapProjectClaimNativeReusesTransactionalAuditAuthority(t *testing.T) {
+	db, repo := projectClaimBootstrapPostgresDB(t)
+	persistence, err := NewPostgresPersistence(repo)
+	require.NoError(t, err)
+	audit := postgresProjectClaimAudit{audit: accesspostgres.New()}
+	input := ProjectClaimBootstrapInput{
+		PrincipalID: "email_admin", ProjectUID: "project:native", IssuerID: "issuer:native",
+		Environment: "dev", IdempotencyKey: "native-operation",
+	}
+	first, err := BootstrapProjectClaimNative(t.Context(), persistence, audit, "lvinst_native", "dev", input)
+	require.NoError(t, err)
+	replay, err := BootstrapProjectClaimNative(t.Context(), persistence, audit, "lvinst_native", "dev", input)
+	require.NoError(t, err)
+	require.Equal(t, first.Claim, replay.Claim)
+	require.False(t, first.Conflict)
+
+	audits, err := accesspostgres.New().ListAuditEvents(t.Context(), db, 10)
+	require.NoError(t, err)
+	require.Len(t, audits, 1)
+	require.Equal(t, "success", audits[0].Outcome)
+}
+
 func projectClaimBootstrapPostgresDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Repository) {
 	t.Helper()
 	h := postgrestest.Start(t)

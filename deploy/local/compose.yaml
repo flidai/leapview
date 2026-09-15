@@ -81,8 +81,6 @@ services:
       LEAPVIEW_POSTGRES_REQUIRE_TLS: "false"
       LEAPVIEW_POSTGRES_CONTROL_URL: postgresql://leapview_control_runtime:${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:?local control runtime password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
       LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE: leapview_control_runtime
-      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL: postgresql://leapview_control_migrator:${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:?local control migrator password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
-      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE: leapview_control_migrator
       LEAPVIEW_POSTGRES_CONTROL_READONLY_URL: postgresql://leapview_control_readonly:${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:?local control readonly password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
       LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE: leapview_control_readonly
       LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL: postgresql://leapview_control_maintenance:${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:?local control maintenance password is required}@127.0.0.1:5432/leapview_control?sslmode=disable
@@ -91,6 +89,10 @@ services:
       LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE: leapview_ducklake_runtime
       LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL: postgresql://leapview_ducklake_maintenance:${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:?local DuckLake maintenance password is required}@127.0.0.1:5432/leapview_ducklake?sslmode=disable
       LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE: leapview_ducklake_maintenance
+      # The host lifecycle writes these only after the existing pool
+      # qualification and admission authority has acknowledged exact identity.
+      LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID: ${LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID:-}
+      LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: ${LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST:-}
       # Contributor-only diagnostics are independent of the environment name
       # and remain disabled in the released local authoring experience.
       LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS: "false"
@@ -125,3 +127,11 @@ volumes:
       io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
       io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}
       io.leapview.local-runtime.storage: application
+
+networks:
+  default:
+    labels:
+      io.leapview.local-runtime: "true"
+      io.leapview.local-runtime.schema: "1"
+      io.leapview.local-runtime.checkout: ${LEAPVIEW_LOCAL_CHECKOUT_ID:?canonical checkout identity is required}
+      io.leapview.local-runtime.owner: ${LEAPVIEW_LOCAL_OWNER_ID:?local runtime owner identity is required}

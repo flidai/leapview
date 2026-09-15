@@ -74,6 +74,26 @@ func TestProfileStoreProjectAuthorityCanBindSameUIDToSeparateTargets(t *testing.
 	require.Equal(t, dev.ProjectID, prod.ProjectID)
 }
 
+func TestProfileStoreRebindsOnlyExactHTTPLoopbackOrigin(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "cli.json"))
+	expected := TargetProfile{Origin: "http://127.0.0.1:8080", InstanceID: "lvinst_dev", Environment: "dev", CredentialAccount: "native-account", ProjectID: "lvproject_local"}
+	require.NoError(t, store.Put("local", expected))
+	require.NoError(t, store.RebindLoopbackOrigin("local", expected, "http://127.0.0.1:54321"))
+	rebound, err := store.Get("local")
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:54321", rebound.Origin)
+	require.Equal(t, expected.InstanceID, rebound.InstanceID)
+	require.Equal(t, expected.ProjectID, rebound.ProjectID)
+	require.Equal(t, expected.CredentialAccount, rebound.CredentialAccount)
+
+	for _, next := range []string{"https://127.0.0.1:54322", "http://analytics.example.com:54322", "http://user:secret@127.0.0.1:54322"} {
+		require.Error(t, store.RebindLoopbackOrigin("local", rebound, next))
+	}
+	stale := rebound
+	stale.Origin = expected.Origin
+	require.ErrorContains(t, store.RebindLoopbackOrigin("local", stale, "http://127.0.0.1:54322"), "changed before")
+}
+
 func TestProfileStoreProjectAuthorityConcurrentFirstUseConverges(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cli.json")
 	const callers = 8

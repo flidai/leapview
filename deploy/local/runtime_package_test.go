@@ -19,6 +19,7 @@ const postgresImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b51
 type composeDocument struct {
 	Services map[string]composeService `yaml:"services"`
 	Volumes  map[string]composeVolume  `yaml:"volumes"`
+	Networks map[string]composeNetwork `yaml:"networks"`
 }
 
 type composeService struct {
@@ -35,6 +36,10 @@ type composeService struct {
 }
 
 type composeVolume struct {
+	Labels map[string]string `yaml:"labels"`
+}
+
+type composeNetwork struct {
 	Labels map[string]string `yaml:"labels"`
 }
 
@@ -86,26 +91,27 @@ func TestLocalRuntimeComposeContract(t *testing.T) {
 	}
 
 	requiredEnvironment := map[string]string{
-		"LEAPVIEW_ADDR":                               "0.0.0.0:8080",
-		"LEAPVIEW_PUBLIC_URL":                         "http://127.0.0.1:${LEAPVIEW_LOCAL_APP_PORT:?local application port is required}",
-		"LEAPVIEW_ALLOWED_HOSTS":                      "127.0.0.1,localhost",
-		"LEAPVIEW_ENVIRONMENT":                        "dev",
-		"LEAPVIEW_PRODUCTION":                         "false",
-		"LEAPVIEW_HOME":                               "/var/lib/leapview/home",
-		"LEAPVIEW_MANAGED_DATA_BACKEND":               "local",
-		"LEAPVIEW_MANAGED_DATA_DIR":                   "/var/lib/leapview/home/managed-data",
-		"LEAPVIEW_OBJECT_STORE_BACKEND":               "filesystem",
-		"LEAPVIEW_OBJECT_STORE_FILESYSTEM_ROOT":       "/var/lib/leapview/home/artifacts/object-store",
-		"LEAPVIEW_LOCAL_AUTH":                         "true",
-		"LEAPVIEW_POSTGRES_EXPECTED_MAJOR":            "18",
-		"LEAPVIEW_POSTGRES_REQUIRE_TLS":               "false",
-		"LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS":            "false",
-		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE":      "leapview_control_runtime",
-		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE":     "leapview_control_migrator",
-		"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE":     "leapview_control_readonly",
-		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE":  "leapview_control_maintenance",
-		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":     "leapview_ducklake_runtime",
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": "leapview_ducklake_maintenance",
+		"LEAPVIEW_ADDR":                                        "0.0.0.0:8080",
+		"LEAPVIEW_PUBLIC_URL":                                  "http://127.0.0.1:${LEAPVIEW_LOCAL_APP_PORT:?local application port is required}",
+		"LEAPVIEW_ALLOWED_HOSTS":                               "127.0.0.1,localhost",
+		"LEAPVIEW_ENVIRONMENT":                                 "dev",
+		"LEAPVIEW_PRODUCTION":                                  "false",
+		"LEAPVIEW_HOME":                                        "/var/lib/leapview/home",
+		"LEAPVIEW_MANAGED_DATA_BACKEND":                        "local",
+		"LEAPVIEW_MANAGED_DATA_DIR":                            "/var/lib/leapview/home/managed-data",
+		"LEAPVIEW_OBJECT_STORE_BACKEND":                        "filesystem",
+		"LEAPVIEW_OBJECT_STORE_FILESYSTEM_ROOT":                "/var/lib/leapview/home/artifacts/object-store",
+		"LEAPVIEW_LOCAL_AUTH":                                  "true",
+		"LEAPVIEW_POSTGRES_EXPECTED_MAJOR":                     "18",
+		"LEAPVIEW_POSTGRES_REQUIRE_TLS":                        "false",
+		"LEAPVIEW_CONTRIBUTOR_DIAGNOSTICS":                     "false",
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE":               "leapview_control_runtime",
+		"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE":              "leapview_control_readonly",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE":           "leapview_control_maintenance",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":              "leapview_ducklake_runtime",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE":          "leapview_ducklake_maintenance",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID":                   "${LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID:-}",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST": "${LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST:-}",
 	}
 	for name, want := range requiredEnvironment {
 		if got := application.Environment[name]; got != want {
@@ -114,7 +120,6 @@ func TestLocalRuntimeComposeContract(t *testing.T) {
 	}
 	for _, name := range []string{
 		"LEAPVIEW_POSTGRES_CONTROL_URL",
-		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL",
 		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_URL",
@@ -126,6 +131,8 @@ func TestLocalRuntimeComposeContract(t *testing.T) {
 		}
 	}
 	for _, operationOnly := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE",
 		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
 		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
 	} {
@@ -146,6 +153,10 @@ func TestLocalRuntimeComposeContract(t *testing.T) {
 	for name, volume := range document.Volumes {
 		assertOwnershipLabels(t, "volume "+name, volume.Labels)
 	}
+	if len(document.Networks) != 1 {
+		t.Fatalf("networks = %#v, want one labeled default network", document.Networks)
+	}
+	assertOwnershipLabels(t, "network default", document.Networks["default"].Labels)
 	for name, service := range document.Services {
 		assertOwnershipLabels(t, "service "+name, service.Labels)
 	}
