@@ -20,6 +20,15 @@ LeapView volume retain the checkout's database state, analytical files,
 managed objects, immutable source and serving artifacts, DuckDB state, and
 runtime artifacts.
 
+The released archive qualification boundary is documented in
+[`qualification/README.md`](qualification/README.md). Its static package and
+CLI identity checks produce release evidence only when run against the exact
+public archive. The optional `init`/`dev` journey
+requires an explicitly selected local Docker socket and, where local device
+authentication is configured, a manual browser approval. Preview
+edit-to-visible measurements and production delivery qualification remain
+planned; this runtime payload does not claim those journeys are released.
+
 The application joins PostgreSQL's network namespace. PostgreSQL listens only
 on that namespace's `127.0.0.1`, so its development-only, TLS-disabled database
 connections remain loopback-only. The application uses LeapView's existing

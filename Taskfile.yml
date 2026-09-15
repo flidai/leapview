@@ -223,6 +223,23 @@ tasks:
     cmds:
       - go test ./internal/app/cli/composectl -run '^TestQualificationNativePostgresTopologyContainerBackedContract$' -count=1 -v
 
+  test:qualification:authoring-package:
+    desc: Verify the released authoring archive qualification contract without Docker
+    cmds:
+      - go test ./deploy/local -run '^TestReleasedAuthoringQualification' -count=1
+
+  qa:authoring-package:
+    desc: Qualify an exact released authoring archive and retain bounded evidence
+    requires:
+      vars: [LEAPVIEW_AUTHORING_ARCHIVE]
+    cmds:
+      - >-
+        ./deploy/local/qualification/qualify.sh
+        --archive "{{.LEAPVIEW_AUTHORING_ARCHIVE}}"
+        --evidence-dir "{{.LEAPVIEW_AUTHORING_EVIDENCE_DIR | default .ROOT_DIR}}/.tmp/qualification/authoring-package"
+        {{if .LEAPVIEW_AUTHORING_REQUIRED}}--required{{end}}
+        {{if .LEAPVIEW_AUTHORING_RUN_LIFECYCLE}}--run-lifecycle --manual-prerequisites-confirmed --docker-host "{{.LEAPVIEW_AUTHORING_DOCKER_HOST}}"{{end}}
+
   test:qualification:postgres-ha:
     desc: Run the bounded disposable same-host PostgreSQL 18 Patroni HA qualification
     cmds:

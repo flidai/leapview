@@ -1,0 +1,79 @@
+# Released authoring package qualification
+
+This directory owns the Milestone 5 qualification contract for a released
+`leapview` authoring archive. It is independent of the source checkout and of
+the unfinished remote preview/deploy flows.
+
+## Current release evidence
+
+Run the harness with an archive and its adjacent checksum:
+
+```sh
+./deploy/local/qualification/qualify.sh \
+  --archive leapview-cli-v<version>-<os>-<arch>.tar.gz \
+  --checksum leapview-cli-v<version>-<os>-<arch>.tar.gz.sha256 \
+  --evidence-dir .tmp/qualification/authoring-package
+```
+
+The equivalent repository convenience entrypoint is
+`scripts/authoring_package_qualification.sh`.
+
+The harness verifies the outer archive checksum, safe archive members, the
+inner `SHA256SUMS` manifest, `authoring-package.json`,
+`release-identity.json`, `image-reference.txt`, `runtime-package.json`, and
+the executable's `leapview version --json` identity. It also checks the
+read-only command surfaces (`init`, `dev`, `plan`, `build`, `publish`, and
+`deploy`) through their help output. The existing release `authoring-cli` job
+remains a separate build/provenance gate and is not replaced by this lane.
+
+## Optional local lifecycle
+
+The lifecycle is deliberately opt-in because local device authentication can
+require a person to approve a browser challenge:
+
+```sh
+./deploy/local/qualification/qualify.sh \
+  --archive leapview-cli-v<version>-linux-amd64.tar.gz \
+  --run-lifecycle \
+  --manual-prerequisites-confirmed \
+  --docker-host unix:///var/run/docker.sock
+```
+
+Lifecycle qualification requires a supported Linux or macOS host, an explicit
+local Unix Docker socket, Docker Compose 2.17 or newer, and the manual
+authentication prerequisite. SSH endpoints, arbitrary TCP endpoints, loopback
+tunnels, and unknown socket proxies are rejected. The endpoint is inspected
+and pinned before the harness runs `init` or `dev`; ambient Docker context or
+host values are not used as a fallback. The temporary checkout and its
+runtime are reset after the run when a reset plan is available.
+
+Use `--required` in CI or another release gate. Without it, the harness may
+return `skipped` only for an explicitly unsupported host or an explicitly
+missing lifecycle prerequisite. In required mode, those same conditions fail
+closed. Archive, manifest, checksum, command, and cleanup failures always
+fail.
+
+## Evidence contract
+
+`qualification-report.json` is validated by
+[`evidence.schema.json`](evidence.schema.json). It contains actual OS,
+toolchain, Docker/Compose, hardware, fixture, network, warmup, and repetition
+metadata plus bounded redacted command results. Credential-shaped values,
+authorization headers, cookies, and credential-bearing URLs are removed before
+retention. `raw-results.json` contains the same bounded command result records
+for consumers that need the raw observations.
+
+The report distinguishes `passed`, `failed`, `skipped`, and `not-run`. Numeric
+samples are populated only from observed commands or browser measurements;
+planned repetitions have `executed: 0`, an empty `samplesMs` array, and a
+reason. The semantic, model, dashboard, presentation, and invalid edit
+scenarios, including cold uncached/cached, warm restart, and edit-to-visible
+measurements, remain `not-run` until the released preview surface provides a
+supported observation contract. This lane never fabricates those values.
+
+The machine-readable source is
+[`qualification-contract.json`](qualification-contract.json). It records the
+boundary between currently released package/lifecycle evidence and the
+planned preview and production-deploy qualification work described by
+[ADR-0021](../../../adr/0021-adopt-a-local-first-analytics-development-workflow.md)
+and the [analytics development CLI contract](../../../adr/specifications/analytics-development-cli-contract.md).
