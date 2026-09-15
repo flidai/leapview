@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/gates"
 	"github.com/flidai/leapview/internal/app/config"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	postgresducklake "github.com/flidai/leapview/internal/app/postgresducklake"
@@ -23,6 +24,28 @@ import (
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/servingstate"
 )
+
+func TestNativeCandidateGateBoundsKeepProductionBounded(t *testing.T) {
+	production := nativeCandidateGateBounds(true)
+	if production != (gates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000}) {
+		t.Fatalf("production candidate gate bounds = %+v", production)
+	}
+	development := nativeCandidateGateBounds(false)
+	if development.MaxRows != production.MaxRows || development.MaxQueries != production.MaxQueries || development.MaxMillis != 120000 {
+		t.Fatalf("development candidate gate bounds = %+v", development)
+	}
+}
+
+func TestDuckDBReadConnectionsRespectThreadLimit(t *testing.T) {
+	cfg := config.Config{WorkloadMaxRunning: 5, DuckDBNodeMaxThreads: 1}
+	if got := duckDBReadConnections(cfg); got != 1 {
+		t.Fatalf("read connections with one execution thread = %d, want 1", got)
+	}
+	cfg.DuckDBNodeMaxThreads = 8
+	if got := duckDBReadConnections(cfg); got != 5 {
+		t.Fatalf("read connections above workload limit = %d, want 5", got)
+	}
+}
 
 type postgresTargetLookupFake struct {
 	target deployment.DeliveryTarget

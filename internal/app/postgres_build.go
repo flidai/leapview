@@ -19,7 +19,6 @@ import (
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
@@ -376,7 +375,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if !production {
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
-	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{ConnectionBindings: graph.ConnectionBinding, QueryAuditStore: graph.QueryAudit, Production: production, CredentialMode: credentialMode, CredentialTarget: instanceID, Environment: string(environment), RootDir: cfg.DuckDBDirPath(), DataPath: cfg.DuckLakeDataDir(), ExtensionSupply: extensionSupply, MaxConnections: cfg.WorkloadConfig().MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes, TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(), DisableProcessEnv: production, RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes, NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes})
+	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{ConnectionBindings: graph.ConnectionBinding, QueryAuditStore: graph.QueryAudit, Production: production, CredentialMode: credentialMode, CredentialTarget: instanceID, Environment: string(environment), RootDir: cfg.DuckDBDirPath(), DataPath: cfg.DuckLakeDataDir(), ExtensionSupply: extensionSupply, MaxConnections: duckDBReadConnections(cfg), MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes, TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(), DisableProcessEnv: production, RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes, NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes})
 	if err != nil {
 		return fail(err)
 	}
@@ -669,7 +668,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 			PoolContract:        contract.PoolContract,
 			CredentialBootstrap: credentialBootstrap,
 			ExtensionAdmission:  extensionSupply,
-			MaxConnections:      cfg.WorkloadConfig().MaxRunning,
+			MaxConnections:      duckDBReadConnections(cfg),
 			MemoryMaxBytes:      cfg.DuckDBNodeMemoryMaxBytes,
 			TempMaxBytes:        cfg.DuckDBNodeTempMaxBytes,
 			MaxThreads:          cfg.DuckDBNodeMaxThreads,
@@ -803,7 +802,7 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 		SnapshotFactory:       appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
 		QualificationFactory:  qualificationFactory,
 		RuntimeVersion:        runtimeVersion,
-		Bounds:                gates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000},
+		Bounds:                nativeCandidateGateBounds(production),
 		Events:                graph.DeploymentPersistence.Events,
 		Audit:                 graph.DeploymentPersistence.Audit,
 		Workflow:              graph.DeploymentPersistence.Workflow,

@@ -872,7 +872,7 @@ func nativeInspectFixtureForConnector(t *testing.T, connectorKind string) native
 	files := map[string]string{
 		"connections/warehouse.yaml": fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: %s}\n", connectorKind),
 		"sources/orders.yaml":        fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: %s, format: csv}}\n", sourcePath),
-		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
+		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: [{name: id, datatype: Integer}], entities: [{name: id, type: primary, fields: [id]}], grain: {entity: id}}\n",
 	}
 	for name, body := range files {
 		filePath := filepath.Join(root, filepath.FromSlash(name))

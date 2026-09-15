@@ -14,7 +14,7 @@ Use one categorical dimension to create the radar indicators and one metric to s
 
 ```yaml visual-example=status_radar
 visuals:
-  status_radar:
+  - id: status_radar
     title: Order status radar
     description: Compares order status counts on a radar chart.
     type: radar
@@ -41,7 +41,7 @@ Replace status with delivery buckets to compare a different categorical profile 
 
 ```yaml visual-example=delivery_radar
 visuals:
-  delivery_radar:
+  - id: delivery_radar
     title: Delivery speed radar
     type: radar
     query:
@@ -65,7 +65,7 @@ Enable `presentation.area` to emphasize the overall revenue profile across state
 
 ```yaml visual-example=state_radar
 visuals:
-  state_radar:
+  - id: state_radar
     title: State revenue radar
     type: radar
     presentation:

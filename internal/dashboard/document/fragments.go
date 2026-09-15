@@ -199,8 +199,8 @@ func ExpandDashboardFragmentsWithReader(input DashboardDocument, dashboardPath, 
 	// Include mappings precede local mappings. A duplicate key is a hard error;
 	// a local value can never redefine a fragment value.
 	for id, value := range document.Spec.Visuals {
-		if _, exists := state.visuals[id]; exists {
-			return FragmentExpansion{}, state.errorf(dashboardPath, 0, "visual %q is redefined after fragment expansion", id)
+		if first, exists := state.visualOrigins[id]; exists {
+			return FragmentExpansion{}, state.errorf(dashboardPath, 0, "visual %q is redefined after fragment expansion (first defined at %s:%d)", id, first.path, first.line)
 		}
 		state.visuals[id] = value
 		state.visualOrigins[id] = idOrigin{path: state.dashboardPath}
@@ -338,16 +338,23 @@ func (state *fragmentState) expandFile(path, expected string) error {
 	collectionNode := fragmentCollectionNode(&root, expected)
 	switch expected {
 	case "visuals":
-		var values map[string]DashboardVisual
+		var values []struct {
+			ID string `json:"id"`
+			DashboardVisual
+		}
 		if err := decodeJSONBytes(fragmentJSON, &values); err != nil {
 			return state.errorf(canonical, root.Line, "decode visuals: %v", err)
 		}
-		for id, visual := range values {
-			if _, exists := state.visuals[id]; exists {
-				return state.errorf(relativePath, collectionMapKeyLine(collectionNode, id), "visual %q is defined more than once", id)
+		for index, entry := range values {
+			id := entry.ID
+			if strings.TrimSpace(id) == "" {
+				return state.errorf(relativePath, collectionSequenceLine(collectionNode, index), "visual id is required")
 			}
-			state.visuals[id] = visual
-			state.visualOrigins[id] = idOrigin{path: relativePath, line: collectionMapKeyLine(collectionNode, id)}
+			if first, exists := state.visualOrigins[id]; exists {
+				return state.errorf(relativePath, collectionSequenceLine(collectionNode, index), "visual %q is defined more than once (first defined at %s:%d)", id, first.path, first.line)
+			}
+			state.visuals[id] = entry.DashboardVisual
+			state.visualOrigins[id] = idOrigin{path: relativePath, line: collectionSequenceLine(collectionNode, index)}
 		}
 	case "filters":
 		var values []DashboardFilter

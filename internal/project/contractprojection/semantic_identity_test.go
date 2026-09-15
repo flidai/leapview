@@ -14,10 +14,10 @@ func semanticIdentityInput(t *testing.T, values string) contracts.SemanticModel 
 	t.Helper()
 	var input contracts.SemanticModel
 	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{
-"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},
-"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + values + `}},
-"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}},
-"filters":{"selected":{"field":"orders.region","operator":"in","value":["west","east"]}}
+"datasets":[{"name":"orders","model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":[{"name":"orders","type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}]}],
+"accessGrants":[{"name":"region","userAttribute":"region","allowedValues":` + values + `}],
+"dimensions":[{"name":"region","datatype":"String","bindings":[{"dataset":"orders","field":"orders.region"}],"requiredAccessGrants":["region"]}],
+"filters":[{"name":"selected","definition":{"field":"orders.region","operator":"in","value":["west","east"]}}]
 }}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestDatasetLocalMembersReachCanonicalSemanticProjection(t *testing.T) {
 	var previous []byte
 	for _, field := range []string{"", `,"field":"amount"`} {
 		var authored contracts.SemanticModel
-		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{"field":"region","datatype":"String"}},"metrics":{"amount":{"type":"simple","agg":"sum"` + field + `}}}}}}`
+		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":[{"name":"orders","model":"orders_model","dimensions":[{"name":"region","field":"region","datatype":"String"}],"metrics":[{"name":"amount","type":"simple","agg":"sum"` + field + `}]}]}}`
 		if err := json.Unmarshal([]byte(raw), &authored); err != nil {
 			t.Fatal(err)
 		}
@@ -75,9 +75,9 @@ func TestDatasetLocalProjectionResolvesDatatypeBeforeIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	var previous []byte
-	for _, assertion := range []string{"", `"datatype":"String"`} {
+	for _, assertion := range []string{"", `,"datatype":"String"`} {
 		var authored contracts.SemanticModel
-		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{` + assertion + `}},"metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`
+		raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":[{"name":"orders","model":"orders_model","dimensions":[{"name":"region"` + assertion + `}],"metrics":[{"name":"orders","type":"simple","agg":"count","field":"id"}]}]}}`
 		if err := json.Unmarshal([]byte(raw), &authored); err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +101,7 @@ func TestDatasetLocalProjectionResolvesDatatypeBeforeIdentity(t *testing.T) {
 		previous = canonical
 	}
 	var incompatible contracts.SemanticModel
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","dimensions":{"region":{"datatype":"Integer"}},"metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":[{"name":"orders","model":"orders_model","dimensions":[{"name":"region","datatype":"Integer"}],"metrics":[{"name":"orders","type":"simple","agg":"count","field":"id"}]}]}}`
 	if err := json.Unmarshal([]byte(raw), &incompatible); err != nil {
 		t.Fatal(err)
 	}

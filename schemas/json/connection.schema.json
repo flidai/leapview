@@ -564,6 +564,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "tags": {
           "items": {
             "type": "string"
@@ -571,6 +575,9 @@
           "type": "array"
         }
       },
+      "required": [
+        "name"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -1151,6 +1158,10 @@
           },
           "type": "array"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "type": {
           "enum": [
             "primary",
@@ -1163,6 +1174,7 @@
       },
       "required": [
         "fields",
+        "name",
         "type"
       ],
       "type": "object",
@@ -1193,24 +1205,16 @@
           "$ref": "#/$defs/ModelDefinition"
         },
         "entities": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/ModelEntity"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "fields": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "grain": {
           "$ref": "#/$defs/ModelGrain"
@@ -1918,14 +1922,10 @@
           "type": "string"
         },
         "fields": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "location": {
           "$ref": "#/$defs/SourceLocation"

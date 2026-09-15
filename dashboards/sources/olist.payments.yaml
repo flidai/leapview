@@ -13,5 +13,5 @@ spec:
   schema:
     mode: compatible
   fields:
-    order_id: {datatype: String, description: Order identifier for the payment.}
-    payment_value: {datatype: Float, description: Payment amount for the transaction.}
+    - {name: order_id, datatype: String, description: Order identifier for the payment.}
+    - {name: payment_value, datatype: Float, description: Payment amount for the transaction.}

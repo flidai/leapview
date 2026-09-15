@@ -6,34 +6,34 @@ metadata:
   displayName: Operations Semantic Model
 spec:
   datasets:
-    operations_orders:
+    - name: operations_orders
       model: operations_orders
       metrics:
-        order_count:
+        - name: order_count
           type: simple
           empty: zero
           label: Orders
           agg: count_distinct
           field: order_id
-        review_score:
+        - name: review_score
           type: simple
           empty: 'null'
           label: Review score
           agg: avg
-        delivery_days:
+        - name: delivery_days
           type: simple
           empty: 'null'
           label: Delivery days
           agg: avg
       dimensions:
-        status:
+        - name: status
           datatype: String
-        delivery_bucket:
+        - name: delivery_bucket
           datatype: String
-    operations_customers:
+    - name: operations_customers
       model: operations_customers
   relationships:
-    orders_customers:
+    - name: orders_customers
       from:
         dataset: operations_orders
         entity: customer
@@ -41,10 +41,10 @@ spec:
         dataset: operations_customers
         entity: customer
   dimensions:
-    state:
+    - name: state
       datatype: String
       bindings:
-        operations_orders:
+        - dataset: operations_orders
           field: operations_customers.state
           path:
             - orders_customers

@@ -12,7 +12,7 @@ Use signed business contributions so the bridge visibly distinguishes gains from
 
 ```yaml visual-example=revenue_bridge_waterfall
 visuals:
-  revenue_bridge_waterfall:
+  - id: revenue_bridge_waterfall
     title: Revenue drivers
     description: Explains positive and negative contributions to net revenue growth.
     type: waterfall
@@ -46,7 +46,7 @@ Replace revenue with order count to reuse the same running-contribution structur
 
 ```yaml visual-example=orders_waterfall
 visuals:
-  orders_waterfall:
+  - id: orders_waterfall
     title: Monthly order contribution
     type: waterfall
     query:
@@ -71,7 +71,7 @@ Use `presentation.labels` for exact contributions and `dataZoom` when many categ
 
 ```yaml visual-example=revenue_waterfall_labeled
 visuals:
-  revenue_waterfall_labeled:
+  - id: revenue_waterfall_labeled
     title: Labeled revenue waterfall
     type: waterfall
     presentation:

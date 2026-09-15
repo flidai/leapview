@@ -7,23 +7,23 @@ metadata:
   description: Deterministic synthetic locations used to verify governed viewport aggregation at production scale.
 spec:
   fields:
-    point_id:
+    - name: point_id
       datatype: String
       label: Point ID
       description: Stable identity for one generated location.
-    city:
+    - name: city
       datatype: String
       label: City
       description: Metropolitan area used as the center of the generated location cloud.
-    state:
+    - name: state
       datatype: String
       label: State
       description: Brazilian state containing the generated location.
-    latitude:
+    - name: latitude
       datatype: Float
       label: Latitude
       description: Deterministic latitude near the metropolitan center.
-    longitude:
+    - name: longitude
       datatype: Float
       label: Longitude
       description: Deterministic longitude near the metropolitan center.
@@ -56,7 +56,7 @@ spec:
       FROM numbered
       WHERE point_number <= 1000000
   entities:
-    point:
+    - name: point
       type: primary
       fields:
       - point_id

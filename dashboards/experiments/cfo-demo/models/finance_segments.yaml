@@ -7,7 +7,7 @@ metadata:
   description: Conformed customer-segment dimension shared by the finance facts.
 spec:
   fields:
-    segment: {datatype: String, label: Segment}
+    - {name: segment, datatype: String, label: Segment}
   definition:
     type: sql
     sql: |
@@ -15,7 +15,7 @@ spec:
       FROM source."finance.financials"
       WHERE segment IS NOT NULL AND trim(segment) <> ''
   entities:
-    segment:
+    - name: segment
       type: primary
       fields: [segment]
   grain:

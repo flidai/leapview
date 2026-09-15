@@ -9,6 +9,8 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -104,9 +106,33 @@ func runOssieImport(ctx context.Context, opts *ossieOptions, input io.Reader, ou
 			Metrics:       nativeMetrics(model.Metrics, true),
 		},
 	}
+	indexedYAML, err := yaml.Marshal(document)
+	if err != nil {
+		return err
+	}
+	indexedJSON, err := configschema.NormalizeJSONDocument("ossie-import.yaml", indexedYAML)
+	if err != nil {
+		return err
+	}
+	authoredJSON, err := projectcontracts.NamedSemanticAuthoringJSON(indexedJSON)
+	if err != nil {
+		return err
+	}
+	var authored yaml.Node
+	if err := yaml.Unmarshal(authoredJSON, &authored); err != nil {
+		return err
+	}
+	useBlockYAML(&authored)
 	encoder := yaml.NewEncoder(output)
 	defer encoder.Close()
-	return encoder.Encode(document)
+	return encoder.Encode(&authored)
+}
+
+func useBlockYAML(node *yaml.Node) {
+	node.Style = 0
+	for _, child := range node.Content {
+		useBlockYAML(child)
+	}
 }
 
 func runOssieExport(ctx context.Context, opts *ossieOptions, output io.Writer) error {

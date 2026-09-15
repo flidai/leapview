@@ -6,19 +6,19 @@ metadata:
   displayName: Monthly market prices
 spec:
   fields:
-    month:
+    - name: month
       datatype: String
       label: Month
-    open:
+    - name: open
       datatype: Float
       label: Open
-    close:
+    - name: close
       datatype: Float
       label: Close
-    low:
+    - name: low
       datatype: Float
       label: Low
-    high:
+    - name: high
       datatype: Float
       label: High
   definition:
@@ -32,7 +32,7 @@ spec:
         CAST(high AS DOUBLE) AS high
       FROM source."docs.market_ohlc"
   entities:
-    month:
+    - name: month
       type: primary
       fields:
       - month

@@ -6,10 +6,10 @@ metadata:
   displayName: Conversion stages
 spec:
   fields:
-    stage:
+    - name: stage
       datatype: String
       label: Stage
-    conversions:
+    - name: conversions
       datatype: Float
       label: Conversions
   definition:
@@ -18,7 +18,7 @@ spec:
       SELECT stage, CAST(conversions AS DOUBLE) AS conversions
       FROM source."docs.conversion_stages"
   entities:
-    stage:
+    - name: stage
       type: primary
       fields:
       - stage

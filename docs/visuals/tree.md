@@ -12,7 +12,7 @@ Order dimensions from division to team and use workload to make the hierarchy us
 
 ```yaml visual-example=operating_model_tree
 visuals:
-  operating_model_tree:
+  - id: operating_model_tree
     title: Workload by division and team
     description: Shows the operating model and active workload across its teams.
     type: tree
@@ -48,7 +48,7 @@ Add state as an intermediate ordered dimension and use `initialDepth` to limit t
 
 ```yaml visual-example=category_state_status_tree
 visuals:
-  category_state_status_tree:
+  - id: category_state_status_tree
     title: Category, state, and status tree
     type: tree
     presentation:
@@ -83,7 +83,7 @@ Replace the parent dimension with category to present a different two-level hier
 
 ```yaml visual-example=category_status_tree
 visuals:
-  category_status_tree:
+  - id: category_status_tree
     title: Category and status tree
     type: tree
     query:

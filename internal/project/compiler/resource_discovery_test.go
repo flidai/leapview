@@ -197,7 +197,7 @@ func TestSnapshotReaderAllowsBoundedParentIncludeAndRejectsNonYAMLMatch(t *testi
 	reader := &snapshotSourceReader{
 		root: root,
 		files: map[string][]byte{
-			"dashboards/shared.yaml":       []byte("visuals: {}\n"),
+			"dashboards/shared.yaml":       []byte("visuals: []\n"),
 			"dashboards/nested/sales.yaml": []byte(discoveryFixture("Dashboard", "dashboard:sales", "sales")),
 		},
 		paths: map[string]struct{}{

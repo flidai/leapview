@@ -7,13 +7,13 @@ metadata:
   description: Variance fact with one signed contribution per financial record and driver that reconciles exactly to EBITDA variance.
 spec:
   fields:
-    variance_row_id: {datatype: String, label: Variance row ID}
-    finance_date: {datatype: Date, label: Date}
-    segment: {datatype: String, label: Segment key}
-    country: {datatype: String, label: Country key}
-    product: {datatype: String, label: Product key}
-    driver_order: {datatype: Integer, label: Order}
-    impact: {datatype: Decimal, label: EBITDA impact}
+    - {name: variance_row_id, datatype: String, label: Variance row ID}
+    - {name: finance_date, datatype: Date, label: Date}
+    - {name: segment, datatype: String, label: Segment key}
+    - {name: country, datatype: String, label: Country key}
+    - {name: product, datatype: String, label: Product key}
+    - {name: driver_order, datatype: Integer, label: Order}
+    - {name: impact, datatype: Decimal, label: EBITDA impact}
   definition:
     type: sql
     sql: |
@@ -54,22 +54,22 @@ spec:
         CAST(round(impact, 2) AS DECIMAL(38,2)) AS impact
       FROM drivers
   entities:
-    variance_row:
+    - name: variance_row
       type: primary
       fields: [variance_row_id]
-    finance_date:
+    - name: finance_date
       type: foreign
       fields: [finance_date]
-    segment:
+    - name: segment
       type: foreign
       fields: [segment]
-    country:
+    - name: country
       type: foreign
       fields: [country]
-    product:
+    - name: product
       type: foreign
       fields: [product]
-    variance_driver:
+    - name: variance_driver
       type: foreign
       fields: [driver_order]
   grain:

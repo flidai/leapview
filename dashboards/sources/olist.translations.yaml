@@ -13,5 +13,5 @@ spec:
   schema:
     mode: compatible
   fields:
-    product_category_name: {datatype: String, description: Product category name in Portuguese.}
-    product_category_name_english: {datatype: String, description: English product category name.}
+    - {name: product_category_name, datatype: String, description: Product category name in Portuguese.}
+    - {name: product_category_name_english, datatype: String, description: English product category name.}

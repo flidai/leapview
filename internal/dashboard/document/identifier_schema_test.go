@@ -28,11 +28,9 @@ func TestDashboardDocumentSchemaRejectsIdentifierViolations(t *testing.T) {
 		"resource id maximum": func(document map[string]any) {
 			document["metadata"].(map[string]any)["id"] = "dashboard:" + repeatString("a", 128)
 		},
-		"visual map key": func(document map[string]any) {
-			visuals := document["spec"].(map[string]any)["visuals"].(map[string]any)
-			visual := visuals["revenue"]
-			delete(visuals, "revenue")
-			visuals["invalid key"] = visual
+		"visual id": func(document map[string]any) {
+			visuals := document["spec"].(map[string]any)["visuals"].([]any)
+			visuals[0].(map[string]any)["id"] = "invalid key"
 		},
 		"filter id": func(document map[string]any) {
 			filters := document["spec"].(map[string]any)["filters"].([]any)
@@ -48,19 +46,19 @@ func TestDashboardDocumentSchemaRejectsIdentifierViolations(t *testing.T) {
 			components[0].(map[string]any)["id"] = "component id"
 		},
 		"result alias": func(document map[string]any) {
-			visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+			visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 			query := visual["query"].(map[string]any)
 			query["dimensions"] = []any{map[string]any{"dimension": "state", "alias": "bad.alias"}}
 		},
 		"qualified records field": func(document map[string]any) {
-			visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+			visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 			visual["query"] = map[string]any{
 				"type": "records", "dataset": "orders",
 				"fields": []any{map[string]any{"field": "orders.id"}},
 			}
 		},
 		"dataset map key": func(document map[string]any) {
-			visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+			visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 			visual["datasets"] = map[string]any{
 				"invalid key": map[string]any{"type": "records", "dataset": "orders", "fields": []any{map[string]any{"field": "id"}}},
 			}
@@ -97,11 +95,11 @@ func TestDashboardDocumentSchemaRejectsUnsupportedGeographicLabelPaths(t *testin
 		kind string
 		path string
 	}{
-		{name: "map presentation", kind: "presentation", path: "/spec/visuals/revenue/presentation/labels"},
-		{name: "heat layer", kind: "heat", path: "/spec/visuals/revenue/presentation/layers/0/label"},
-		{name: "density layer", kind: "density", path: "/spec/visuals/revenue/presentation/layers/0/label"},
-		{name: "path layer", kind: "path", path: "/spec/visuals/revenue/presentation/layers/0/label"},
-		{name: "reference layer", kind: "reference", path: "/spec/visuals/revenue/presentation/layers/0/label"},
+		{name: "map presentation", kind: "presentation", path: "/spec/visuals/0/presentation/labels"},
+		{name: "heat layer", kind: "heat", path: "/spec/visuals/0/presentation/layers/0/label"},
+		{name: "density layer", kind: "density", path: "/spec/visuals/0/presentation/layers/0/label"},
+		{name: "path layer", kind: "path", path: "/spec/visuals/0/presentation/layers/0/label"},
+		{name: "reference layer", kind: "reference", path: "/spec/visuals/0/presentation/layers/0/label"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			document := geographicSchemaDocument(t, test.kind, true)
@@ -115,7 +113,7 @@ func TestDashboardDocumentSchemaRejectsUnsupportedGeographicLabelPaths(t *testin
 func TestDashboardDocumentSchemaRejectsRemovedPathCurvature(t *testing.T) {
 	compiled := loadDashboardDocumentSchema(t)
 	document := geographicSchemaDocument(t, "path", false)
-	layer := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)["presentation"].(map[string]any)["layers"].([]any)[0].(map[string]any)
+	layer := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)["presentation"].(map[string]any)["layers"].([]any)[0].(map[string]any)
 	layer["line"] = map[string]any{"width": 3, "curvature": 0}
 	if err := compiled.Validate(document); err == nil || !strings.Contains(err.Error(), "curvature") {
 		t.Fatalf("generated dashboard schema accepted removed path curvature: %v", err)
@@ -125,7 +123,7 @@ func TestDashboardDocumentSchemaRejectsRemovedPathCurvature(t *testing.T) {
 func geographicSchemaDocument(t *testing.T, kind string, label bool) map[string]any {
 	t.Helper()
 	document := loadDashboardDocumentFixture(t)
-	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 	visual["type"] = "map"
 	visual["presentation"] = map[string]any{"type": "geographic"}
 	if kind == "presentation" {
@@ -154,7 +152,7 @@ func geographicSchemaDocument(t *testing.T, kind string, label bool) map[string]
 func TestDashboardDocumentSchemaRejectsRemovedKPIThresholds(t *testing.T) {
 	compiled := loadDashboardDocumentSchema(t)
 	document := loadDashboardDocumentFixture(t)
-	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 	visual["type"] = "kpi"
 	visual["presentation"] = map[string]any{
 		"type":       "kpi",

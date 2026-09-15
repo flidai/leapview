@@ -24581,71 +24581,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 draftId: example
                 lifecycle:
                   draft:
@@ -25535,71 +25471,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 projectId: example
                 provenance:
                   actorId: example
@@ -25965,71 +25837,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 projectId: example
                 provenance:
                   actorId: example
@@ -62989,71 +62797,7 @@ components:
                 title: example
             semanticModel: example
             visuals:
-              key:
-                accessibility:
-                  announceChanges: true
-                  description: example
-                  summary: example
-                  title: example
-                calculations:
-                  - axis: rows
-                    hidden: true
-                    id: example
-                    label: example
-                    lookup:
-                      field: example
-                      value: example
-                    offset: 1
-                    orderBy:
-                      - direction: asc
-                        field: example
-                    parent: example
-                    partitionBy:
-                      - example
-                    reset: none
-                    source: example
-                    template: running_total
-                    window: 1
-                dataBudget:
-                  maxRows: 1
-                  requiredCompleteness: complete
-                datasets:
-                  key: {}
-                description: example
-                interactions: []
-                metadata:
-                  description:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  subtitle:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  summary:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  title:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                subtitle: example
-                title: example
-                titleVisible: true
-                type: line
+              - id: example
         draftId: example
         lifecycle:
           draft:
@@ -65894,71 +65638,7 @@ components:
                 title: example
             semanticModel: example
             visuals:
-              key:
-                accessibility:
-                  announceChanges: true
-                  description: example
-                  summary: example
-                  title: example
-                calculations:
-                  - axis: rows
-                    hidden: true
-                    id: example
-                    label: example
-                    lookup:
-                      field: example
-                      value: example
-                    offset: 1
-                    orderBy:
-                      - direction: asc
-                        field: example
-                    parent: example
-                    partitionBy:
-                      - example
-                    reset: none
-                    source: example
-                    template: running_total
-                    window: 1
-                dataBudget:
-                  maxRows: 1
-                  requiredCompleteness: complete
-                datasets:
-                  key: {}
-                description: example
-                interactions: []
-                metadata:
-                  description:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  subtitle:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  summary:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  title:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                subtitle: example
-                title: example
-                titleVisible: true
-                type: line
+              - id: example
         projectId: example
         provenance:
           actorId: example
@@ -67757,71 +67437,7 @@ components:
               title: example
           semanticModel: example
           visuals:
-            key:
-              accessibility:
-                announceChanges: true
-                description: example
-                summary: example
-                title: example
-              calculations:
-                - axis: rows
-                  hidden: true
-                  id: example
-                  label: example
-                  lookup:
-                    field: example
-                    value: example
-                  offset: 1
-                  orderBy:
-                    - direction: asc
-                      field: example
-                  parent: example
-                  partitionBy:
-                    - example
-                  reset: none
-                  source: example
-                  template: running_total
-                  window: 1
-              dataBudget:
-                maxRows: 1
-                requiredCompleteness: complete
-              datasets:
-                key: {}
-              description: example
-              interactions: []
-              metadata:
-                description:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                subtitle:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                summary:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                title:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-              subtitle: example
-              title: example
-              titleVisible: true
-              type: line
+            - id: example
     DashboardEventAnnotation:
       type: object
       required:
@@ -70631,80 +70247,11 @@ components:
                 - example
               urlParameter: example
         visuals:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/DashboardVisual'
-          propertyNames:
-            type: string
-            minLength: 1
-            maxLength: 128
-            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          type: array
+          items:
+            $ref: '#/components/schemas/NamedDashboardVisual'
           example:
-            key:
-              accessibility:
-                announceChanges: true
-                description: example
-                summary: example
-                title: example
-              calculations:
-                - axis: rows
-                  hidden: true
-                  id: example
-                  label: example
-                  lookup:
-                    field: example
-                    value: example
-                  offset: 1
-                  orderBy:
-                    - direction: asc
-                      field: example
-                  parent: example
-                  partitionBy:
-                    - example
-                  reset: none
-                  source: example
-                  template: running_total
-                  window: 1
-              dataBudget:
-                maxRows: 1
-                requiredCompleteness: complete
-              datasets:
-                key: {}
-              description: example
-              interactions: []
-              metadata:
-                description:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                subtitle:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                summary:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                title:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-              subtitle: example
-              title: example
-              titleVisible: true
-              type: line
+            - id: example
         pages:
           type: array
           items:
@@ -70779,71 +70326,7 @@ components:
             title: example
         semanticModel: example
         visuals:
-          key:
-            accessibility:
-              announceChanges: true
-              description: example
-              summary: example
-              title: example
-            calculations:
-              - axis: rows
-                hidden: true
-                id: example
-                label: example
-                lookup:
-                  field: example
-                  value: example
-                offset: 1
-                orderBy:
-                  - direction: asc
-                    field: example
-                parent: example
-                partitionBy:
-                  - example
-                reset: none
-                source: example
-                template: running_total
-                window: 1
-            dataBudget:
-              maxRows: 1
-              requiredCompleteness: complete
-            datasets:
-              key: {}
-            description: example
-            interactions: []
-            metadata:
-              description:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              subtitle:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              summary:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              title:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-            subtitle: example
-            title: example
-            titleVisible: true
-            type: line
+          - id: example
     DashboardStackingMode:
       type: string
       enum:
@@ -75540,6 +75023,22 @@ components:
       example:
         maxSelectedValues: 1
         type: example
+    NamedDashboardVisual:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardVisual'
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+      description: A visual declared in a Dashboard document carries its list identity.
+      example:
+        id: example
     NullCheckDashboardFilterExpression:
       type: object
       allOf:

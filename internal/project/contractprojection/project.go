@@ -471,7 +471,7 @@ func projectDuration(value *authoredDuration) *Duration {
 }
 
 func decodeGenerated(input, output any) error {
-	data, err := json.Marshal(input)
+	data, err := projectcontracts.IndexedAuthoringJSON(input)
 	if err != nil {
 		return err
 	}
