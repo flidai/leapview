@@ -23,7 +23,10 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 			Steps []struct {
 				Name string            `yaml:"name"`
 				If   string            `yaml:"if"`
+				ID   string            `yaml:"id"`
 				Run  string            `yaml:"run"`
+				Uses string            `yaml:"uses"`
+				With map[string]string `yaml:"with"`
 				Env  map[string]string `yaml:"env"`
 			} `yaml:"steps"`
 		} `yaml:"jobs"`
@@ -58,6 +61,47 @@ func TestMergeWorkflowIndependentLanesAndStrictGate(t *testing.T) {
 	}
 	if !validated {
 		t.Fatal("full merge validation must retain the complete extras contract")
+	}
+	frontend := workflow.Jobs["frontend-validation"]
+	prepareIndex, qaIndex, generatedIndex, artifactIndex := -1, -1, -1, -1
+	frontendToolchain := false
+	for index, step := range frontend.Steps {
+		switch {
+		case step.Name == "Set up the cached CI toolchain":
+			frontendToolchain = true
+			if step.With["browser"] != "true" {
+				t.Fatal("site UI QA must reuse the frontend lane's browser toolchain")
+			}
+		case step.ID == "frontend-prepare":
+			prepareIndex = index
+		case step.Name == "Verify generated artifacts":
+			generatedIndex = index
+		case step.ID == "ui-route-qa":
+			qaIndex = index
+			if step.Name != "Run UI route QA" || step.If != "${{ !cancelled() && matrix.shard == 'site' && steps.frontend-prepare.outcome == 'success' }}" || step.Run != "task qa:ui-framework" {
+				t.Fatal("UI route QA must run unchanged on only the existing site shard")
+			}
+		case step.Name == "Upload UI visual-regression failure artifacts":
+			artifactIndex = index
+			if step.If != "${{ failure() && matrix.shard == 'site' && steps.ui-route-qa.outcome == 'failure' }}" || step.Uses != "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" || !strings.Contains(step.With["path"], ".tmp/qa-ui-framework/visual-artifacts") {
+				t.Fatal("site UI QA failures must retain visual-regression artifacts")
+			}
+		}
+	}
+	if !frontendToolchain || prepareIndex < 0 || generatedIndex <= prepareIndex || qaIndex <= generatedIndex || artifactIndex <= qaIndex {
+		t.Fatal("site UI QA must reuse prepared inputs after the shard contract and retain failure artifacts")
+	}
+	fullToolchain := false
+	for _, step := range workflow.Jobs["full-validation"].Steps {
+		if step.Name == "Set up the cached CI toolchain" {
+			fullToolchain = true
+			if step.With["browser"] != "false" || step.With["terraform"] != "true" {
+				t.Fatal("full validation must retain Terraform without reinstalling the site-owned browser toolchain")
+			}
+		}
+	}
+	if !fullToolchain {
+		t.Fatal("full validation lost its cached toolchain setup")
 	}
 	gate := workflow.Jobs["ci-gate"]
 	if gate.Name != "CI gate" || gate.If != "${{ always() }}" || !slices.Equal(gate.Needs, lanes) {

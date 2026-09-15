@@ -1634,8 +1634,6 @@ tasks:
     desc: Run merge-only validation with bounded hosted parallelism
     cmds:
       - task: desktop:test
-      - task: qa:ui-framework
-      - task: generate
       - task: ci:full:extras:parallel
 
   ci:nightly:

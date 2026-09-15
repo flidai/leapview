@@ -114,6 +114,7 @@ jobs:
           browser: "true"
 
       - name: Prepare generated and embedded assets
+        id: frontend-prepare
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
 
       - name: Run frontend validation
@@ -121,6 +122,22 @@ jobs:
 
       - name: Verify generated artifacts
         run: task generated:check
+
+      - name: Run UI route QA
+        if: ${{ !cancelled() && matrix.shard == 'site' && steps.frontend-prepare.outcome == 'success' }}
+        id: ui-route-qa
+        run: task qa:ui-framework
+
+      - name: Upload UI visual-regression failure artifacts
+        if: ${{ failure() && matrix.shard == 'site' && steps.ui-route-qa.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: leapview-ui-visual-regression-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            .tmp/qa-ui-framework/visual-artifacts
+            scripts/visual-regression-baselines
 
   full-validation:
     name: Full merge validation
@@ -140,7 +157,7 @@ jobs:
       - name: Set up the cached CI toolchain
         uses: ./.github/actions/setup-ci
         with:
-          browser: "true"
+          browser: "false"
           terraform: "true"
 
       - name: Prepare generated and embedded assets
@@ -149,17 +166,6 @@ jobs:
       - name: Run merge-only validation
         id: merge-validation
         run: task ci:full:extras:hosted
-
-      - name: Upload UI visual-regression failure artifacts
-        if: ${{ failure() && steps.merge-validation.outcome == 'failure' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: leapview-ui-visual-regression-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          retention-days: 30
-          if-no-files-found: warn
-          path: |
-            .tmp/qa-ui-framework/visual-artifacts
-            scripts/visual-regression-baselines
 
   ci-gate:
     name: CI gate
