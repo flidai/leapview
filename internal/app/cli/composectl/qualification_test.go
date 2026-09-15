@@ -898,7 +898,8 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 		"exec",
 		"leapview-app",
 		"sh", "-ec",
-		`find /var/lib/leapview -type f ! -name '*.db-wal' ! -name '*.db-shm' -exec du -b {} + | awk '{ total += $1 } END { print total + 0 }'`,
+		qualificationDiskUsageCommand,
+		"qualification-disk-usage", "/var/lib/leapview",
 	}
 	if got != 39996109 || len(executor.requests) != 1 ||
 		!slices.Equal(executor.requests[0].Arguments, wantArguments) {
@@ -907,6 +908,17 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 			got,
 			executor.requests,
 		)
+	}
+}
+
+func TestQualificationDiskUsageCommandRejectsMissingRoot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	output, err := exec.CommandContext(
+		t.Context(), "sh", "-ec", qualificationDiskUsageCommand,
+		"qualification-disk-usage", missing,
+	).CombinedOutput()
+	if err == nil || strings.TrimSpace(string(output)) == "0" {
+		t.Fatalf("missing disk root command error = %v, output = %q; want non-zero failure", err, output)
 	}
 }
 

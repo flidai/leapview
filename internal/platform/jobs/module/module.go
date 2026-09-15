@@ -58,8 +58,14 @@ var errWaitForStaleRiverClaim = errors.New("wait for stale River claim finalizat
 const (
 	approvalActivationKind        = "delivery.approval.activate"
 	approvalActivationRescueAfter = 2 * time.Minute
+	riverDefaultRescueAfter       = time.Hour
 	noDefaultRiverJobTimeout      = -1
 )
+
+type riverWorkerTiming struct {
+	executionTimeout time.Duration
+	rescueAfter      time.Duration
+}
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil {
@@ -100,23 +106,23 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		if timeoutHandler, ok := handler.(interface{ LeaseTimeout() time.Duration }); ok && timeoutHandler.LeaseTimeout() > 0 {
 			leaseTimeouts[handler.Kind()] = timeoutHandler.LeaseTimeout()
 		}
-		workerTimeout, err := m.riverWorkerTimeout(handler)
+		workerTiming, err := m.riverWorkerTiming(handler)
 		if err != nil {
 			return err
 		}
 		switch handler.Kind() {
 		case "agent.run":
-			river.AddWorker(workers, &agentRunWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.AgentRunArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &agentRunWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.AgentRunArgs]{module: m, timing: workerTiming}})
 		case "upload.finalize":
-			river.AddWorker(workers, &uploadFinalizeWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.UploadFinalizeArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &uploadFinalizeWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.UploadFinalizeArgs]{module: m, timing: workerTiming}})
 		case "release.finalize":
-			river.AddWorker(workers, &releaseFinalizeWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.ReleaseFinalizeArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &releaseFinalizeWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.ReleaseFinalizeArgs]{module: m, timing: workerTiming}})
 		case "deployment.activate":
-			river.AddWorker(workers, &deploymentActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.DeploymentActivateArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &deploymentActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.DeploymentActivateArgs]{module: m, timing: workerTiming}})
 		case approvalActivationKind:
-			river.AddWorker(workers, &approvalActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.ApprovalActivateArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &approvalActivateWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.ApprovalActivateArgs]{module: m, timing: workerTiming}})
 		case "refresh_pipeline":
-			river.AddWorker(workers, &refreshPipelineWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.RefreshPipelineArgs]{module: m, timeout: workerTimeout}})
+			river.AddWorker(workers, &refreshPipelineWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.RefreshPipelineArgs]{module: m, timing: workerTiming}})
 		default:
 			return errors.Join(jobs.ErrUnknownKind, errors.New(handler.Kind()))
 		}
@@ -132,10 +138,10 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	riverConfig := &river.Config{
 		ID: strings.TrimSpace(m.config.OwnerID), Logger: logger, MaxAttempts: jobpostgres.MaxAttempts,
 		Queues: map[string]river.QueueConfig{"control": {MaxWorkers: 2}, "background": {MaxWorkers: 4}}, Workers: workers,
-		// River's rescuer first applies this client-wide horizon, then each
-		// worker's Timeout. Disable the fallback timeout and publish an explicit
-		// timeout for every registered worker so approval activation can recover
-		// promptly without shortening genuinely long-running jobs.
+		// River's rescuer first applies this client-wide candidate horizon, then
+		// each worker's Timeout. Disable the fallback and publish the prior
+		// effective rescue horizon per long-running worker; approval activation
+		// alone publishes the bounded horizon needed for prompt orphan recovery.
 		JobTimeout: noDefaultRiverJobTimeout, RescueStuckJobsAfter: approvalActivationRescueAfter,
 	}
 	if m.config.PollInterval > 0 {
@@ -340,15 +346,22 @@ func (m *Module) riverJobTimeout() time.Duration {
 	return river.JobTimeoutDefault
 }
 
-func (m *Module) riverWorkerTimeout(handler jobs.Handler) (time.Duration, error) {
+func (m *Module) riverWorkerTiming(handler jobs.Handler) (riverWorkerTiming, error) {
+	executionTimeout := m.riverJobTimeout()
 	if handler.Kind() != approvalActivationKind {
-		return m.riverJobTimeout(), nil
+		rescueAfter := riverDefaultRescueAfter
+		if m.config.RiverJobTimeout > 0 {
+			rescueAfter = executionTimeout + riverDefaultRescueAfter
+		} else if executionTimeout < 0 {
+			rescueAfter = executionTimeout
+		}
+		return riverWorkerTiming{executionTimeout: executionTimeout, rescueAfter: rescueAfter}, nil
 	}
 	timeoutHandler, ok := handler.(interface{ LeaseTimeout() time.Duration })
 	if !ok || timeoutHandler.LeaseTimeout() <= 0 || timeoutHandler.LeaseTimeout() > approvalActivationRescueAfter {
-		return 0, errors.New("approval activation handler requires a bounded execution lease")
+		return riverWorkerTiming{}, errors.New("approval activation handler requires a bounded execution lease")
 	}
-	return timeoutHandler.LeaseTimeout(), nil
+	return riverWorkerTiming{executionTimeout: timeoutHandler.LeaseTimeout(), rescueAfter: approvalActivationRescueAfter}, nil
 }
 
 func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], kind string, args jobpostgres.ExecutionArgs) error {
@@ -393,8 +406,8 @@ func (m *Module) protectRiverResult(ctx context.Context, riverJobID int64, fence
 
 type riverWorkerDefaults[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
-	module  *Module
-	timeout time.Duration
+	module *Module
+	timing riverWorkerTiming
 }
 
 func (w riverWorkerDefaults[T]) NextRetry(job *river.Job[T]) time.Time {
@@ -404,14 +417,23 @@ func (w riverWorkerDefaults[T]) NextRetry(job *river.Job[T]) time.Time {
 	return time.Time{}
 }
 
-func (w riverWorkerDefaults[T]) Timeout(*river.Job[T]) time.Duration { return w.timeout }
+func (w riverWorkerDefaults[T]) Timeout(*river.Job[T]) time.Duration { return w.timing.rescueAfter }
+
+func (w riverWorkerDefaults[T]) work(ctx context.Context, job *river.Job[T], kind string, args jobpostgres.ExecutionArgs) error {
+	if w.timing.executionTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, w.timing.executionTimeout)
+		defer cancel()
+	}
+	return workTyped(ctx, w.module, job, kind, args)
+}
 
 type agentRunWorker struct {
 	riverWorkerDefaults[jobpostgres.AgentRunArgs]
 }
 
 func (w *agentRunWorker) Work(ctx context.Context, j *river.Job[jobpostgres.AgentRunArgs]) error {
-	return workTyped(ctx, w.module, j, "agent.run", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, "agent.run", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type uploadFinalizeWorker struct {
@@ -419,7 +441,7 @@ type uploadFinalizeWorker struct {
 }
 
 func (w *uploadFinalizeWorker) Work(ctx context.Context, j *river.Job[jobpostgres.UploadFinalizeArgs]) error {
-	return workTyped(ctx, w.module, j, "upload.finalize", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, "upload.finalize", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type releaseFinalizeWorker struct {
@@ -427,7 +449,7 @@ type releaseFinalizeWorker struct {
 }
 
 func (w *releaseFinalizeWorker) Work(ctx context.Context, j *river.Job[jobpostgres.ReleaseFinalizeArgs]) error {
-	return workTyped(ctx, w.module, j, "release.finalize", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, "release.finalize", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type deploymentActivateWorker struct {
@@ -435,7 +457,7 @@ type deploymentActivateWorker struct {
 }
 
 func (w *deploymentActivateWorker) Work(ctx context.Context, j *river.Job[jobpostgres.DeploymentActivateArgs]) error {
-	return workTyped(ctx, w.module, j, "deployment.activate", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, "deployment.activate", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type approvalActivateWorker struct {
@@ -443,7 +465,7 @@ type approvalActivateWorker struct {
 }
 
 func (w *approvalActivateWorker) Work(ctx context.Context, j *river.Job[jobpostgres.ApprovalActivateArgs]) error {
-	return workTyped(ctx, w.module, j, "delivery.approval.activate", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, approvalActivationKind, jobpostgres.ExecutionArgs(j.Args))
 }
 
 type refreshPipelineWorker struct {
@@ -451,7 +473,7 @@ type refreshPipelineWorker struct {
 }
 
 func (w *refreshPipelineWorker) Work(ctx context.Context, j *river.Job[jobpostgres.RefreshPipelineArgs]) error {
-	return workTyped(ctx, w.module, j, "refresh_pipeline", jobpostgres.ExecutionArgs(j.Args))
+	return w.work(ctx, j, "refresh_pipeline", jobpostgres.ExecutionArgs(j.Args))
 }
 
 func (m *Module) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {

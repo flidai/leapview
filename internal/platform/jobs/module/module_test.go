@@ -58,18 +58,22 @@ func TestHandlerExecutionLeaseTimeoutOverridesModuleFallback(t *testing.T) {
 	if got := (&Module{}).riverJobTimeout(); got != river.JobTimeoutDefault {
 		t.Fatalf("default River job timeout = %s, want library default", got)
 	}
-	longRunning, err := m.riverWorkerTimeout(jobs.HandlerFunc{JobKind: "release.finalize"})
-	if err != nil || longRunning != 24*time.Hour {
-		t.Fatalf("long-running worker timeout = %s, %v; want 24h", longRunning, err)
+	longRunning, err := m.riverWorkerTiming(jobs.HandlerFunc{JobKind: "release.finalize"})
+	if err != nil || longRunning.executionTimeout != 24*time.Hour || longRunning.rescueAfter != 25*time.Hour {
+		t.Fatalf("long-running worker timing = %#v, %v; want 24h execution and 25h rescue", longRunning, err)
 	}
-	approval, err := m.riverWorkerTimeout(jobs.HandlerFunc{
+	approval, err := m.riverWorkerTiming(jobs.HandlerFunc{
 		JobKind: approvalActivationKind, ExecutionLeaseTimeout: time.Minute,
 	})
-	if err != nil || approval != time.Minute {
-		t.Fatalf("approval worker timeout = %s, %v; want 1m", approval, err)
+	if err != nil || approval.executionTimeout != time.Minute || approval.rescueAfter != approvalActivationRescueAfter {
+		t.Fatalf("approval worker timing = %#v, %v; want 1m execution and 2m rescue", approval, err)
 	}
-	if _, err := m.riverWorkerTimeout(jobs.HandlerFunc{JobKind: approvalActivationKind}); err == nil {
+	if _, err := m.riverWorkerTiming(jobs.HandlerFunc{JobKind: approvalActivationKind}); err == nil {
 		t.Fatal("approval worker without a bounded execution lease was accepted")
+	}
+	defaults, err := (&Module{}).riverWorkerTiming(jobs.HandlerFunc{JobKind: "release.finalize"})
+	if err != nil || defaults.executionTimeout != river.JobTimeoutDefault || defaults.rescueAfter != riverDefaultRescueAfter {
+		t.Fatalf("default worker timing = %#v, %v; want River's 1m execution and 1h rescue defaults", defaults, err)
 	}
 }
 

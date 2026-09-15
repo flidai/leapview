@@ -227,19 +227,26 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 	repositoryB := jobpostgres.NewRepository(poolB)
 	nodeA := buildRiverMultiNodeModule(t, repositoryA, riverMultiNodeOwnerA)
 	nodeB := buildRiverMultiNodeModule(t, repositoryB, riverMultiNodeOwnerB)
-	started := make(chan riverMultiNodeInvocation, 1)
-	handler := jobs.HandlerFunc{
+	approvalStarted := make(chan riverMultiNodeInvocation, 1)
+	longRunningStarted := make(chan riverMultiNodeInvocation, 1)
+	handlers := []jobs.Handler{jobs.HandlerFunc{
 		JobKind:               approvalActivationKind,
 		ExecutionLeaseTimeout: time.Minute,
 		Run: func(_ context.Context, job jobs.Job) error {
-			started <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
+			approvalStarted <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
 			return nil
 		},
-	}
-	if err := nodeA.RegisterHandlers([]jobs.Handler{handler}); err != nil {
+	}, jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run: func(_ context.Context, job jobs.Job) error {
+			longRunningStarted <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
+			return nil
+		},
+	}}
+	if err := nodeA.RegisterHandlers(handlers); err != nil {
 		t.Fatal(err)
 	}
-	if err := nodeB.RegisterHandlers([]jobs.Handler{handler}); err != nil {
+	if err := nodeB.RegisterHandlers(handlers); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,28 +258,9 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var riverID int64
-	if err := poolA.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
-		t.Fatal(err)
-	}
-	// Model the exact durable state left by SIGKILL: River and product history
-	// both record attempt one as running, but no live client owns the claim and
-	// no retryable result was returned. Backdating attempted_at makes the row
-	// immediately eligible for the production two-minute rescue scan.
-	if _, err := poolA.Exec(ctx, `
-		UPDATE public.river_job
-		SET state='running', attempt=1, attempted_by=ARRAY[$2],
-		    attempted_at=clock_timestamp()-interval '3 minutes'
-		WHERE id=$1`, riverID, riverMultiNodeOwnerA); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := poolA.Exec(ctx, `
-		UPDATE jobs.job_history
-		SET status='running', attempt_count=1,
-		    started_at=clock_timestamp()-interval '3 minutes'
-		WHERE id=$1`, job.ID); err != nil {
-		t.Fatal(err)
-	}
+	longRunning := enqueueTestJob(t, nodeA, "river-long-running-orphan", "release-orphan")
+	riverID := markRiverMultiNodeOrphan(t, ctx, poolA, job.ID)
+	markRiverMultiNodeOrphan(t, ctx, poolA, longRunning.ID)
 	orphan, err := nodeA.Get(ctx, job.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -281,6 +269,7 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 		t.Fatalf("orphaned product job = %q/%d, want running/1", orphan.Status, orphan.Attempts)
 	}
 	assertRiverMultiNodeEvidence(t, ctx, poolA, job.ID, rivertype.JobStateRunning, 1, 1)
+	assertRiverMultiNodeEvidence(t, ctx, poolA, longRunning.ID, rivertype.JobStateRunning, 1, 1)
 	var orphanOwners []string
 	if err := poolA.QueryRow(ctx, `SELECT attempted_by FROM public.river_job WHERE id=$1`, riverID).Scan(&orphanOwners); err != nil {
 		t.Fatal(err)
@@ -293,7 +282,7 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = nodeB.Stop(context.Background()) })
-	invocation := waitRiverMultiNodeInvocation(t, ctx, started)
+	invocation := waitRiverMultiNodeInvocation(t, ctx, approvalStarted)
 	if invocation.owner != riverMultiNodeOwnerB || invocation.attempt != 2 {
 		t.Fatalf("reclaimed invocation = %#v, want attempt 2 on replacement node", invocation)
 	}
@@ -302,6 +291,47 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 		t.Fatalf("recovered product job = %q/%d, want same job %q at attempt 2", recovered.ID, recovered.Attempts, job.ID)
 	}
 	assertRiverMultiNodeEvidence(t, ctx, poolB, job.ID, rivertype.JobStateCompleted, 2, 1)
+	// The same rescue pass sees the three-minute-old long-running orphan, but
+	// its preserved 25-hour rescue horizon leaves it on attempt one.
+	assertRiverMultiNodeEvidence(t, ctx, poolB, longRunning.ID, rivertype.JobStateRunning, 1, 1)
+	longProduct, err := nodeB.Get(ctx, longRunning.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if longProduct.Status != jobs.StatusRunning || longProduct.Attempts != 1 {
+		t.Fatalf("long-running product job = %q/%d, want preserved running/1", longProduct.Status, longProduct.Attempts)
+	}
+	select {
+	case unexpected := <-longRunningStarted:
+		t.Fatalf("long-running orphan was reclaimed at the two-minute candidate horizon: %#v", unexpected)
+	default:
+	}
+}
+
+func markRiverMultiNodeOrphan(t *testing.T, ctx context.Context, pool *pgxpool.Pool, productID string) int64 {
+	t.Helper()
+	var riverID int64
+	if err := pool.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, productID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	// Model the exact durable state left by SIGKILL: River and product history
+	// both record attempt one as running, but no live client owns the claim and
+	// no retryable result was returned.
+	if _, err := pool.Exec(ctx, `
+		UPDATE public.river_job
+		SET state='running', attempt=1, attempted_by=ARRAY[$2],
+		    attempted_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, riverID, riverMultiNodeOwnerA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE jobs.job_history
+		SET status='running', attempt_count=1,
+		    started_at=clock_timestamp()-interval '3 minutes'
+		WHERE id=$1`, productID); err != nil {
+		t.Fatal(err)
+	}
+	return riverID
 }
 
 func buildRiverMultiNodeModule(t *testing.T, repository *jobpostgres.Repository, owner string) *Module {
@@ -311,13 +341,14 @@ func buildRiverMultiNodeModule(t *testing.T, repository *jobpostgres.Repository,
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Persistence:  &persistence,
-		Production:   true,
-		Admission:    jobs.AdmitterFunc(allowJobs),
-		OwnerID:      owner,
-		PollInterval: 5 * time.Millisecond,
-		LeaseTimeout: 30 * time.Second,
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Persistence:     &persistence,
+		Production:      true,
+		Admission:       jobs.AdmitterFunc(allowJobs),
+		OwnerID:         owner,
+		PollInterval:    5 * time.Millisecond,
+		LeaseTimeout:    30 * time.Second,
+		RiverJobTimeout: 24 * time.Hour,
+		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
