@@ -7,7 +7,7 @@ const projectFiles = {
   dashboard: { path: 'dashboards/executive-sales.yaml', label: '06 / BUILD DASHBOARDS', detail: 'Turn your metrics into charts and tables.' }
 };
 const walkthrough = ['connection', 'source', 'model', 'semantics'];
-const phaseDuration = 5500;
+const phaseDuration = 4500;
 
 const explorer = document.querySelector('#project-explorer');
 explorer.style.setProperty('--project-phase-duration', `${phaseDuration}ms`);
