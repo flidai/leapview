@@ -38,7 +38,7 @@ Execution categories and their duration samples are separate:
 | Category | Evidence |
 |---|---|
 | `selective` | `ci.yml` PR with supported non-full, non-audit plan |
-| `full_pr` | `ci.yml` PR with supported full plan or audit |
+| `full_pr` | `ci.yml` PR with supported full plan or audit, or a supported manual full run |
 | `merge` | `merge-validation.yml` and `merge_group` |
 | `nightly` | `nightly.yml` schedule or manual dispatch |
 | `deferred` | PR gate success and complete observed stack-deferral job pattern |
@@ -87,9 +87,16 @@ is never consumed by a workflow gate.
 Conclusions have separate success/failure/cancelled/skipped/unknown counters.
 Timeout, startup failure and action-required conclusions count as failures. Unknown
 conclusions, including neutral, remain unknown. `incomplete` is an overlapping
-reporting-evidence/problem count, not an alternative to the failure count. The
-report preserves GitHub's run conclusion even when job evidence contradicts it;
-that contradiction appears in problems rather than rewriting GitHub's history.
+reporting-evidence count, not an alternative to the failure count. A known failed
+or cancelled expected job is complete failure evidence and does not by itself make
+the run's reporting evidence incomplete. The report preserves GitHub's run
+conclusion even when job evidence contradicts it; that contradiction appears in
+problems rather than rewriting GitHub's history.
+
+Planner selection rates use supported `pull_request` plans only. Manual CI runs
+remain full-validation latency samples but do not inflate PR selection rates.
+Merge and nightly workflows use the exhaustive workflow registry and do not need a
+`ci-plan` artifact; missing plans are evidence gaps only for planner-driven PR CI.
 
 ## Time and thresholds
 

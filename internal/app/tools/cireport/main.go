@@ -22,11 +22,7 @@ import (
 )
 
 type githubRun struct {
-	TestedSHA    string `json:"-"`
-	PullRequests []struct {
-		Base githubRevision `json:"base"`
-		Head githubRevision `json:"head"`
-	} `json:"pull_requests"`
+	TestedSHA  string    `json:"-"`
 	HeadSHA    string    `json:"head_sha"`
 	ID         int64     `json:"id"`
 	Workflow   string    `json:"-"`
@@ -211,14 +207,14 @@ func (c *client) healthRun(ctx context.Context, repo string, run githubRun) (pla
 	return observedRun(run, jobs, plan), nil
 }
 
-// PR run metadata names the source head, while checkout tests GitHub's merge
-// commit. Verify the immutable candidate's two parents against the PR metadata
-// attached to this run; never resolve today's mutable refs/pull/N/merge.
+// PR run metadata names the immutable source head, while checkout tests GitHub's
+// merge commit. Verify that candidate's parents and diff-base ancestry; never
+// resolve today's mutable refs/pull/N/merge.
 func (c *client) testedCandidate(ctx context.Context, repo string, run githubRun, plan platformci.Plan) string {
 	if plan.PR == nil || run.Event != "pull_request" || plan.PR.Head == run.HeadSHA {
 		return run.HeadSHA
 	}
-	if run.HeadSHA == "" || len(run.PullRequests) == 0 || validateHealthPRPlan(plan) != nil || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
+	if run.HeadSHA == "" || validateHealthPRPlan(plan) != nil || plan.PR.RunID != fmt.Sprint(run.ID) || plan.PR.Attempt != fmt.Sprint(run.Attempt) {
 		return run.HeadSHA
 	}
 	var commit struct {
@@ -234,14 +230,38 @@ func (c *client) testedCandidate(ctx context.Context, repo string, run githubRun
 	if commit.SHA != plan.PR.Head || len(commit.Parents) != 2 || commit.Parents[1].SHA != run.HeadSHA {
 		return run.HeadSHA
 	}
-	for _, pr := range run.PullRequests {
-		if pr.Head.SHA == run.HeadSHA && pr.Base.SHA != "" && pr.Base.SHA == commit.Parents[0].SHA {
-			// plan.PR.Base is a diff base, potentially a cumulative stack
-			// ancestor; it need not be this merge commit's first parent.
-			return commit.SHA
-		}
+	covered, err := c.commitDescendsFrom(ctx, repo, plan.PR.Base, commit.Parents[0].SHA)
+	if err != nil || !covered {
+		return run.HeadSHA
 	}
-	return run.HeadSHA
+	// The plan is bound to this run and attempt. GitHub's pull_requests field is
+	// mutable and can be empty or point at a later PR revision, so the immutable
+	// run head and merge parents are the durable provenance evidence. Requiring
+	// the plan's diff base to cover the merge parent preserves stack safety.
+	return commit.SHA
+}
+
+func (c *client) commitDescendsFrom(ctx context.Context, repo, ancestor, descendant string) (bool, error) {
+	if ancestor == "" || descendant == "" {
+		return false, nil
+	}
+	if ancestor == descendant {
+		return true, nil
+	}
+	endpoint := fmt.Sprintf(
+		"https://api.github.com/repos/%s/compare/%s...%s",
+		repo,
+		url.PathEscape(ancestor),
+		url.PathEscape(descendant),
+	)
+	var comparison struct {
+		Status          string         `json:"status"`
+		MergeBaseCommit githubRevision `json:"merge_base_commit"`
+	}
+	if err := c.getJSON(ctx, endpoint, &comparison); err != nil {
+		return false, err
+	}
+	return comparison.Status == "ahead" && comparison.MergeBaseCommit.SHA == ancestor, nil
 }
 
 func observedRun(run githubRun, jobs []githubJob, plan platformci.Plan) platformci.HealthRun {
@@ -508,11 +528,11 @@ func renderMarkdown(report platformci.HealthReport, days int) string {
 		name   string
 		metric platformci.DurationMetric
 	}{
-		{"Selective PR", report.Selective}, {"Exhaustive merge", report.Merge}, {"Nightly", report.Nightly}, {"Full PR / audit", report.FullPR}, {"Unknown category", report.Unknown}, {"Queue", report.Queue},
+		{"Selective PR", report.Selective}, {"Exhaustive merge", report.Merge}, {"Nightly", report.Nightly}, {"Full PR / audit / manual", report.FullPR}, {"Unknown category", report.Unknown}, {"Queue", report.Queue},
 	} {
 		fmt.Fprintf(&output, "| %s p50 / p95 (samples) | %s |\n", row.name, formatMetric(row.metric))
 	}
-	fmt.Fprintf(&output, "| Reruns | %d (%.1f%%) |\n| Supported plans / unknown selection | %d / %d |\n| Audit samples / misses | %d / %d |\n", report.Reruns, report.RerunPercent, report.PlannedRuns, report.UnknownSelection, report.AuditSamples, report.AuditMisses)
+	fmt.Fprintf(&output, "| Reruns | %d (%.1f%%) |\n| Supported PR plans / unknown PR selection | %d / %d |\n| Audit samples / misses | %d / %d |\n", report.Reruns, report.RerunPercent, report.PlannedRuns, report.UnknownSelection, report.AuditSamples, report.AuditMisses)
 	output.WriteString("\nLatency uses latest-attempt timestamps, including failed and cancelled attempts with complete timestamps. Unknown evidence is not proof of success.\n")
 	output.WriteString("\n## Planned selection\n\nRates use supported plans only; they are not execution rates.\n\n| Job | Planned | Rate |\n|---|---:|---:|\n")
 	names := make([]string, 0, len(report.Selection))
