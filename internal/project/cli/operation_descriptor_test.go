@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -150,6 +152,23 @@ func TestDeploymentOperationDescriptorRejectsCredentialBearingEvidence(t *testin
 			descriptor.FailureDetail = secret
 			if err := NewDeploymentOperationStore(filepath.Join(t.TempDir(), "operations.json")).Create(descriptor); err == nil {
 				t.Fatalf("credential-bearing descriptor was accepted: %s", secret)
+			}
+		})
+	}
+}
+
+func TestPortableDeploymentSourceRejectsCredentialMaterial(t *testing.T) {
+	for name, content := range map[string]string{
+		"inline token":      "title: Orders\ntoken: supersecret\n",
+		"credential URL":    "description: postgres://user:supersecret@db.example/prod\n",
+		"provider key":      "access_key_id=AKIAIOSFODNN7EXAMPLE\n",
+		"connection string": "connection_string=Server=db;Pwd=supersecret\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			hash := sha256.Sum256([]byte(content))
+			artifact := DeploymentSourceArtifact{Path: "dashboards/orders.yaml", Digest: "sha256:" + hex.EncodeToString(hash[:]), SizeBytes: int64(len(content)), Content: []byte(content)}
+			if err := validatePortableSourceArtifacts("project-1", "", "", []DeploymentSourceArtifact{artifact}); err == nil {
+				t.Fatal("credential-bearing portable source was accepted")
 			}
 		})
 	}

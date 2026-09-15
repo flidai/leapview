@@ -675,6 +675,9 @@ func validatePortableSourceArtifacts(projectID, graphDigest, sourceDigest string
 		if artifact.Digest != "sha256:"+hex.EncodeToString(hash[:]) {
 			return fmt.Errorf("deployment operation source artifact %q content does not match digest", artifact.Path)
 		}
+		if safetext.Credentials(string(artifact.Content)) != string(artifact.Content) {
+			return fmt.Errorf("deployment operation source artifact %q appears to contain credential material", artifact.Path)
+		}
 	}
 	if sourceDigest != "" {
 		ordered := append([]DeploymentSourceArtifact(nil), artifacts...)

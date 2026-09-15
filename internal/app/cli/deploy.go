@@ -502,6 +502,12 @@ func validateDeploymentPublishResult(result projectcli.PublishResult, checkpoint
 func classifyDeploymentError(err error) projectcli.DeploymentOperationOutcome {
 	var deliveryErr *projectcli.DeliveryError
 	if errors.As(err, &deliveryErr) {
+		if deliveryErr.Status == http.StatusRequestTimeout || deliveryErr.Status == http.StatusTooEarly || deliveryErr.Status == http.StatusTooManyRequests {
+			// These responses do not establish that a target mutation failed. A
+			// timeout can lose an acknowledgement, and retry throttling/Too Early
+			// is explicitly transient; retain the operation for exact replay.
+			return projectcli.DeploymentOperationIndeterminate
+		}
 		switch strings.ToLower(strings.TrimSpace(deliveryErr.Kind)) {
 		case "approval":
 			return projectcli.DeploymentOperationPendingApproval

@@ -274,6 +274,17 @@ func TestDeployClassifiesTypedPlanConflictAsTerminalFailure(t *testing.T) {
 	}
 }
 
+func TestDeployKeepsTimeoutAndThrottleResponsesIndeterminate(t *testing.T) {
+	for _, status := range []int{http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			got := classifyDeploymentError(&projectcli.DeliveryError{Kind: "other", Status: status, Code: "TRANSIENT"})
+			if got != projectcli.DeploymentOperationIndeterminate {
+				t.Fatalf("status %d classified as %s", status, got)
+			}
+		})
+	}
+}
+
 type operationTestClient struct{}
 
 func (operationTestClient) Resolve(_ context.Context, credentials cliapi.Credentials) (cliapi.Credentials, error) {

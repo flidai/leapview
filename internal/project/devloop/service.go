@@ -149,14 +149,18 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 
+	preAttemptRevision, err := service.markSessionPreAttempt(ctx)
+	if err != nil {
+		return service.result(StatusRetryable), err
+	}
 	snapshot, err := service.builder.Build(ctx)
 	if err != nil {
-		service.recordSessionFailure(ctx, 0, developmentsession.Identity{}, err)
+		service.recordSessionFailure(ctx, preAttemptRevision, developmentsession.Identity{}, err)
 		return service.result(StatusInvalid), err
 	}
 	snapshot, err = normalizeSnapshot(snapshot)
 	if err != nil {
-		service.recordSessionFailure(ctx, 0, developmentsession.Identity{}, err)
+		service.recordSessionFailure(ctx, preAttemptRevision, developmentsession.Identity{}, err)
 		return service.result(StatusInvalid), err
 	}
 	if service.candidate.ID != "" &&
@@ -166,7 +170,7 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, nil
 	}
-	attemptRevision, err := service.markSessionAttempt(ctx, snapshot)
+	attemptRevision, err := service.markSessionAttempt(ctx, snapshot, preAttemptRevision)
 	if err != nil {
 		return service.result(StatusRetryable), err
 	}
@@ -199,31 +203,44 @@ func sessionIdentity(snapshot Snapshot) developmentsession.Identity {
 	return developmentsession.Identity{ArtifactDigest: snapshot.Digest, GraphDigest: snapshot.GraphDigest}
 }
 
-func (service *Service) markSessionAttempt(ctx context.Context, snapshot Snapshot) (int64, error) {
+func (service *Service) markSessionPreAttempt(ctx context.Context) (int64, error) {
 	if service.sessionStore == nil {
 		return 0, nil
 	}
-	for tries := 0; tries < 2; tries++ {
-		record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
-		if err != nil && !errors.Is(err, developmentsession.ErrNotFound) {
-			return 0, err
-		}
-		expected := int64(0)
-		if err == nil {
-			expected = record.Revision
-		} else {
-			record = developmentsession.Record{ID: service.sessionKey.ID(), Key: service.sessionKey}
-		}
-		record.Attempted, record.Diagnostics = sessionIdentity(snapshot), nil
-		updated, saveErr := service.sessionStore.Save(ctx, record, expected)
-		if saveErr == nil {
-			return updated.Revision, nil
-		}
-		if !errors.Is(saveErr, developmentsession.ErrConflict) {
-			return 0, saveErr
-		}
+	record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+	expected := int64(0)
+	if errors.Is(err, developmentsession.ErrNotFound) {
+		record = developmentsession.Record{ID: service.sessionKey.ID(), Key: service.sessionKey}
+	} else if err != nil {
+		return 0, err
+	} else {
+		expected = record.Revision
 	}
-	return 0, developmentsession.ErrConflict
+	record.Diagnostics = nil
+	updated, err := service.sessionStore.Save(ctx, record, expected)
+	if err != nil {
+		return 0, err
+	}
+	return updated.Revision, nil
+}
+
+func (service *Service) markSessionAttempt(ctx context.Context, snapshot Snapshot, expected int64) (int64, error) {
+	if service.sessionStore == nil {
+		return 0, nil
+	}
+	record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+	if err != nil {
+		return 0, err
+	}
+	if record.Revision != expected {
+		return 0, developmentsession.ErrConflict
+	}
+	record.Attempted, record.Diagnostics = sessionIdentity(snapshot), nil
+	updated, err := service.sessionStore.Save(ctx, record, expected)
+	if err != nil {
+		return 0, err
+	}
+	return updated.Revision, nil
 }
 
 func (service *Service) markSessionValid(ctx context.Context, expected int64, snapshot Snapshot, candidate Candidate) error {
@@ -249,29 +266,12 @@ func (service *Service) recordSessionFailure(ctx context.Context, expected int64
 		return
 	}
 	diagnostics := sessionDiagnostics(syncErr)
-	for tries := 0; tries < 2; tries++ {
-		record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
-		if errors.Is(err, developmentsession.ErrNotFound) {
-			record = developmentsession.Record{ID: service.sessionKey.ID(), Key: service.sessionKey}
-			expected = 0
-		} else if err != nil {
-			return
-		}
-		if err == nil && expected == 0 {
-			expected = record.Revision
-		}
-		if expected != 0 && record.Revision != expected {
-			return
-		}
-		record.Attempted, record.Diagnostics = attempted, diagnostics
-		if _, err = service.sessionStore.Save(ctx, record, expected); err == nil {
-			return
-		}
-		if !errors.Is(err, developmentsession.ErrConflict) {
-			return
-		}
-		expected = record.Revision
+	record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+	if err != nil || record.Revision != expected {
+		return
 	}
+	record.Attempted, record.Diagnostics = attempted, diagnostics
+	_, _ = service.sessionStore.Save(ctx, record, expected)
 }
 
 // sessionDiagnostics preserves safe authoring locations for the browser/API

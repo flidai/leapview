@@ -27,7 +27,7 @@ import (
 
 // Current main's generated surface plus target-policy and development-profile
 // operations.
-const expectedAPIGenAggregateOperationCount = 191
+const expectedAPIGenAggregateOperationCount = 193
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)

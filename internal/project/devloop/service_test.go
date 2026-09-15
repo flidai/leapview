@@ -211,6 +211,46 @@ func TestReconcilePersistsRedactedFileLineDiagnostics(t *testing.T) {
 	}
 }
 
+func TestDelayedBuildFailureCannotOverwriteNewerValidSession(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "principal_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("sales_project"), TargetID: "target_1", Environment: "development"}
+	started, release := make(chan struct{}), make(chan struct{})
+	older, err := NewWithSession(blockingFailureBuilder{started: started, release: release}, &recordingRemote{}, store, key)
+	require.NoError(t, err)
+	newerSnapshot := testSnapshot("newer-valid")
+	newer, err := NewWithSession(&scriptedBuilder{steps: []buildStep{{snapshot: newerSnapshot}}}, &recordingRemote{}, store, key)
+	require.NoError(t, err)
+
+	olderDone := make(chan error, 1)
+	go func() {
+		_, reconcileErr := older.Reconcile(t.Context())
+		olderDone <- reconcileErr
+	}()
+	<-started
+	newerResult, err := newer.Reconcile(t.Context())
+	require.NoError(t, err)
+	close(release)
+	if err := <-olderDone; err == nil {
+		t.Fatal("delayed invalid build unexpectedly succeeded")
+	}
+	record, err := store.Resolve(t.Context(), key)
+	require.NoError(t, err)
+	if record.LastValid.CandidateID != newerResult.Candidate.ID || record.Attempted.ArtifactDigest != newerSnapshot.Digest || len(record.Diagnostics) != 0 {
+		t.Fatalf("stale failure replaced newer session state: %#v", record)
+	}
+}
+
+type blockingFailureBuilder struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (builder blockingFailureBuilder) Build(context.Context) (Snapshot, error) {
+	close(builder.started)
+	<-builder.release
+	return Snapshot{}, errors.New("stale invalid edit")
+}
+
 type buildStep struct {
 	snapshot Snapshot
 	err      error

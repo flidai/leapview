@@ -36,9 +36,13 @@ type Candidate struct {
 	// PreviewURL is the canonical, opaque candidate route. It is retained on
 	// the internal projection for native read paths; generated API DTOs choose
 	// explicitly which fields to expose and must not derive owner data from it.
-	PreviewURL       string
-	Scope            CandidateScope
-	ArtifactDigest   string
+	PreviewURL     string
+	Scope          CandidateScope
+	ArtifactDigest string
+	// GraphDigest is the whole compiled graph identity proven by the sealed
+	// candidate. Stable development-session views use it to reject a pointer
+	// whose claimed graph does not match the candidate authority.
+	GraphDigest      string
 	ProvenanceDigest string
 	Status           CandidateStatus
 	FailureReason    string

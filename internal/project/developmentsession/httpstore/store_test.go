@@ -26,7 +26,7 @@ func TestAuthenticatedStoreRoundTripAndOwnerIsolation(t *testing.T) {
 		},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return key.ProjectID, nil },
 		ValidateCandidate: func(context.Context, string, string, projectgraph.ResourceID, string, string) (developmenthttp.CandidateValidation, error) {
-			return developmenthttp.CandidateValidation{Qualified: true, OwnerID: key.OwnerID, ProjectID: key.ProjectID, TargetID: key.TargetID, Environment: key.Environment, Identity: developmentsession.Identity{CandidateID: "candidate_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), PreviewURL: "https://target.example/candidates/candidate_1"}}, nil
+			return developmenthttp.CandidateValidation{Qualified: true, OwnerID: key.OwnerID, ProjectID: key.ProjectID, TargetID: key.TargetID, Environment: key.Environment, Identity: developmentsession.Identity{CandidateID: "candidate_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), GraphDigest: "sha256:" + strings.Repeat("b", 64), PreviewURL: "https://target.example/candidates/candidate_1"}}, nil
 		},
 	}).Mount(router)
 	server := httptest.NewServer(router)
@@ -36,7 +36,7 @@ func TestAuthenticatedStoreRoundTripAndOwnerIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := developmentsession.Record{ID: key.ID(), Key: key, Attempted: developmentsession.Identity{ArtifactDigest: "sha256:" + strings.Repeat("a", 64)}}
-	record.LastValid = developmentsession.Identity{CandidateID: "candidate_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), PreviewURL: "https://target.example/candidates/candidate_1"}
+	record.LastValid = developmentsession.Identity{CandidateID: "candidate_1", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), GraphDigest: "sha256:" + strings.Repeat("b", 64), PreviewURL: "https://target.example/candidates/candidate_1"}
 	updated, err := store.Save(t.Context(), record, 0)
 	if err != nil {
 		t.Fatal(err)

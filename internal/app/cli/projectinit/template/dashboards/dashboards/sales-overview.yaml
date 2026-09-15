@@ -16,15 +16,15 @@ spec:
       operators: [in, notIn]
       urlParameter: region
   visuals:
-    revenue:
+    - id: revenue
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [revenue]}
       presentation: {type: kpi, note: Synthetic revenue, tone: success}
-    sales:
+    - id: sales
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [sale_count]}
       presentation: {type: kpi, note: Distinct synthetic sales, tone: ink}
-    revenue_by_month:
+    - id: revenue_by_month
       type: area
       title: Revenue by month
       query:
@@ -34,7 +34,7 @@ spec:
         metrics: [revenue]
         sort: [{field: sale_month, direction: asc}]
       presentation: {type: cartesian}
-    revenue_by_category:
+    - id: revenue_by_category
       type: bar
       title: Revenue by category
       query:

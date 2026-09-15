@@ -65,7 +65,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 					Expired:   value.Status == deployment.CandidateExpired,
 					OwnerID:   value.OwnerID, ProjectID: value.Scope.ProjectID,
 					TargetID: value.TargetID, Environment: value.Scope.Environment,
-					Identity: developmentsession.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, PreviewURL: value.PreviewURL},
+					Identity: developmentsession.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, GraphDigest: value.GraphDigest, PreviewURL: value.PreviewURL},
 				}, nil
 			},
 		})

@@ -13,8 +13,8 @@ spec:
   schema:
     mode: strict
   fields:
-    sale_id: {datatype: String}
-    sale_date: {datatype: String}
-    region: {datatype: String}
-    category: {datatype: String}
-    amount: {datatype: Decimal}
+    - {name: sale_id, datatype: String}
+    - {name: sale_date, datatype: String}
+    - {name: region, datatype: String}
+    - {name: category, datatype: String}
+    - {name: amount, datatype: Decimal}

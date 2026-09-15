@@ -16,17 +16,17 @@ spec:
         TRY_CAST(amount AS DOUBLE) AS amount
       FROM source."sample.sales"
   entities:
-    sale:
+    - name: sale
       type: primary
       fields: [sale_id]
   grain:
     entity: sale
   fields:
-    sale_id: {datatype: String}
-    sale_date: {datatype: Date}
-    region: {datatype: String}
-    category: {datatype: String}
-    amount: {datatype: Float}
+    - {name: sale_id, datatype: String}
+    - {name: sale_date, datatype: Date}
+    - {name: region, datatype: String}
+    - {name: category, datatype: String}
+    - {name: amount, datatype: Float}
   checks:
     - {id: sales_id_not_null, type: non_null, field: sale_id, severity: error}
     - {id: sales_date_not_null, type: non_null, field: sale_date, severity: error}

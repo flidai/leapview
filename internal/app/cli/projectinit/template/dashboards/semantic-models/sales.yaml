@@ -6,18 +6,18 @@ metadata:
   displayName: Sales
 spec:
   datasets:
-    sales:
+    - name: sales
       model: sales
       defaultTimeDimension: sale_date
       metrics:
-        revenue:
+        - name: revenue
           type: simple
           empty: zero
           label: Revenue
           format: currency
           agg: sum
           field: amount
-        sale_count:
+        - name: sale_count
           type: simple
           empty: zero
           label: Sales
@@ -25,12 +25,12 @@ spec:
           agg: count_distinct
           field: sale_id
       dimensions:
-        sale_date:
+        - name: sale_date
           datatype: Date
           label: Sale date
           time:
             nativeGrain: day
             grains: [day, week, month, quarter, year]
             calendar: iso8601
-        region: {datatype: String, label: Region}
-        category: {datatype: String, label: Category}
+        - {name: region, datatype: String, label: Region}
+        - {name: category, datatype: String, label: Category}

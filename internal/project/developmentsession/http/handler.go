@@ -49,11 +49,11 @@ type CandidateValidator func(context.Context, string, string, projectgraph.Resou
 type Handler struct {
 	config  Config
 	mu      sync.Mutex
-	streams map[chan developmentsession.Record]struct{}
+	streams map[string]map[chan developmentsession.Record]struct{}
 }
 
 func New(config Config) *Handler {
-	return &Handler{config: config, streams: make(map[chan developmentsession.Record]struct{})}
+	return &Handler{config: config, streams: make(map[string]map[chan developmentsession.Record]struct{})}
 }
 
 // Mount registers only authenticated, owner-scoped routes. The caller must
@@ -213,7 +213,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 			transport.WriteProblem(w, r, http.StatusConflict, "CANDIDATE_NOT_QUALIFIED", "The candidate is not qualified for this development session", nil)
 			return
 		}
-		if !proof.Qualified || proof.OwnerID != key.OwnerID || proof.ProjectID != key.ProjectID || proof.TargetID != key.TargetID || proof.Environment != key.Environment || proof.Identity.CandidateID != body.LastValid.CandidateID || proof.Identity.ArtifactDigest != body.LastValid.ArtifactDigest || (proof.Identity.GraphDigest != "" && body.LastValid.GraphDigest != proof.Identity.GraphDigest) || (body.LastValid.PreviewURL != "" && body.LastValid.PreviewURL != proof.Identity.PreviewURL) {
+		if !proof.Qualified || proof.OwnerID != key.OwnerID || proof.ProjectID != key.ProjectID || proof.TargetID != key.TargetID || proof.Environment != key.Environment || proof.Identity.CandidateID != body.LastValid.CandidateID || proof.Identity.ArtifactDigest != body.LastValid.ArtifactDigest || proof.Identity.GraphDigest == "" || body.LastValid.GraphDigest != proof.Identity.GraphDigest || (body.LastValid.PreviewURL != "" && body.LastValid.PreviewURL != proof.Identity.PreviewURL) {
 			transport.WriteProblem(w, r, http.StatusConflict, "CANDIDATE_NOT_QUALIFIED", "The candidate identity does not match the authoritative candidate", nil)
 			return
 		}
@@ -297,23 +297,45 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 		transport.WriteProblem(w, r, http.StatusServiceUnavailable, "SESSION_EVENTS_UNAVAILABLE", "Development session events are unavailable", nil)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Content-Type", "text/event-stream")
 	stream := make(chan developmentsession.Record, 1)
+	sessionID := key.ID()
 	h.mu.Lock()
 	if h.streams == nil {
-		h.streams = make(map[chan developmentsession.Record]struct{})
+		h.streams = make(map[string]map[chan developmentsession.Record]struct{})
 	}
-	h.streams[stream] = struct{}{}
+	if h.streams[sessionID] == nil {
+		h.streams[sessionID] = make(map[chan developmentsession.Record]struct{})
+	}
+	h.streams[sessionID][stream] = struct{}{}
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
-		delete(h.streams, stream)
+		delete(h.streams[sessionID], stream)
+		if len(h.streams[sessionID]) == 0 {
+			delete(h.streams, sessionID)
+		}
 		h.mu.Unlock()
 	}()
+	// Close the resolve/subscribe race: an update committed after the first
+	// read but before registration is not in this channel, so reread the
+	// durable authority after registration. If it advanced, replay the newer
+	// revision and reconnect instead of waiting forever on stale state.
+	initialRevision := record.Revision
+	latest, latestOK := h.resolveRecord(w, r, key)
+	if !latestOK {
+		return
+	}
+	if latest.Revision > record.Revision {
+		record = latest
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Content-Type", "text/event-stream")
 	writeSessionEvent(w, record)
 	flusher.Flush()
+	if record.Revision > initialRevision {
+		return
+	}
 	for {
 		select {
 		case <-r.Context().Done():
@@ -349,13 +371,17 @@ func writeSessionEvent(w http.ResponseWriter, record developmentsession.Record) 
 func (h *Handler) publish(record developmentsession.Record) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for stream := range h.streams {
+	streams := h.streams[record.ID]
+	for stream := range streams {
 		select {
 		case stream <- record:
 		default:
 		}
 		close(stream)
-		delete(h.streams, stream)
+		delete(streams, stream)
+	}
+	if len(streams) == 0 {
+		delete(h.streams, record.ID)
 	}
 }
 
@@ -397,7 +423,8 @@ func (h *Handler) resolveRecord(w http.ResponseWriter, r *http.Request, key deve
 func sameCandidateIdentity(authority, stored developmentsession.Identity) bool {
 	return authority.CandidateID == stored.CandidateID &&
 		authority.ArtifactDigest == stored.ArtifactDigest &&
-		(authority.GraphDigest == "" || authority.GraphDigest == stored.GraphDigest) &&
+		authority.GraphDigest != "" &&
+		authority.GraphDigest == stored.GraphDigest &&
 		authority.PreviewURL == stored.PreviewURL
 }
 

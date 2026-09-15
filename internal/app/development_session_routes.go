@@ -20,31 +20,34 @@ import (
 // implementation with a stable RouteBasePath. The generated dashboard does
 // not need to know the candidate ID and its document/page/command/update URLs
 // therefore remain stable across pointer advances.
-func mountDevelopmentSessionRoutes(r chi.Router, session *developmenthttp.Handler, candidates candidateRouteDependencies, updates func(http.Handler) http.Handler) {
+func mountDevelopmentSessionRoutes(r chi.Router, session *developmenthttp.Handler, candidates candidateRouteDependencies, updates func(http.Handler) http.Handler, guard func(http.HandlerFunc) http.HandlerFunc) {
 	if session == nil {
 		return
 	}
+	if guard == nil {
+		guard = func(next http.HandlerFunc) http.HandlerFunc { return next }
+	}
 	sessionBase := "/api/v1/projects/{project}/targets/{target}/development-session"
-	r.Get(sessionBase+"/events", session.Events)
+	r.Get(sessionBase+"/events", guard(session.Events))
 	base := sessionBase + "/candidate/preview"
-	r.Get(base, func(w http.ResponseWriter, request *http.Request) {
+	r.Get(base, guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidatePreview(session, candidates, w, request)
-	})
-	r.Get(base+"/dashboards/{dashboard}", func(w http.ResponseWriter, request *http.Request) {
+	}))
+	r.Get(base+"/dashboards/{dashboard}", guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidateDocument(session, candidates, w, request)
-	})
-	r.Get(base+"/dashboards/{dashboard}/pages/{page}", func(w http.ResponseWriter, request *http.Request) {
+	}))
+	r.Get(base+"/dashboards/{dashboard}/pages/{page}", guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidateDocument(session, candidates, w, request)
-	})
+	}))
 	if updates == nil {
 		updates = func(next http.Handler) http.Handler { return next }
 	}
-	r.With(updates).Get(base+"/updates", func(w http.ResponseWriter, request *http.Request) {
+	r.With(updates).Get(base+"/updates", guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidateUpdates(session, candidates, w, request)
-	})
-	r.Post(base+"/dashboards/{dashboard}/commands/{command}", func(w http.ResponseWriter, request *http.Request) {
+	}))
+	r.Post(base+"/dashboards/{dashboard}/commands/{command}", guard(func(w http.ResponseWriter, request *http.Request) {
 		stableCandidateCommand(session, candidates, w, request)
-	})
+	}))
 }
 
 func stableCandidatePreview(session *developmenthttp.Handler, candidates candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
