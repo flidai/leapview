@@ -265,7 +265,7 @@ func TestDashboardDraftCreateAndForkAuthorizationFailuresRenderBrowserRecovery(t
 			if recorder.Code != nethttp.StatusForbidden || !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
 				t.Fatalf("response = %d %q body=%s", recorder.Code, recorder.Header().Get("Content-Type"), recorder.Body.String())
 			}
-			for _, want := range []string{"You don't have access to this dashboard", "Return to Insights", "No changes were made"} {
+			for _, want := range []string{"You're signed in, but you don't have access to this dashboard", "Sign in with a different account", "A LeapView administrator needs to assign your account"} {
 				if !strings.Contains(recorder.Body.String(), want) {
 					t.Fatalf("response missing %q: %s", want, recorder.Body.String())
 				}

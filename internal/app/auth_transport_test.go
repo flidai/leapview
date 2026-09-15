@@ -10,10 +10,18 @@ func TestAuthenticationAndAuthenticatedBrowserResponsesArePrivate(t *testing.T) 
 	server := assembleRuntime(fakeMetrics{}, assemblyConfig{})
 	handler := server.Routes()
 
-	for _, path := range []string{"/login", "/", "/auth/azureadv2"} {
-		t.Run(path, func(t *testing.T) {
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/login"},
+		{method: http.MethodGet, path: "/"},
+		{method: http.MethodGet, path: "/auth/azureadv2"},
+		{method: http.MethodPost, path: "/auth/switch-account"},
+	} {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			handler.ServeHTTP(response, httptest.NewRequest(test.method, test.path, nil))
 			if got := response.Header().Get("Cache-Control"); got != "no-store" {
 				t.Fatalf("Cache-Control = %q, want no-store", got)
 			}

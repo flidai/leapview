@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -70,6 +71,35 @@ func TestOIDCErrorsDoNotExposeProviderDetails(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "provider-secret-detail") {
 		t.Fatalf("provider detail leaked in response: %q", response.Body.String())
+	}
+}
+
+func TestOIDCBeginOnlyForcesAccountSelectionForAllowlistedPrompt(t *testing.T) {
+	auth := mustNewAuth(t, nil, AuthConfig{DevBypass: true, CSRFKey: strings.Repeat("k", 32)})
+	auth.ConfigureOIDCTestClients(map[string]OIDCClient{"azureadv2": rejectingOIDCClient{}})
+	for _, test := range []struct {
+		name       string
+		path       string
+		wantPrompt string
+	}{
+		{name: "normal login", path: "/auth/azureadv2"},
+		{name: "account switch", path: "/auth/azureadv2?prompt=select_account", wantPrompt: "select_account"},
+		{name: "unrecognized prompt", path: "/auth/azureadv2?prompt=consent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			auth.Begin(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if response.Code != http.StatusFound {
+				t.Fatalf("status = %d body=%q", response.Code, response.Body.String())
+			}
+			location, err := url.Parse(response.Header().Get("Location"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := location.Query().Get("prompt"); got != test.wantPrompt {
+				t.Fatalf("prompt = %q, want %q; location=%q", got, test.wantPrompt, location.String())
+			}
+		})
 	}
 }
 

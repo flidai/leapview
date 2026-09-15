@@ -22,6 +22,7 @@ func (m *Module) LoginPageOptions(r *http.Request) accessui.LoginPageOptions {
 		LocalAuth:     m != nil && m.auth != nil && m.auth.LocalAuthEnabled(),
 		SSOAuth:       m == nil || m.auth == nil || m.auth.SSOConfigured(),
 		ProviderLabel: "Sign in with Azure Active Directory",
+		SelectAccount: loginAccountSelectionRequested(r),
 		Presentation:  m.presentation,
 		Assets:        m.assets,
 		Error:         loginErrorMessage(r),
@@ -35,6 +36,10 @@ func (m *Module) LoginPageOptions(r *http.Request) accessui.LoginPageOptions {
 		options.MustChangePassword = m.auth.MustChangeLocalPassword(r, principal.ID)
 	}
 	return options
+}
+
+func loginAccountSelectionRequested(r *http.Request) bool {
+	return r != nil && loginErrorCode(r) == "forbidden" && r.URL.Query().Get("switch") == "1"
 }
 
 // loginErrorMessage maps the deliberately small set of login redirect
@@ -107,4 +112,12 @@ func (m *Module) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.auth.Logout(w, r)
+}
+
+func (m *Module) SwitchAccount(w http.ResponseWriter, r *http.Request) {
+	if m == nil || m.auth == nil {
+		http.NotFound(w, r)
+		return
+	}
+	m.auth.SwitchAccount(w, r)
 }
