@@ -1,13 +1,12 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
 .involved {
-  padding: 72px clamp(20px, 5vw, 78px) 76px;
+  padding: 72px 0 76px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   scroll-margin-top: 72px;
 }
 
-.involved-inner { width: min(100%, 1300px); margin: 0 auto; }
 .involved h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; text-wrap: balance; }
 .involved-intro { margin: 22px 0 0; color: var(--muted); font: 17px/1.6 var(--fontStack-system); }
 
@@ -22,7 +21,7 @@
 .involved-card:hover .involved-card-action span { transform: translateX(5px); }
 
 @media (max-width: 700px) {
-  .involved { padding: 56px 18px 60px; }
+  .involved { padding-block: 56px 60px; }
   .involved-intro { margin-top: 16px; font-size: 15px; }
   .involved-grid { grid-template-columns: 1fr; gap: 13px; margin-top: 28px; }
   .involved-card { padding: 18px; }

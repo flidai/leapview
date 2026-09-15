@@ -79,6 +79,31 @@ test('homepage presents the new sections inside the shared site shell', async ()
   }
 })
 
+test('homepage content aligns with the shared header and footer across screen sizes', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [390, 801, 1281, 1920, 2560]) {
+      await page.setViewportSize({ width, height: 900 })
+      const edges = await page.evaluate(() => [
+        '.site-header .site-brand',
+        '.hero .eyebrow',
+        '.project-heading h2',
+        '#enterprise .enterprise-heading h2',
+        '.architecture-heading h2',
+        '#openness .enterprise-heading h2',
+        '.involved h2',
+        '.site-footer-brand-block',
+        '.site-footer-bottom p',
+      ].map((selector) => document.querySelector(selector)!.getBoundingClientRect().left))
+      expect(Math.max(...edges) - Math.min(...edges)).toBeLessThanOrEqual(1)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
 test('architecture connections stay aligned with the layers across screen sizes', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {

@@ -4,12 +4,11 @@
   position: relative;
   overflow: hidden;
   scroll-margin-top: 72px;
-  padding: 96px clamp(18px, 4vw, 64px) 105px;
+  padding: 96px 0 105px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   color: var(--ink);
 }
-.architecture-inner { width: min(100%, 1220px); margin: 0 auto; }
 .architecture-heading { max-width: 850px; margin: 0 0 48px; }
 .architecture-heading h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; letter-spacing: -.055em; line-height: 1.04; }
 .architecture-heading > p:last-child { max-width: 720px; margin: 20px 0 0; color: var(--muted); font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; }
@@ -70,7 +69,7 @@
 .architecture-callout-tags span { padding: 5px 7px; border: 1px solid var(--border); border-radius: 2px; color: var(--ink); font-size: 10px; font-weight: 650; line-height: 1; }
 
 @media (max-width: 1000px) and (min-width: 801px) {
-  .architecture { padding: 82px clamp(20px, 5vw, 46px) 85px; }
+  .architecture { padding-block: 82px 85px; }
   .architecture-heading { margin-bottom: 50px; }
   .architecture-board { min-height: 570px; }
   .architecture-stack { top: 100px; width: min(46%, 340px); }
@@ -85,7 +84,7 @@
   .slab-face { font-size: clamp(8px, 1.25vw, 11px); }
 }
 @media (max-width: 800px) {
-  .architecture { padding: 70px 17px 72px; }
+  .architecture { padding-block: 70px 72px; }
   .architecture-heading { margin-bottom: 32px; }
   .architecture-heading > p:last-child { max-width: 380px; margin-top: 16px; font-size: 13px; }
   .architecture-board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-height: 0; }

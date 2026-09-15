@@ -36,6 +36,11 @@
     --frame-shadow: rgba(31, 35, 40, .17);
     --glow: rgba(9, 105, 218, .16);
   }
+  .home-container {
+    width: min(100%, var(--site-layout-width));
+    margin-inline: auto;
+    padding-inline: var(--site-header-inline-space);
+  }
   @media (max-width: 620px) {
     :scope {
       --section-title-size: clamp(28px, 7.2vw, 34px);
@@ -77,7 +82,7 @@
     background: linear-gradient(to bottom, transparent 68%, var(--bg));
     pointer-events: none;
   }
-  .hero-inner { position: relative; width: 100%; margin: 0 auto; padding: 44px 18px 0; }
+  .hero-inner { position: relative; width: 100%; margin: 0 auto; padding: 44px var(--site-header-inline-space) 0; }
   .hero-copy { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
   .hero .eyebrow {
     display: block;
@@ -194,11 +199,8 @@
     .product-frame { -webkit-mask-image: none; mask-image: none; }
     .image-scroller img { aspect-ratio: auto; }
   }
-  @media (min-width: 581px) and (max-width: 639px) {
-    .hero-inner { padding-inline: 23px; }
-  }
   @media (min-width: 640px) and (max-width: 1023px) {
-    .hero-inner { padding: 39px 23px 0; }
+    .hero-inner { padding: 39px var(--site-header-inline-space) 0; }
     .hero .eyebrow { margin-bottom: 31px; }
     .hero h1 { font-size: 38px; line-height: 1.1; }
     .hero-description { max-width: 620px; margin: 16px 0 0; font-size: 16px; line-height: 1.5; }
@@ -215,18 +217,18 @@
     .hero h1 { max-width: 490px; }
   }
   @media (min-width: 1024px) and (max-width: 1100px) {
-    .hero-inner { padding: 96px 0 0 32px; }
+    .hero-inner { padding: 96px 0 0 var(--site-header-inline-space); }
     .hero-copy { max-width: 350px; }
     .hero .eyebrow { margin-bottom: 30px; }
     .hero h1 { max-width: 350px; font-size: 44px; line-height: 1.06; }
     .hero-description { max-width: 340px; margin-top: 25px; font-size: 18px; line-height: 1.5; }
     .primary-link, .secondary-link { min-height: 44px; }
-    .product-stage { width: 1057px; margin: calc(-3.5vw - 160px) 0 0 calc(46vw - 110px); }
+    .product-stage { width: 1057px; margin: calc(-3.5vw - 160px) 0 0 calc(46vw - 94px); }
     .product-frame { width: auto; border-radius: 16px 16px 0 0; }
   }
   @media (min-width: 1101px) {
     .hero-inner {
-      --hero-inline-start: clamp(32px, calc(50vw - 551px), 170px);
+      --hero-inline-start: clamp(16px, calc(50vw - 560px), 160px);
       width: min(100%, 1440px);
       max-width: 1440px;
       padding: 96px 0 0 var(--hero-inline-start);

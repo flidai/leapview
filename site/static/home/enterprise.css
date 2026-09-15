@@ -1,13 +1,12 @@
 /* Homepage study, scoped to preserve the shared site shell. */
 @scope (.site-home) {
 .enterprise {
-  padding: 105px clamp(20px, 5vw, 78px) 112px;
+  padding: 105px 0 112px;
   border-top: 1px solid var(--border);
   background: var(--bg);
   scroll-margin-top: 72px;
 }
 
-.enterprise-inner { width: min(100%, 1300px); margin: 0 auto; }
 .enterprise-heading h2 { margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.05; letter-spacing: -.055em; }
 .enterprise-heading > p:last-child { max-width: 690px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
 
@@ -22,14 +21,14 @@
 .enterprise-feature > a span { color: var(--accent); font-size: 19px; font-weight: 400; }
 
 @media (max-width: 960px) {
-  .enterprise { padding: 85px 32px 90px; }
+  .enterprise { padding-block: 85px 90px; }
   .enterprise-grid { grid-template-columns: 1fr; gap: 39px; max-width: 700px; margin-top: 50px; }
   .enterprise-feature .enterprise-caveat { min-height: 0; }
   .enterprise-feature > a { margin-top: 16px; padding-top: 0; }
 }
 
 @media (max-width: 620px) {
-  .enterprise { padding: 72px 18px 78px; }
+  .enterprise { padding-block: 72px 78px; }
   .enterprise-heading > p:last-child { max-width: 380px; margin-top: 14px; font-size: 14px; }
   .enterprise-grid { gap: 39px; margin-top: 46px; }
   .enterprise-feature { display: flex; padding-top: 23px; }

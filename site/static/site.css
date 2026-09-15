@@ -2432,6 +2432,11 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-home + .site-footer {
   background: var(--lv-bg-page);
+  padding-inline: 0;
+}
+
+.site-home + .site-footer :is(.site-footer-content, .site-footer-bottom) {
+  padding-inline: var(--site-header-inline-space);
 }
 
 .site-footer-content,

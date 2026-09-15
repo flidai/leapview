@@ -6,7 +6,7 @@
   --project-code-sql: #7ee4ba;
   --project-code-comment: #7fb278;
   position: relative;
-  padding: 105px clamp(20px, 5vw, 78px) 100px;
+  padding: 105px 0 100px;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 96%, var(--ink));
   scroll-margin-top: 72px;
@@ -17,7 +17,6 @@
   --project-code-sql: #1a7f37;
   --project-code-comment: #27803c;
 }
-.project-inner { width: min(100%, 1320px); margin: 0 auto; }
 .project-heading h2 { max-width: 850px; margin: 0; font-size: var(--section-title-size); font-weight: 600; line-height: 1.03; letter-spacing: -.055em; text-wrap: balance; }
 .project-intro { max-width: 750px; margin: 18px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; text-wrap: pretty; }
 .project-phase-copy { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-height: 27px; margin: 16px 0 0; color: var(--muted); font-size: 17px; line-height: 1.55; }
@@ -58,10 +57,10 @@
 .project-syntax-comment { color: var(--project-code-comment); }
 
 @media (max-width: 900px) {
-  .project-section { padding: 85px 32px 85px; }
+  .project-section { padding-block: 85px; }
 }
 @media (max-width: 650px) {
-  .project-section { padding: 73px 18px 72px; }
+  .project-section { padding-block: 73px 72px; }
     .project-intro { margin-top: 14px; font-size: 13px; }
   .project-phase-copy { max-width: 360px; min-height: 44px; margin-top: 12px; font-size: 13px; }
   .project-phase-copy > span:first-child { font-size: 10px; }
