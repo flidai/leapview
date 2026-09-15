@@ -50,6 +50,73 @@ type RiverJobsOwnerV2 struct{ binding bindingOwner }
 type DuckLakeOwnerV2 struct{ binding bindingOwner }
 type PhysicalPoolOwnerV2 struct{ binding bindingOwner }
 
+// AuthorityV2 is the production aggregation boundary. It can only be built
+// from the concrete artifact, deployment-target, and capability authorities;
+// callers cannot inject owner envelopes or compatibility projections.
+type AuthorityV2 struct {
+	goose        *GooseOwnerV2
+	river        *RiverJobsOwnerV2
+	duckLake     *DuckLakeOwnerV2
+	physicalPool *PhysicalPoolOwnerV2
+}
+
+func NewAuthorityV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*AuthorityV2, error) {
+	goose, err := NewGooseOwnerV2(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	river, err := NewRiverJobsOwnerV2(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	duckLake, err := NewDuckLakeOwnerV2(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	physicalPool, err := NewPhysicalPoolOwnerV2(artifacts, targets, capabilities)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthorityV2{goose: goose, river: river, duckLake: duckLake, physicalPool: physicalPool}, nil
+}
+
+// Resolve obtains all four independently owner-produced envelopes and checks
+// the frozen migration-compatibility/v2 aggregate before returning it.
+func (a *AuthorityV2) Resolve(ctx context.Context, selection SelectionV2) (migrationcompatibility.EvidenceV2, error) {
+	if a == nil || a.goose == nil || a.river == nil || a.duckLake == nil || a.physicalPool == nil {
+		return migrationcompatibility.EvidenceV2{}, ErrOwnerUnavailable
+	}
+	goose, err := a.goose.Resolve(ctx, selection)
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, fmt.Errorf("resolve Goose owner evidence: %w", err)
+	}
+	river, err := a.river.Resolve(ctx, selection)
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, fmt.Errorf("resolve River/jobs owner evidence: %w", err)
+	}
+	duckLake, err := a.duckLake.Resolve(ctx, selection)
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, fmt.Errorf("resolve DuckLake owner evidence: %w", err)
+	}
+	physicalPool, err := a.physicalPool.Resolve(ctx, selection)
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, fmt.Errorf("resolve PhysicalPool owner evidence: %w", err)
+	}
+	evidence, err := migrationcompatibility.NewEvidenceV2(goose, river, duckLake, physicalPool)
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, err
+	}
+	canonical, err := evidence.CanonicalJSON()
+	if err != nil {
+		return migrationcompatibility.EvidenceV2{}, err
+	}
+	parsed, err := migrationcompatibility.ParseEvidenceV2(canonical)
+	if err != nil || parsed != evidence {
+		return migrationcompatibility.EvidenceV2{}, fmt.Errorf("%w: aggregate canonical round trip", ErrOwnerState)
+	}
+	return evidence, nil
+}
+
 func NewGooseOwnerV2(artifacts *releasepostgres.Repository, targets *deploymentpostgres.Repository, capabilities *releasepostgres.MigrationCapabilityAuthority) (*GooseOwnerV2, error) {
 	binding, err := newBindingOwner(artifacts, targets, capabilities)
 	if err != nil {
