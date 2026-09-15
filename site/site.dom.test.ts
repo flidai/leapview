@@ -505,6 +505,26 @@ test('documentation header keeps only search and theme actions', async () => {
   }
 })
 
+test('documentation header, sidebar, and article share the page background in both themes', async () => {
+  for (const colorScheme of ['light', 'dark'] as const) {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, colorScheme })
+    try {
+      await page.goto(`${baseURL}/docs/guides/data/refresh`)
+      const colors = await page.evaluate(() => ({
+        page: getComputedStyle(document.body).backgroundColor,
+        header: getComputedStyle(document.querySelector('.site-header')!).backgroundColor,
+        sidebar: getComputedStyle(document.querySelector('.site-docs-sidebar')!).backgroundColor,
+        article: getComputedStyle(document.querySelector('.site-docs-content')!).backgroundColor,
+      }))
+      expect(colors.header).toBe(colors.page)
+      expect(colors.sidebar).toBe(colors.page)
+      expect(colors.article).toBe(colors.page)
+    } finally {
+      await page.close()
+    }
+  }
+})
+
 test('site header follows homepage section colors on scroll', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {

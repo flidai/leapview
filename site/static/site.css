@@ -148,7 +148,7 @@ a {
 }
 
 .site-header--docs {
-  background: var(--lv-bg-panel);
+  background: var(--lv-bg-page);
 }
 
 .site-header--docs.is-scrolled::before {
@@ -524,7 +524,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   border-right: var(--lv-border-muted);
-  background: var(--lv-bg-panel);
+  background: var(--lv-bg-page);
   padding: 0 var(--base-size-16) var(--base-size-16) 0;
 }
 
@@ -646,6 +646,7 @@ lv-site-search:not(:defined) > .site-search-active-input {
 
 .site-docs-content {
   min-width: 0;
+  background: var(--lv-bg-page);
   padding: var(--base-size-32) 0 var(--base-size-128);
   container: site-docs-content / inline-size;
 }
