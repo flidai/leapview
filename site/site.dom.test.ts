@@ -72,6 +72,40 @@ test('homepage presents the new sections inside the shared site shell', async ()
   }
 })
 
+test('architecture connections stay aligned with the layers across screen sizes', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [1440, 820, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.waitForFunction(() => {
+        const board = document.querySelector('#architecture-board')
+        const canvas = board?.querySelector('svg.architecture-wires')
+        return board && canvas?.getAttribute('viewBox')?.split(' ')[2] === String(board.getBoundingClientRect().width)
+      })
+      expect(await page.locator('.architecture-wire').count()).toBe(6)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+      const overlap = await page.locator('#architecture-board').evaluate((board) => {
+        const pieces = [...board.querySelectorAll<HTMLElement>('.slab-piece')]
+        const cards = [...board.querySelectorAll<HTMLElement>('.architecture-callout')]
+        return Math.max(...cards.flatMap((card) => pieces.map((piece) => {
+          const a = card.getBoundingClientRect()
+          const b = piece.getBoundingClientRect()
+          return Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) *
+            Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
+        })))
+      })
+      expect(overlap).toBe(0)
+    }
+    await page.setViewportSize({ width: 820, height: 900 })
+    await page.locator('#architecture-postgres').hover()
+    expect(await page.locator('#architecture-postgres').evaluate((element) => element.classList.contains('is-active'))).toBe(true)
+    expect(await page.locator('.architecture-wire.is-active').count()).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
 test('analytics code walkthrough advances when visible and stops after a file is chosen', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
