@@ -242,7 +242,6 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if !strings.Contains(browser, "Authorization: `Bearer ${credentials.workloadToken}`") || strings.Contains(browser, "Authorization: `Bearer ${credentials.publisherToken}`") {
 		t.Error("browser qualification must prove PROJECT_ADMIN denial with the project-bound restricted workload credential")
 	}
-
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",
 		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
@@ -348,7 +347,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if !strings.Contains(browser, `getByRole('checkbox', { name: 'SP', exact: true })`) ||
 		!strings.Contains(performance, `getByRole('checkbox', { name: value, exact: true })`) ||
-		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
+		!strings.Contains(performance, `getByRole('button', { name: 'Clear State', exact: true })`) || strings.Contains(performance, "All State") {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
 	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
