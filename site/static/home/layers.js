@@ -50,6 +50,8 @@ function drawWires() {
       : `${start.x} ${start.y + bend * direction}, ${end.x} ${end.y - bend * direction}`;
     const wire = document.createElementNS(svgNamespace, 'g');
     wire.classList.add('architecture-wire');
+    wire.dataset.layer = card.dataset.layer;
+    if (card.dataset.detail) wire.dataset.detail = card.dataset.detail;
     const path = document.createElementNS(svgNamespace, 'path');
     path.setAttribute('d', `M ${start.x} ${start.y} C ${controls}, ${end.x} ${end.y}`);
     const dot = document.createElementNS(svgNamespace, 'circle');
@@ -71,7 +73,9 @@ function highlight(piece) {
 
 function restoreFocusOrHover() {
   const focusedPiece = pieces.find(piece => piece === document.activeElement && piece.matches(':focus-visible'));
-  highlight(focusedPiece || pieces.find(piece => piece.matches(':hover')) || null);
+  const hoveredCallout = callouts.find(callout => callout.matches(':hover'));
+  highlight(focusedPiece || pieces.find(piece => piece.matches(':hover')) ||
+    pieces.find(piece => hoveredCallout && matchesPiece(hoveredCallout, piece)) || null);
 }
 
 pieces.forEach(piece => {
