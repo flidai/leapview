@@ -148,36 +148,6 @@ const (
 	generationCleanupFinished
 )
 
-type GenerationCleanupState string
-
-const (
-	GenerationCleanupDraining GenerationCleanupState = "draining_readers"
-	GenerationCleanupPending  GenerationCleanupState = "cleanup_pending"
-	GenerationCleanupRunning  GenerationCleanupState = "cleanup_running"
-)
-
-type RetiredGeneration struct {
-	ServingStateID     servingstate.ID
-	DuckLakeSnapshotID int64
-	Readers            int
-	CleanupState       GenerationCleanupState
-}
-
-func (m *Manager) RetiredGenerations() []RetiredGeneration {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := make([]RetiredGeneration, 0, len(m.retired))
-	for _, r := range m.retired {
-		state := GenerationCleanupDraining
-		if r.cleanupState == generationCleanupPending {
-			state = GenerationCleanupPending
-		} else if r.cleanupState == generationCleanupRunning {
-			state = GenerationCleanupRunning
-		}
-		out = append(out, RetiredGeneration{r.servingStateID, r.snapshotID, r.refs, state})
-	}
-	return out
-}
 func (m *Manager) cleanupRetired(runtime *managedRuntime) {
 	if runtime == nil {
 		return

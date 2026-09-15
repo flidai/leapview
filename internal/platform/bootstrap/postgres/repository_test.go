@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -129,6 +130,15 @@ func TestBootstrapImmutableTamperAndCallerRollback(t *testing.T) {
 	}
 	if _, err := db.Exec(t.Context(), `DELETE FROM platform.instance_project_claim`); err == nil {
 		t.Fatal("instance project claim delete unexpectedly succeeded")
+	}
+}
+
+func TestBootstrapMissingSettingUsesApplicationSettingsNotFoundContract(t *testing.T) {
+	db := bootstrapTestDB(t)
+	r := New(db)
+
+	if _, err := r.GetSetting(t.Context(), "agent.system_prompt"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing setting error = %v, want sql.ErrNoRows", err)
 	}
 }
 

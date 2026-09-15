@@ -338,9 +338,15 @@ type runtimeAssemblyInputs struct {
 	// DeliveryTargetReader is the durable target-owned active-generation
 	// pointer. Sealed production serving must consult it before the legacy
 	// serving-state scope table when deciding whether bootstrap is still open.
-	DeliveryTargetReader    deliveryTargetReader
-	ProjectID               projectgraph.ResourceID
-	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
+	DeliveryTargetReader deliveryTargetReader
+	ProjectID            projectgraph.ResourceID
+	ProjectIDResolver    func(context.Context) (projectgraph.ResourceID, error)
+
+	// IdempotencyProjectIDResolver resolves the durable claim boundary used by
+	// commands that are valid before the first serving generation exists. When
+	// unset, API protocol composition uses the active runtime Project resolver.
+	IdempotencyProjectIDResolver func(context.Context) (projectgraph.ResourceID, error)
+
 	ServingSnapshotResolver func(context.Context) (string, error)
 	InstanceID              string
 	DuckDBDir               string
@@ -507,6 +513,9 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	}
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
+	}
+	if production && config.BeforeNativeActivationCommit == nil {
+		return errors.New("native delivery composition requires the semantic activation pre-commit fence")
 	}
 	return nil
 }
@@ -681,7 +690,7 @@ func buildApplicationSurfaces(
 		platform.asyncJobs = platform.jobModule
 	}
 	if platform.apiProtocol == nil {
-		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
+		if err := configureAPIProtocol(routes, runtime, platform, policy, runtimeConfig, ctx, apiProtocolPersistence{
 			Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
 			BypassDurableIdempotency:  data.BypassDurableIdempotency,
 			ReclaimExpiredIdempotency: data.ReclaimExpiredIdempotency,
@@ -1260,6 +1269,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				AgentCommands: dashboardmodule.AgentCommandBindings{
 					CreateConversation: agentUICommands.CreateConversation,
 					CreateRun:          agentUICommands.CreateRun,
+					CancelRun:          agentUICommands.CancelRun,
 				},
 				Presentation: dashboardmodule.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 				Assets:       platform.assets,
@@ -1569,6 +1579,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return platform.auth.APICredential(r)
 			},
 			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
+			CurrentProjectID:             runtime.resolveProjectID,
 			Publications:                 routes.dashboardModule,
 			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
 			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
@@ -1705,7 +1716,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
@@ -1744,7 +1755,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if len(resources) == 0 {
 				// Unknown/new resources require an explicit target-owned role;
 				// a grant on an unrelated graph object must never widen scope.
-				return deliveryRoleAllows(snapshot, subjects, capability), nil
+				return accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability), nil
 			}
 			return deliverySnapshotAllows(snapshot, subjects, resources, capability)
 		},

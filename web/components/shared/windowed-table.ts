@@ -396,7 +396,17 @@ class WindowedTable extends LitElement {
       min-height: var(--control-small-size);
     }
 
+    .header-label {
+      flex: 1 1 0;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+
     .sort {
+      flex: 0 0 1rem;
       min-width: 1rem;
       color: var(--lv-fg-link);
       text-align: right;
@@ -544,6 +554,11 @@ class WindowedTable extends LitElement {
     this.observeViewport()
   }
 
+  connectedCallback(): void {
+    super.connectedCallback()
+    if (this.hasUpdated) queueMicrotask(() => this.observeViewport())
+  }
+
   updated(): void {
     if (this.shouldResetScroll) {
       this.shouldResetScroll = false
@@ -577,10 +592,16 @@ class WindowedTable extends LitElement {
       this.clearJumpTimer()
     }
     this.mergeIncomingBlocks(table)
+    // A matching empty response completes the request even without scrollable content.
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+    }
   }
 
   disconnectedCallback(): void {
     this.resizeObserver?.disconnect()
+    this.resizeObserver = undefined
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
     if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame)
     this.clearJumpTimer()
@@ -638,8 +659,8 @@ class WindowedTable extends LitElement {
                 <div class="head" role="row">
                   ${columns.map((column) => html`
                     <div class=${`header-cell ${column.align === 'right' ? 'right' : ''}`} role="columnheader">
-                      <button type="button" @click=${() => this.sortColumn(table, column)}>
-                        <span>${column.label || column.key}</span>
+                      <button type="button" title=${column.label || column.key} @click=${() => this.sortColumn(table, column)}>
+                        <span class="header-label">${column.label || column.key}</span>
                         <span class="sort">${sortMarker(table.sort, column.key)}</span>
                       </button>
                       <span
@@ -655,8 +676,8 @@ class WindowedTable extends LitElement {
                     ? html`
                       <div class="row" role="row" style=${`top:${slot.index * table.rowHeight}px`}>
                         ${columns.map((column) => html`
-                          <div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell" title=${cellLabel(slot.row?.[column.key])}>
-                            ${renderCell(slot.row?.[column.key])}
+                          <div class=${`cell ${column.align === 'right' ? 'right' : ''}`} role="cell" title=${slot.row?.[column.key] == null || slot.row?.[column.key] === '' ? 'No value' : cellLabel(slot.row?.[column.key], column)}>
+                            ${renderCell(slot.row?.[column.key], column)}
                           </div>
                         `)}
                       </div>
@@ -747,7 +768,11 @@ class WindowedTable extends LitElement {
 
   private ensureBlocksForScroll(): void {
     const table = normalizeTable(this.table)
-    if (table.availableRows <= 0) return
+    if (table.availableRows <= 0) {
+      this.expectedBlocks.clear()
+      this.clearJumpTimer()
+      return
+    }
     const currentStart = Math.floor(Math.floor(this.viewportTop / table.rowHeight) / table.chunkSize) * table.chunkSize
     const desired = this.desiredStarts(table, currentStart)
     const desiredSet = new Set(desired)
@@ -771,10 +796,10 @@ class WindowedTable extends LitElement {
   }
 
   private scheduleJumpBlock(start: number): void {
-    if (this.jumpTimer && this.pendingJumpStart === start) return
     this.pendingJumpStart = start
     this.requestUpdate()
-    this.clearJumpTimer()
+    // Keep one bounded trailing request alive; restarting per chunk can postpone loading indefinitely.
+    if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
       const table = normalizeTable(this.table)
@@ -844,11 +869,14 @@ class WindowedTable extends LitElement {
       const cacheIsEmpty = this.blockCache[id].rows.length === 0
       if (carriesRows || carriesNonDefaultStart || cacheIsEmpty) {
         this.blockCache[id] = { ...incoming, rows: incoming.rows }
-        if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
-        const expected = this.expectedBlocks.get(id)
-        if (expected && this.blockMatchesExpected(incoming, expected)) {
-          this.expectedBlocks.delete(id)
-        }
+      }
+      // A matching response fulfils the request even when it contains no
+      // rows. Empty windows are valid after a filter reduces a deeply
+      // scrolled table; leaving them pending keeps loading stuck forever.
+      if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
+      const expected = this.expectedBlocks.get(id)
+      if (expected && this.blockMatchesExpected(incoming, expected)) {
+        this.expectedBlocks.delete(id)
       }
     }
   }
@@ -886,7 +914,7 @@ class WindowedTable extends LitElement {
     if (Number.isFinite(configured) && Number(configured) > 0) {
       return Math.max(this.minColumnWidth(column), Math.round(Number(configured)))
     }
-    return Math.max(this.minColumnWidth(column), defaultColumnWidth(column))
+    return Math.max(this.minColumnWidth(column), defaultColumnWidth(column, table.blocks))
   }
 
   private displayColumnWidths(table: Required<WindowedTablePayload>, columns: WindowedTableColumn[]): number[] {
@@ -997,8 +1025,13 @@ class WindowedTable extends LitElement {
   }
 }
 
-function defaultColumnWidth(column: WindowedTableColumn): number {
+function defaultColumnWidth(column: WindowedTableColumn, blocks: Required<WindowedTablePayload>['blocks']): number {
   if (Number.isFinite(column.width) && Number(column.width) > 0) return Number(column.width)
+  if (isTemporalColumn(column)) {
+    // Reserve enough room for the full displayed timestamp, including precision and offset.
+    const lengths = Object.values(blocks).flatMap(block => block?.rows.map(row => cellLabel(row[column.key], column).length) ?? [])
+    return Math.max(168, (Math.max(20, ...lengths) * 9) + 24)
+  }
   if (column.align === 'right') return 128
   if (column.key.length > 24) return 240
   return 168
@@ -1010,15 +1043,24 @@ function sortMarker(sort: WindowedTableSort, column: string) {
   return lucideIcon(normalized.direction === 'desc' ? ArrowDown : ArrowUp, { size: 12, strokeWidth: 2 })
 }
 
-function renderCell(value: unknown) {
-  const text = cellLabel(value)
-  if (text === '-') return html`<span class="muted">-</span>`
+function renderCell(value: unknown, column: WindowedTableColumn) {
+  const text = cellLabel(value, column)
+  if (value == null || value === '') return html`<span class="muted" aria-label="No value">-</span>`
   if (typeof value === 'number') return html`<span>${text}</span>`
   return html`<code>${text}</code>`
 }
 
-function cellLabel(value: unknown): string {
+function isTemporalColumn(column: WindowedTableColumn): boolean {
+  return /^(date|datetime|timestamp|timestamptz)(?:\b|_)/i.test(column.type || '')
+}
+
+function cellLabel(value: unknown, column: WindowedTableColumn): string {
   if (value == null || value === '') return '-'
+  if (typeof value === 'string' && isTemporalColumn(column)) {
+    // Keep the source date order, time, precision and timezone; only separate
+    // ISO date and time for readability.
+    return value.replace(/^(\d{4}-\d{2}-\d{2})T(?=\d{2}:\d{2}:\d{2})/, '$1 ')
+  }
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import type { BrowserWindowConstructorOptions } from "electron";
 
 import { createRemoteWindow } from "./security/remote-window.mjs";
 
@@ -35,7 +36,9 @@ describe("createRemoteWindow", () => {
         bounds: { x: 10, y: 20, width: 1200, height: 800 },
         maximized: true,
       },
-      createWindow: (options) => {
+      createWindow: (
+        options: BrowserWindowConstructorOptions,
+      ) => {
         calls.push("create");
         expect(options.webPreferences).toMatchObject({
           partition: "persist:leapview-profile-0123456789abcdef",

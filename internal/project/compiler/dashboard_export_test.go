@@ -23,16 +23,42 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders_model}
-spec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}
+metadata:
+  id: model:orders
+  name: orders_model
+spec:
+  definition:
+    type: direct
+    source: orders
+  entities:
+  - name: id
+    type: primary
+    fields:
+    - id
+  grain:
+    entity: id
+  fields:
+  - name: id
+    datatype: String
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic:sales, name: sales}
-spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}
+metadata:
+  id: semantic:sales
+  name: sales
+spec:
+  datasets:
+  - name: orders
+    model: orders_model
+    metrics:
+    - name: order_count
+      type: simple
+      empty: zero
+      agg: count
+      field: id
 `,
 		"dashboards/fragments/visuals.yaml": `visuals:
-  order_count:
+  - id: order_count
     type: kpi
     query: {type: aggregate, dimensions: [], metrics: [order_count]}
     presentation: {type: kpi}
@@ -44,14 +70,18 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {order_count: {type: 
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
-metadata: {id: dashboard:sales, name: sales_dashboard}
+metadata:
+  id: dashboard:sales
+  name: sales_dashboard
 spec:
   semanticModel: sales
   filters: []
   includes:
-    visuals: [fragments/visuals.yaml]
-    pages: [fragments/pages.yaml]
-  visuals: {}
+    visuals:
+    - fragments/visuals.yaml
+    pages:
+    - fragments/pages.yaml
+  visuals: []
   pages: []
 `,
 	}
@@ -85,7 +115,7 @@ spec:
 		t.Fatalf("fragmented export did not preserve source bytes: %s", visualSource)
 	}
 	badFragment := filepath.Join(root, "dashboards/fragments/visuals.yaml")
-	if err := os.WriteFile(badFragment, []byte("visuals:\n  order_count:\n    type: unsupported\n    query: {type: aggregate, dimensions: [], metrics: [order_count]}\n    presentation: {type: kpi}\n"), 0o644); err != nil {
+	if err := os.WriteFile(badFragment, []byte("visuals:\n  - id: order_count\n    type: unsupported\n    query: {type: aggregate, dimensions: [], metrics: [order_count]}\n    presentation: {type: kpi}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ExportDashboardSource(filepath.Join(root, "dashboards/sales.yaml"), root, DashboardExportFragmented); err == nil || !strings.Contains(err.Error(), "validate canonical dashboard") {

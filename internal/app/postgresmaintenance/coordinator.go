@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
@@ -22,6 +21,7 @@ import (
 	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -163,16 +163,7 @@ func New(options Options) (*Coordinator, error) {
 }
 
 func nilAuthority(value any) bool {
-	if value == nil {
-		return true
-	}
-	rv := reflect.ValueOf(value)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(value)
 }
 
 // OperationPolicy controls one bounded operation-history batch.

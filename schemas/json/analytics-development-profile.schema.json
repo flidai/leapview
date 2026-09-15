@@ -1,0 +1,125 @@
+{
+  "$id": "https://leapview.dev/schemas/analytics-development-profile.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "profiles": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "connections": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "credentials": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "env": {
+                          "maxLength": 256,
+                          "pattern": "^LEAPVIEW_DEV_CONNECTION_[A-Z0-9_]+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "env"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "none": {
+                          "const": true
+                        }
+                      },
+                      "required": [
+                        "none"
+                      ],
+                      "type": "object"
+                    }
+                  ]
+                },
+                "endpoint": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "database": {
+                      "type": "string"
+                    },
+                    "host": {
+                      "type": "string"
+                    },
+                    "objectScope": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "data_path": {
+                          "type": "string"
+                        },
+                        "path": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "port": {
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceIdentity": {
+                      "type": "string"
+                    },
+                    "tlsMode": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "endpoint",
+                "credentials"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "connections"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+      },
+      "type": "object"
+    },
+    "version": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "profiles"
+  ],
+  "title": "LeapView local analytics connection profiles",
+  "type": "object",
+  "x-leapview-endpoint-options": [
+    "data_path",
+    "path"
+  ],
+  "x-leapview-runtime-validation": [
+    "canonical-path",
+    "yaml-features",
+    "templates",
+    "inline-secrets",
+    "secret-bearing-urls"
+  ]
+}

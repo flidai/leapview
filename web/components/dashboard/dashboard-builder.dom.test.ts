@@ -3,8 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { typographyTestTokens } from '../test-typography-tokens'
-import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope } from './dashboard-builder-test-fixtures'
+import { governedBarPreviewEnvelope, headerlessKPIPreviewEnvelope, builderTestDocument as testDocument } from './dashboard-builder-test-fixtures'
 import { verifyBuilderZoomActionTargets } from './dashboard-builder-zoom-targets.test'
 
 let server: Server
@@ -55,7 +54,7 @@ test('dashboard builder renders bottom page tabs, canvas, and visual builder wit
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       let builderCommand = false
       element.addEventListener('lv-builder-command', () => { builderCommand = true }, { once: true })
       ;(root.querySelector('.field') as HTMLButtonElement).click()
@@ -96,7 +95,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const body = root.querySelector('.body') as HTMLElement
       const regions = Array.from(body.children).map((child) => child.className)
       const boxes = ['.canvas-pane', '.page-bar', '.right-dock'].map((selector) => {
@@ -172,6 +171,39 @@ test('dashboard builder places the page tab bar below the canvas without consumi
   }
 })
 
+test('dashboard builder reads one dashboard snapshot per update and refreshes it after a signal patch', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const result = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const originalSignal = element.signal.bind(element)
+      const originalRender = element.render.bind(element)
+      let reads = 0
+      let renders = 0
+      element.signal = (path: string, fallback: unknown) => {
+        if (path === 'builder') reads++
+        return originalSignal(path, fallback)
+      }
+      element.render = () => { renders++; return originalRender() }
+      element.shadowRoot.querySelector('[data-pane-toggle="data"]').click()
+      await element.updateComplete
+      const toggled = { reads, renders }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { title: 'Updated saved draft' } })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      await element.updateComplete
+      return { toggled, title: element.shadowRoot.querySelector('h1')?.textContent?.trim() }
+    })
+    expect(result.toggled.renders).toBeGreaterThan(0)
+    expect(result.toggled.reads).toBe(result.toggled.renders)
+    expect(result.title).toBe('Updated saved draft')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder collapses right panes, persists the choice, and uses icon actions', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -179,9 +211,9 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const before = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       return {
-        canvasWidth: root.querySelector('.canvas-pane').getBoundingClientRect().width,
+        canvasWidth: root.querySelector('.canvas-pane')!.getBoundingClientRect().width,
         panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.getAttribute('data-collapsed')),
         historyIcons: Array.from(root.querySelectorAll('[data-builder-action="undo"], [data-builder-action="redo"]')).map((button: Element) => ({
           label: button.getAttribute('aria-label'),
@@ -196,7 +228,8 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
         })),
         agent: {
           bodyHidden: (root.querySelector('#builder-agent-content') as HTMLElement).hidden,
-          hasDrawer: Boolean(root.querySelector('.agent-pane lv-chat-drawer[open][embedded]')),
+          hasDrawer: Boolean(root.querySelector('.agent-pane lv-chat-drawer[embedded]')),
+          drawerOpen: Boolean((root.querySelector('lv-chat-drawer') as any).open),
           toggleIconHidden: getComputedStyle(root.querySelector('[data-pane-toggle="agent"] svg') as SVGElement).display === 'none',
           toggleCoversRail: (() => {
             const pane = (root.querySelector('.agent-pane') as HTMLElement).getBoundingClientRect()
@@ -208,7 +241,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     })
 
     const visualsToggle = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
       await element.updateComplete
       const collapsed = {
@@ -222,21 +255,21 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     })
 
     const agentToggle = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       ;(root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement).click()
       await element.updateComplete
       const pane = root.querySelector('.agent-pane') as HTMLElement
       const content = root.querySelector('#builder-agent-content') as HTMLElement
       const drawer = root.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
-      const title = drawer.shadowRoot.querySelector('.title') as HTMLElement
+      const title = (drawer.shadowRoot as ShadowRoot).querySelector('.title') as HTMLElement
       const state = {
         collapsed: pane.dataset.collapsed,
         hidden: content.hidden,
         width: pane.getBoundingClientRect().width,
         embeddedTitleHidden: getComputedStyle(title).display === 'none',
         expandedToggleIconVisible: getComputedStyle(root.querySelector('[data-pane-toggle="agent"] svg') as SVGElement).display !== 'none',
-        hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
+        hasComposer: Boolean((drawer.shadowRoot as ShadowRoot).querySelector('lv-chat-composer')),
       }
       ;(root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement).click()
       await element.updateComplete
@@ -244,17 +277,17 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     })
 
     await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       ;(root.querySelector('[data-pane-toggle="filters"]') as HTMLButtonElement).click()
       ;(root.querySelector('[data-pane-toggle="data"]') as HTMLButtonElement).click()
       await element.updateComplete
     })
     const collapsed = await page.locator('lv-dashboard-builder').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const filters = root.querySelector('.filters-pane') as HTMLElement
       const data = root.querySelector('.data-pane') as HTMLElement
       return {
-        canvasWidth: root.querySelector('.canvas-pane').getBoundingClientRect().width,
+        canvasWidth: root.querySelector('.canvas-pane')!.getBoundingClientRect().width,
         filtersCollapsed: filters.dataset.collapsed,
         dataCollapsed: data.dataset.collapsed,
         filtersHidden: (root.querySelector('#builder-filters-content') as HTMLElement).hidden,
@@ -269,7 +302,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const restored = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       return {
         filters: root.querySelector('.filters-pane')?.getAttribute('data-collapsed'),
         visuals: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
@@ -280,7 +313,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     await page.setViewportSize({ width: 900, height: 900 })
     const responsive = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const dock = root.querySelector('.right-dock') as HTMLElement
       const filters = root.querySelector('.filters-pane') as HTMLElement
       const data = root.querySelector('.data-pane') as HTMLElement
@@ -295,7 +328,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     await page.setViewportSize({ width: 1100, height: 900 })
     const stacked = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const filters = root.querySelector('.filters-pane') as HTMLElement
       const data = root.querySelector('.data-pane') as HTMLElement
       const agent = root.querySelector('.agent-pane') as HTMLElement
@@ -310,7 +343,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     })
 
     expect(before.panes).toEqual(['false', 'false', 'false', 'true'])
-    expect(before.agent).toEqual({ bodyHidden: true, hasDrawer: true, toggleIconHidden: true, toggleCoversRail: true })
+    expect(before.agent).toEqual({ bodyHidden: true, hasDrawer: true, drawerOpen: false, toggleIconHidden: true, toggleCoversRail: true })
     expect(before.historyIcons).toEqual([
       { label: 'Undo', hasIcon: true, text: 'Undo' },
       { label: 'Redo', hasIcon: true, text: 'Redo' },
@@ -345,6 +378,36 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
   }
 })
 
+test('builder Agent Escape collapses the dock and reopening preserves the unsent draft', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const result = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const drawer = root.querySelector('lv-chat-drawer') as any
+      const toggle = root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement
+      toggle.click()
+      await element.updateComplete
+      await drawer.updateComplete
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer')
+      composer.setDraft('Keep this unsent question')
+      await composer.updateComplete
+      drawer.shadowRoot.querySelector('.drawer').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true, cancelable: true }))
+      await element.updateComplete
+      const collapsed = root.querySelector('.agent-pane')?.getAttribute('data-collapsed')
+      toggle.click()
+      await element.updateComplete
+      await drawer.updateComplete
+      return { collapsed, reopened: drawer.open, sameComposer: composer === drawer.shadowRoot.querySelector('lv-chat-composer'), draft: composer.shadowRoot.querySelector('textarea').value }
+    })
+    expect(result).toEqual({ collapsed: 'true', reopened: true, sameComposer: true, draft: 'Keep this unsent question' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder toggles the product theme between light and dark', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -357,7 +420,7 @@ test('dashboard builder toggles the product theme between light and dark', async
       document.addEventListener('leapview-theme-change', onThemeChange)
       document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: 'light', resolvedMode: 'light' } }))
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const toggle = root.querySelector('[data-builder-action="theme"]') as HTMLButtonElement
       const light = {
         mode: toggle.dataset.themeMode,
@@ -398,7 +461,7 @@ test('dashboard builder creates a slicer from one compatible dimension', async (
         { id: 'orders.total', datasetId: 'orders', label: 'Total', kind: 'metric', roles: ['metric'], dataType: 'decimal' },
       ] }] } } })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
       ;(root.querySelector('button[data-visual-picker-type="slicer"]') as HTMLButtonElement).click()
@@ -458,7 +521,7 @@ test('dashboard builder leaves slicer mode when adding a chart visual', async ()
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const pages = structuredClone(element.builder.pages)
       pages[0].filterComponents = [{ id: 'status-slicer', filterId: 'status-filter', label: 'Status', controlType: 'multiSelect', placement: { col: 7, row: 1, colSpan: 3, rowSpan: 2 } }]
@@ -506,7 +569,7 @@ test('dashboard builder changes the selected visual type without creating a visu
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const beforeCount = root.querySelectorAll('.visual').length
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
@@ -536,7 +599,7 @@ test('dashboard builder can select every catalog visual type through the same co
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const catalogTypes = element.builder.visualCatalog.map((entry: any) => entry.type)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
@@ -567,7 +630,7 @@ test('dashboard builder restores the exact prior revision when immediately switc
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
       ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
@@ -605,7 +668,7 @@ test('dashboard builder remaps normally after an intervening edit instead of rol
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const commands = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const received: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => received.push(event.detail))
       ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
@@ -657,10 +720,10 @@ test('dashboard builder reselects a legacy mismatched type to repair its query f
       await element.updateComplete
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      element.shadowRoot.querySelector<HTMLButtonElement>('button[data-visual-picker-type="donut"]')?.click()
+      ;(element.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('button[data-visual-picker-type="donut"]')?.click()
       await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 20))
-      return { command, message: element.shadowRoot.querySelector('.pane-header [role="status"]')?.textContent?.trim() }
+      return { command, message: (element.shadowRoot as ShadowRoot).querySelector('.pane-header [role="status"]')?.textContent?.trim() }
     })
     expect(state.command).toMatchObject({ action: 'set_visual_type', pageId: 'overview', visualId: 'sales-chart', type: 'donut' })
     expect(state.message).toContain('Repairing')
@@ -698,11 +761,11 @@ test('dashboard builder explains incomplete target visuals without hidden retain
           schemaVersion: 10, visualID: 'sales-chart', rendererID: 'echarts', specRevision: revision, dataRevision: 1,
           spec: { kind: 'cartesian', title: 'Stale table preview', accessibility: { title: 'Stale table preview', description: 'Preview from the prior visual type.' }, fields: [], x: { dataset: 'primary', field: 'category' }, y: [{ dataset: 'primary', field: 'value' }] },
           dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
-          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
+          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'generation-7', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'overview/sales-chart',
         },
       } })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const switched = {
         requirement: root.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
         retained: root.querySelectorAll('.retained-field, .retained-fields').length,
@@ -755,7 +818,7 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const selectedBefore = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id')
       const addButtonBefore = root.querySelector('button[data-builder-action="add-visual"]')
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
@@ -819,7 +882,7 @@ test('dashboard builder keeps visual actions out of the header and supports copy
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }))
@@ -852,7 +915,7 @@ test('dashboard builder restores exact revisions through toolbar undo and redo',
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const undo = root.querySelector<HTMLButtonElement>('[data-builder-action="undo"]')!
@@ -906,7 +969,7 @@ test('dashboard builder exposes field-token remove, role movement, and reorder a
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const tokens = Array.from(root.querySelectorAll<HTMLElement>('.field-token')).map((token) => ({
         text: token.textContent?.trim(),
         actions: Array.from(token.querySelectorAll<HTMLElement>('[data-field-action]')).map((action) => ({
@@ -940,7 +1003,7 @@ test('dashboard builder keeps format controls visible and persistent alongside b
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const controlSelectors = [
         'input[data-format-control="title-text"]',
         'input[data-format-control="title-visible"]',
@@ -1008,7 +1071,7 @@ test('dashboard builder keeps the independent Data pane usable across dock break
       await page.setViewportSize({ width, height: 820 })
       return page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
         await element.updateComplete
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const box = (selector: string) => (root.querySelector(selector) as HTMLElement).getBoundingClientRect()
         const canvas = box('.canvas-pane')
         const pageBar = box('.page-bar')
@@ -1053,7 +1116,7 @@ test('dashboard builder keeps bottom-tab navigation and add-page actions wired',
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const pageBar = root.querySelector('.page-bar') as HTMLElement
       let pageSelect: Record<string, unknown> | undefined
       let command: Record<string, unknown> | undefined
@@ -1086,7 +1149,7 @@ test('dashboard builder presents Power BI-style page tabs with working footer zo
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const initialZoom = Number.parseInt(root.querySelector('.page-zoom-value')?.textContent ?? '', 10)
       const zoomIn = root.querySelector('button[aria-label="Zoom in"]') as HTMLButtonElement
       zoomIn.click()
@@ -1140,7 +1203,7 @@ test('dashboard builder edits page name and grid through the page Format contrac
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       ;(root.querySelector('.page-tab[data-page-id="details"]') as HTMLButtonElement).click()
@@ -1187,7 +1250,7 @@ test('dashboard builder exposes page settings from the active tab and page actio
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const selectionEvents: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-visual-select', (event: CustomEvent) => selectionEvents.push(event.detail))
       ;(root.querySelector('.page-tab[data-page-id="overview"]') as HTMLButtonElement).click()
@@ -1242,7 +1305,7 @@ test('dashboard builder reorders, duplicates, and immediately deletes pages thro
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const overview = root.querySelector('.page-tab[data-page-id="overview"]') as HTMLElement
@@ -1298,7 +1361,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as any
       const visual = root.querySelector('.visual') as HTMLElement & { gridstackNode?: { id?: string } }
       const resizeHandles = Array.from(visual.querySelectorAll('.ui-resizable-handle')).map((handle) => (
@@ -1332,14 +1395,14 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
   }
 })
 
-test('dashboard builder fits the authored desktop canvas and grows a drop runway below occupied rows', async () => {
+test('dashboard builder fits the authored desktop canvas without idle rows below its content', async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const scroll = root.querySelector('.canvas-scroll') as HTMLElement
       const fit = root.querySelector('.canvas-fit') as HTMLElement
       const canvas = root.querySelector('.canvas') as HTMLElement & { gridstack?: any }
@@ -1361,6 +1424,7 @@ test('dashboard builder fits the authored desktop canvas and grows a drop runway
         scale: initialScale,
         cellHeight: canvas.gridstack.opts.cellHeight,
         grownLogicalHeight: canvas.offsetHeight,
+        contentBottom: (visual.getBoundingClientRect().bottom - grownCanvasBox.top) / initialScale,
         grownFittedHeight: grownFitBox.height,
         grownCanvasHeight: grownCanvasBox.height,
       }
@@ -1373,6 +1437,7 @@ test('dashboard builder fits the authored desktop canvas and grows a drop runway
     expect(state.fittedHeight).toBeCloseTo(state.logicalHeight * state.scale, 0)
     expect(state.cellHeight).toBe(64)
     expect(state.grownLogicalHeight).toBeGreaterThan(state.logicalHeight)
+    expect(state.grownLogicalHeight).toBeCloseTo(state.contentBottom + 16, 0)
     expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight, 0)
   } finally {
     await page.close()
@@ -1387,7 +1452,7 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
     const element = page.locator('lv-dashboard-builder')
     const initial = await element.evaluate(async (builder: any) => {
       await builder.updateComplete
-      const root = builder.shadowRoot
+      const root = (builder.shadowRoot as ShadowRoot)
       ;(window as any).__builderPlacementCommands = []
       builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
         if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
@@ -1403,10 +1468,11 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
     await page.mouse.down()
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 8 * 64 * initial.scale, { steps: 12 })
+    const draggingHeight = await element.locator('.canvas-fit').evaluate(node => node.getBoundingClientRect().height)
     await page.mouse.up()
     await page.waitForTimeout(30)
     const state = await element.evaluate((builder: any) => {
-      const root = builder.shadowRoot
+      const root = (builder.shadowRoot as ShadowRoot)
       const commands = (window as any).__builderPlacementCommands as any[]
       return {
         command: commands.at(-1),
@@ -1415,7 +1481,8 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
     })
     expect(state.command).toBeDefined()
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
-    expect(state.fittedHeight).toBeGreaterThan(initial.fittedHeight)
+    expect(state.fittedHeight).toBeGreaterThanOrEqual(initial.fittedHeight)
+    expect(draggingHeight).toBeGreaterThan(state.fittedHeight)
   } finally {
     await page.close()
   }
@@ -1429,7 +1496,7 @@ test('dashboard builder resizes a selected widget from its left edge', async () 
     const element = page.locator('lv-dashboard-builder')
     const initial = await element.evaluate(async (builder: any) => {
       await builder.updateComplete
-      const root = builder.shadowRoot
+      const root = (builder.shadowRoot as ShadowRoot)
       ;(window as any).__builderPlacementCommands = []
       builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
         if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
@@ -1467,7 +1534,7 @@ test('dashboard builder emits one canonical atomic placement command after a Gri
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const command = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as any
       const visual = root.querySelector('.visual') as any
       let detail: Record<string, unknown> | undefined
@@ -1493,7 +1560,7 @@ test('dashboard builder restores GridStack nodes from canonical placements after
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as any
       const visual = root.querySelector('.visual') as any
       canvas.gridstack.update(visual, { x: 4, y: 6 })
@@ -1519,7 +1586,7 @@ test('dashboard builder supports keyboard move and resize through the same atomi
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const commands = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const visual = root.querySelector('.visual') as HTMLElement
       const received: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { received.push(event.detail) })
@@ -1549,9 +1616,9 @@ test('dashboard builder does not persist breakpoint-derived mobile stacking', as
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as any
-      const visual = root.querySelector('.visual') as HTMLElement
+      const visual = root.querySelector('.visual') as any
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       visual.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true, composed: true }))
@@ -1571,7 +1638,7 @@ test('dashboard builder disables GridStack editing in read-only state and reinit
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as any
       const firstGrid = canvas.gridstack
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -1598,7 +1665,7 @@ test('dashboard builder shows build and format controls in one inspector panel',
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       return {
         inspectorTabs: root.querySelectorAll('.inspector-tab').length,
         panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
@@ -1632,7 +1699,7 @@ test('dashboard builder only exposes query controls supported by the projected q
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const pages = structuredClone(element.builder.pages)
       pages[0].visuals[0].queryOptions = { supportsSort: true, supportsLimit: true, sort: [] }
@@ -1670,7 +1737,7 @@ test('dashboard builder filters fields and drops a metric into its well', async 
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const search = root.querySelector('.data-pane input[aria-label="Search fields"]') as HTMLInputElement
       search.value = 'Total'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
@@ -1739,7 +1806,7 @@ test('dashboard builder blocks record-only and full-role field assignments befor
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const rows = Array.from(root.querySelectorAll<HTMLElement>('.data-pane .field'))
       const row = (label: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label)!
       const commands: unknown[] = []
@@ -1806,7 +1873,7 @@ test('dashboard builder keeps table columns within the bound records dataset', a
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const rows = Array.from(root.querySelectorAll<HTMLElement>('.data-pane .field'))
       const row = (label: string, datasetID: string, group?: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label && candidate.closest('[data-dataset-id]')?.getAttribute('data-dataset-id') === datasetID && (!group || candidate.closest('.field-list')?.getAttribute('data-field-group') === group))!
       const metricRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Measure.'))!
@@ -1853,7 +1920,7 @@ test('dashboard builder creates smart governed visuals from fields on an empty c
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const fields = Array.from(root.querySelectorAll<HTMLButtonElement>('.data-pane .field'))
       const metric = fields.find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Total')!
       const dimension = fields.find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Status')!
@@ -1895,7 +1962,7 @@ test('dashboard builder highlights compatible visual and field-well drop targets
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const metric = Array.from(root.querySelectorAll<HTMLButtonElement>('.data-pane .field')).find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Total')!
       const dataTransfer = new DataTransfer()
       metric.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
@@ -1954,7 +2021,7 @@ test('dashboard builder presents an entity-first field catalog with role filters
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const entities = Array.from(root.querySelectorAll('.data-pane .field-entity')).map((entity) => ({
         id: entity.getAttribute('data-dataset-id'),
         title: entity.querySelector('.field-entity-title')?.textContent?.trim(),
@@ -2050,7 +2117,7 @@ test('dashboard builder preserves distinct semantic fields that share a display 
         ],
       }] } } })
       await element.updateComplete
-      return Array.from(element.shadowRoot.querySelectorAll('.data-pane .field-entity .field-label')).map((field: Element) => field.textContent?.trim())
+      return Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.data-pane .field-entity .field-label')).map((field: Element) => field.textContent?.trim())
     })
     expect(labels).toEqual(['Status', 'Status'])
   } finally {
@@ -2065,7 +2132,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const toolbar = root.querySelector('.toolbar-actions') as HTMLElement
       let visibilityCommand: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { visibilityCommand = event.detail }, { once: true })
@@ -2084,12 +2151,43 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     })
     expect(state.badgeCount).toBe(0)
     expect(state.metadataLines).toBe(1)
-    expect(state.metadata).toContain('Saving changes…')
+    expect(state.metadata).toContain('Saved · Unpublished')
     expect(state.metadata).not.toContain('Unsaved')
-    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['more', 'Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard settings stay in the toolbar and popovers dismiss without changing canvas selection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const summary = page.locator('lv-dashboard-builder .dashboard-metadata summary')
+    const selected = await page.locator('lv-dashboard-builder .visual[data-selected="true"]').getAttribute('gs-id')
+    const toolbar = await page.locator('lv-dashboard-builder header.toolbar').boundingBox()
+    const trigger = await summary.boundingBox()
+    expect(trigger!.y + trigger!.height).toBeLessThanOrEqual(toolbar!.y + toolbar!.height)
+    await summary.click()
+    await page.getByRole('textbox', { name: 'Dashboard title', exact: true }).focus()
+    await page.keyboard.press('Escape')
+    expect(await page.locator('lv-dashboard-builder .dashboard-metadata').evaluate((e: HTMLDetailsElement) => e.open)).toBe(false)
+    expect(await summary.evaluate(e => (e.getRootNode() as ShadowRoot).activeElement === e)).toBe(true)
+    await summary.click()
+    await page.locator('lv-dashboard-builder .more-actions summary').click()
+    expect(await page.locator('lv-dashboard-builder .dashboard-metadata').evaluate((e: HTMLDetailsElement) => e.open)).toBe(false)
+    await page.locator('lv-dashboard-builder h1.title').click()
+    expect(await page.locator('lv-dashboard-builder .more-actions').evaluate((e: HTMLDetailsElement) => e.open)).toBe(false)
+    expect(await page.locator('lv-dashboard-builder .visual[data-selected="true"]').getAttribute('gs-id')).toBe(selected)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await summary.click()
+    const form = await page.locator('lv-dashboard-builder .dashboard-metadata-form').boundingBox()
+    expect(form!.x).toBeGreaterThanOrEqual(0)
+    expect(form!.x + form!.width).toBeLessThanOrEqual(390)
   } finally {
     await page.close()
   }
@@ -2120,7 +2218,7 @@ test('dashboard builder renders authored headers, locked placeholders, and metad
       } })
       await element.updateComplete
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const header = root.querySelector('.header-component') as HTMLElement
       const placeholder = root.querySelector('.builder-placeholder') as HTMLElement
       const commands: Record<string, unknown>[] = []
@@ -2193,7 +2291,7 @@ test('dashboard builder hides empty technical details and separates validation f
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       mergePatch({ builder: { diagnostics: [], sourceEvidence: null } })
       await element.updateComplete
       const empty = {
@@ -2233,7 +2331,7 @@ test('dashboard builder edits the dashboard icon and color from the title bar', 
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+      const root = (element.shadowRoot as ShadowRoot)!
       const trigger = root.querySelector<HTMLButtonElement>('[data-builder-action="appearance"]')!
       const initial = {
         label: trigger.getAttribute('aria-label'),
@@ -2247,7 +2345,7 @@ test('dashboard builder edits the dashboard icon and color from the title bar', 
       await picker.updateComplete
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      picker.shadowRoot!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
+      ;(picker.shadowRoot as ShadowRoot)!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
       return {
         initial,
         pickerLabel: picker.label,
@@ -2273,7 +2371,7 @@ test('dashboard builder archives an owned dashboard from More without an extra c
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const archive = root.querySelector<HTMLButtonElement>('[data-builder-action="archive"]')
@@ -2311,7 +2409,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builderVisuals: { 'sales-chart': envelope } })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const host = root.querySelector('.visual-preview lv-visualization-host') as any
       const initialEnvelope = host?.envelope
       const pages = element.builder.pages.map((page: any) => page.id === 'overview'
@@ -2415,7 +2513,7 @@ test('dashboard builder keeps headerless runtime visuals free of duplicate autho
         builderVisuals: { 'sales-chart': envelope },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const host = root.querySelector('.visual-preview lv-visualization-host') as any
       await host?.updateComplete
       const grip = root.querySelector('.visual .component-drag-grip') as HTMLElement | null
@@ -2445,7 +2543,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const scroll = root.querySelector('.canvas-scroll') as HTMLElement
       const canvas = root.querySelector('.canvas') as HTMLElement
       return {
@@ -2485,7 +2583,7 @@ test('dashboard builder keeps an accessible responsive surface and exposes loadi
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const buttonLabels = Array.from(root.querySelectorAll('button')).map((button) => button.getAttribute('aria-label') || button.textContent?.trim())
       const responsiveDisplay = getComputedStyle(root.querySelector('.body') as HTMLElement).display
       const hasSearchLabel = Boolean(root.querySelector('label input[aria-label], label .sr-only'))
@@ -2535,7 +2633,7 @@ test('dashboard builder stacks visual tiles within the mobile canvas viewport', 
         },
       })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const canvas = root.querySelector('.canvas') as HTMLElement
       const scroll = root.querySelector('.canvas-scroll') as HTMLElement
       const canvasBox = canvas.getBoundingClientRect()
@@ -2599,7 +2697,7 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       element.setAttribute('page-base-href', '/dashboards/revenue/builder?draft=draft-7')
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const activePage = root.querySelector('.page-tab[aria-current="page"]') as HTMLAnchorElement
       const inactivePage = root.querySelector('.page-tab:not([aria-current="page"])') as HTMLAnchorElement
       const activeStyle = getComputedStyle(activePage)
@@ -2652,25 +2750,45 @@ test('dashboard builder exposes the full mobile surface through one vertical scr
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
+      // Keep a wide preview-like descendant in the authoring dock while this
+      // test measures the mobile track. Without an explicit mobile builder
+      // column, its max-content width expands the whole page past the viewport.
+      const widePreview = document.createElement('div')
+      widePreview.className = 'visual-preview mobile-overflow-fixture'
+      widePreview.style.width = '3000px'
+      widePreview.style.minWidth = '3000px'
+      widePreview.style.height = '1px'
+      root.querySelector('.properties')?.append(widePreview)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
       const visualBuilder = root.querySelector('.visual-builder') as HTMLElement
       const host = element as HTMLElement
       host.scrollTop = host.scrollHeight - host.clientHeight
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
       const reachable = visualBuilder.getBoundingClientRect()
+      const builder = root.querySelector('.builder') as HTMLElement
+      const body = root.querySelector('.body') as HTMLElement
       return {
         hostOverflowY: getComputedStyle(host).overflowY,
         hostScrollHeight: host.scrollHeight,
         hostClientHeight: host.clientHeight,
         visualBuilderReachable: reachable.top < innerHeight && reachable.bottom > 0,
+        builderWidth: builder.getBoundingClientRect().width,
+        builderTrack: getComputedStyle(builder).gridTemplateColumns,
+        bodyWidth: body.getBoundingClientRect().width,
         hostHorizontalOverflow: host.scrollWidth > host.clientWidth,
+        documentHeight: document.documentElement.scrollHeight,
         documentHorizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
       }
     })
     expect(state.hostOverflowY).toBe('auto')
     expect(state.hostScrollHeight).toBeGreaterThan(state.hostClientHeight)
     expect(state.visualBuilderReachable).toBe(true)
+    expect(state.builderWidth).toBe(390)
+    expect(state.builderTrack).toBe('390px')
+    expect(state.bodyWidth).toBe(390)
     expect(state.hostHorizontalOverflow).toBe(false)
+    expect(state.documentHeight).toBeLessThanOrEqual(844)
     expect(state.documentHorizontalOverflow).toBe(false)
   } finally {
     await page.close()
@@ -2684,7 +2802,7 @@ test('dashboard builder selects a newly added page after the authoritative comma
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       ;(root.querySelector('button[aria-label="Add page"]') as HTMLButtonElement).click()
@@ -2737,7 +2855,7 @@ test('dashboard builder retains the draft and exposes terminal command recovery'
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      ;(element.shadowRoot.querySelector('button[aria-label="Add page"]') as HTMLButtonElement).click()
+      ;((element.shadowRoot as ShadowRoot).querySelector('button[aria-label="Add page"]') as HTMLButtonElement).click()
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(resolve))
       await element.updateComplete
@@ -2745,18 +2863,18 @@ test('dashboard builder retains the draft and exposes terminal command recovery'
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(resolve))
       await element.updateComplete
-      const alert = element.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const alert = (element.shadowRoot as ShadowRoot)?.querySelector('[role="alert"]') as HTMLElement | null
       const buttons = Array.from(alert?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
       const beforeDismiss = {
-        title: element.shadowRoot?.querySelector('h1')?.textContent?.trim(),
-        pageCount: element.shadowRoot?.querySelectorAll('.page-tab[role="tab"]').length,
+        title: (element.shadowRoot as ShadowRoot)?.querySelector('h1')?.textContent?.trim(),
+        pageCount: (element.shadowRoot as ShadowRoot)?.querySelectorAll('.page-tab[role="tab"]').length,
         failureKind: element.terminalFailure?.kind,
         message: alert?.textContent?.trim(),
         actions: buttons.map((button) => button.textContent?.trim()),
       }
       buttons.find((button) => button.textContent?.includes('Dismiss'))?.click()
       await element.updateComplete
-      return { ...beforeDismiss, unrelatedIgnored, pendingAddPage: element.pendingAddPage, alertAfterDismiss: Boolean(element.shadowRoot?.querySelector('[role="alert"]')) }
+      return { ...beforeDismiss, unrelatedIgnored, pendingAddPage: element.pendingAddPage, alertAfterDismiss: Boolean((element.shadowRoot as ShadowRoot)?.querySelector('[role="alert"]')) }
     })
     expect(state.title).toBe('Revenue draft')
     expect(state.pageCount).toBe(2)
@@ -2778,7 +2896,7 @@ test('dashboard builder keeps the canvas as the preview instead of exposing sepa
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const initialPreviewAction = root.querySelector('[data-builder-action="preview"]')
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({
@@ -2816,7 +2934,7 @@ test('dashboard builder authors report filters from governed fields through focu
         { id: 'orders.total', datasetId: 'orders', label: 'Total', kind: 'metric', roles: ['metric'], dataType: 'decimal' },
       ] }] } } })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const select = root.querySelector('.filter-add-select') as HTMLSelectElement
@@ -2879,7 +2997,7 @@ test('dashboard builder authors report filters from governed fields through focu
     ])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
     expect(state.commands[1]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview' })
-    expect(state.commands[2]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'report' })
+    expect(state.commands[2]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'report', pageId: '' })
     expect(state.commands[2]).not.toHaveProperty('targets')
     expect(state.commands[3]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview', targets: ['sales-chart'] })
     expect(state.commands[4]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
@@ -2888,6 +3006,7 @@ test('dashboard builder authors report filters from governed fields through focu
     await page.close()
   }
 })
+
 
 test('dashboard builder resets only the selected page or all governed filter bindings', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
@@ -2914,7 +3033,7 @@ test('dashboard builder resets only the selected page or all governed filter bin
       const state = { revision: 1, appliedControls: { [reportKey]: applied('report-selected'), [pageKey]: applied('page-selected'), [otherPageKey]: applied('other-page-selected') }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' }
       mergePatch({ builderFilterContract: contract, builderFilterState: state })
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-filter-command', (event: CustomEvent) => commands.push(event.detail))
       const pageReset = root.querySelector<HTMLButtonElement>('[data-reset-scope="page"]')!
@@ -2971,7 +3090,7 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, any>[] = []
       const filterCommands: Record<string, any>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
@@ -3010,11 +3129,11 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       await paneLeaf?.updateComplete
       const slicer = root.querySelector('lv-slicer') as any
       await slicer.updateComplete
-      const slicerLeaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      const slicerLeaf = (slicer.shadowRoot as ShadowRoot).querySelector('lv-filter-leaf') as any
       await slicerLeaf.updateComplete
-      ;(paneLeaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLButtonElement).click()
+      ;((paneLeaf.shadowRoot as ShadowRoot).querySelector('.dropdown-trigger') as HTMLButtonElement).click()
       await paneLeaf.updateComplete
-      const completeOption = paneLeaf.shadowRoot.querySelector('input[aria-label="Complete"]') as HTMLInputElement
+      const completeOption = (paneLeaf.shadowRoot as ShadowRoot).querySelector('input[aria-label="Complete"]') as HTMLInputElement
       completeOption.checked = true
       completeOption.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await element.updateComplete
@@ -3023,8 +3142,8 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       const tile = root.querySelector('.filter-component') as HTMLElement
       const tileLabel = tile.getAttribute('aria-label')
       const selected = tile.getAttribute('data-selected')
-      const slicerTitle = slicerLeaf.shadowRoot.querySelector('.field-title')?.textContent?.trim()
-      const slicerControl = slicerLeaf.shadowRoot.querySelector('.dropdown-trigger')?.getAttribute('aria-label')
+      const slicerTitle = (slicerLeaf.shadowRoot as ShadowRoot).querySelector('.field-title')?.textContent?.trim()
+      const slicerControl = (slicerLeaf.shadowRoot as ShadowRoot).querySelector('.dropdown-trigger')?.getAttribute('aria-label')
       tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
@@ -3112,6 +3231,7 @@ test('dashboard builder accepts only the current filter option request generatio
   }
 })
 
+
 test('dashboard builder clears pending filter commands and surfaces transport failures', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -3131,7 +3251,7 @@ test('dashboard builder clears pending filter commands and surfaces transport fa
       const pendingBefore = element.builderFilterController.pending
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await element.updateComplete
-      return { pendingBefore, pendingAfter: element.builderFilterController.pending, error: element.shadowRoot.querySelector('.filter-validation')?.textContent?.trim() ?? '' }
+      return { pendingBefore, pendingAfter: element.builderFilterController.pending, error: (element.shadowRoot as ShadowRoot).querySelector('.filter-validation')?.textContent?.trim() ?? '' }
     })
     expect(state.pendingBefore).toBe(true)
     expect(state.pendingAfter).toBe(false)
@@ -3148,7 +3268,7 @@ test('dashboard builder authors one visual interaction target at a time', async 
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -3198,7 +3318,7 @@ test('dashboard builder gates publishing on exact draft state and visible valida
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const publish = root.querySelector<HTMLButtonElement>('[data-builder-action="publish"]')!
@@ -3242,45 +3362,3 @@ test('dashboard builder gates publishing on exact draft state and visible valida
     await page.close()
   }
 })
-
-function testDocument(): string {
-  const visualCatalog = [
-    ['line', 'Line chart', 'Cartesian'], ['area', 'Area chart', 'Cartesian'], ['bar', 'Bar chart', 'Cartesian'], ['column', 'Column chart', 'Cartesian'], ['pie', 'Pie chart', 'Part to whole'], ['donut', 'Donut chart', 'Part to whole'], ['scatter', 'Scatter chart', 'Distribution'], ['funnel', 'Funnel chart', 'Part to whole'],
-    ['treemap', 'Treemap', 'Hierarchy & flow'], ['gauge', 'Gauge', 'Specialized'], ['heatmap', 'Heatmap', 'Distribution'], ['sankey', 'Sankey', 'Hierarchy & flow'], ['graph', 'Graph', 'Hierarchy & flow'], ['map', 'Map', 'Specialized'],
-    ['candlestick', 'Candlestick chart', 'Cartesian'], ['boxplot', 'Boxplot', 'Distribution'], ['combo', 'Combo chart', 'Cartesian'], ['waterfall', 'Waterfall chart', 'Cartesian'], ['histogram', 'Histogram', 'Distribution'], ['radar', 'Radar chart', 'Specialized'], ['tree', 'Tree', 'Hierarchy & flow'], ['sunburst', 'Sunburst', 'Hierarchy & flow'], ['kpi', 'KPI', 'Specialized'],
-    ['table', 'Table', 'Tables'], ['matrix', 'Matrix', 'Tables'], ['pivot', 'Pivot', 'Tables'],
-  ].map(([type, label, group]) => ({ type, label, group, referenceHref: `/docs/visuals/${type}`, roles: type === 'table' || type === 'map' ? ['detail'] : type === 'kpi' || type === 'gauge' || type === 'histogram' || type === 'boxplot' ? ['metric'] : ['dimension', 'metric'] }))
-  const signals = {
-    builder: {
-      projectId: 'sales', dashboardId: 'revenue', draftId: 'draft-7',
-      revision: { id: 'rev-7', number: 7, contentHash: 'sha256:abc' },
-      title: 'Revenue draft', lifecycle: 'draft', visibility: 'private', hasUnpublishedChanges: true,
-      appearance: { icon: 'chart-no-axes-combined', color: 'purple' },
-      origin: { kind: 'file', label: 'Project file', sourcePath: 'dashboards/revenue.yaml' },
-      sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
-      semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'decimal' }] }] },
-      visualCatalog,
-      filters: [],
-      pages: [
-        { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', visualId: 'sales-chart', title: 'Sales by status', titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, formatOptions: [
-          { key: 'axisVisible', label: 'Show axes', section: 'Display', control: 'toggle', value: 'true', choices: [] },
-          { key: 'legend', label: 'Legend', section: 'Display', control: 'select', value: 'right', choices: [{ value: 'none', label: 'None' }, { value: 'top', label: 'Top' }, { value: 'right', label: 'Right' }, { value: 'bottom', label: 'Bottom' }, { value: 'left', label: 'Left' }] },
-          { key: 'labels.density', label: 'Data labels', section: 'Display', control: 'select', value: 'hidden', choices: [{ value: 'hidden', label: 'Hidden' }, { value: 'automatic', label: 'Automatic' }, { value: 'dense', label: 'Dense' }, { value: 'always', label: 'Always' }] },
-          { key: 'stacking', label: 'Stacking', section: 'Chart', control: 'select', value: 'none', choices: [{ value: 'none', label: 'None' }, { value: 'normal', label: 'Normal' }, { value: 'percent', label: 'Percent' }] },
-        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], queryOptions: { supportsSort: true, supportsLimit: true, sort: [] }, filters: [] }], filterComponents: [] },
-        { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [], filterComponents: [] },
-      ],
-      selectedPageId: 'overview', selectedVisualId: 'sales-chart',
-      capabilities: { canEdit: true, canShare: true, canPublish: true, canArchive: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },
-      diagnostics: [{ severity: 'warning', code: 'FIELD_REQUIRED', message: 'Add a metric to complete this visual.' }],
-      preview: { active: false, mode: 'draft', loading: false, href: '/dashboards/revenue/preview?draft=draft-7&revisionId=rev-7&revisionNumber=7&revisionContentHash=sha256%3Aabc' }, save: { state: 'dirty', message: '2 changes' },
-    },
-    status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
-    runtime: { kind: 'dashboard_builder', projectId: 'sales', servingStateId: 'generation-7', dashboardId: 'revenue' },
-  }
-  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-report-page-bg:#fbfcfe;--lv-report-canvas-bg:#eef1f4;--lv-chart-surface:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
-}
-
-function escapeHTML(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-}

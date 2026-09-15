@@ -12,7 +12,7 @@ Use one ordered `query.dimensions` field for the horizontal axis and one `query.
 
 ```yaml visual-example=revenue_line
 visuals:
-  revenue_line:
+  - id: revenue_line
     title: Revenue line by month
     type: line
     presentation:
@@ -43,7 +43,7 @@ Use a time axis for date-grained categories and an inverted bounded value axis w
 
 ```yaml visual-example=revenue_line_axis_policies
 visuals:
-  revenue_line_axis_policies:
+  - id: revenue_line_axis_policies
     title: Revenue with explicit axis policies
     type: line
     presentation:
@@ -91,7 +91,7 @@ Use two ordered `query.dimensions` fields to split the metric into one line per 
 
 ```yaml visual-example=revenue_line_status
 visuals:
-  revenue_line_status:
+  - id: revenue_line_status
     title: Revenue line by status
     type: line
     presentation:
@@ -152,7 +152,7 @@ Add a running-total calculation to the same result frame. Calculation references
 
 ```yaml visual-example=revenue_line_running
 visuals:
-  revenue_line_running:
+  - id: revenue_line_running
     title: Revenue and running total
     type: line
     calculations:
@@ -185,7 +185,7 @@ Set `presentation.step: true` for discrete changes between periods, hide point s
 
 ```yaml visual-example=revenue_line_step
 visuals:
-  revenue_line_step:
+  - id: revenue_line_step
     title: Long-range revenue line
     type: line
     presentation:
@@ -217,7 +217,7 @@ Here the context query summarizes the first status separately; it does not filte
 
 ```yaml visual-example=revenue_line_context
 visuals:
-  revenue_line_context:
+  - id: revenue_line_context
     title: Revenue trend
     subtitle: Total revenue with separate status context
     type: line

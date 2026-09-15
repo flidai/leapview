@@ -104,6 +104,7 @@ type ApprovalActivationJob struct {
 	PolicyRevision         int64  `json:"policy_revision"`
 	DecisionRevision       int64  `json:"decision_revision"`
 	DecisionID             string `json:"decision_id"`
+	Rollback               bool   `json:"rollback"`
 }
 
 type nativeApprovalCoordinator struct {
@@ -150,6 +151,13 @@ func (c *nativeApprovalCoordinator) RequestPublicationApproval(ctx context.Conte
 		expires = input.Actor.CredentialExpiresAt
 	}
 	evidence := approvalEvidenceFor(requestID, depauth.ApprovalActionRequest)
+	rollback, err := c.repository.IsRollbackPublication(ctx, publication)
+	if err != nil {
+		return depauth.ApprovalRequest{}, err
+	}
+	if rollback {
+		evidence.Metadata = []byte(`{"rollback":true,"source":"native-http"}`)
+	}
 	return c.authority.Request(ctx, depauth.ApprovalRequestInput{RequestID: requestID, PublicationID: publication.PublicationID, TargetID: c.targetID, CandidateID: publication.CandidateID, GenerationID: publication.GenerationID, RequestDigest: publication.RequestDigest, ExpectedTargetRevision: publication.ExpectedTargetRevision, PolicyRevision: plan.ApprovalPolicyRevision, RequestedBy: nativeActor(input.Actor), ExpiresAt: expires, Evidence: evidence})
 }
 

@@ -116,7 +116,7 @@ func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) 
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repository := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
 	request.AddCookie(&http.Cookie{Name: "lv_session", Value: "expired-session"})
@@ -147,7 +147,7 @@ func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	repository := accesssqlite.NewRepository(store.SQLDB())
-	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +265,7 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 	if _, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: principal.ID, Email: principal.Email, Role: access.PlatformRoleAdmin}); err != nil {
 		t.Fatal(err)
 	}
-	auth := NewAuth(repository, AuthConfig{})
+	auth := mustNewAuth(t, repository, AuthConfig{})
 	module, err := newSurface(surfaceConfig{
 		Repository: func() (access.Repository, error) { return repository, nil },
 		Auth:       auth,
@@ -352,7 +352,7 @@ func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
 	}
 	module, err := newSurface(surfaceConfig{
 		Repository: func() (access.Repository, error) { return repository, nil },
-		Auth:       NewAuth(repository, AuthConfig{}),
+		Auth:       mustNewAuth(t, repository, AuthConfig{}),
 		CurrentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: principal.ID, Kind: access.PrincipalKindUser}, true
 		},

@@ -148,6 +148,7 @@ type eventModelStream struct {
 	mu        sync.Mutex
 	part      outputPart
 	opened    bool
+	content   strings.Builder
 }
 
 func (s *eventModelStream) ensureOpen(ctx context.Context) error {
@@ -172,6 +173,7 @@ func (s *eventModelStream) Delta(ctx context.Context, text string) error {
 	if err := s.ensureOpen(ctx); err != nil {
 		return err
 	}
+	s.content.WriteString(text)
 	return s.run.emit(ctx, Event{
 		Type:            EventTypeOutputTextDelta,
 		Severity:        SeverityInfo,
@@ -206,4 +208,10 @@ func (s *eventModelStream) finish(ctx context.Context, content string) outputPar
 		Content:         content,
 	})
 	return s.part
+}
+
+func (s *eventModelStream) partialContent() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.content.String()
 }

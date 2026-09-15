@@ -243,12 +243,13 @@ func (s *QueryService) executeTableConsumer(ctx context.Context, request consume
 		publish(consumer.Result{Target: target, Err: err, Duration: time.Since(startedAt)})
 		return
 	}
-	if !publish(consumer.Result{Target: target, Envelope: envelope, Duration: time.Since(startedAt)}) {
-		return
-	}
 	defaults := target.WindowRequest.WithDefaults()
 	_, totalKnown := table.Cardinality.ExactValue()
-	if totalKnown || !consumerTableNeedsExactCount(request.Command, defaults, target.ExactCardinality) {
+	metadataPending := consumerTableMetadataPending(request.Command, defaults, target.ExactCardinality, totalKnown)
+	if !publish(consumer.Result{Target: target, Envelope: envelope, MetadataPending: metadataPending, Duration: time.Since(startedAt)}) {
+		return
+	}
+	if !metadataPending {
 		return
 	}
 	total, err := s.visualizations.queryTableCountPage(ctx, request.DashboardID, request.PageID, request.Filters, target.WindowRequest)
@@ -265,6 +266,10 @@ func (s *QueryService) executeTableConsumer(ctx context.Context, request consume
 
 func consumerTableNeedsExactCount(command string, request dashboard.TableRequest, exact bool) bool {
 	return exact && (request.Block == "all" || command != "visual_window" && request.Block == "a" && request.Start == 0)
+}
+
+func consumerTableMetadataPending(command string, request dashboard.TableRequest, exact, totalKnown bool) bool {
+	return !totalKnown && consumerTableNeedsExactCount(command, request, exact)
 }
 
 func consumerTargetContext(ctx context.Context, job consumer.Job) context.Context {

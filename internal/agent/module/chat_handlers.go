@@ -6,6 +6,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 	"github.com/flidai/leapview/internal/agent/ui"
+	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
 func (m *Module) executeStartedChatTurn(ctx context.Context, service *agent.Service, scope agent.Scope, started *agent.StartedPrompt, execution agenthttp.ChatTurnExecution) (agent.PromptResult, error) {
@@ -16,17 +17,20 @@ func (m *Module) executeStartedChatTurn(ctx context.Context, service *agent.Serv
 	}
 	transcript := state.Transcript
 	streamArtifacts := state.Artifacts
+	liveConversations := execution.LiveConversations
+	if liveConversations == nil {
+		// A streamed answer may emit many token/tool events. Resolve the
+		// sidebar snapshot once per turn instead of issuing one conversation
+		// query for every event.
+		liveConversations = m.chatConversations(ctx, scope)
+	}
 	emit := func(signal ui.ChatViewState) {
 		if execution.Emit != nil {
 			_ = execution.Emit(signal)
 		}
 	}
 	liveSignal := func(statusErr string, running bool) ui.ChatViewState {
-		conversations := execution.LiveConversations
-		if conversations == nil {
-			conversations = m.chatConversations(ctx, scope)
-		}
-		return chatSignalWithConversations(conversations, started.ConversationID, transcript, streamArtifacts, statusErr, running, true)
+		return chatSignalWithConversations(liveConversations, started.ConversationID, transcript, streamArtifacts, statusErr, running, true, started.RunID)
 	}
 	finalSignal := func(statusErr string, running bool) ui.ChatViewState {
 		return m.ChatSignalWith(ctx, scope, started.ConversationID, transcript, streamArtifacts, statusErr, running)
@@ -38,7 +42,7 @@ func (m *Module) executeStartedChatTurn(ctx context.Context, service *agent.Serv
 		transcript = applyLiveTranscriptEvent(transcript, started.ConversationID, event)
 		emit(liveSignal("", true))
 	})
-	statusErr := chatTurnStatusError(err)
+	statusErr := chatTurnStatusError(err, result.StopReason)
 	if result.RunID != "" {
 		if refreshed, refreshErr := service.ConversationTranscriptState(ctx, scope, started.ConversationID); refreshErr == nil {
 			transcript = refreshed.Transcript
@@ -56,8 +60,12 @@ func (m *Module) executeStartedChatTurn(ctx context.Context, service *agent.Serv
 	return result, err
 }
 
-func chatTurnStatusError(err error) string {
+func chatTurnStatusError(err error, stopReason agentcore.StopReason) string {
 	if err == nil {
+		switch stopReason {
+		case agentcore.StopReasonMaxTurns:
+			return "The agent reached its turn limit before producing a final answer. Ask it to continue."
+		}
 		return ""
 	}
 	if agent.IsBusy(err) {

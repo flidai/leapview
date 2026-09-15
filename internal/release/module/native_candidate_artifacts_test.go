@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
@@ -21,6 +22,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/google/uuid"
@@ -357,8 +359,9 @@ func TestNativeAuthorizationFingerprintIsGenerationIndependent(t *testing.T) {
 
 		recovered, err := service.RecoverCandidateArtifacts(t.Context(), release.CandidateArtifactRecoveryRequest{
 			CandidateID: fixture.request.CandidateID, ServingIdentity: materialized.Generation.Identity, SourceDigest: request.ArtifactDigest,
-			ManagedDataPins: materialized.Generation.ManagedDataPins,
-			Artifact:        release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID},
+			AuthorizationFingerprint: inspected.AuthorizationFingerprint,
+			ManagedDataPins:          materialized.Generation.ManagedDataPins,
+			Artifact:                 release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID},
 		})
 		if err != nil {
 			t.Fatalf("recover generation %q: %v", generationID, err)
@@ -376,6 +379,21 @@ type nativeRecoveryFixtureValue struct {
 	request release.CandidateArtifactRecoveryRequest
 	store   *platformobjectstore.MemoryStore
 	body    []byte
+}
+
+type nativeRecoveryAuthorizationPolicyReader struct {
+	policy access.AuthorizationPolicy
+}
+
+func (r nativeRecoveryAuthorizationPolicyReader) AuthorizationPolicy(context.Context, access.AuthorizationPolicyScope) (access.AuthorizationPolicy, error) {
+	return r.policy, nil
+}
+
+func (r nativeRecoveryAuthorizationPolicyReader) AuthorizationPolicyRevision(_ context.Context, _ access.AuthorizationPolicyScope, revision int64) (access.AuthorizationPolicy, error) {
+	if revision != r.policy.Revision {
+		return access.AuthorizationPolicy{}, access.ErrAuthorizationPolicyNotFound
+	}
+	return r.policy, nil
 }
 
 func nativeRecoveryFixture(t *testing.T) nativeRecoveryFixtureValue {
@@ -423,10 +441,23 @@ func nativeRecoveryFixtureForConnector(t *testing.T, connectorKind string) nativ
 	if err != nil {
 		t.Fatal(err)
 	}
+	policyIdentity, err := candidatePolicyIdentity(identity.ProjectID, identity.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, compiled.Graph(), projectmanifest.AccessPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationFingerprint, err := policySnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return nativeRecoveryFixtureValue{
 		request: release.CandidateArtifactRecoveryRequest{
 			CandidateID: "018f0e4e-6f2a-7abc-8def-0123456789aa", ServingIdentity: identity, SourceDigest: fixture.request.ArtifactDigest,
-			Artifact: release.CandidateArtifactIdentity{ServingArtifactID: nativeServingArtifactID(digest), ServingArtifactDigest: digest, ServingStateID: identity.GenerationID},
+			AuthorizationFingerprint: authorizationFingerprint,
+			Artifact:                 release.CandidateArtifactIdentity{ServingArtifactID: nativeServingArtifactID(digest), ServingArtifactDigest: digest, ServingStateID: identity.GenerationID},
 		},
 		store: store, body: body.Bytes(),
 	}
@@ -461,6 +492,74 @@ func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing
 	service.extensionPreparation = nil
 	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
 		t.Fatalf("missing extension admission error = %v, want unavailable", err)
+	}
+}
+
+func TestNativeCandidateRecoverRequiresExactPost017AuthorizationPolicyIdentity(t *testing.T) {
+	fixture := nativeRecoveryFixture(t)
+	legacyService := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
+	legacy, err := legacyService.RecoverCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := access.AuthorizationPolicyScope{TargetID: "target:test", ProjectID: fixture.request.ServingIdentity.ProjectID.String(), Environment: fixture.request.ServingIdentity.Environment}
+	binding := access.RoleBinding{
+		ID: "reviewer", Name: "Reviewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "reviewer"},
+		Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}
+	digest, err := access.AuthorizationPolicyDigest(scope, []access.RoleBinding{binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := access.AuthorizationPolicy{Scope: scope, Revision: 1, Digest: digest, RoleBindings: []access.RoleBinding{binding}}
+	manifest, err := targetAuthorizationManifestPolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyIdentity, err := candidatePolicyIdentity(fixture.request.ServingIdentity.ProjectID, fixture.request.ServingIdentity.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, legacy.Compiler.Graph, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := snapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &nativeCandidateArtifactPhases{
+		artifacts: fixture.store, storageDomain: "runtime", environment: "dev", targetID: scope.TargetID,
+		authorizationPolicies: nativeRecoveryAuthorizationPolicyReader{policy: policy}, extensionPreparation: nativeInspectExtensionStub{},
+	}
+	request := fixture.request
+	request.AuthorizationPolicyRevision = policy.Revision
+	request.AuthorizationPolicyDigest = policy.Digest
+	request.AuthorizationFingerprint = fingerprint
+	recovered, err := service.RecoverCandidateArtifacts(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.AuthorizationPolicyRevision != policy.Revision || recovered.AuthorizationPolicyDigest != policy.Digest || recovered.AuthorizationFingerprint != fingerprint {
+		t.Fatalf("post-017 policy evidence = %#v", recovered)
+	}
+
+	for name, mutate := range map[string]func(*release.CandidateArtifactRecoveryRequest){
+		"missing revision": func(request *release.CandidateArtifactRecoveryRequest) { request.AuthorizationPolicyRevision = 0 },
+		"wrong digest": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.AuthorizationPolicyDigest = testNativeDigest("wrong-policy")
+		},
+		"wrong fingerprint": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.AuthorizationFingerprint = testNativeDigest("wrong-fingerprint")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := request
+			mutate(&invalid)
+			if _, err := service.RecoverCandidateArtifacts(t.Context(), invalid); err == nil {
+				t.Fatal("post-017 recovery accepted mismatched policy evidence")
+			}
+		})
 	}
 }
 
@@ -519,8 +618,24 @@ func TestNativeCandidateRecoverRejectsIdentityAndBundleMismatches(t *testing.T) 
 			}
 		})
 	}
+	original, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rebound := fixture.request
 	rebound.ServingIdentity.ProjectID = "project:other"
+	policyIdentity, err := candidatePolicyIdentity(rebound.ServingIdentity.ProjectID, rebound.ServingIdentity.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, original.Compiler.Graph, projectmanifest.AccessPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebound.AuthorizationFingerprint, err = policySnapshot.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	recovered, err := service.RecoverCandidateArtifacts(t.Context(), rebound)
 	if err != nil {
 		t.Fatalf("recover portable bundle for another Project: %v", err)
@@ -872,7 +987,7 @@ func nativeInspectFixtureForConnector(t *testing.T, connectorKind string) native
 	files := map[string]string{
 		"connections/warehouse.yaml": fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: %s}\n", connectorKind),
 		"sources/orders.yaml":        fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: %s, format: csv}}\n", sourcePath),
-		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
+		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: [{name: id, datatype: Integer}], entities: [{name: id, type: primary, fields: [id]}], grain: {entity: id}}\n",
 	}
 	for name, body := range files {
 		filePath := filepath.Join(root, filepath.FromSlash(name))
@@ -951,7 +1066,7 @@ func nativeBaseFixture(t *testing.T, fixture nativeInspectFixtureValue) nativeBa
 	state := servingstate.State{ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID, ProjectDigest: compiled.Digest(), AccessPolicyJSON: accessJSON, DashboardPublicationsJSON: publicationsJSON, DashboardAppearancesJSON: appearancesJSON, Environment: servingstate.Environment(identity.Environment), Status: servingstate.StatusActive, Digest: digest, ManifestJSON: manifestJSON, DuckLakeSnapshotID: 17}
 	artifact := servingstate.Artifact{ID: nativeServingArtifactID(digest), ServingStateID: state.ID, Digest: digest, Format: servingstate.ArtifactBundleFormat, Locator: nativeServingArtifactKey(digest), StorageSecurityDomain: "runtime", ContentType: nativeServingArtifactContentType, MetadataDigest: metadataDigest, ManifestJSON: manifestJSON, SizeBytes: int64(body.Len())}
 	artifactProvenance := release.ProjectArtifactProvenance{SourceDigest: fixture.request.ArtifactDigest, ProjectDigest: compiled.Digest(), ContentDigest: digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version}
-	planProvenance := release.GenerationPlanProvenance{Identity: identity, TargetID: "target-dev", RuntimeVersion: "runtime:test", PolicyDigest: testNativeDigest("base-policy"), DataRevision: "snapshot:17", DataMode: release.GenerationDataReuseBase, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "connection:warehouse", RevisionID: "revision:base"}}}
+	planProvenance := release.GenerationPlanProvenance{Identity: identity, TargetID: "target-dev", RuntimeVersion: "runtime:test", PolicyDigest: testNativeDigest("base-policy"), PolicyRevision: 1, AuthorizationDigest: testNativeDigest("base-authorization"), DataRevision: "snapshot:17", DataMode: release.GenerationDataReuseBase, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "connection:warehouse", RevisionID: "revision:base"}}}
 	gate, err := (release.GateEvidence{Version: 1, CandidateID: "base-candidate", SourceDigest: artifactProvenance.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: planProvenance.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 1, MaxMillis: 100}}).Canonical()
 	if err != nil {
 		t.Fatal(err)

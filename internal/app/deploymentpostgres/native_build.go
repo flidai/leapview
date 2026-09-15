@@ -284,11 +284,6 @@ func (c *NativeBuildCoordinator) CreatePlan(context.Context, deploymentmodule.Na
 	return deploymentmodule.NativeDeliveryPlan{}, deploymentmodule.ErrDeliveryInputUnavailable
 }
 
-// NewNativeBuild is a concise constructor alias.
-func NewNativeBuild(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
-	return NewNativeBuildCoordinator(config)
-}
-
 func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (_ deploymentmodule.NativeDeliveryBuild, resultErr error) {
 	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.managedData) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
@@ -540,7 +535,8 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	}
 	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
-	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
+	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis, MaxRows: c.bounds.MaxRows})
+	physicalContext = analyticsmaterialize.WithSourceCheckEvaluator(physicalContext, sourceCheckEvaluator)
 	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native candidate managed-data roots: %w", releaseErr)))

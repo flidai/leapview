@@ -28,6 +28,7 @@ import (
 
 var (
 	ErrInvalid      = errors.New("invalid managed-data PostgreSQL input")
+	ErrCaptureLimit = errors.New("managed-data observation capture capability limit exceeded")
 	ErrConflict     = manageddata.ErrConflict
 	ErrNotFound     = manageddata.ErrNotFound
 	ErrStaleFence   = errors.New("managed-data lease fencing epoch is stale")
@@ -679,12 +680,6 @@ func (r *Repository) CompleteUpload(ctx context.Context, in manageddata.Complete
 	}
 	return completeUploadTx(ctx, db, in)
 }
-func (r *Repository) CompleteUploadTx(ctx context.Context, tx Tx, in manageddata.CompleteUploadInput) (manageddata.Revision, error) {
-	if tx == nil {
-		return manageddata.Revision{}, ErrInvalid
-	}
-	return completeUploadTx(ctx, tx, in)
-}
 func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploadInput) (manageddata.Revision, error) {
 	if in.SessionID == "" {
 		return manageddata.Revision{}, ErrInvalid
@@ -700,7 +695,11 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 		if row.RevisionID == "" {
 			return manageddata.Revision{}, ErrConflict
 		}
-		if row.CompletionDigest != completionDigest(in) || in.RevisionID != "" && in.RevisionID.String() != row.RevisionID {
+		// The requested revision ID is an operation identity, not necessarily
+		// the bound revision: duplicate content may reuse an existing revision.
+		// completionDigest still binds replay to the original request's revision
+		// ID and exact stored-file metadata.
+		if row.CompletionDigest != completionDigest(in) {
 			return manageddata.Revision{}, ErrConflict
 		}
 		r, e := manageddb.New(db).GetRevisionByID(ctx, row.RevisionID)
@@ -748,9 +747,26 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 		return manageddata.Revision{}, err
 	}
 	seq := int64(sequence)
-	err = manageddb.New(db).InsertRevisionFromUpload(ctx, manageddb.InsertRevisionFromUploadParams{RevisionID: revisionID, CollectionID: collection, Sequence: seq, Digest: digest, Manifest: []byte(row.Manifest), FileCount: row.ExpectedFileCount, SizeBytes: row.ExpectedSizeBytes, UploadID: in.SessionID.String()})
+	insertTag, err := manageddb.New(db).InsertRevisionFromUpload(ctx, manageddb.InsertRevisionFromUploadParams{RevisionID: revisionID, CollectionID: collection, Sequence: seq, Digest: digest, Manifest: []byte(row.Manifest), FileCount: row.ExpectedFileCount, SizeBytes: row.ExpectedSizeBytes, UploadID: in.SessionID.String()})
 	if err != nil {
 		return manageddata.Revision{}, err
+	}
+	if insertTag.RowsAffected() == 0 {
+		existing, lookupErr := manageddb.New(db).GetReadyRevisionByCollectionDigest(ctx, manageddb.GetReadyRevisionByCollectionDigestParams{CollectionID: collection, Digest: digest})
+		if errors.Is(lookupErr, pgx.ErrNoRows) {
+			return manageddata.Revision{}, ErrConflict
+		}
+		if lookupErr != nil {
+			return manageddata.Revision{}, lookupErr
+		}
+		completionTag, completionErr := manageddb.New(db).CompleteUploadSession(ctx, manageddb.CompleteUploadSessionParams{UploadID: in.SessionID.String(), RevisionID: &existing.RevisionID, CompletionDigest: completionDigest(in)})
+		if completionErr != nil {
+			return manageddata.Revision{}, completionErr
+		}
+		if completionTag.RowsAffected() != 1 {
+			return manageddata.Revision{}, ErrConflict
+		}
+		return revisionFromValues(existing.RevisionID, existing.CollectionID, existing.Digest, existing.Status, existing.Manifest, existing.CreatedBy, existing.Error, existing.Sequence, existing.FileCount, existing.SizeBytes, existing.CreatedAt, existing.ReadyAt), nil
 	}
 	files := append([]manageddata.StoredFile(nil), in.Files...)
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })

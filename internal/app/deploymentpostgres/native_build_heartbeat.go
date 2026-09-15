@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +15,7 @@ import (
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 )
 
 const nativeBuildHeartbeatMaxLease = 24 * time.Hour
@@ -245,14 +245,5 @@ func validateNativeBuildHeartbeatInput(input NativeBuildHeartbeatInput) error {
 }
 
 func nativeBuildAuthorityNil(authority any) bool {
-	if authority == nil {
-		return true
-	}
-	v := reflect.ValueOf(authority)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(authority)
 }

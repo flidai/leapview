@@ -348,5 +348,4 @@ type BundleColumn struct {
 
 const (
 	BundleBranchColumn = "__bundle_branch"
-	BundleRowColumn    = "__bundle_row"
 )

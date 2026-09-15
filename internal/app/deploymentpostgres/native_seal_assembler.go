@@ -125,61 +125,6 @@ func AssembleRecoveredNativeGenerationAdmissionInput(input NativeRecoveredSealEv
 	return assembled, nil
 }
 
-// AssembleNativeRecoveredGenerationAdmissionInput is a descriptive alias for
-// AssembleRecoveredNativeGenerationAdmissionInput.
-func AssembleNativeRecoveredGenerationAdmissionInput(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeGenerationAdmissionInputForRecovery is a compatibility alias
-// for callers that keep the recovery qualifier at the end of the operation
-// name.
-func AssembleNativeGenerationAdmissionInputForRecovery(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleRecoveredNativeGenerationAdmission is a concise alias for
-// AssembleRecoveredNativeGenerationAdmissionInput.
-func AssembleRecoveredNativeGenerationAdmission(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleRecoveredNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeGenerationAdmission is a descriptive alias for
-// AssembleNativeGenerationAdmissionInput.
-func AssembleNativeGenerationAdmission(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeSealEvidence is retained for callers that describe this
-// operation as assembling seal evidence.  It returns the full admission input
-// because a seal is not admissible without its generation and artifact proof.
-func AssembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-// AssembleNativeSnapshotSealEvidence assembles and validates only the seal
-// projection.  It shares all cross-identity checks with the full admission
-// assembler and therefore cannot be used to bypass generation validation.
-func AssembleNativeSnapshotSealEvidence(input NativeSealEvidenceAssemblerInput) (SnapshotSealEvidence, error) {
-	assembled, err := assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
-	if err != nil {
-		return SnapshotSealEvidence{}, err
-	}
-	return assembled.Seal, nil
-}
-
-// NativeSealEvidenceAssembler is a stateless convenience value for callers
-// which prefer a method-shaped API.
-type NativeSealEvidenceAssembler struct{}
-
-func (NativeSealEvidenceAssembler) Assemble(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return AssembleNativeGenerationAdmissionInput(input)
-}
-
-func assembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	return assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
-}
-
 type nativeSealAssemblerPolicy uint8
 
 const (
@@ -226,6 +171,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 	}
 
 	assembled := GenerationAdmissionInput{
+		legacyAuthorizationPolicy: policy == nativeSealAssemblerRecovery && input.Plan.Governance.PolicyRevision == 0,
 		Commit: CommitEvidence{
 			DeliveryID: marker.DeliveryID, AttemptID: attempt.AttemptID, OwnerID: attempt.OwnerID,
 			FencingEpoch: attempt.FencingEpoch, SnapshotID: build.SnapshotID, CommitMarker: canonicalMarker,
@@ -242,6 +188,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			ArtifactRoot: artifactRoot, ArtifactRootDigest: artifactRootDigest,
 			CompiledGraphDigest: input.Artifacts.Compiler.Graph.Digest(), CompiledConfigDigest: input.Plan.Execution.ConfigDigest,
 			SecurityDomainFingerprint: input.Artifacts.AuthorizationFingerprint, RequestDigest: attempt.RequestDigest,
+			AuthorizationPolicyRevision: input.Artifacts.AuthorizationPolicyRevision, AuthorizationPolicyDigest: input.Artifacts.AuthorizationPolicyDigest,
 			PlanDigest: input.Plan.Digest, CompatibilityDigest: input.Compatibility.CompatibilityDigest,
 			ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest,
 			DuckDBVersion: input.Compatibility.DuckDBRuntime, RuntimeVersion: input.RuntimeVersion,
@@ -269,7 +216,11 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			DashboardPublicationsJSON: artifact.DashboardPublicationsJSON, DashboardAppearancesJSON: artifact.DashboardAppearancesJSON,
 			CreatedBy: attempt.OwnerID,
 		},
-		ManagedDataPins:   append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		ManagedDataPins: append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		AuthorizationPolicy: AuthorizationPolicyEvidence{
+			Revision: input.Artifacts.AuthorizationPolicyRevision,
+			Digest:   input.Artifacts.AuthorizationPolicyDigest,
+		},
 		Graph:             input.Artifacts.Compiler.Graph,
 		ResourceInventory: inventory,
 	}
@@ -294,13 +245,18 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 		baseIdentity = &base
 	}
 	gates := input.Qualification.Gates
+	provenancePolicyDigest := input.Artifacts.AuthorizationPolicyDigest
+	if assembled.legacyAuthorizationPolicy {
+		provenancePolicyDigest = input.Plan.Governance.PolicyDigest
+	}
 	assembled.Provenance = release.ProvenanceInput{
 		Artifact:       input.Artifacts.Artifact,
 		Candidate:      release.CandidateProvenance{ID: attempt.CandidateID, OwnerID: attempt.OwnerID},
 		SourceRevision: sourceRevision,
 		Plan: release.GenerationPlanProvenance{
 			Identity: artifact.Identity, BaseIdentity: baseIdentity, TargetID: input.Plan.TargetID,
-			RuntimeVersion: input.RuntimeVersion, PolicyDigest: input.Artifacts.AuthorizationFingerprint,
+			RuntimeVersion: input.RuntimeVersion, PolicyDigest: provenancePolicyDigest,
+			PolicyRevision: input.Artifacts.AuthorizationPolicyRevision, AuthorizationDigest: input.Artifacts.AuthorizationFingerprint,
 			DataRevision: artifact.DataRevision, DataMode: artifact.DataMode,
 			ManagedDataPins: append([]release.ManagedDataPin(nil), artifact.ManagedDataPins...), Bindings: bindings,
 			AuthoredConnections: nativeAuthoredConnectionEvidence(artifact.AuthoredConnections), Extensions: append([]extension.Evidence(nil), input.Artifacts.Extensions...), GateEvidence: &gates,
@@ -560,6 +516,14 @@ func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerIn
 	}
 	if input.Artifacts.AuthorizationFingerprint == "" || input.Artifacts.AuthorizationFingerprint != input.Plan.Governance.AuthorizationDigest {
 		return conflict("candidate authorization fingerprint differs from delivery plan")
+	}
+	if policy == nativeSealAssemblerRecovery && input.Plan.Governance.PolicyRevision == 0 {
+		if input.Artifacts.AuthorizationPolicyRevision != 0 || input.Artifacts.AuthorizationPolicyDigest != "" {
+			return conflict("legacy candidate contains target authorization policy evidence")
+		}
+	} else if input.Artifacts.AuthorizationPolicyRevision <= 0 || input.Artifacts.AuthorizationPolicyRevision != input.Plan.Governance.PolicyRevision ||
+		input.Artifacts.AuthorizationPolicyDigest == "" || input.Artifacts.AuthorizationPolicyDigest != input.Plan.Governance.PolicyDigest {
+		return conflict("candidate target authorization policy differs from delivery plan")
 	}
 	if err := validateNativeArtifactObject(input.Artifacts.Generation.NativeArtifact, input.Artifacts.Generation.ArtifactDigest); err != nil {
 		return err

@@ -20,7 +20,7 @@ spec:
             value: CA
       urlParameter: state
   visuals:
-    revenue:
+    - id: revenue
       type: bar
       title: Revenue
       query:

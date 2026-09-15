@@ -9,6 +9,10 @@ type FakeLayer = { id: string; source?: string; type?: string; metadata?: Record
 type FakeSource = { setData: (value: unknown) => void; getClusterExpansionZoom?: (clusterID: number) => Promise<number> }
 type FakeHandler = { enabled: boolean; enableCalls: number; disableCalls: number; enable: () => void; disable: () => void; isEnabled: () => boolean }
 
+function testFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): typeof fetch {
+  return Object.assign(handler, { preconnect: () => {} })
+}
+
 function fakeHandler(enabled = false): FakeHandler {
   const handler = { enabled, enableCalls: 0, disableCalls: 0 } as FakeHandler
   handler.enable = () => { handler.enabled = true; handler.enableCalls += 1 }
@@ -105,7 +109,7 @@ class FakeMap {
   removeLayer(id: string): void { this.layers.delete(id) }
   setMinZoom(_value: number): void {}
   setMaxZoom(_value: number): void {}
-  resize(): void {}
+  resize(_eventData?: unknown, _constrainTransform?: boolean): this { return this }
   fitBounds(bounds: [[number, number], [number, number]]): void { this.center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2] }
   jumpTo(options: { center?: [number, number]; zoom?: number }): void { if (options.center) this.center = options.center; if (options.zoom !== undefined) this.zoom = options.zoom }
   getCenter(): { lng: number; lat: number } { return { lng: this.center[0], lat: this.center[1] } }
@@ -131,7 +135,8 @@ function context(theme: 'light' | 'dark') {
 }
 
 async function digest(value: Uint8Array): Promise<string> {
-  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', value))
+  const copy = new Uint8Array(value)
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', copy.buffer))
   return `sha256:${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
@@ -243,13 +248,13 @@ test('MapLibre reconciles basemap styles without replacing controls or stale dat
   const styleA = await basemapFixture('streets-a', 'labels-a', 'OSM A')
   const styleB = await basemapFixture('streets-b', 'labels-b', 'OSM B')
   const failed = await basemapFixture('streets-failed', 'labels-failed', 'OSM failed')
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = testFetch(async (input) => {
     const url = String(input)
     if (url.includes(styleA.asset.styleUrl)) return new Response(styleA.body, { status: 200 })
     if (url.includes(styleB.asset.styleUrl)) return new Response(styleB.body, { status: 200 })
     if (url.includes(failed.asset.styleUrl)) return new Response('unavailable', { status: 503 })
     return new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
-  }
+  })
   try {
     const controls = { zoom: true, reset: true, compass: true }
     const envelopeA = await labelEnvelope('auto', 'sha256:basemap-a', controls, false, false, false, styleA.asset)
@@ -314,7 +319,7 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const envelope = await labelEnvelope()
     const container = dom.window.document.createElement('div')
@@ -356,7 +361,7 @@ test('MapLibre mounted labels resolve theme and repaint in place on context-only
 test('MapLibre registers tooltipItems-only row-backed layers for pointer hover', async () => {
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
-  globalThis.fetch = async () => new Response('{}', { status: 200 })
+  globalThis.fetch = testFetch(async () => new Response('{}', { status: 200 }))
   try {
     const inline = await labelEnvelope()
     if (inline.spec.kind !== 'geographic') throw new Error('geographic map fixture is unavailable')
@@ -395,7 +400,7 @@ test('MapLibre reconciles roam handlers and interactive affordances without cont
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const roaming = await labelEnvelope('auto', 'sha256:roam-on', { zoom: false, reset: false, compass: false }, true)
     const container = dom.window.document.createElement('div')
@@ -445,7 +450,7 @@ test('MapLibre keeps spatial drag-pan disabled through a roam update during a ge
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const roaming = await labelEnvelope('auto', 'sha256:spatial-roam-on', { zoom: false, reset: false, compass: false }, true, false, true)
     const container = dom.window.document.createElement('div')
@@ -477,7 +482,7 @@ test('MapLibre reconciles navigation and reset controls across spec updates with
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const all = await labelEnvelope('auto', 'sha256:controls-all', { zoom: true, reset: true, compass: true })
     const container = dom.window.document.createElement('div')
@@ -535,7 +540,7 @@ test('MapLibre applies a fixed camera during tiled placeholder bootstrap', async
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const inline = await labelEnvelope('auto', 'sha256:tiled-bootstrap', { zoom: false, reset: false, compass: false })
     const tiled = {
@@ -566,7 +571,7 @@ test('MapLibre rechecks cluster camera policy after asynchronous expansion', asy
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     let resolveZoom!: (zoom: number) => void
     const pendingZoom = new Promise<number>((resolve) => { resolveZoom = resolve })
@@ -602,7 +607,7 @@ test('MapLibre changes basemap label density in place without rebuilding geograp
   const dom = new JSDOM('<!doctype html><body></body>', { url: 'https://dash.example/' })
   const restoreDomGlobals = installDomGlobals(dom)
   const geometryJSON = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', id: 'SP', geometry: { type: 'Polygon', coordinates: [[[-47, -24], [-46, -24], [-46, -23], [-47, -23], [-47, -24]]] }, properties: { id: 'SP' } }] })
-  globalThis.fetch = async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } })
+  globalThis.fetch = testFetch(async () => new Response(geometryJSON, { status: 200, headers: { 'content-type': 'application/json' } }))
   try {
     const normal = await labelEnvelope('auto', 'sha256:labels-normal', 'normal')
     const dense = await labelEnvelope('auto', 'sha256:labels-dense', 'dense')

@@ -274,7 +274,6 @@ type Execution struct {
 	BestEffortAudit func(context.Context, Contract) error
 	Transactional   func(context.Context, Contract) error
 	LogMessage      string
-	LogAttributes   []slog.Attr
 }
 
 type Executor struct {
@@ -333,19 +332,37 @@ func (e *Executor) Execute(ctx context.Context, operationID string, execution Ex
 				slog.String("operation_owner", contract.Owner),
 				slog.String("audit_action", contract.AuditAction),
 				slog.String("audit_guarantee", string(contract.Guarantee)),
-				slog.Any("error", err),
+				// Callback failures can wrap transport responses, including
+				// sensitive header values. Keep the failure category fixed
+				// instead of sending arbitrary error text to the logger.
+				slog.String("error", "audit_recorder_failure"),
+				slog.String("error_class", auditErrorClass(err)),
 			}
 			message := strings.TrimSpace(execution.LogMessage)
 			if message == "" {
 				message = "best-effort command audit failed"
 			}
-			e.logger.LogAttrs(ctx, slog.LevelError, message, append(attrs, execution.LogAttributes...)...)
+			e.logger.LogAttrs(ctx, slog.LevelError, message, attrs...)
 		}
 		markCompleted(ctx, contract)
 		e.observe(ctx, contract, "succeeded")
 		return nil
 	default:
 		return fmt.Errorf("%w: operation %q has unsupported audit guarantee %q", ErrInvalidContract, operationID, contract.Guarantee)
+	}
+}
+
+// auditErrorClass intentionally returns a closed vocabulary. Callback errors
+// can wrap transport responses (including sensitive headers), so their text
+// and concrete values must not be copied into the command log.
+func auditErrorClass(err error) string {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	default:
+		return "generic"
 	}
 }
 

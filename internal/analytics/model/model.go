@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -377,15 +378,7 @@ func sortedStringSet(values map[string]struct{}) []string {
 }
 
 func sameStringSet(left []string, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func (m *Model) validateSemanticGraph() error {
@@ -536,9 +529,16 @@ func validateModelChecks(model *Model, tableName string, table Table, allowUnres
 		}
 		fieldExists := func(field string) bool {
 			_, ok := table.Dimensions[field]
-			return ok
+			if ok {
+				return true
+			}
+			return allowUnresolvedTypes && table.AuthoredFields != nil && len(table.Schema.Columns) == 0 && validateSemanticIdentifier(field) == nil
 		}
 		switch check.Type {
+		case "freshness":
+			if check.Freshness == nil || check.Freshness.Basis != "field" || !fieldExists(check.Freshness.Field) {
+				return fmt.Errorf("semantic dataset %q check %d freshness requires an output timestamp field", tableName, index)
+			}
 		case "non_null", "accepted_values":
 			if !fieldExists(check.Field) {
 				return fmt.Errorf("semantic dataset %q check %d references unknown field %q", tableName, index, check.Field)
@@ -593,7 +593,7 @@ func validateModelChecks(model *Model, tableName string, table Table, allowUnres
 				return fmt.Errorf("semantic dataset %q check %d references unknown Model %q", tableName, index, targetName)
 			}
 			targetField := parts[len(parts)-1]
-			if _, ok := target.Dimensions[targetField]; !ok {
+			if _, ok := target.Dimensions[targetField]; !ok && !(allowUnresolvedTypes && target.AuthoredFields != nil && len(target.Schema.Columns) == 0 && validateSemanticIdentifier(targetField) == nil) {
 				return fmt.Errorf("semantic dataset %q check %d references unknown target field %q", tableName, index, check.To)
 			}
 			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField], allowUnresolvedTypes) {
@@ -1000,7 +1000,7 @@ func (s Source) Validate(name string, connections map[string]Connection) error {
 	if mode == "inferred" && len(s.Fields) > 0 {
 		return fmt.Errorf("source %q inferred schema cannot declare fields", name)
 	}
-	if mode != "inferred" && len(s.Fields) == 0 {
+	if mode == "strict" && len(s.Fields) == 0 {
 		return fmt.Errorf("source %q %s schema requires fields", name, mode)
 	}
 	for field, declaration := range s.Fields {

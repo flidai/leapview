@@ -19,12 +19,12 @@
     {
       "slug": "catalog_get",
       "title": "catalog_get",
-      "summary": "Resolve one exact authorized project resource ID and return its compact metadata."
+      "summary": "Resolve one exact authorized project resource ID and return compact metadata."
     },
     {
       "slug": "catalog_list",
       "title": "catalog_list",
-      "summary": "Browse authorized project resources."
+      "summary": "Browse one authorized project-resource hierarchy level when a parent ref is known."
     },
     {
       "slug": "catalog_search",

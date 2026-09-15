@@ -12,7 +12,7 @@ Provide row and column dimensions plus one metric for compact categorical intens
 
 ```yaml visual-example=state_status_heatmap
 visuals:
-  state_status_heatmap:
+  - id: state_status_heatmap
     title: State by order status
     description: Shows order status concentration by customer state.
     type: heatmap
@@ -47,7 +47,7 @@ Replace the row dimension with product category to reuse the same matrix contrac
 
 ```yaml visual-example=category_status_heatmap
 visuals:
-  category_status_heatmap:
+  - id: category_status_heatmap
     title: Category by order status
     type: heatmap
     query:
@@ -81,7 +81,7 @@ Use the renderer-neutral `presentation.labels` policy when exact cell values mat
 
 ```yaml visual-example=category_status_heatmap_labels
 visuals:
-  category_status_heatmap_labels:
+  - id: category_status_heatmap_labels
     title: Labeled category status heatmap
     type: heatmap
     presentation:

@@ -29,20 +29,11 @@ func runtimeError(code, format string, args ...any) *Error {
 type Effect string
 
 const (
-	EffectRead            Effect = "read"
-	EffectIdempotentWrite Effect = "idempotent-write"
-	EffectWrite           Effect = "write"
-	EffectDestructive     Effect = "destructive"
+	EffectRead Effect = "read"
 )
 
 // Confirmation is the minimum confirmation requirement for a tool.
 type Confirmation string
-
-const (
-	ConfirmationNever  Confirmation = "never"
-	ConfirmationPolicy Confirmation = "policy"
-	ConfirmationAlways Confirmation = "always"
-)
 
 // Context supplies trusted values that are not visible to the model.
 type Context map[string]any

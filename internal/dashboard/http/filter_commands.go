@@ -52,6 +52,11 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 			return
 		}
 	}
+	streamID := h.scopedStreamID(lddatastar.ClientStreamID(r, signals, dashboardID, pageID))
+	if !h.privateStreamActive(streamID) {
+		nethttp.NotFound(w, r)
+		return
+	}
 	if h.SessionStore == nil {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return
@@ -138,7 +143,6 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	streamID := h.scopedStreamID(lddatastar.ClientStreamID(r, signals, dashboardID, pageID))
 	registry := h.Coordinators
 	if registry == nil {
 		registry = dashboardstream.NewRegistry()
@@ -150,6 +154,10 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	coordinator := registry.Ensure(streamID, h.analyticalStreamContext(context.WithoutCancel(r.Context()), streamID), func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
+	if coordinator == nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
 	h.observeRefreshes(coordinator, dashboardID, pageID)
 	_, refreshErr := coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		prepared, prepareErr := (command.Service{Metrics: metrics}).PrepareFilterState(

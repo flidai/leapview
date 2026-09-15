@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -28,11 +29,13 @@ import (
 
 var readStreamInstanceRandom = rand.Read
 
+// Dashboard sessions expire after five minutes by default. Refreshing this
+// lease well before expiry keeps an otherwise-idle SSE dashboard alive while
+// still allowing a failed store to close the stream and trigger a reconnect.
+const dashboardSessionKeepAliveInterval = time.Minute
+
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	projectID, projectErr := h.projectIDForRequest(r.Context())
-	if projectErr != nil {
-		projectID, projectErr = projectgraph.NewResourceID(strings.TrimSpace(r.URL.Query().Get("project")))
-	}
 	if projectErr != nil {
 		nethttp.NotFound(w, r)
 		return
@@ -131,6 +134,25 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	mailbox, unsubscribe := broker.Subscribe(streamID)
 	defer unsubscribe()
 
+	registry := h.Coordinators
+	if registry == nil {
+		registry = dashboardstream.NewRegistry()
+	}
+	streamContext, cancelStream := context.WithCancel(r.Context())
+	defer cancelStream()
+	if h.SessionStore != nil {
+		go keepDashboardSessionAlive(streamContext, h.SessionStore, sessionKey, dashboardSessionKeepAliveInterval, cancelStream)
+	}
+	coordinatorContext := h.analyticalStreamContext(streamContext, streamID)
+	coordinator, closeCoordinator, openErr := registry.OpenWithError(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
+		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
+	})
+	if openErr != nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	defer closeCoordinator()
+
 	updates := pagestream.NewSignalStream(w, r)
 	var providers []webpage.Provider
 	if h.Layout != nil {
@@ -157,22 +179,14 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		status["lastUpdated"] = h.DataRefreshedAt(r.Context(), projectID.String(), environment, request.ModelID)
 	}
 	bootstrap["status"] = status
-	if err := updates.Patch(bootstrap); err != nil {
-		return
-	}
 
-	registry := h.Coordinators
-	if registry == nil {
-		registry = dashboardstream.NewRegistry()
-	}
-	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
-	coordinator, closeCoordinator := registry.Open(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
-		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
-	})
-	defer closeCoordinator()
 	h.observeRefreshes(coordinator, dashboardID, activePage.ID)
 	service := command.Service{Metrics: metrics}
-	registry.Bind(streamID, projectID, environment, request.ModelID, func() {
+	publicationScope := ""
+	if presentation, ok := publicPresentationFromContext(r.Context()); ok {
+		publicationScope = presentation.PublicationID
+	}
+	registry.BindForPublication(streamID, projectID, environment, request.ModelID, publicationScope, func() {
 		_, _ = coordinator.BeginPrepared(func(current dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 			prepared, err := service.PrepareInitial(request, current)
 			return streamPreparation(prepared), err
@@ -184,12 +198,13 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			})
 		})
 	})
+	initialWorkGate := make(chan struct{})
 	_, err = coordinator.BeginPrepared(func(dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		prepared, err := service.PrepareInitial(request, initialFilters)
 		return streamPreparation(prepared), err
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
-		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
+		work := dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
 			DashboardID:              dashboardID,
 			PageID:                   activePage.ID,
 			ModelID:                  request.ModelID,
@@ -199,11 +214,68 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			CacheObserved:            h.CacheObserved,
 			CacheObservationObserved: h.CacheObservationObserved,
 		})
+		return func(ctx context.Context, publish dashboardstream.RefreshPublisher) {
+			select {
+			case <-initialWorkGate:
+				work(ctx, publish)
+			case <-ctx.Done():
+			}
+		}
 	})
+	// Establish the initial refresh before exposing bootstrap state, but hold
+	// its query work until the bootstrap write completes. A table can emit its
+	// first window request as soon as bootstrap mounts; publishing bootstrap
+	// before establishing the plan lets that plan cancel the window request,
+	// while running it during bootstrap can overflow the subscribed mailbox.
+	if patchErr := updates.Patch(bootstrap); patchErr != nil {
+		return
+	}
+	close(initialWorkGate)
 	if err != nil {
 		return
 	}
-	_ = updates.ForwardUpdates(r.Context(), mailbox)
+	_ = updates.ForwardUpdates(streamContext, mailbox)
+}
+
+func keepDashboardSessionAlive(
+	ctx context.Context,
+	store dashboardsession.Store,
+	key dashboardsession.Key,
+	interval time.Duration,
+	onFailure func(),
+) {
+	if store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = dashboardSessionKeepAliveInterval
+	}
+	touch := func() bool {
+		if err := store.Touch(ctx, key); err != nil {
+			if ctx.Err() == nil && onFailure != nil {
+				onFailure()
+			}
+			return false
+		}
+		return true
+	}
+	// Loading a session does not extend its lease. Renew immediately so an SSE
+	// reconnect cannot inherit a record that expires before the first tick.
+	if !touch() {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !touch() {
+				return
+			}
+		}
+	}
 }
 
 func (h Handler) recordDashboardView(r *nethttp.Request, projectID projectgraph.ResourceID, dashboardID, pageID string) {

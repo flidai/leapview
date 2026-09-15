@@ -463,6 +463,13 @@ func validateEndpoint(endpoint EndpointConfig) error {
 	return nil
 }
 
+// ValidateEndpointConfig applies the target-binding endpoint contract without
+// constructing or mutating a binding. Local authoring profile validation uses
+// this boundary before any target identity or credential reference exists.
+func ValidateEndpointConfig(endpoint EndpointConfig) error {
+	return validateEndpoint(endpoint)
+}
+
 func cloneEndpoint(endpoint EndpointConfig) EndpointConfig {
 	result := endpoint
 	if endpoint.Options != nil {
@@ -520,7 +527,6 @@ func NewNoAuthCredentialSnapshot(now time.Time) CredentialSnapshot {
 }
 
 func (snapshot CredentialSnapshot) ProviderVersion() string { return snapshot.providerVersion }
-func (snapshot CredentialSnapshot) RetrievedAt() time.Time  { return snapshot.retrievedAt }
 func (snapshot CredentialSnapshot) ExpiresAt() time.Time    { return snapshot.expiresAt }
 
 func (snapshot CredentialSnapshot) Use(consumer func(map[string]string) error) error {

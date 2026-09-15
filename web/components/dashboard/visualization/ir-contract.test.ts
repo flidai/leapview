@@ -22,10 +22,10 @@ function specificationKind(spec: VisualizationSpec): string {
       return `${spec.kind}:${spec.metrics.length}`
     case 'kpi':
       return `${spec.kind}:${spec.value.field}`
+    case 'point':
+      return `${spec.kind}`
     case 'geographic':
       return `${spec.kind}:${spec.layers.length}`
-    case 'custom':
-      return `${spec.kind}:${spec.engine}`
     default: {
       const unsupported: never = spec
       return unsupported
@@ -39,6 +39,8 @@ function dataStateKind(state: VisualizationDataState): string {
       return `${state.kind}:${state.datasets.length}`
     case 'windowed':
       return `${state.kind}:${Object.keys(state.blocks).length}`
+    case 'spatial_tiled':
+      return `${state.kind}`
     default: {
       const unsupported: never = state
       return unsupported
@@ -73,7 +75,7 @@ test('the generated contract is a closed union of renderer-independent specifica
     'pivot',
     'kpi',
     'geographic',
-    'custom',
+    'point',
   ] as const satisfies ReadonlyArray<VisualizationSpec['kind']>
 
   expect(kinds).toHaveLength(10)

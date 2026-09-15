@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configspec "github.com/flidai/leapview/internal/app/config/spec"
+	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/stretchr/testify/require"
 )
@@ -92,6 +93,7 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 		{name: "LEAPVIEW_PRODUCTION", value: "sometimes"},
 		{name: "LEAPVIEW_WORKLOAD_REFRESH_MAX_QUEUED", value: "several"},
 		{name: "LEAPVIEW_REFRESH_JOB_LEASE_TIMEOUT", value: "later"},
+		{name: "LEAPVIEW_JOB_EXECUTION_TIMEOUT", value: "later"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv(test.name, test.value)
@@ -99,6 +101,14 @@ func TestLoadRejectsMalformedTypedValues(t *testing.T) {
 				t.Fatalf("Load() accepted %s=%q", test.name, test.value)
 			}
 		})
+	}
+}
+
+func TestValidateRequiresPositiveIndependentJobExecutionTimeout(t *testing.T) {
+	cfg := withAnalyticalTestDefaults(Config{CSRFKey: "0123456789abcdef0123456789abcdef"})
+	cfg.JobExecutionTimeout = 0
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_JOB_EXECUTION_TIMEOUT") {
+		t.Fatalf("non-positive job execution timeout error = %v", err)
 	}
 }
 
@@ -110,6 +120,7 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 		t.Fatal("partial Infisical configuration was accepted")
 	}
 	complete := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                          "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_INFISICAL_BASE_URL":                "https://infisical.example.com",
 		"LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_ID":     "machine-client",
 		"LEAPVIEW_INFISICAL_UNIVERSAL_CLIENT_SECRET": "bootstrap-secret",
@@ -126,6 +137,7 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 
 func TestObjectStoreRuntimeConfigurationIsComplete(t *testing.T) {
 	base := map[string]any{
+		"LEAPVIEW_CSRF_KEY":                                "0123456789abcdef0123456789abcdef",
 		"LEAPVIEW_OBJECT_STORE_BACKEND":                    "s3",
 		"LEAPVIEW_OBJECT_STORE_S3_BUCKET":                  "leapview-objects",
 		"LEAPVIEW_OBJECT_STORE_S3_REGION":                  "eu-west-1",
@@ -260,6 +272,30 @@ func TestValidateProductionAuthRequiresCSRFKey(t *testing.T) {
 	cfg := Config{Production: true, APITokenOnlyAuth: true}
 	if err := cfg.ValidateProductionAuth(); err == nil {
 		t.Fatal("expected missing CSRF key to fail production auth validation")
+	}
+}
+
+func TestValidateRequiresCSRFKeyOutsideProduction(t *testing.T) {
+	cfg := withAnalyticalTestDefaults(Config{CSRFKey: "short"})
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_CSRF_KEY") {
+		t.Fatalf("non-production short CSRF key validation error = %v", err)
+	}
+}
+
+func TestValidateRejectsManagedDataFileLimitAboveCaptureBound(t *testing.T) {
+	cfg := Config{ManagedDataMaxFiles: manageddata.MaxManifestFiles + 1}
+	if err := cfg.Validate(ProfileServe); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_MANAGED_DATA_MAX_FILES") {
+		t.Fatalf("managed-data file limit validation error = %v", err)
+	}
+}
+
+func TestManagedDataDefaultFileLimitMatchesCaptureBound(t *testing.T) {
+	cfg, err := LoadEnvironment(map[string]string{})
+	if err != nil {
+		t.Fatalf("load defaults: %v", err)
+	}
+	if cfg.ManagedDataMaxFiles != manageddata.MaxManifestFiles {
+		t.Fatalf("managed-data default file limit = %d, capture bound = %d", cfg.ManagedDataMaxFiles, manageddata.MaxManifestFiles)
 	}
 }
 
@@ -596,6 +632,7 @@ func withAnalyticalTestDefaults(cfg Config) Config {
 	cfg.QueryCacheRuntimeMaxBytes = 4 << 20
 	cfg.QueryCacheNodeMaxEntries = 64
 	cfg.QueryCacheNodeMaxBytes = 16 << 20
+	cfg.JobExecutionTimeout = 24 * time.Hour
 	return cfg
 }
 

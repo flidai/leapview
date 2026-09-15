@@ -8,6 +8,10 @@ import { typographyTestTokens } from '../test-typography-tokens'
 let server: Server
 let baseURL = ''
 let browser: Browser
+let draftTurnRequests = 0
+let draftTurnAnswerSent = false
+let draftTurnAnswerFinished = false
+let releaseDraftTurnAnswer: (() => void) | null = null
 
 setDefaultTimeout(15_000)
 
@@ -17,6 +21,28 @@ const root = join(projectRoot, '.tmp/chat-page-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (request.method === 'POST' && url.pathname === '/chats/turns') {
+      draftTurnRequests += 1
+      response.writeHead(200, {
+        'cache-control': 'no-cache',
+        'content-type': 'text/event-stream',
+        connection: 'close',
+      })
+      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"activeConversationId":"c3"}}\n\n')
+      await new Promise<void>((resolve) => {
+        releaseDraftTurnAnswer = resolve
+      })
+      draftTurnAnswerSent = true
+      if (response.destroyed) {
+        draftTurnAnswerFinished = true
+        return
+      }
+      response.write('event: datastar-patch-signals\ndata: signals {"agent":{"transcript":[{"id":"fake-answer","kind":"assistant","markdown":"Fake answer","conversationId":"c3"}]}}\n\n')
+      response.end()
+      draftTurnAnswerFinished = true
+      releaseDraftTurnAnswer = null
+      return
+    }
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -71,7 +97,11 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  server.closeAllConnections()
+  await new Promise<void>((resolve, reject) => server.close((error: NodeJS.ErrnoException | undefined) => {
+    if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
+    else resolve()
+  }))
 }, 15_000)
 
 for (const viewport of [
@@ -90,7 +120,7 @@ for (const viewport of [
       await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-chat-page').evaluate((element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const composer = root.querySelector('lv-chat-composer') as any
         const thread = root.querySelector('lv-chat-thread') as any
         const threadRoot = thread?.shadowRoot
@@ -142,7 +172,7 @@ for (const viewport of [
       await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
       const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
-        const root = element.shadowRoot
+        const root = (element.shadowRoot as ShadowRoot)
         const title = root.querySelector('h1') as HTMLElement
         const stage = root.querySelector('.new-chat-stage') as HTMLElement
         const intro = root.querySelector('.new-chat-intro') as HTMLElement
@@ -265,6 +295,78 @@ test('new chat navigates when the created conversation signal arrives', async ()
   }
 })
 
+test('new chat submits Enter and navigates from the command signal before the answer arrives', async () => {
+  draftTurnRequests = 0
+  draftTurnAnswerSent = false
+  draftTurnAnswerFinished = false
+  releaseDraftTurnAnswer = null
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/new`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
+    await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const composer = element.shadowRoot.querySelector('lv-chat-composer') as any
+      await composer.updateComplete
+    })
+
+    const textarea = page.locator('lv-chat-page').locator('lv-chat-composer').locator('textarea')
+    await textarea.fill('What changed most recently?')
+    await textarea.press('Enter')
+
+    await page.waitForURL(`${baseURL}/chats/c3`)
+    expect(draftTurnRequests).toBe(1)
+    expect(draftTurnAnswerSent).toBe(false)
+    expect(new URL(page.url()).pathname).toBe('/chats/c3')
+  } finally {
+    const release = releaseDraftTurnAnswer as (() => void) | null
+    release?.()
+    for (let attempt = 0; attempt < 50 && !draftTurnAnswerFinished; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    }
+    await page.close()
+  }
+})
+
+test('active chat shows a submitted turn immediately and replaces it with durable state', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
+    const lifecycle = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const composer = element.shadowRoot.querySelector('lv-chat-composer') as HTMLElement
+      composer.dispatchEvent(new CustomEvent('lv-chat-submit', {
+        bubbles: true,
+        composed: true,
+        detail: { input: 'What changed this month?', references: [] },
+      }))
+      await element.updateComplete
+      const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
+      await thread.updateComplete
+      const optimistic = {
+        pending: element.pending,
+        transcript: thread.transcript,
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { transcript: [
+        { id: 'ready', kind: 'assistant', markdown: 'Ready.', conversationId: 'c1' },
+        { id: 'accepted-user', kind: 'user', text: 'What changed this month?', conversationId: 'c1' },
+      ], status: { enabled: true, running: true } } })
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await element.updateComplete
+      await thread.updateComplete
+      return { optimistic, durable: thread.transcript }
+    })
+    expect(lifecycle.optimistic.pending).toBe(true)
+    expect(lifecycle.optimistic.transcript.at(-1)).toMatchObject({ kind: 'user', text: 'What changed this month?' })
+    expect(lifecycle.durable.at(-1)?.id).toBe('accepted-user')
+    expect(lifecycle.durable.some((item: any) => item.id?.startsWith('optimistic-'))).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat list page renders searchable conversation history', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -273,7 +375,7 @@ test('chat list page renders searchable conversation history', async () => {
     await page.locator('lv-chat-page').evaluate((element: any) => element.updateComplete)
 
     const initial = await page.locator('lv-chat-page').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const list = root.querySelector('lv-chat-list') as any
       const listRoot = list?.shadowRoot
       return {
@@ -284,7 +386,7 @@ test('chat list page renders searchable conversation history', async () => {
         activeConversationId: list?.activeConversationId,
         title: listRoot?.querySelector('h2')?.textContent?.trim(),
         searchPlaceholder: listRoot?.querySelector('.search')?.getAttribute('placeholder'),
-        newChatHref: listRoot?.querySelector('.new-chat-link')?.getAttribute('href'),
+        newChatHref: listRoot?.querySelector('a.new-chat-link')?.getAttribute('href'),
         headerOrder: Array.from(listRoot?.querySelector('.header')?.children ?? []).map((child: any) => child.className || child.tagName.toLowerCase()),
         metrics: (() => {
           const title = listRoot?.querySelector('h2') as HTMLElement
@@ -324,7 +426,7 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.title).toBe('Chats')
     expect(initial.searchPlaceholder).toBe('Search chats...')
     expect(initial.newChatHref).toBe('/chats/new')
-    expect(initial.headerOrder).toEqual(['h2', 'new-chat-link'])
+    expect(initial.headerOrder).toEqual(['h2', 'header-actions'])
     expect(initial.metrics).toEqual({
       titleFontSize: '20px',
       searchHeight: 40,
@@ -339,17 +441,17 @@ test('chat list page renders searchable conversation history', async () => {
     expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', text: 'Inventory status Jan 3', optionsLabel: undefined })
 
     await page.locator('lv-chat-page').evaluate((element: any) => {
-      const input = element.shadowRoot.querySelector('lv-chat-list').shadowRoot.querySelector('.search') as HTMLInputElement
+      const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
       input.value = 'inventory'
       input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: 'inventory' }))
     })
     await page.locator('lv-chat-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-chat-list') as any
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
       await list.updateComplete
     })
 
     const filteredRows = await page.locator('lv-chat-page').evaluate((element: any) => {
-      const root = element.shadowRoot.querySelector('lv-chat-list').shadowRoot
+      const root = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!
       return Array.from(root.querySelectorAll('tbody tr')).map((row: any) => ({
         href: row.querySelector('.primary-link')?.getAttribute('href'),
         text: row.textContent.replace(/\s+/g, ' ').trim(),
@@ -377,7 +479,7 @@ test('unconfigured agent uses intentional unavailable states', async () => {
     await page.waitForFunction(() => customElements.get('lv-chat-page'))
     const newState = await page.locator('lv-chat-page').evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const composer = root.querySelector('lv-chat-composer') as any
       await composer.updateComplete
       return {
@@ -405,14 +507,18 @@ test('unconfigured agent uses intentional unavailable states', async () => {
       const list = element.shadowRoot.querySelector('lv-chat-list') as any
       await list.updateComplete
       const root = list.shadowRoot
+      let archivedOpened = false
+      list.addEventListener('lv-chat-settings-open', () => { archivedOpened = true })
+      ;(root.querySelector('button') as HTMLButtonElement | null)?.click()
       return {
         title: root.querySelector('.empty-title')?.textContent?.trim(),
         detail: root.querySelector('.empty-detail')?.textContent?.trim(),
         hasSearch: Boolean(root.querySelector('.search')),
-        newChatDisabled: root.querySelector('.new-chat-link')?.hasAttribute('disabled'),
+        newChatDisabled: root.querySelector('button[disabled]')?.hasAttribute('disabled'),
+        archivedOpened,
       }
     })
-    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true })
+    expect(listState).toEqual({ title: 'No chats yet', detail: 'Agent is not configured.', hasSearch: false, newChatDisabled: true, archivedOpened: true })
   } finally {
     await page.close()
   }
@@ -435,6 +541,9 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
     status: { enabled, running: false, ...(enabled ? {} : { error: 'Agent is not configured.' }) },
     composer: { value: '', disabled: !enabled, placeholder: enabled ? 'Ask about dashboards, metrics, or models...' : 'Agent is not configured.' },
   }
+  const submitCommand = scenario === 'new'
+    ? ` data-on:lv-chat-submit="$agent.composer.value = evt.detail.input; @post('/chats/turns')"`
+    : ''
   return `
     <!doctype html>
     <html>
@@ -447,7 +556,7 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
       </head>
       <body>
         <main data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}">
-          <lv-chat-page></lv-chat-page>
+          <lv-chat-page${submitCommand}></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
         <script type="module" src="/chat-page-under-test.js"></script>

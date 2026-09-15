@@ -37,27 +37,16 @@ func NewRepositoryWithAudit(db *sql.DB, audit access.AuditIntentRecorder) *Repos
 }
 
 func mapPublication(row publicationdb.DashboardPublication) (publication.Publication, error) {
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
-	if err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication project ID: %w", err)
-	}
-	out := publication.Publication{
-		ID: row.ID, ProjectID: projectID, Name: row.Name,
+	return publication.MapProjection(publication.Projection{
+		ID: row.ID, ProjectID: row.ProjectID, Name: row.Name,
 		PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 		ConfigurationDigest: row.ConfigurationDigest, Configured: row.Configured == 1,
-		Revision:       row.Revision,
-		ServingStateID: row.ActiveServingStateID.String, SuspendedAt: row.SuspendedAt.String,
-		SuspendedBy: row.SuspendedBy, ConfiguredAt: row.ConfiguredAt.String,
-		DisabledAt: row.DisabledAt.String, RotatedAt: row.RotatedAt.String,
+		Revision: row.Revision, ServingStateID: row.ActiveServingStateID.String,
+		SuspendedAt: row.SuspendedAt.String, SuspendedBy: row.SuspendedBy,
+		ConfiguredAt: row.ConfiguredAt.String, DisabledAt: row.DisabledAt.String, RotatedAt: row.RotatedAt.String,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-	}
-	if err := json.Unmarshal([]byte(row.AllowedOriginsJson), &out.AllowedOrigins); err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication origins: %w", err)
-	}
-	if err := json.Unmarshal([]byte(row.DependencyAssetIdsJson), &out.DependencyAssetIDs); err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication dependencies: %w", err)
-	}
-	return out, nil
+		AllowedOriginsJSON: row.AllowedOriginsJson, DependencyAssetIDsJSON: row.DependencyAssetIdsJson,
+	})
 }
 
 func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID, name string) (publication.Publication, error) {

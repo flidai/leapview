@@ -18,13 +18,19 @@ import (
 )
 
 type Config struct {
-	Persistence  *Persistence
-	Production   bool
-	Admission    jobs.Admitter
+	Persistence *Persistence
+	Production  bool
+	Admission   jobs.Admitter
+	// LeaseTimeout is the module fallback for handlers that do not publish a
+	// narrower execution lease. It is not River's worker deadline; handlers
+	// that can outlive a lease must renew their capability-owned fence.
 	LeaseTimeout time.Duration
-	PollInterval time.Duration
-	Logger       *slog.Logger
-	OwnerID      string
+	// RiverJobTimeout is River's independent worker deadline. It must be
+	// longer than renewable capability leases; zero uses River's default.
+	RiverJobTimeout time.Duration
+	PollInterval    time.Duration
+	Logger          *slog.Logger
+	OwnerID         string
 }
 
 type Module struct {
@@ -33,8 +39,12 @@ type Module struct {
 	config      Config
 	client      *river.Client[pgx.Tx]
 	handlers    map[string]jobs.Handler
-	retryAt     sync.Map
-	mu          sync.RWMutex
+	// handlerLeaseTimeouts are the product execution fences for each handler.
+	// River's JobTimeout is a worker-wide safety bound; it is not the lease
+	// contract consumed by capability handlers.
+	handlerLeaseTimeouts map[string]time.Duration
+	retryAt              sync.Map
+	mu                   sync.RWMutex
 	// afterRiverResultValidated is a deterministic test seam for the narrow
 	// interval before River performs its separate worker-result transaction.
 	afterRiverResultValidated func()
@@ -71,6 +81,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		return errors.New("job handlers are already registered")
 	}
 	registered := make(map[string]jobs.Handler, len(handlers))
+	leaseTimeouts := make(map[string]time.Duration, len(handlers))
 	workers := river.NewWorkers()
 	for _, handler := range handlers {
 		if handler == nil || strings.TrimSpace(handler.Kind()) == "" {
@@ -80,6 +91,9 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 			return errors.New("duplicate job handler " + handler.Kind())
 		}
 		registered[handler.Kind()] = handler
+		if timeoutHandler, ok := handler.(interface{ LeaseTimeout() time.Duration }); ok && timeoutHandler.LeaseTimeout() > 0 {
+			leaseTimeouts[handler.Kind()] = timeoutHandler.LeaseTimeout()
+		}
 		switch handler.Kind() {
 		case "agent.run":
 			river.AddWorker(workers, &agentRunWorker{riverWorkerDefaults: riverWorkerDefaults[jobpostgres.AgentRunArgs]{module: m}})
@@ -109,9 +123,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		ID: strings.TrimSpace(m.config.OwnerID), Logger: logger, MaxAttempts: jobpostgres.MaxAttempts,
 		Queues: map[string]river.QueueConfig{"control": {MaxWorkers: 2}, "background": {MaxWorkers: 4}}, Workers: workers,
 	}
-	if m.config.LeaseTimeout > 0 {
-		riverConfig.JobTimeout = m.config.LeaseTimeout
-	}
+	riverConfig.JobTimeout = m.riverJobTimeout()
 	if m.config.PollInterval > 0 {
 		riverConfig.FetchCooldown = m.config.PollInterval
 		riverConfig.FetchPollInterval = m.config.PollInterval
@@ -124,6 +136,7 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		return err
 	}
 	m.handlers = registered
+	m.handlerLeaseTimeouts = leaseTimeouts
 	m.client = client
 	return nil
 }
@@ -297,7 +310,23 @@ func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) e
 	return m.repository.WaitForRiverClaimFinalization(ctx, riverJobID)
 }
 
-func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], args jobpostgres.ExecutionArgs) error {
+func (m *Module) executionLeaseTimeout(kind string) time.Duration {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if timeout := m.handlerLeaseTimeouts[kind]; timeout > 0 {
+		return timeout
+	}
+	return m.config.LeaseTimeout
+}
+
+func (m *Module) riverJobTimeout() time.Duration {
+	if m.config.RiverJobTimeout != 0 {
+		return m.config.RiverJobTimeout
+	}
+	return river.JobTimeoutDefault
+}
+
+func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], kind string, args jobpostgres.ExecutionArgs) error {
 	owner := strings.TrimSpace(m.config.OwnerID)
 	if owner == "" && len(job.AttemptedBy) > 0 {
 		owner = strings.TrimSpace(job.AttemptedBy[len(job.AttemptedBy)-1])
@@ -307,7 +336,7 @@ func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T
 		// ID-only finalizer. Fail safe until the row is terminal.
 		return m.waitForStaleRiverClaim(ctx, job.ID)
 	}
-	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, owner, m.config.LeaseTimeout)
+	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, job, owner, m.executionLeaseTimeout(kind))
 	result := m.workAndWait(executionCtx, job.ID, job.Attempt, args)
 	return m.protectRiverResult(ctx, job.ID, jobs.Fence{Owner: owner, Generation: int64(job.Attempt)}, result)
 }
@@ -354,7 +383,7 @@ type agentRunWorker struct {
 }
 
 func (w *agentRunWorker) Work(ctx context.Context, j *river.Job[jobpostgres.AgentRunArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "agent.run", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type uploadFinalizeWorker struct {
@@ -362,7 +391,7 @@ type uploadFinalizeWorker struct {
 }
 
 func (w *uploadFinalizeWorker) Work(ctx context.Context, j *river.Job[jobpostgres.UploadFinalizeArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "upload.finalize", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type releaseFinalizeWorker struct {
@@ -370,7 +399,7 @@ type releaseFinalizeWorker struct {
 }
 
 func (w *releaseFinalizeWorker) Work(ctx context.Context, j *river.Job[jobpostgres.ReleaseFinalizeArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "release.finalize", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type deploymentActivateWorker struct {
@@ -378,7 +407,7 @@ type deploymentActivateWorker struct {
 }
 
 func (w *deploymentActivateWorker) Work(ctx context.Context, j *river.Job[jobpostgres.DeploymentActivateArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "deployment.activate", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type approvalActivateWorker struct {
@@ -386,7 +415,7 @@ type approvalActivateWorker struct {
 }
 
 func (w *approvalActivateWorker) Work(ctx context.Context, j *river.Job[jobpostgres.ApprovalActivateArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "delivery.approval.activate", jobpostgres.ExecutionArgs(j.Args))
 }
 
 type refreshPipelineWorker struct {
@@ -394,7 +423,7 @@ type refreshPipelineWorker struct {
 }
 
 func (w *refreshPipelineWorker) Work(ctx context.Context, j *river.Job[jobpostgres.RefreshPipelineArgs]) error {
-	return workTyped(ctx, w.module, j, jobpostgres.ExecutionArgs(j.Args))
+	return workTyped(ctx, w.module, j, "refresh_pipeline", jobpostgres.ExecutionArgs(j.Args))
 }
 
 func (m *Module) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {

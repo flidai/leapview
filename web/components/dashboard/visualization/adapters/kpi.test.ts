@@ -66,6 +66,7 @@ function envelope(current: number | null, comparison: number | null, goal: numbe
     },
     selection: [],
     status: { kind: 'ready' },
+    highlights: [],
     diagnostics: [],
   }
 }

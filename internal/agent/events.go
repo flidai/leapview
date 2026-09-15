@@ -137,6 +137,10 @@ func messageEnvelope(conversationID string, row Message) EventEnvelope {
 }
 
 func messageContentJSON(message agentcore.Message, context *TurnContext) string {
+	return messageContentJSONWithEdit(message, context, "")
+}
+
+func messageContentJSONWithEdit(message agentcore.Message, context *TurnContext, editMessageID string) string {
 	payload := map[string]any{
 		"role":            message.Role,
 		"content":         message.Content,
@@ -148,6 +152,9 @@ func messageContentJSON(message agentcore.Message, context *TurnContext) string 
 		"finish_reason":   message.FinishReason,
 		"usage":           message.Usage,
 	}
+	if message.ID != "" {
+		payload["message_id"] = message.ID
+	}
 	if message.OutputPartID != "" {
 		payload["output_part_id"] = message.OutputPartID
 		payload["output_ordinal"] = message.OutputOrdinal
@@ -156,6 +163,9 @@ func messageContentJSON(message agentcore.Message, context *TurnContext) string 
 	if message.Role == agentcore.RoleUser && context != nil {
 		normalized := context.normalized()
 		payload["turn_context"] = normalized
+	}
+	if message.Role == agentcore.RoleUser && strings.TrimSpace(editMessageID) != "" {
+		payload["edit_message_id"] = strings.TrimSpace(editMessageID)
 	}
 	return metadataJSON(payload)
 }

@@ -65,13 +65,13 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
         element.presentation = mode.presentation
         element.readOnly = mode.readOnly
         await element.updateComplete
-        const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+        const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
         deferredByMode[`${mode.presentation}:${mode.readOnly}`] = hosts.length > 0
           && hosts.every((host) => host.deferMount && host.hasAttribute('defer-mount'))
       }
 
       await element.ensureVisualizationsMounted()
-      const hosts = Array.from(element.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const hosts = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const original = hosts[0].ensureMounted
       hosts[0].ensureMounted = async () => { throw new Error('capture mount failed') }
       let failure = ''
@@ -84,7 +84,7 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
       }
       return {
         deferredByMode,
-        mounted: hosts.every((host) => (host.shadowRoot?.querySelector('.renderer')?.childElementCount ?? 0) > 0),
+        mounted: hosts.every((host) => ((host.shadowRoot as ShadowRoot)?.querySelector('.renderer')?.childElementCount ?? 0) > 0),
         failure,
       }
     })
@@ -99,6 +99,147 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
   } finally {
     await page.close()
   }
+})
+
+for (const emptyResponse of [false, true]) test(`windowed table reconciles cached rows after a delayed ${emptyResponse ? 'empty' : 'populated'} jump response`, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any, emptyResponse: boolean) => {
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...(base.blocks.a.rows[0] ?? {}), order_id: `bounce-${start + offset}` }))
+      const block = (start: number, requestSeq = 0) => ({ ...base.blocks.a, start, requestSeq, resetVersion: base.resetVersion, rows: rows(start) })
+      const emptyBlock = (start: number, requestSeq: number) => ({ ...block(start, requestSeq), rows: [] })
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = { ...base, availableRows: 1000, rowCap: 10000, chunkSize: 100, cardinality: { kind: 'exact', value: 1000 }, blocks: { a: block(0), b: block(100), c: block(200) }, loadingBlock: '' }
+      await table.updateComplete
+      const viewport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const requests: any[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => { requests.push(event.detail); event.stopImmediatePropagation() }, { capture: true })
+      const waitForRequest = async (start: number, after = -1) => {
+        const deadline = Date.now() + 2000
+        while (!requests.some(r => r.start === start && r.requestSeq > after)) {
+          if (Date.now() > deadline) throw new Error(`No request for row ${start}`)
+          await new Promise(resolve => setTimeout(resolve, 10))
+        }
+        return requests.find(r => r.start === start && r.requestSeq > after)
+      }
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      viewport.scrollTop = 500 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      const jump = await waitForRequest(500)
+      viewport.scrollTop = 0
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 20))
+      const jumpBlock = emptyResponse ? emptyBlock : block
+      table.table = { ...table.table, blocks: { a: jumpBlock(400, jump.requestSeq), b: jumpBlock(500, jump.requestSeq), c: jumpBlock(600, jump.requestSeq) }, loadingBlock: '' }
+      await table.updateComplete
+      const followUp = await waitForRequest(0, jump.requestSeq)
+      table.table = { ...table.table, blocks: { a: emptyBlock(0, followUp.requestSeq), b: block(100, followUp.requestSeq), c: block(200, followUp.requestSeq) }, loadingBlock: '' }
+      await table.updateComplete
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      return { jump, followUp, requests, requestCount: requests.length, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+    }, emptyResponse)
+    expect(result.jump).toEqual(expect.objectContaining({ blockID: 'all', start: 500, limit: 100 }))
+    expect(result.followUp).toEqual(expect.objectContaining({ blockID: 'all', start: 0, limit: 100 }))
+    expect(result.requests.filter((r: any) => r.requestSeq >= result.jump.requestSeq).map((r: any) => [r.blockID, r.start])).toEqual([['all', 500], ['all', 0]])
+    expect(result.skeletons).toBeGreaterThan(0)
+  } finally { await page.close() }
+})
+
+test('windowed table only shows loading for missing visible rows', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const tableHost = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((host: any) => host.envelope?.visualID === 'orders') as any
+      const table = (tableHost.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      await table.updateComplete
+      const base = table.table
+      const seed = base.blocks.a.rows[0] ?? {}
+      const rows = (start: number) => Array.from({ length: 100 }, (_, offset) => ({ ...seed, order_id: `synthetic-${start + offset}` }))
+      const block = (start: number, present = true) => ({ ...base.blocks.a, start, requestSeq: 0, resetVersion: base.resetVersion, rows: present ? rows(start) : [] })
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = {
+        ...base,
+        availableRows: 500,
+        rowCap: 10000,
+        chunkSize: 100,
+        cardinality: { kind: 'exact', value: 500 },
+        blocks: { a: block(0), b: block(100), c: block(200) },
+        loadingBlock: '',
+      }
+      await table.updateComplete
+      const viewport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
+      const requests: unknown[] = []
+      table.addEventListener('lv-visualization-window-request', (event: CustomEvent) => {
+        requests.push(event.detail)
+        event.stopImmediatePropagation()
+      }, { capture: true })
+      const snapshot = () => ({
+        skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length,
+        visibleLoading: table.visibleLoading,
+        loadingBar: (table.shadowRoot as ShadowRoot).querySelector('.loading') !== null,
+        footer: (table.shadowRoot as ShadowRoot).querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
+      })
+      viewport.scrollTop = 200 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      const prefetch = snapshot()
+      table.clearJumpTimer()
+      table.expectedBlocks.clear()
+      table.table = { ...table.table, blocks: { a: block(0), b: block(100), c: block(200, false) }, loadingBlock: '' }
+      await table.updateComplete
+      viewport.scrollTop = 200 * table.rowHeight
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => window.setTimeout(resolve, 140))
+      return { prefetch, missing: snapshot(), requests }
+    })
+    expect(result.requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ blockID: 'a', start: 300, limit: 100 }),
+      expect.objectContaining({ blockID: 'all', start: 200, limit: 100 }),
+    ]))
+    expect(result.prefetch).toEqual({ skeletons: 0, visibleLoading: false, loadingBar: false, footer: expect.not.stringContaining('loading') })
+    expect(result.missing.skeletons).toBeGreaterThan(0)
+    expect(result.missing.visibleLoading).toBe(true)
+    expect(result.missing.loadingBar).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('empty table distinguishes completed results from waiting and keeps its message visible', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-table'))
+    const result = await page.evaluate(async () => {
+      const table = document.createElement('lv-report-table') as any
+      table.style.cssText = 'display:block;width:380px;height:350px;'
+      document.body.prepend(table)
+      await table.updateComplete
+      const waiting = table.shadowRoot.querySelector('.empty')?.textContent
+      table.table = { ...table.table, cardinality: { kind: 'exact', value: 0 } }
+      await table.updateComplete
+      const message = table.shadowRoot.querySelector('.empty') as HTMLElement
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      scrollport.scrollLeft = 200
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      const outer = scrollport.getBoundingClientRect()
+      const inner = message.getBoundingClientRect()
+      return { waiting, message: message.textContent, visible: inner.left >= outer.left && inner.right <= outer.right + 1 }
+    })
+    expect(result.waiting).toBe('Waiting for table data')
+    expect(result.message).toBe('No rows to display')
+    expect(result.visible).toBe(true)
+  } finally { await page.close() }
 })
 
 for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: 'mobile', width: 390, height: 820 }]) {
@@ -117,8 +258,8 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
         await element.updateComplete
         await element.ensureVisualizationsMounted()
-        const root = element.shadowRoot
-        const hosts = Array.from(root.querySelectorAll('lv-visualization-host')) as any[]
+        const root = (element.shadowRoot as ShadowRoot)
+        const hosts = Array.from(root.querySelectorAll('lv-visualization-host'))
         await Promise.all(hosts.map((host) => host.updateComplete))
         const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
         const table = tableHost?.shadowRoot?.querySelector('lv-report-table') as any
@@ -129,8 +270,8 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
         const kpiValue = kpi?.querySelector('.lv-visualization-kpi') as HTMLElement | null
         const canvas = root.querySelector('lv-report-canvas') as any
         await canvas.updateComplete
-        const canvasViewport = canvas.shadowRoot.querySelector('.viewport') as HTMLElement
-        const assigned = (canvas.shadowRoot.querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
+        const canvasViewport = (canvas.shadowRoot as ShadowRoot).querySelector('.viewport') as HTMLElement
+        const assigned = ((canvas.shadowRoot as ShadowRoot).querySelector('slot') as HTMLSlotElement).assignedElements() as HTMLElement[]
         const visualFrame = (id: string) => assigned.find((item) => (item.querySelector('lv-visualization-host') as any)?.envelope?.visualID === id)?.getBoundingClientRect()
         const chart = visualFrame('orders_chart')
         const tableFrame = visualFrame('orders')
@@ -157,7 +298,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
             valueSize: kpiValue ? Number.parseFloat(getComputedStyle(kpiValue).fontSize) : 0,
             labelSize: kpiLabel ? Number.parseFloat(getComputedStyle(kpiLabel).fontSize) : 0,
           },
-          presentationMode: canvas.shadowRoot.querySelector('.surface')?.dataset.presentationMode,
+          presentationMode: (canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.presentationMode,
           canvasScrollbarWidth: getComputedStyle(canvasViewport, '::-webkit-scrollbar').width,
           canvasScrollbarTrack: getComputedStyle(canvasViewport, '::-webkit-scrollbar-track').backgroundColor,
           canvasScrollbarThumb: getComputedStyle(canvasViewport, '::-webkit-scrollbar-thumb').backgroundColor,
@@ -212,11 +353,11 @@ test('visualization actions keep touch targets and spacing when a report is scal
       document.documentElement.style.setProperty('--control-small-size', '20px')
       document.documentElement.style.setProperty('--lv-button-height-sm', '20px')
       document.dispatchEvent(new CustomEvent('lv-report-zoom-command', { detail: { mode: 'custom', scale: 0.8 } }))
-      const canvas = dashboard.shadowRoot.querySelector('lv-report-canvas') as any
+      const canvas = (dashboard.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
       await canvas.updateComplete
       await new Promise((resolve) => requestAnimationFrame(resolve))
       await canvas.updateComplete
-      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const hosts = Array.from((dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host'))
       const chart = hosts.find((host) => host.envelope?.visualID === 'orders_chart')
       const options = chart?.shadowRoot?.querySelector('.visual-options') as HTMLDetailsElement | null
       if (options) {
@@ -236,8 +377,8 @@ test('visualization actions keep touch targets and spacing when a report is scal
         return { width: rect.width, height: rect.height, top: rect.top, bottom: rect.bottom }
       })
       return {
-        scale: canvas.shadowRoot.querySelector('.surface')?.dataset.scale,
-        inverseScale: getComputedStyle(canvas.shadowRoot.querySelector('.surface')).getPropertyValue('--report-canvas-inverse-scale'),
+        scale: (canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.scale,
+        inverseScale: getComputedStyle((canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')!).getPropertyValue('--report-canvas-inverse-scale'),
         rects,
         menuRects,
         gap: rects.length === 2 ? rects[1].left - rects[0].right : 0,
@@ -258,5 +399,107 @@ test('visualization actions keep touch targets and spacing when a report is scal
     for (let index = 1; index < result.menuRects.length; index += 1) {
       expect(result.menuRects[index].top).toBeGreaterThanOrEqual(result.menuRects[index - 1].bottom)
     }
+  } finally { await page.close() }
+})
+
+for (const start of [50, 950]) {
+  test(`table scrolling loads missing rows at ${start} and completes at the browse boundary`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-report-table'))
+      const result = await page.evaluate(async (start) => {
+        const table = document.createElement('lv-report-table') as any
+        table.style.cssText = 'display:block;width:500px;height:320px;'
+        const sort = { key: 'id', direction: 'asc' }
+        const block = (start: number, count: number, requestSeq = 0) => ({ start, requestSeq, resetVersion: 1, sort, rows: Array.from({ length: count }, (_, i) => ({ id: String(start + i) })) })
+        table.tableId = 'orders'
+        table.table = { ...table.table, columns: [{ key: 'id', label: 'ID' }], sort, resetVersion: 1, cardinality: { kind: 'exact', value: 2000 }, availableRows: 1000, rowCap: 100, isCapped: true, chunkSize: 50, rowHeight: 32, blocks: { a: block(0, 50), b: block(50, 0), c: block(100, 0) } }
+        document.body.prepend(table)
+        await table.updateComplete
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        const requests: any[] = []
+        table.addEventListener('lv-visual-window-change', (event: CustomEvent) => {
+          requests.push(event.detail)
+          const request = event.detail
+          const starts = request.start ? [request.start - 50, request.start, request.start + 50] : [0, 50, 100]
+          const blocks = Object.fromEntries(['a', 'b', 'c'].flatMap((id, i) => starts[i]! >= 1000 ? [] : [[id, block(starts[i]!, Math.min(50, 1000 - starts[i]!), request.requestSeq)]]))
+          table.table = { ...table.table, blocks }
+        })
+        const viewport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+        viewport.scrollTop = start * 32
+        viewport.dispatchEvent(new Event('scroll'))
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await table.updateComplete
+        return { footer: table.shadowRoot.querySelector('.footer').textContent, requests: requests.length, loading: table.visibleLoading, pending: table.expectedBlocks.size, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+      }, start)
+      expect(result.requests).toBeGreaterThan(0)
+      expect(result.loading).toBe(false)
+      expect(result.pending).toBe(0)
+      expect(result.footer).toContain('browsing first 1,000')
+      expect(result.skeletons).toBe(0)
+    } finally { await page.close() }
+  })
+}
+
+test('phone headers keep page actions below the title and default table values readable', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot))
+    await page.locator('lv-report-table .table-scrollport').first().waitFor()
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const title = root.querySelector('.dashboard-heading')!.getBoundingClientRect()
+      const actions = root.querySelector('.actions')!.getBoundingClientRect()
+      const host = [...root.querySelectorAll('lv-visualization-host')].find((h: any) => h.envelope?.visualID === 'orders') as any
+      const table = host.shadowRoot.querySelector('lv-report-table') as any
+      table.table = { ...table.table, columns: table.table.columns.map((column: any) => ({ ...column, width: undefined })) }
+      await table.updateComplete
+      // Allow ResizeObserver to measure the mounted narrow scrollport.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      return { actionsBelowTitle: actions.top >= title.bottom, defaultWidths: table.columns.map((column: any) => table.columnPixelWidth(column)) }
+    })
+    expect(result.actionsBelowTitle).toBe(true)
+    expect(result.defaultWidths.length).toBeGreaterThan(0)
+    expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
+        id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
+      })) } })
+    })
+    await page.locator('.mobile-page-menu summary').click()
+    // Exercise hit testing: chart/table stacking must not intercept the last option.
+    await page.locator('.mobile-page-menu a').last().click({ trial: true })
+  } finally { await page.close() }
+})
+
+test('table data updates preserve desktop canvas positions', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 940 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('[data-visual-id="orders"]')?.getAttribute('style')?.includes('left:')))
+    const results = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const frame = root.querySelector('[data-visual-id="orders"]') as HTMLElement
+      const geometry = () => ['left', 'top', 'width', 'height'].map(key => frame.style.getPropertyValue(key))
+      const before = geometry()
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const envelope = structuredClone(dashboard.visuals.orders)
+      envelope.dataRevision++
+      envelope.dataState.availableRows = 2
+      envelope.dataState.cardinality = { kind: 'exact', count: 2 }
+      envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, 2)
+      envelope.dataState.dataRevision = envelope.dataRevision
+      mergePatch({ visuals: { orders: { dataRevision: envelope.dataRevision, dataState: {
+        dataRevision: envelope.dataRevision, payload: JSON.stringify(envelope.dataState),
+      } } } })
+      await dashboard.updateComplete
+      return { before, after: geometry(), mobileHeight: frame.style.getPropertyValue('--lv-mobile-table-height') }
+    })
+    expect(results.before.every(Boolean)).toBe(true)
+    expect(results.after).toEqual(results.before)
+    expect(results.mobileHeight).not.toBe('')
   } finally { await page.close() }
 })

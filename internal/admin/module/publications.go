@@ -2,6 +2,8 @@ package module
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +13,9 @@ import (
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	platformhttp "github.com/flidai/leapview/internal/platform/http"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/google/uuid"
 )
@@ -45,14 +49,18 @@ func (m *Module) authorizePublicationReplay(r *http.Request) bool {
 		return false
 	}
 	command := signals.AdminPublicationCommand
-	if strings.TrimSpace(command.ProjectID) == "" || strings.TrimSpace(command.Publication) == "" || strings.TrimSpace(command.Action) == "" || !adminPublicationRevisionMatches(r, command.ExpectedRevision) {
+	if strings.TrimSpace(command.Publication) == "" || strings.TrimSpace(command.Action) == "" || !adminPublicationRevisionMatches(r, command.ExpectedRevision) {
+		return false
+	}
+	projectID, err := m.activeProjectID(r.Context())
+	if err != nil {
 		return false
 	}
 	if principal.DevBypass {
 		return true
 	}
 	credential, hasCredential := m.credential(r)
-	allowed, err := m.capabilityAllowed(r, principal.ID, command.ProjectID, access.CapabilityResourcePublish, credential, hasCredential)
+	allowed, err := m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credential, hasCredential)
 	return err == nil && allowed
 }
 
@@ -64,9 +72,13 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	if !ok {
 		return publication.ErrConflict
 	}
+	projectID, err := m.activeProjectID(r.Context())
+	if err != nil {
+		return err
+	}
 	if !principal.DevBypass {
 		credential, hasCredential := m.credential(r)
-		allowed, err := m.capabilityAllowed(r, principal.ID, command.ProjectID, access.CapabilityResourcePublish, credential, hasCredential)
+		allowed, err := m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credential, hasCredential)
 		if err != nil {
 			return err
 		}
@@ -81,7 +93,7 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 	if err := uicommand.VerifyClaim(uicommand.OperationClaims(r), binding.OperationID()); err != nil {
 		return err
 	}
-	requestID := firstAdminPublicationHeader(r, "X-Request-Id", "X-Request-ID")
+	requestID := platformhttp.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
 	if requestID == "" {
 		generated, err := uuid.NewV7()
 		if err != nil {
@@ -90,11 +102,11 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		requestID = generated.String()
 		r.Header.Set("X-Request-ID", requestID)
 	}
-	correlationID := firstAdminPublicationHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	correlationID := platformhttp.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 	if correlationID == "" {
 		correlationID = requestID
 	}
-	idempotencyKey := firstAdminPublicationHeader(r, "Idempotency-Key")
+	idempotencyKey := platformhttp.FirstNonEmptyHeader(r, "Idempotency-Key")
 	if idempotencyKey == "" {
 		return fmt.Errorf("%w: missing Idempotency-Key", publication.ErrConflict)
 	}
@@ -113,24 +125,12 @@ func (m *Module) mutatePublication(r *http.Request, command uisignals.AdminPubli
 		CorrelationID:    correlationID,
 		ExpectedRevision: command.ExpectedRevision,
 	}
-	_, err = m.publications.MutatePublicationWithInvocation(r.Context(), command.ProjectID, command.Publication, principal.ID, publication.Action(command.Action), invocation)
+	_, err = m.publications.MutatePublicationWithInvocation(r.Context(), projectID.String(), command.Publication, principal.ID, publication.Action(command.Action), invocation)
 	return err
 }
 
 func adminPublicationRevisionMatches(r *http.Request, expected int64) bool {
 	return r != nil && expected > 0 && strings.TrimSpace(r.Header.Get("If-Match")) == fmt.Sprintf("\"%d\"", expected)
-}
-
-func firstAdminPublicationHeader(r *http.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool, error) {
@@ -141,7 +141,11 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 	if !ok {
 		return nil, false, nil
 	}
-	rows, err := m.publications.AllPublications(r.Context())
+	projectID, err := m.activeProjectID(r.Context())
+	if err != nil {
+		return nil, false, err
+	}
+	rows, err := m.publications.ProjectPublications(r.Context(), projectID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -150,26 +154,22 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 		credential = &resolved
 	}
 	canManage := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
-	if !canManage && m.authorizeAnyProject != nil {
-		canManage, err = m.authorizeAnyProject(r.Context(), principal.ID, credential, access.CapabilityResourcePublish)
+	if !canManage {
+		credentialValue := access.APICredential{}
+		if credential != nil {
+			credentialValue = *credential
+		}
+		canManage, err = m.capabilityAllowed(r, principal.ID, projectID.String(), access.CapabilityResourcePublish, credentialValue, credential != nil)
 		if err != nil {
 			return nil, false, err
 		}
 	}
 	out := make([]ui.AdminPublication, 0, len(rows))
 	for _, row := range rows {
-		allowed := principal.DevBypass || (m.access == nil && m.currentEffectiveCapabilities == nil)
-		if !allowed {
-			credentialValue := access.APICredential{}
-			if credential != nil {
-				credentialValue = *credential
-			}
-			allowed, err = m.capabilityAllowed(r, principal.ID, row.ProjectID.String(), access.CapabilityResourcePublish, credentialValue, credential != nil)
-			if err != nil {
-				return nil, false, err
-			}
+		if row.ProjectID != projectID {
+			continue
 		}
-		if !allowed {
+		if !canManage {
 			continue
 		}
 		dto := m.publications.PublicationDTO(row)
@@ -194,6 +194,17 @@ func (m *Module) adminPublications(r *http.Request) ([]ui.AdminPublication, bool
 		})
 	}
 	return out, canManage, nil
+}
+
+func (m *Module) activeProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if m == nil || m.currentProjectID == nil {
+		return "", errors.New("active Project identity is unavailable")
+	}
+	projectID, err := m.currentProjectID(ctx)
+	if err != nil || projectID.Validate() != nil {
+		return "", errors.New("active Project identity is unavailable")
+	}
+	return projectID, nil
 }
 
 func (m *Module) capabilityAllowed(r *http.Request, principalID, projectID string, required access.Capability, credential access.APICredential, hasCredential bool) (bool, error) {

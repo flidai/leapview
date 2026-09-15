@@ -21,6 +21,7 @@ type inventory struct {
 type inventoryProducer struct {
 	ID                   string              `json:"id"`
 	Owner                string              `json:"owner"`
+	Events               []string            `json:"events"`
 	Guarantee            string              `json:"guarantee"`
 	CompletionGuarantee  string              `json:"completionGuarantee"`
 	ImplementationStatus string              `json:"implementationStatus"`
@@ -29,6 +30,43 @@ type inventoryProducer struct {
 	ContractSources      []string            `json:"contractSources"`
 	Evidence             []string            `json:"evidence"`
 	Members              map[string][]string `json:"members"`
+}
+
+func TestDurableAuditInventoryDeclaresServicePrincipalSettingsActions(t *testing.T) {
+	value, root := loadInventory(t)
+	var events []string
+	for _, producer := range value.Producers {
+		if producer.ID == "access.transactional-mutations" {
+			events = producer.Events
+			break
+		}
+	}
+	want := []string{
+		"service_principal.created",
+		"service_principal.updated",
+		"service_principal.deleted",
+		"service_principal_secret.created",
+		"service_principal_secret.revoked",
+	}
+	typespec, err := os.ReadFile(filepath.Join(root, "api", "typespec", "access.tsp"))
+	if err != nil {
+		t.Fatalf("read access TypeSpec: %v", err)
+	}
+	for _, action := range want {
+		found := false
+		for _, event := range events {
+			if event == action {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("transactional audit inventory omits TypeSpec action %q", action)
+		}
+		if !strings.Contains(string(typespec), `auditAction: "`+action+`"`) {
+			t.Errorf("TypeSpec access contract omits mapped service-principal action %q", action)
+		}
+	}
 }
 
 func repositoryRoot(t *testing.T) string {

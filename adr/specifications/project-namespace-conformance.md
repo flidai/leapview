@@ -309,17 +309,23 @@ names, and physical relation names must not replace durable identity.
 
 ## Evidence and conformance gates
 
-| Requirement range | Required maintained evidence                                                                          | Status  |
-| ----------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| PRJ-01–PRJ-09     | UID issuance, pre-Project authorization, singleton claim, audit, idempotency, and environment tests   | Pending |
-| BND-01–BND-07     | Generated authoring schema, discovery, unbound compile, binding, promotion, and graph tests           | Pending |
-| RID-01–RID-07     | Uniqueness, instance registry, tombstone, restore, rollback, and projection fixtures                  | Pending |
-| API-01–API-07     | Generated contracts, selector rejection, authorization, filtering, cache, and runtime-admission tests | Pending |
-| ENV-01–ENV-05     | Activation, promotion, provenance, and same-environment rollback tests                                | Pending |
-| SEM-01–SEM-05     | Project-local dataset resolution, generation closure, dbt lowering, and topology tests                | Pending |
-| ISO-01–ISO-03     | Deployment topology and isolation-claim review                                                        | Pending |
-| XPR-01–XPR-05     | Foreign-reference and unsupported-import rejection corpus                                             | Pending |
-| DBT-01–DBT-06     | Reference deployment, upstream dependency, multi-Source closure, and cross-Project rejection tests    | Pending |
+The [per-requirement reconciliation](project-namespace-final-conformance-evidence.md)
+records one accountable owner, merged change, maintained validation, and status
+for every normative requirement. `Partial` means merged behavior exists but the
+full evidence inventory named by the requirement is not yet maintained; it is
+not an implicit implementation claim.
+
+| Requirement range | Accountable owner | Merged change | Maintained validation | Status |
+| --- | --- | --- | --- | --- |
+| PRJ-01–PRJ-09 | FAI-667 | [PR #499](https://github.com/flidai/leapview/pull/499), `fdba57d29` | Issuer minting, pre-Project authorization, singleton claim, durable audit, conflict, replay, and multi-environment tests | Implemented |
+| BND-01–BND-07 | FAI-666, FAI-669, FAI-671, FAI-675 | [PR #495](https://github.com/flidai/leapview/pull/495), `5d766dc4f`; [PR #512](https://github.com/flidai/leapview/pull/512), `62d039399`; [PR #546](https://github.com/flidai/leapview/pull/546), `4435ea6c1`; [PR #549](https://github.com/flidai/leapview/pull/549), `372039da7` | Generated authoring schema, deterministic unbound compilation, exact delivery binding, selector/cache partitions, closed graph tests, and the maintained [BND-06 boundary/retention qualification](project-namespace-bnd06-boundary-matrix.md) | Implemented |
+| RID-01–RID-07 | FAI-666, FAI-670 | [PR #495](https://github.com/flidai/leapview/pull/495), `5d766dc4f`; [PR #542](https://github.com/flidai/leapview/pull/542), `c9e6482a8` | Candidate uniqueness plus first activation, concurrent allocation, reuse, kind fence, tombstone, authorized restore, rollback, audit, and instance/Project isolation qualification | Implemented |
+| API-01–API-07 | FAI-669, FAI-671 | [PR #512](https://github.com/flidai/leapview/pull/512), `62d039399`; [PR #546](https://github.com/flidai/leapview/pull/546), `4435ea6c1`; API-06 completion change | Foreign-scope rejection before source I/O, shared selector and generated-locator rejection, claim validation, complete cache/idempotency inventory and partitions, replay reauthorization, and runtime admission tests | Partial — API-01, API-02, and API-05 inventories remain non-exhaustive; API-06 is implemented |
+| ENV-01–ENV-05 | FAI-669, FAI-670 | [PR #512](https://github.com/flidai/leapview/pull/512), `62d039399`; [PR #542](https://github.com/flidai/leapview/pull/542), `c9e6482a8` | Multi-environment planning, immutable generation activation, stale-fence preservation, same-scope historical rollback, foreign-scope rejection, and provenance separation | Implemented |
+| SEM-01–SEM-05 | FAI-675, FAI-678 | [PR #549](https://github.com/flidai/leapview/pull/549), `372039da7`; [PR #581](https://github.com/flidai/leapview/pull/581), `f4ad4a032` | Project-local dataset resolution, exact-generation ResourceUID closure, provenance non-aliasing, upstream package resolution before handoff, and topology-independent rejection tests | Implemented |
+| ISO-01–ISO-03 | Baseline, FAI-677 | Merged instance claim/runtime topology; [PR #587](https://github.com/flidai/leapview/pull/587) aligns maintained architecture and public documentation with the FAI-677 Project-free mental model | Bound authorization/runtime isolation tests plus documentation audit and explicit rejection of Project enumeration, selectors, pickers, native cross-Project imports, and same-process multi-Project isolation; PR #587 protected CI and Security, selected SAST, and CodeQL documentation-only path classification | Implemented |
+| XPR-01–XPR-05 | FAI-675, FAI-678 | [PR #549](https://github.com/flidai/leapview/pull/549), `372039da7`; [PR #581](https://github.com/flidai/leapview/pull/581), `f4ad4a032` | Foreign qualifier, missing edge, unsupported `projectOutput`, closed bundle, and pre-handoff upstream package rejection tests | Implemented |
+| DBT-01–DBT-06 | FAI-666, FAI-678 | [PR #495](https://github.com/flidai/leapview/pull/495), `5d766dc4f`; [PR #581](https://github.com/flidai/leapview/pull/581), `f4ad4a032` | `task dbt:warehouse:proof`, `TestDBTMultiSourceProjectClosure`, and `TestPostgresResourceUIDMultiSourceProjectClosure` | Implemented for the accepted local warehouse-boundary profile |
 
 ### Delivery-plan binding evidence (FAI-669)
 
@@ -363,6 +369,26 @@ This evidence qualifies only the closed-graph and unsupported-native-import
 boundary. It does not introduce cross-Project authorization, a foreign catalog,
 ResourceUID behavior, deployment binding, or the dbt adoption fixture owned by
 FAI-678.
+
+### dbt and multi-Source adoption evidence (FAI-678)
+
+The maintained multi-source fixture proves that producer topology does not
+create another LeapView identity boundary. dbt resolves an upstream package and
+materializes a consumer-owned Parquet mart; an independent CRM producer writes
+a second Parquet publication. LeapView compiles only ordinary Connections,
+Sources, thin Models, one SemanticModel, and one Dashboard into its rootless
+portable graph.
+
+| Requirements | Maintained evidence |
+| --- | --- |
+| DBT-01, DBT-03, DBT-06 | `task dbt:warehouse:proof` and `TestDBTMultiSourceProjectClosure` build both physical publications, compile the two-Connection/two-Source graph, and execute a leased cross-producer semantic query under one issuer-minted ProjectUID. |
+| DBT-02, DBT-04 | The same test rejects producer, repository, dbt project, invocation, manifest, path, and target authority from portable bytes while rebinding the unchanged portable digest to independent dev/prod targets. |
+| DBT-05, SEM-04, XPR-01 | The upstream package is resolved before Parquet handoff. Package-qualified, Project-qualified, and missing live Model references fail during rootless compilation; no manifest or dbt runtime resolver is used. |
+| RID-02, RID-03, SEM-02 | `TestPostgresResourceUIDMultiSourceProjectClosure` commits the sealed graph inventory through the activation-owned registry, preserves ResourceUIDs across a compatible generation, and rejects foreign Project and instance lookup. |
+
+This evidence covers local dbt package resolution, not live dbt Mesh, cloud IAM,
+or an atomic snapshot across independent upstream producers. It does not mark
+ADR-0018 as a whole implemented; FAI-679 retains final conformance ownership.
 
 Implementation must update the project-delivery and data-contract versioning
 conformance specifications where their current language conflicts with this

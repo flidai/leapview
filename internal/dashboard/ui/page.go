@@ -75,6 +75,7 @@ type RouteScope struct {
 type AgentCommandBindings struct {
 	CreateConversation uicommand.Binding
 	CreateRun          uicommand.Binding
+	CancelRun          uicommand.Binding
 }
 
 // DashboardAuthoringAction is the single contextual transition from a
@@ -99,10 +100,6 @@ func PageWithPresentation(presentation Presentation, clientID, csrfToken string,
 
 func PageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
 	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, DashboardAuthoringAction{}, providers...)
-}
-
-func PageWithRouteScopeAndAgentCommands(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, DashboardAuthoringAction{}, providers...)
 }
 
 func PageWithRouteScopeAndAgentCommandsAndAuthoring(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, action DashboardAuthoringAction, providers ...webpage.Provider) g.Node {
@@ -157,7 +154,7 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
 		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.ConcurrentEventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
 	}
 	if strings.TrimSpace(action.Label) != "" && strings.TrimSpace(action.Href) != "" && routes.BasePath == "" {
 		componentAttrs = append(componentAttrs,
@@ -186,10 +183,11 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 }
 
 func dashboardAgentComponentAttrs(commands AgentCommandBindings) []g.Node {
-	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
+	agentTurn := "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 	return []g.Node{
 		g.Attr("data-on:lv-chat-submit", agentTurn),
+		g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(commands.CancelRun, "/chats/stop", "agent", "agentContext")),
 		g.Attr("data-on:lv-chat-restore", agentRestore),
 		g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
 	}
@@ -245,7 +243,7 @@ func PublicPage(options PublicPageOptions, catalog dashboard.Catalog, report das
 			g.Attr("data-on:lv-selection-clear", "$interactionSelections = []; "+uiactions.EventPost(commandBase+"clear-selection", "runtime")),
 			g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 			g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
-			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+			g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.ConcurrentEventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
 		),
 	})
 }

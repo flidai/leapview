@@ -30,22 +30,6 @@ type Definition struct {
 	Visualizations    map[string]visualizationdefinition.Definition `json:"visualizations"`
 }
 
-// WithCanonicalFilters attaches compiler-owned canonical filter contracts
-// while preserving their authored sequence for pane/state presentation.
-func (definition Definition) WithCanonicalFilters(compiled map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, order []string, application dashboardfilter.ApplicationPolicy) Definition {
-	definition.FilterDefinitions = make(map[string]dashboardfilter.Definition, len(compiled))
-	for key, value := range compiled {
-		definition.FilterDefinitions[key] = value
-	}
-	definition.FilterBindings = make(map[string]dashboardfilter.Binding, len(bindings))
-	for key, value := range bindings {
-		definition.FilterBindings[key] = value
-	}
-	definition.FilterOrder = append([]string(nil), order...)
-	definition.FilterApplication = application.WithDefaults()
-	return definition
-}
-
 func New(id, title, description, semanticModel string, pages []dashboard.Page, visualizations map[string]visualizationdefinition.Definition) (Definition, error) {
 	if id == "" || semanticModel == "" {
 		return Definition{}, fmt.Errorf("compiled dashboard requires ID and semantic model")

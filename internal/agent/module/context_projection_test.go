@@ -62,6 +62,36 @@ func TestResolveDashboardTurnReferencesUsesCompiledMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveDashboardTurnReferencesBindsMissingResourceAndRejectsMismatch(t *testing.T) {
+	page := dashboard.Page{ID: "overview", Title: "Overview", Visuals: []dashboard.PageVisual{
+		{ID: "orders-chart", Kind: "visual", Visual: "orders_chart"},
+	}}
+	for _, tc := range []struct {
+		name, resourceID string
+		count            int
+	}{
+		{"missing resource", "", 1},
+		{"wrong resource", "other_project", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolved := ResolveDashboardTurnReferences([]agent.TurnReference{
+				{Reference: agent.TurnReferenceKey{Kind: "visual", ID: "executive-sales.orders_chart"}, Resource: agent.TurnReferenceResource{ID: tc.resourceID}},
+			}, DashboardTurnReferenceContext{
+				Resource:    agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"},
+				DashboardID: "executive-sales", DashboardTitle: "Executive Sales", Page: page,
+			}, map[string]visualizationdefinition.Definition{
+				"orders_chart": {ID: "orders_chart", Spec: visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "cartesian", Title: "Orders by status"}, Mark: visualizationir.VisualizationCartesianMarkBar}}},
+			})
+			if len(resolved) != tc.count {
+				t.Fatalf("resolved references = %#v, want %d", resolved, tc.count)
+			}
+			if tc.count > 0 && resolved[0].Resource != (agent.TurnReferenceResource{ID: "project_demo", Name: "Demo"}) {
+				t.Fatalf("resolved resource = %#v, want server-bound project", resolved[0].Resource)
+			}
+		})
+	}
+}
+
 func TestResolveChatTurnContextUsesAuthorizedCatalogMetadata(t *testing.T) {
 	module := &Module{projectID: projectgraph.ResourceID("project_demo"), catalog: contextCatalog{items: map[string]agenttools.CatalogItem{
 		"dashboard_sales": {Ref: agenttools.CatalogRef{ID: "dashboard_sales", Kind: "dashboard"}, Name: "Sales dashboard"},

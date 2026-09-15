@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
-	"sort"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -13,38 +12,10 @@ import (
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
 )
 
-var errSemanticConsumerUnavailable = errors.New("semantic consumer authority is unavailable")
-
-type semanticContextPlanner interface {
-	SemanticPlanner(context.Context, string) (*semanticquery.Planner, error)
-}
-
-type semanticContextTargetAuthorizer interface {
-	AuthorizeSemanticTarget(context.Context, string, semanticquery.SemanticAccessTarget) error
-}
-
-type semanticContextFieldAuthorizer interface {
-	AuthorizeSemanticField(context.Context, string, string, string) error
-}
-
-type semanticContextProjectionAuthorizer interface {
-	AuthorizeSemanticModelProjection(context.Context, string) error
-}
-
-type semanticContextConsumerProvider interface {
-	SemanticConsumer(context.Context, string) (*semanticquery.SemanticAccessConsumer, error)
-}
-
-type semanticConsumerContextKey struct{}
-
-type semanticConsumerBinding struct {
-	modelID  string
-	consumer *semanticquery.SemanticAccessConsumer
-}
+var errSemanticConsumerUnavailable = queryauthz.ErrSemanticConsumerAuthorityUnavailable
 
 func protectedSemanticModel(metrics Metrics, modelID string) bool {
-	model, ok := semanticModelSnapshot(metrics, modelID)
-	return ok && !model.AccessPolicy.Empty()
+	return semanticAuthorizationAdapter(metrics).ProtectedSemanticModel(modelID)
 }
 
 func semanticModelSnapshot(metrics Metrics, modelID string) (*semanticmodel.Model, bool) {
@@ -58,185 +29,73 @@ func semanticModelSnapshot(metrics Metrics, modelID string) (*semanticmodel.Mode
 }
 
 func semanticModelKnown(metrics Metrics, modelID string) bool {
-	_, ok := semanticModelSnapshot(metrics, modelID)
-	return ok
+	return semanticAuthorizationAdapter(metrics).SemanticModelKnown(modelID)
 }
 
-func semanticPlannerMatchesModel(metrics Metrics, modelID string, planner *semanticquery.Planner) bool {
-	if planner == nil || planner.CompiledModel() == nil {
-		return false
+func semanticAuthorizationAdapter(metrics Metrics) queryauthz.SemanticAuthorizationAdapter {
+	adapter := queryauthz.SemanticAuthorizationAdapter{
+		Model: func(modelID string) (*semanticmodel.Model, bool) {
+			return semanticModelSnapshot(metrics, modelID)
+		},
+		Planner: func(modelID string) (*semanticquery.Planner, bool) {
+			return semanticPlanner(metrics, modelID)
+		},
+		RequireConsumerModelID: true,
 	}
-	model := semanticModelForID(metrics, modelID)
-	return model != nil && planner.CompiledModel().MatchesModel(model)
-}
-
-func semanticConsumerForRequest(ctx context.Context, metrics Metrics, modelID string) (context.Context, error) {
-	if binding, ok := ctx.Value(semanticConsumerContextKey{}).(semanticConsumerBinding); ok && binding.modelID == modelID && binding.consumer != nil {
-		return ctx, nil
+	if provider, ok := any(metrics).(interface {
+		SemanticPlanner(context.Context, string) (*semanticquery.Planner, error)
+	}); ok {
+		adapter.ContextPlanner = provider.SemanticPlanner
 	}
-	provider, ok := any(metrics).(semanticContextConsumerProvider)
-	if !ok {
-		return ctx, nil
+	if provider, ok := any(metrics).(interface {
+		SemanticConsumer(context.Context, string) (*semanticquery.SemanticAccessConsumer, error)
+	}); ok {
+		adapter.Consumer = provider.SemanticConsumer
 	}
-	consumer, err := provider.SemanticConsumer(ctx, modelID)
-	if err != nil {
-		return nil, err
+	if provider, ok := any(metrics).(interface {
+		AuthorizeSemanticTarget(context.Context, string, semanticquery.SemanticAccessTarget) error
+	}); ok {
+		adapter.TargetAuthorizer = provider.AuthorizeSemanticTarget
 	}
-	if consumer == nil || !semanticPlannerMatchesModel(metrics, modelID, consumer.Planner()) {
-		return nil, errSemanticConsumerUnavailable
+	if provider, ok := any(metrics).(interface {
+		AuthorizeSemanticField(context.Context, string, string, string) error
+	}); ok {
+		adapter.FieldAuthorizer = provider.AuthorizeSemanticField
 	}
-	// A compiled source fingerprint alone is not sufficient identity: two
-	// semantic model resources may carry identical source. Protected consumers
-	// therefore must also be bound to the requested resource ID before any
-	// metadata is projected.
-	if protectedSemanticModel(metrics, modelID) && consumer.ModelID() != modelID {
-		return nil, errSemanticConsumerUnavailable
+	if provider, ok := any(metrics).(interface {
+		AuthorizeSemanticModelProjection(context.Context, string) error
+	}); ok {
+		adapter.ProjectionAuthorizer = provider.AuthorizeSemanticModelProjection
 	}
-	return context.WithValue(ctx, semanticConsumerContextKey{}, semanticConsumerBinding{modelID: modelID, consumer: consumer}), nil
+	return adapter
 }
 
 func semanticConsumerFromContext(ctx context.Context, modelID string) (*semanticquery.SemanticAccessConsumer, bool) {
-	binding, ok := ctx.Value(semanticConsumerContextKey{}).(semanticConsumerBinding)
-	return binding.consumer, ok && binding.modelID == modelID && binding.consumer != nil
+	return queryauthz.SemanticConsumerFromContext(ctx, modelID)
 }
 
 func authorizeSemanticConsumerProjection(consumer *semanticquery.SemanticAccessConsumer) error {
-	if consumer == nil || consumer.Planner() == nil || consumer.Planner().CompiledModel() == nil {
-		return errSemanticConsumerUnavailable
-	}
-	planner := consumer.Planner()
-	compiled := planner.CompiledModel()
-	model := compiled.SourceModel()
-	if model == nil {
-		return errSemanticConsumerUnavailable
-	}
-	for _, dataset := range compiled.DatasetNames() {
-		if err := consumer.Authorize(semanticquery.SemanticAccessTarget{Dataset: dataset}); err != nil {
-			return err
-		}
-		dimensions := make([]string, 0, len(model.Dimensions))
-		for name := range model.Dimensions {
-			dimensions = append(dimensions, name)
-		}
-		sort.Strings(dimensions)
-		for _, name := range dimensions {
-			if _, bound := compiled.DimensionBinding(name, dataset); !bound {
-				continue
-			}
-			if err := consumer.Authorize(semanticquery.SemanticAccessTarget{Dataset: dataset, Dimension: name}); err != nil {
-				return err
-			}
-		}
-	}
-	metrics := make([]string, 0, len(model.Metrics))
-	for name := range model.Metrics {
-		metrics = append(metrics, name)
-	}
-	sort.Strings(metrics)
-	for _, name := range metrics {
-		if err := consumer.Authorize(semanticquery.SemanticAccessTarget{Metric: name}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return queryauthz.AuthorizeSemanticConsumerProjection(consumer)
 }
 
 func semanticPlannerForRequest(ctx context.Context, metrics Metrics, modelID string) (*semanticquery.Planner, error) {
-	if consumer, ok := semanticConsumerFromContext(ctx, modelID); ok {
-		planner := consumer.Planner()
-		if planner == nil || !semanticPlannerMatchesModel(metrics, modelID, planner) {
-			return nil, errSemanticConsumerUnavailable
-		}
-		return planner, nil
-	}
-	if provider, ok := any(metrics).(semanticContextPlanner); ok {
-		planner, err := provider.SemanticPlanner(ctx, modelID)
-		if err != nil {
-			return nil, err
-		}
-		if planner != nil && semanticPlannerMatchesModel(metrics, modelID, planner) {
-			return planner, nil
-		}
-		return nil, errSemanticConsumerUnavailable
-	}
-	if !semanticModelKnown(metrics, modelID) || protectedSemanticModel(metrics, modelID) {
-		return nil, errSemanticConsumerUnavailable
-	}
-	planner, ok := semanticPlanner(metrics, modelID)
-	if !ok || planner == nil || !semanticPlannerMatchesModel(metrics, modelID, planner) {
-		return nil, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
-	}
-	return planner, nil
+	return semanticAuthorizationAdapter(metrics).SemanticPlannerForRequest(ctx, modelID)
 }
 
 func authorizeSemanticTarget(ctx context.Context, metrics Metrics, modelID string, target semanticquery.SemanticAccessTarget) error {
-	if consumer, ok := semanticConsumerFromContext(ctx, modelID); ok {
-		return consumer.Authorize(target)
-	}
-	if scoped, err := semanticConsumerForRequest(ctx, metrics, modelID); err != nil {
-		if _, provider := any(metrics).(semanticContextConsumerProvider); provider {
-			return err
-		}
-	} else if consumer, ok := semanticConsumerFromContext(scoped, modelID); ok {
-		return consumer.Authorize(target)
-	}
-	if provider, ok := any(metrics).(semanticContextTargetAuthorizer); ok {
-		return provider.AuthorizeSemanticTarget(ctx, modelID, target)
-	}
-	if !semanticModelKnown(metrics, modelID) || protectedSemanticModel(metrics, modelID) {
-		return errSemanticConsumerUnavailable
-	}
-	return nil
+	return semanticAuthorizationAdapter(metrics).AuthorizeSemanticTarget(ctx, modelID, target)
 }
 
 func authorizeSemanticField(ctx context.Context, metrics Metrics, modelID, dataset, field string) error {
-	if consumer, ok := semanticConsumerFromContext(ctx, modelID); ok {
-		planner := consumer.Planner()
-		if planner == nil {
-			return errSemanticConsumerUnavailable
-		}
-		_, err := planner.PlanRows(semanticquery.RowRequest{Dataset: dataset, Dimensions: []semanticquery.Field{{Field: field}}, Limit: 1})
-		return err
-	}
-	if scoped, err := semanticConsumerForRequest(ctx, metrics, modelID); err != nil {
-		if _, provider := any(metrics).(semanticContextConsumerProvider); provider {
-			return err
-		}
-	} else if consumer, ok := semanticConsumerFromContext(scoped, modelID); ok {
-		planner := consumer.Planner()
-		if planner == nil {
-			return errSemanticConsumerUnavailable
-		}
-		_, err := planner.PlanRows(semanticquery.RowRequest{Dataset: dataset, Dimensions: []semanticquery.Field{{Field: field}}, Limit: 1})
-		return err
-	}
-	if provider, ok := any(metrics).(semanticContextFieldAuthorizer); ok {
-		return provider.AuthorizeSemanticField(ctx, modelID, dataset, field)
-	}
-	if !semanticModelKnown(metrics, modelID) || protectedSemanticModel(metrics, modelID) {
-		return errSemanticConsumerUnavailable
-	}
-	return nil
+	return semanticAuthorizationAdapter(metrics).AuthorizeSemanticField(ctx, modelID, dataset, field)
 }
 
 func authorizeSemanticModelProjection(ctx context.Context, metrics Metrics, modelID string) error {
-	if consumer, ok := semanticConsumerFromContext(ctx, modelID); ok {
-		return authorizeSemanticConsumerProjection(consumer)
-	}
-	if scoped, err := semanticConsumerForRequest(ctx, metrics, modelID); err != nil {
-		if _, provider := any(metrics).(semanticContextConsumerProvider); provider {
-			return err
-		}
-	} else if consumer, ok := semanticConsumerFromContext(scoped, modelID); ok {
-		return authorizeSemanticConsumerProjection(consumer)
-	}
-	if provider, ok := any(metrics).(semanticContextProjectionAuthorizer); ok {
-		return provider.AuthorizeSemanticModelProjection(ctx, modelID)
-	}
-	if !semanticModelKnown(metrics, modelID) || protectedSemanticModel(metrics, modelID) {
-		return errSemanticConsumerUnavailable
-	}
-	return nil
+	return semanticAuthorizationAdapter(metrics).AuthorizeSemanticModelProjection(ctx, modelID)
+}
+
+func semanticConsumerForRequest(ctx context.Context, metrics Metrics, modelID string) (context.Context, error) {
+	return semanticAuthorizationAdapter(metrics).SemanticConsumerForRequest(ctx, modelID)
 }
 
 // authorizeSemanticRequest admits a query shape before either explain output

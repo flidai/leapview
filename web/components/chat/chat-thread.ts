@@ -1,12 +1,11 @@
 import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronRight, FileText, LayoutDashboard, LayoutPanelTop, Waypoints, Wrench, type IconNode } from 'lucide'
+import { Copy, Check, Pencil, RotateCcw } from 'lucide'
+import { lucideIcon } from '../shared/lucide-icons'
 import type { ChatArtifactSignal, ChatStatus, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
-import { lucideIcon } from '../shared/lucide-icons'
 import { agentIcon } from './agent-icon'
 import { referenceHierarchy, referenceIcon, referenceKindLabel } from './reference'
-import '../shared/code-block'
 import { chatThreadStyles } from './chat-thread-styles'
 import '../shared/markdown-view'
 import '../shared/visual-artifact'
@@ -14,12 +13,6 @@ import '../shared/visual-artifact'
 type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
   | { kind: 'agent'; items: ChatTranscriptItemSignal[] }
-
-type ToolPreviewLanguage = 'json' | 'toon' | 'text' | 'yaml'
-type ChatTranscriptItemWithFormats = ChatTranscriptItemSignal & {
-  inputFormat?: string
-  resultFormat?: string
-}
 
 const jsonConverter = <T,>(fallback: T) => ({
   fromAttribute(value: string | null): T {
@@ -43,7 +36,9 @@ class ChatThread extends LitElement {
   @property({ attribute: 'status', converter: jsonConverter<ChatStatus>({ enabled: false, running: false }) }) status: ChatStatus = { enabled: false, running: false }
   @property({ attribute: 'conversation-id' }) conversationId = ''
   @property({ reflect: true }) surface: 'page' | 'drawer' = 'page'
-  @state() private expandedToolCalls = new Set<string>()
+  @state() private copiedId = ''
+  @state() private copyError = ''
+  private copyTimer = 0
   private scrollFrame = 0
   private shouldAutoScroll = true
 
@@ -53,10 +48,11 @@ class ChatThread extends LitElement {
     const transcript = this.resolvedTranscript
     const unavailable = !this.status.enabled && transcript.length === 0
     const empty = transcript.length === 0 && !this.status.running
-    const showWorking = this.status.running && !transcript.some((item) => item.kind === 'tool' && item.status === 'running')
+    const showWorking = this.status.running
 
     return html`
       <div class="thread">
+        ${this.copyError ? html`<div class="copy-error" role="alert">${this.copyError}</div>` : nothing}
         <div class="scroll" @scroll=${this.onScroll}>
           <div class=${`stack${empty ? ' is-empty' : ''}`}>
             ${unavailable ? this.renderEmptyState('Agent unavailable', this.status.error || 'Agent is not configured.') : nothing}
@@ -87,6 +83,7 @@ class ChatThread extends LitElement {
 
   disconnectedCallback() {
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    window.clearTimeout(this.copyTimer)
     this.scrollFrame = 0
     super.disconnectedCallback()
   }
@@ -133,7 +130,7 @@ class ChatThread extends LitElement {
 
 	private renderUserTurn(item: ChatTranscriptItemSignal) {
 		const references = item.references ?? []
-		if (references.length === 0) return this.renderMessage('user', item.text || '-')
+		if (references.length === 0) return html`<article class="message user">${this.renderBubble(item.text || '-', false)}${item.edited ? html`<span class="edited-label">Edited</span>` : nothing}${this.messageActions(item.id, item.text || '', item, true)}</article>`
 		return html`
 			<article class="message user">
 				<div class="bubble plain user-turn-bubble">
@@ -152,24 +149,70 @@ class ChatThread extends LitElement {
 					</div>
 					<div class="turn-message-text">${item.text || '-'}</div>
 				</div>
+				${item.edited ? html`<span class="edited-label">Edited</span>` : nothing}${this.messageActions(item.id, item.text || '', item, true)}
 			</article>
 		`
 	}
 
   private renderAgentTurn(items: ChatTranscriptItemSignal[]) {
+    const text = items.filter(item => item.kind === 'assistant').map(item => item.markdown || item.text || '').filter(Boolean).join('\n\n')
+    const index = this.resolvedTranscript.indexOf(items[0])
+    const prompt = this.resolvedTranscript.slice(0, index).reverse().find(item => item.kind === 'user')
     return html`
       <article class="agent-turn">
         <div class="agent-stack">
           ${items.map((item) => this.renderAgentItem(item))}
         </div>
+        ${text && !this.status.running ? this.messageActions(items[0].id, text, prompt, false) : nothing}
       </article>
     `
+  }
+
+  private messageActions(id: string, text: string, prompt: ChatTranscriptItemSignal | undefined, user: boolean) {
+    return html`<div class="message-actions" role="group" aria-label=${user ? 'Your message actions' : 'Answer actions'}>
+      <button type="button" title=${this.copiedId === id ? 'Copied' : 'Copy'} aria-label=${this.copiedId === id ? 'Copied' : 'Copy message'} @click=${() => this.copyMessage(id, text)}>${lucideIcon(this.copiedId === id ? Check : Copy, { size: 16 })}</button>
+      ${prompt ? html`<button type="button" title=${user ? 'Edit in message input' : 'Ask again'} aria-label=${user ? 'Edit message' : 'Ask again'} ?disabled=${this.status.running || !this.status.enabled} @click=${() => this.reuseMessage(prompt, user)}>${lucideIcon(user ? Pencil : RotateCcw, { size: 16 })}</button>` : nothing}
+      ${this.copiedId === id ? html`<span class="copy-confirmation" role="status">Copied</span>` : nothing}
+    </div>`
+  }
+
+  private reuseMessage(item: ChatTranscriptItemSignal, edit: boolean) {
+    if (this.status.running || !this.status.enabled) return
+    if (edit && item.kind === 'user') {
+      const editMessageId = typeof item.id === 'string' ? item.id.trim() : ''
+      // An edit without a persisted message ID cannot be represented safely.
+      // Leave the composer untouched rather than turning it into a new prompt.
+      if (!editMessageId) return
+      this.dispatchEvent(new CustomEvent('lv-chat-reuse', {
+        bubbles: true,
+        composed: true,
+        detail: { text: item.text || '', references: item.references || [], editMessageId },
+      }))
+      return
+    }
+    this.dispatchEvent(new CustomEvent('lv-chat-reuse', {
+      bubbles: true,
+      composed: true,
+      detail: { text: item.text || '', references: item.references || [] },
+    }))
+  }
+
+  private async copyMessage(id: string, text: string) {
+    this.copyError = ''
+    try {
+      await navigator.clipboard.writeText(text)
+      this.copiedId = id
+      window.clearTimeout(this.copyTimer)
+      this.copyTimer = window.setTimeout(() => { this.copiedId = '' }, 1800)
+    } catch {
+      this.copyError = 'Could not copy. Select the message text and copy it manually.'
+    }
   }
 
   private renderAgentItem(item: ChatTranscriptItemSignal) {
     switch (item.kind) {
       case 'tool':
-        return this.renderTool(item)
+        return item.status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing
       case 'error':
         return this.renderMessage('error', item.text || item.error || '-', false, true)
       case 'assistant': {
@@ -199,69 +242,10 @@ class ChatThread extends LitElement {
     return html`<lv-markdown-view class="agent-markdown" .value=${content}></lv-markdown-view>`
   }
 
-  private renderTool(item: ChatTranscriptItemSignal) {
-    const status = item.status || 'running'
-    const label = toolCallLabel(item)
-    const key = toolCallKey(item)
-    const detailsID = toolDetailsID(key)
-    const expanded = this.expandedToolCalls.has(key)
-    return html`
-      <div
-        class=${['tool-call', item.artifact ? 'has-artifact' : '', status === 'running' ? 'running' : '', status === 'complete' ? 'done' : '', status === 'error' ? 'error' : ''].filter(Boolean).join(' ')}
-        title=${`${label}: ${statusLabel(status)}`}
-      >
-        <button
-          class="tool-trigger"
-          type="button"
-          aria-expanded=${expanded ? 'true' : 'false'}
-          aria-controls=${detailsID}
-          @click=${() => this.toggleToolCall(key)}
-        >
-          <span class="tool-icon" aria-hidden="true">${toolIcon(item.name)}</span>
-          <span class="activity-text">${label}</span>
-          <span class="tool-chevron" aria-hidden="true">${chevronRightIcon()}</span>
-        </button>
-        ${status === 'complete' && item.artifact ? this.renderArtifact(item.artifact) : nothing}
-        ${expanded ? this.renderToolDetails(item, detailsID) : nothing}
-      </div>
-    `
-  }
-
   private renderArtifact(artifact: ChatArtifactSignal) {
     const payload = this.resolvedVisuals[artifact.id] || null
     return html`<lv-visual-artifact type=${artifact.type} artifact-id=${artifact.id} .payload=${payload ?? null}></lv-visual-artifact>`
   }
-
-  private renderToolDetails(item: ChatTranscriptItemSignal, detailsID: string) {
-    const status = item.status || 'running'
-    return html`
-      <div class="tool-details" id=${detailsID}>
-        ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
-        ${item.resultJson ? this.renderToolCode(toolResultLabel(item, status), item.resultJson, toolResultLanguage(item)) : nothing}
-        ${!item.resultJson && item.error ? html`<div class="tool-error">${item.error}</div>` : nothing}
-      </div>
-    `
-  }
-
-  private renderToolCode(label: string, value: string, language: ToolPreviewLanguage) {
-    return html`
-      <div class="tool-detail-block">
-        <div class="tool-detail-label">${label}</div>
-        <lv-code-block compact language=${language} .code=${value}></lv-code-block>
-      </div>
-    `
-  }
-
-  private toggleToolCall(key: string) {
-    const next = new Set(this.expandedToolCalls)
-    if (next.has(key)) {
-      next.delete(key)
-    } else {
-      next.add(key)
-    }
-    this.expandedToolCalls = next
-  }
-
 }
 
 function hasKeys(value: Record<string, unknown> | undefined): boolean {
@@ -278,6 +262,7 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
   }
 
   for (const item of transcript) {
+    if (!isVisibleTranscriptItem(item)) continue
     if (item.kind === 'user') {
       flushAgent()
       units.push({ kind: 'user', item })
@@ -289,97 +274,8 @@ function groupTranscript(transcript: ChatTranscriptItemSignal[]): ChatRenderUnit
   return units
 }
 
-function toolCallLabel(item: ChatTranscriptItemSignal): string {
-  const title = item.title || titleFromToolName(item.name || '')
-  return title || 'Tool'
-}
-
-function titleFromToolName(name: string): string {
-  return name
-    .replace(/_/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (match) => match.toUpperCase())
-}
-
-const toolIconContent: Record<string, IconNode> = {
-  catalog_search: LayoutDashboard,
-  catalog_list: LayoutDashboard,
-  catalog_get: FileText,
-  docs_search: FileText,
-  docs_read: FileText,
-  query_semantic_model: Waypoints,
-  query_dashboard_visual: LayoutPanelTop,
-  query_visual: LayoutPanelTop,
-  // Historical transcript entries retain their original icons after the
-  // curated catalog cutover.
-  list_dashboards: LayoutDashboard,
-  describe_dashboard: FileText,
-  list_semantic_models: Waypoints,
-  describe_model: Waypoints,
-  query_dashboard_page: LayoutPanelTop,
-}
-
-function toolIcon(name = '') {
-  return lucideIcon(toolIconContent[name] ?? Wrench)
-}
-
-function chevronRightIcon() {
-  return lucideIcon(ChevronRight)
-}
-
-function toolCallKey(item: ChatTranscriptItemSignal): string {
-  return item.toolCallId || item.id || `${item.name || 'tool'}:${item.createdAt || ''}`
-}
-
-function toolDetailsID(key: string): string {
-  return `tool-details-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
-}
-
-function toolInputLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
-  return previewLanguage((item as ChatTranscriptItemWithFormats).inputFormat, item.argumentsJson || item.inputJson || '', 'json')
-}
-
-function toolResultLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
-  return previewLanguage((item as ChatTranscriptItemWithFormats).resultFormat, item.resultJson || '', 'toon')
-}
-
-function toolResultLabel(item: ChatTranscriptItemSignal, status: string): string {
-  if (status === 'error') return 'Error result'
-  if (item.name === 'export_dashboard_yaml' && toolResultLanguage(item) === 'yaml') return 'Dashboard YAML'
-  return 'Result'
-}
-
-function previewLanguage(format: string | undefined, value: string, fallback: ToolPreviewLanguage): ToolPreviewLanguage {
-  const normalized = (format || '').trim().toLowerCase()
-  if (normalized === 'json' || normalized === 'toon' || normalized === 'text' || normalized === 'yaml') return normalized
-  if (isJSON(value)) return 'json'
-  return fallback
-}
-
-function isJSON(value: string): boolean {
-  const trimmed = value.trim()
-  if (!trimmed || !['{', '['].includes(trimmed[0])) return false
-  try {
-    JSON.parse(trimmed)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'complete':
-      return 'Complete'
-    case 'error':
-      return 'Failed'
-    case 'streaming':
-      return 'Streaming'
-    case 'pending':
-      return 'Queued'
-    default:
-      return 'Running'
-  }
+function isVisibleTranscriptItem(item: ChatTranscriptItemSignal): boolean {
+  return item.kind !== 'tool' || (item.status === 'complete' && Boolean(item.artifact))
 }
 
 if (!customElements.get('lv-chat-thread')) customElements.define('lv-chat-thread', ChatThread)

@@ -1,0 +1,10 @@
+{
+  "evidenceDigest": "sha256:e0034612b542eaf5bf52d8e0b5f01b63a0f6aa4b0c10df551caef86ccb4811fb",
+  "policyDigest": "sha256:bbc0d28dc4a4d7589cb6c2c634dcfe83e031c741b5d5d2e577d805be76bdaf56",
+  "phaseDigests": [
+    "sha256:9ff7f1c6f353b190ecb93c71f30e93f595ab8ef21f46a518d4e401244dc1e7a0",
+    "sha256:f34cc8e94b0aba8b4828f231bf0b2acf38337152ff802dddcd0f4427adaa8879",
+    "sha256:ce8927fdcd064c6344c44c08f3e1c5a93a9ec84fd906027d66cad2a46b3f6d7f",
+    "sha256:07b57e1050b70a0098cf62a5c1502b83756940ab4a342819e4ac0b0bf676321e"
+  ]
+}

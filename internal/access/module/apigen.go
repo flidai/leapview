@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -163,14 +164,14 @@ func (a *APIGenAuthorizer) AuthorizeReplay(r *http.Request) bool {
 		return false
 	}
 	operationID := ""
-	route := routePattern(r)
+	matched := false
+	parameters := 0
 	for id, contract := range a.operations {
-		if strings.EqualFold(contract.Method, r.Method) && (contract.Path == route || matchOperationPath(contract.Path, r.URL.Path)) {
-			if route != "" && !matchOperationPath(contract.Path, r.URL.Path) {
-				continue
+		if strings.EqualFold(contract.Method, r.Method) && apigencommand.MatchPath(contract.Path, r.URL.Path) {
+			count := strings.Count(contract.Path, "{")
+			if !matched || count < parameters {
+				operationID, matched, parameters = id, true, count
 			}
-			operationID = id
-			break
 		}
 	}
 	if operationID == "" {
@@ -316,14 +317,16 @@ func (a *APIGenAuthorizer) projectBoundaryProjectID(ctx context.Context) (projec
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
-// Candidate source retention and managed-data staging operations are the only
-// project-scoped routes that may run before an active serving generation; all
-// other project resource operations must use immutable snapshot authorization.
+// Candidate source retention, managed-data staging, and the narrowly scoped
+// target-policy role-binding creation command are the only project-scoped
+// routes that may run before an active serving generation; all other project
+// resource operations must use immutable snapshot authorization.
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"createProjectRoleBinding", "listProjectRoleBindings":
 		return true
 	default:
 		return false
@@ -631,7 +634,8 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 
 func isAuthoringBootstrapOperation(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource":
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
+		"listProjectRoleBindings", "createProjectRoleBinding":
 		return true
 	default:
 		return false
@@ -683,7 +687,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			return
 		}
 		if !allowed {
-			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -691,7 +695,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 		if err != nil {
 			slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, access.ErrForbidden) {
-				a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+				a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
@@ -699,7 +703,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 			return
 		}
 		if !containsCapability(effective, capability) {
-			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
+			a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -707,7 +711,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 	}))
 }
 
-func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID, principalID string, resource access.ResourceRef, capability access.Capability) {
+func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID string, projectID projectgraph.ResourceID, principalID string, resource access.ResourceRef, capability access.Capability) {
 	if a == nil || a.module == nil || a.module.repository == nil || r == nil {
 		return
 	}
@@ -717,6 +721,7 @@ func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, op
 		return
 	}
 	input := authAuditInput(r, "authorization.denied", principalID, string(resource.Kind()), resource.ID().String(), capability, "denied", map[string]any{"operationId": operationID})
+	input.ProjectID = projectID.String()
 	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil {
 		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit failed", "operation", operationID, "error", err)
 	}
@@ -772,7 +777,7 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 			}
 		}
 		if resource.Kind() == projectgraph.KindProjectNamespace && !access.SupportsCapability(resource.Kind(), capability) {
-			if !projectRoleAllowsCapability(snapshot, subjects, capability) {
+			if !accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
 				return false, nil
 			}
 			continue
@@ -793,25 +798,6 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		}
 	}
 	return true, nil
-}
-
-// Project-scoped authoring APIs target the project root while requiring a
-// resource capability such as RESOURCE_EDIT. Those capabilities belong to an
-// explicit project role bundle, not to direct grants on the project kind.
-func projectRoleAllowsCapability(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
-	for _, binding := range snapshot.RoleBindings() {
-		for _, subject := range subjects {
-			if binding.Subject != subject {
-				continue
-			}
-			for _, captured := range binding.Capabilities {
-				if captured == capability {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGenOperationContract) error {
@@ -1015,33 +1001,6 @@ func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope,
 }
 
 func apiGenRequiresCSRF(operationID string) bool { return operationID == "decideDeviceAuthorization" }
-
-func matchOperationPath(pattern, path string) bool {
-	patternParts := strings.Split(strings.Trim(strings.TrimSpace(pattern), "/"), "/")
-	pathParts := strings.Split(strings.Trim(strings.TrimSpace(path), "/"), "/")
-	if len(patternParts) != len(pathParts) {
-		return false
-	}
-	for index, part := range patternParts {
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") && len(part) > 2 {
-			if pathParts[index] == "" {
-				return false
-			}
-			continue
-		}
-		if part != pathParts[index] {
-			return false
-		}
-	}
-	return true
-}
-
-func routePattern(r *http.Request) string {
-	if routeContext := chi.RouteContext(r.Context()); routeContext != nil {
-		return routeContext.RoutePattern()
-	}
-	return ""
-}
 
 type discardAuthorizationResponse struct{ header http.Header }
 

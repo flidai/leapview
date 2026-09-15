@@ -16,22 +16,46 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata:
+  id: model:orders
+  name: orders
 spec:
-  definition: {type: direct, source: warehouse.orders}
-  fields: {order_id: {datatype: String}}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
+  definition:
+    type: direct
+    source: warehouse.orders
+  fields:
+  - name: order_id
+    datatype: String
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: orders}}
+  datasets:
+  - name: orders
+    model: orders
+    metrics:
+    - name: revenue
+      type: simple
+      agg: sum
+    - name: order_count
+      type: simple
+      agg: count
+      field: order_id
   metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
-    order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}}
-    revenue_per_order: {type: ratio, numerator: revenue, denominator: order_count}
+  - name: revenue_per_order
+    type: ratio
+    numerator: revenue
+    denominator: order_count
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -40,7 +64,7 @@ spec:
   semanticModel: sales
   filters: []
   visuals:
-    revenue_per_order:
+    - id: revenue_per_order
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [revenue_per_order]}
       presentation: {type: kpi}
@@ -90,19 +114,33 @@ spec: {connection: warehouse, location: {type: path, path: orders.csv, format: c
 `,
 		"models/orders.yaml": `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata:
+  id: model:orders
+  name: orders
 spec:
-  definition: {type: direct, source: warehouse.orders}
-  fields: {order_id: {datatype: String}}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
+  definition:
+    type: direct
+    source: warehouse.orders
+  fields:
+  - name: order_id
+    datatype: String
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
 `,
 		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: orders}}
-  metrics: {}
+  datasets:
+  - name: orders
+    model: orders
 `,
 		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -111,7 +149,7 @@ spec:
   semanticModel: sales
   filters: []
   visuals:
-    orders_table:
+    - id: orders_table
       type: table
       query: {type: records, dataset: orders, fields: [order_id, dashboard_only]}
       presentation: {type: table, rowHeight: 32, showHeader: true, striped: false}

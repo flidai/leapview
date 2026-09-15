@@ -4,49 +4,17 @@ import (
 	"context"
 
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/dashboard/querymap"
 )
 
-type QueryField struct {
-	Field string
-	Alias string
-}
-
-type QueryFilter struct {
-	Field    string
-	Dataset  string
-	Operator string
-	Values   []any
-	Groups   []QueryFilterGroup
-	Spatial  *SpatialFilter
-}
-
-type SpatialFilter struct {
-	Kind           string
-	LatitudeField  string
-	LongitudeField string
-	Dataset        string
-	West           float64
-	South          float64
-	East           float64
-	North          float64
-	Points         []SpatialPoint
-	Center         SpatialPoint
-	RadiusMeters   float64
-}
-
-type SpatialPoint struct {
-	Longitude float64
-	Latitude  float64
-}
-
-type QueryFilterGroup struct {
-	Filters []QueryFilter
-}
-
-type QuerySort struct {
-	Field     string
-	Direction string
-}
+// These aliases keep report's public request API stable while making
+// querymap the single owner of report-definition query conversion inputs.
+type QueryField = querymap.QueryField
+type QueryFilter = querymap.QueryFilter
+type SpatialFilter = querymap.SpatialFilter
+type SpatialPoint = querymap.SpatialPoint
+type QueryFilterGroup = querymap.QueryFilterGroup
+type QuerySort = querymap.QuerySort
 
 // QueryTime is a runtime query projection. Authoring documents use the
 // generated Dashboard query contract; this alias keeps the execution request

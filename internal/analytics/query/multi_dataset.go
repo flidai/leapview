@@ -280,11 +280,20 @@ func (p *Planner) resolveAggregate(request Request) (aggregateResolution, error)
 		// but canonical requests carry grain on the dimension reference itself.
 		dimensionFields = append(dimensionFields, Field{Field: request.Time.Field, Alias: request.Time.Alias, Grain: request.Time.Grain})
 	}
+	seenDimensionAliases := make(map[string]struct{}, len(dimensionFields))
 	for index, item := range dimensionFields {
 		alias, err := outputAlias(item)
 		if err != nil {
 			return aggregateResolution{}, err
 		}
+		name := strings.TrimSpace(item.Field)
+		if name == "" {
+			return aggregateResolution{}, fmt.Errorf("selected dimension is required")
+		}
+		if _, exists := seenDimensionAliases[alias]; exists {
+			return aggregateResolution{}, fmt.Errorf("duplicate dimension alias %q", alias)
+		}
+		seenDimensionAliases[alias] = struct{}{}
 		grain := item.Grain
 		// Preserve the old Request.Time positional behavior only when the
 		// reference did not already carry a grain. Canonical lowering never uses

@@ -176,7 +176,7 @@ func (r *testQueryAuditRepository) RecordQueryEvent(_ context.Context, input que
 	return nil
 }
 
-func (r *testQueryAuditRepository) GetQueryEvent(_ context.Context, id string) (queryaudit.Event, error) {
+func (r *testQueryAuditRepository) GetQueryEvent(_ context.Context, projectID projectgraph.ResourceID, id string) (queryaudit.Event, error) {
 	if r == nil {
 		return queryaudit.Event{}, fmt.Errorf("query audit repository is unavailable")
 	}
@@ -184,7 +184,7 @@ func (r *testQueryAuditRepository) GetQueryEvent(_ context.Context, id string) (
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, event := range r.events {
-		if event.ID == id {
+		if event.ID == id && event.ProjectID == projectID {
 			return event, nil
 		}
 	}
@@ -232,7 +232,7 @@ func (r *testQueryAuditRepository) ListQueryEvents(_ context.Context, filter que
 	return filtered, nil
 }
 
-func (r *testQueryAuditRepository) ListQueryEventFilterOptions(_ context.Context, field, search string, limit int) ([]queryaudit.FilterOption, error) {
+func (r *testQueryAuditRepository) ListQueryEventFilterOptions(_ context.Context, projectID projectgraph.ResourceID, field, search string, limit int) ([]queryaudit.FilterOption, error) {
 	if r == nil {
 		return nil, fmt.Errorf("query audit repository is unavailable")
 	}
@@ -250,6 +250,9 @@ func (r *testQueryAuditRepository) ListQueryEventFilterOptions(_ context.Context
 	r.mu.RLock()
 	counts := make(map[string]int)
 	for _, event := range r.events {
+		if event.ProjectID != projectID {
+			continue
+		}
 		value := testQueryAuditOptionValue(event, field)
 		if value != "" && (search == "" || strings.Contains(strings.ToLower(value), search)) {
 			counts[value]++

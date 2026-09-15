@@ -2,7 +2,7 @@
 
 # catalog_list
 
-Browse authorized project resources. Returned refs are exact stable IDs for subsequent calls.
+Browse one authorized project-resource hierarchy level when a parent ref is known. Returned refs are exact stable IDs; a page with hasMore false is complete.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_list.json) · [complete manifest](/docs/agent-tools/manifest.json)
 

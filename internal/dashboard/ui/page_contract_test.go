@@ -61,6 +61,16 @@ func TestCanonicalPageInitialSignalsArePageScoped(t *testing.T) {
 	if !strings.Contains(rendered, `data-on:lv-interaction-select`) {
 		t.Fatal("command bridge missing")
 	}
+	if !strings.Contains(rendered, `data-on:lv-visualization-window-request`) || !strings.Contains(rendered, `requestCancellation: 'disabled'`) {
+		t.Fatal("viewer window requests must allow concurrent responses")
+	}
+	var public strings.Builder
+	if err := PublicPage(PublicPageOptions{PublicID: "public-report"}, dashboard.Catalog{}, report, canonicalPageModel(), report.Pages, report.Pages[0], dashboard.Filters{}).Render(&public); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html.UnescapeString(public.String()), `requestCancellation: 'disabled'`) {
+		t.Fatal("public viewer window requests must allow concurrent responses")
+	}
 }
 
 func TestCanonicalPageCreatesUniqueStreamInstancePerRender(t *testing.T) {

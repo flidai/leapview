@@ -22,7 +22,7 @@ func TestSQLPublicationIdentitySurvivesImplicitQualifierRename(t *testing.T) {
 			t.Fatal(err)
 		}
 		var input contracts.Model
-		raw := fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"sql","sql":"SELECT %s.id FROM source.%s"},"entities":{"row":{"type":"primary","fields":["id"]}},"grain":{"entity":"row"},"fields":{"id":{"datatype":"Integer"}}}}`, name, name)
+		raw := fmt.Sprintf(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"sql","sql":"SELECT %s.id FROM source.%s"},"entities":[{"name":"row","type":"primary","fields":["id"]}],"grain":{"entity":"row"},"fields":[{"name":"id","datatype":"Integer"}]}}`, name, name)
 		if err := json.Unmarshal([]byte(raw), &input); err != nil {
 			t.Fatal(err)
 		}

@@ -1,0 +1,11 @@
+version: 2
+models:
+  - name: fct_orders
+    config:
+      contract: {enforced: true}
+    columns:
+      - {name: order_id, data_type: varchar, tests: [not_null, unique]}
+      - {name: customer_id, data_type: varchar, tests: [not_null]}
+      - {name: order_date, data_type: date, tests: [not_null]}
+      - {name: order_status, data_type: varchar, tests: [not_null]}
+      - {name: revenue, data_type: double, tests: [not_null]}

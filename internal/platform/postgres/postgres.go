@@ -43,11 +43,6 @@ type Intent string
 const (
 	IntentReadWrite Intent = "read-write"
 	IntentReadOnly  Intent = "read-only"
-
-	// ReadWrite and ReadOnly are concise aliases for callers that prefer the
-	// nouns over the Intent-prefixed constants.
-	ReadWrite = IntentReadWrite
-	ReadOnly  = IntentReadOnly
 )
 
 // Config is the explicit, independent connection policy for one PostgreSQL
@@ -500,21 +495,10 @@ func OpenControl(ctx context.Context, cfg Config) (*Pool, error) {
 	return Open(ctx, cfg)
 }
 
-// OpenControlPool is an explicit alias retained for readability at call
-// sites that construct more than one capability pool.
-func OpenControlPool(ctx context.Context, cfg Config) (*Pool, error) {
-	return OpenControl(ctx, cfg)
-}
-
 // OpenDuckLake opens and validates one DuckLake catalog pool. The caller must
 // provide a separate URL, role, and policy from the control pool.
 func OpenDuckLake(ctx context.Context, cfg Config) (*Pool, error) {
 	return Open(ctx, cfg)
-}
-
-// OpenDuckLakePool is an explicit alias for OpenDuckLake.
-func OpenDuckLakePool(ctx context.Context, cfg Config) (*Pool, error) {
-	return OpenDuckLake(ctx, cfg)
 }
 
 // OpenPools opens independently configured pools. It is useful to test the

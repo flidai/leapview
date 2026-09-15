@@ -53,7 +53,7 @@ test('composer renders a compact centered prompt surface', async () => {
     await page.locator('lv-chat-composer').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-chat-composer').evaluate((element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const form = root.querySelector('form') as HTMLElement
       const surface = root.querySelector('.composer-surface') as HTMLElement
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
@@ -89,7 +89,7 @@ test('composer renders a compact centered prompt surface', async () => {
         buttonHeight: Math.round(button.getBoundingClientRect().height),
         buttonDisabled: button.disabled,
 		surfaceClickFocusesTextarea: root.activeElement === textarea,
-      }
+      };
     })
 
     expect(state).toMatchObject({
@@ -128,7 +128,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     await page.locator('lv-chat-composer').evaluate((element: any) => element.updateComplete)
 
     const events = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const button = root.querySelector('.send-button') as HTMLButtonElement
       const received: string[] = []
@@ -161,7 +161,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       const pendingDisabled = button.disabled
       const spinner = root.querySelector('lv-loading-spinner') as any
       await spinner.updateComplete
-      const spinnerSvg = spinner.shadowRoot.querySelector('svg') as SVGElement
+      const spinnerSvg = (spinner.shadowRoot as ShadowRoot).querySelector('svg') as SVGElement
       const spinnerCircle = spinnerSvg.querySelector('circle') as SVGCircleElement
       const spinnerPath = spinnerSvg.querySelector('path') as SVGPathElement
       const spinnerStyle = getComputedStyle(spinnerSvg)
@@ -209,6 +209,85 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
   }
 })
 
+test('composer exposes stop only after a run is accepted and protects an unsent draft from Continue', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+    const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+      const root = element.shadowRoot as ShadowRoot
+      const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+      textarea.value = 'Keep this new question'
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await element.updateComplete
+
+      element.pending = true
+      await element.updateComplete
+      const beforeAcceptedRun = Boolean(root.querySelector('.stop-button'))
+
+      element.running = true
+      element.runId = 'run-accepted'
+      await element.updateComplete
+      const stop = root.querySelector('.stop-button') as HTMLButtonElement
+      const stopEvents: any[] = []
+      element.addEventListener('lv-chat-stop', (event: CustomEvent) => stopEvents.push({ detail: event.detail, bubbles: event.bubbles, composed: event.composed }))
+      stop.click()
+      await element.updateComplete
+
+      element.running = false
+      element.pending = false
+      element.canContinue = true
+      await element.updateComplete
+      const continueButton = root.querySelector('.continue-button') as HTMLButtonElement
+      const submits: any[] = []
+      element.addEventListener('lv-chat-submit', (event: CustomEvent) => submits.push(event.detail))
+      continueButton.click()
+      await element.updateComplete
+      const draftBeforeContinue = root.querySelector('textarea')?.value
+      const continueDisabledWithDraft = continueButton.disabled
+      const continueTitleWithDraft = continueButton.title
+
+      element.setDraft('')
+      await element.updateComplete
+      const continueEnabledWithoutDraft = !continueButton.disabled
+      continueButton.click()
+      await element.updateComplete
+      const draftAfterContinue = root.querySelector('textarea')?.value
+
+      element.pending = true
+      await element.updateComplete
+      const continueDisabledWhilePending = (root.querySelector('.continue-button') as HTMLButtonElement).disabled
+
+      return {
+        beforeAcceptedRun,
+        stop: { disabled: stop.disabled, label: stop.getAttribute('aria-label'), events: stopEvents },
+        continue: { disabledWithDraft: continueDisabledWithDraft, titleWithDraft: continueTitleWithDraft, enabledWithoutDraft: continueEnabledWithoutDraft, submits, draftBeforeContinue, draftAfterContinue },
+        continueDisabledWhilePending,
+      }
+    })
+
+    expect(result).toEqual({
+      beforeAcceptedRun: false,
+      stop: {
+        disabled: false,
+        label: 'Stop response',
+        events: [{ detail: { runId: 'run-accepted' }, bubbles: true, composed: true }],
+      },
+      continue: {
+        disabledWithDraft: true,
+        titleWithDraft: 'Clear your draft to continue the previous response',
+        enabledWithoutDraft: true,
+        submits: [{ input: 'Continue your previous response from where you stopped.', references: [] }],
+        draftBeforeContinue: 'Keep this new question',
+        draftAfterContinue: '',
+      },
+      continueDisabledWhilePending: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('touch-primary composer reserves Return for newlines and enlarges the send target', async () => {
   const context = await browser.newContext({
 	viewport: { width: 390, height: 844 },
@@ -220,7 +299,7 @@ test('touch-primary composer reserves Return for newlines and enlarges the send 
 	await page.goto(baseURL)
 	await page.waitForFunction(() => customElements.get('lv-chat-composer'))
 	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-	  const root = element.shadowRoot
+	  const root = (element.shadowRoot as ShadowRoot)
 	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
 	  const contextButton = root.querySelector('.context-button') as HTMLButtonElement
 	  const button = root.querySelector('.send-button') as HTMLButtonElement
@@ -266,7 +345,7 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = element.shadowRoot as ShadowRoot
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       const contextButton = root.querySelector('.context-button') as HTMLButtonElement
       textarea.value = 'Compare revenue'
@@ -295,6 +374,52 @@ test('Add context opens the existing @ picker and keeps the draft editable', asy
   }
 })
 
+test('composer presents edit mode, targets the selected message, and cancels safely', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+    const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+      element.editMessageId = 'user-1'
+      element.editing = true
+      element.setDraft('Rewrite this answer')
+      await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const submit = new Promise<any>((resolve) => element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true }))
+      const editState = {
+        banner: root.querySelector('.edit-banner')?.textContent?.replace(/\s+/g, ' ').trim(),
+        sendLabel: root.querySelector('.send-button')?.getAttribute('aria-label'),
+        cancel: root.querySelector('.cancel-edit')?.textContent?.trim(),
+      }
+      root.querySelector<HTMLFormElement>('form')?.requestSubmit()
+      const submitted = await submit
+      let cancelCount = 0
+      element.addEventListener('lv-chat-edit-cancel', () => cancelCount += 1)
+      root.querySelector<HTMLButtonElement>('.cancel-edit')?.click()
+      await element.updateComplete
+      return {
+        editState,
+        submitted,
+        afterCancel: {
+          editMessageId: element.editMessageId,
+          editing: element.editing,
+          draft: root.querySelector<HTMLTextAreaElement>('textarea')?.value,
+          hasBanner: Boolean(element.shadowRoot.querySelector('.edit-banner')),
+          cancelCount,
+        },
+      }
+    })
+
+    expect(result).toEqual({
+      editState: { banner: 'Editing message Cancel', sendLabel: 'Save & send', cancel: 'Cancel' },
+      submitted: { input: 'Rewrite this answer', references: [], editMessageId: 'user-1' },
+      afterCancel: { editMessageId: '', editing: false, draft: '', hasBanner: false, cancelCount: 1 },
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('composer searches for and attaches typed @ references with spaces', async () => {
   const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
   try {
@@ -313,21 +438,21 @@ test('composer searches for and attaches typed @ references with spaces', async 
       }
       element.suggestions = [reference]
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       const searches: string[] = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
       textarea.value = 'Compare @orders by'
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await element.updateComplete
-      const option = element.shadowRoot.querySelector('.mention-option') as HTMLButtonElement
+      const option = (element.shadowRoot as ShadowRoot).querySelector('.mention-option') as HTMLButtonElement
       const optionText = option?.textContent?.replace(/\s+/g, ' ').trim()
       option.click()
       await element.updateComplete
       const draftAfterReference = textarea.value
       textarea.value = 'Compare this with last month'
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
-      const submitted = await new Promise<any>((resolve) => {
+      const submitted = await new Promise((resolve) => {
         element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true })
         textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       })
@@ -378,35 +503,37 @@ test('composer consumes attachments only after a user turn is accepted', async (
       }
       element.acceptedRunId = 'run_previous'
       await element.updateComplete
+	  element.editMessageId = 'user-1'
+	  element.editing = true
 	  element.references = [reference]
 	  await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       textarea.value = 'Why did revenue fall?'
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true }))
       const changes: any[] = []
       element.addEventListener('lv-chat-references-change', (event: CustomEvent) => changes.push(event.detail.references))
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       await element.updateComplete
-      const afterSubmit = { draft: textarea.value, references: element.references.length, changes: changes.length }
+	  const afterSubmit = { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, changes: changes.length }
 
       // A rejected request returns no newly persisted user run.
       element.value = ''
       await element.updateComplete
-      const afterRejected = { draft: textarea.value, references: element.references.length, changes: changes.length }
+	  const afterRejected = { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, changes: changes.length }
 
       // The persisted user message identifies the accepted turn before model completion.
       element.acceptedRunId = 'run_new'
       await element.updateComplete
-      return {
-        afterSubmit,
-        afterRejected,
-        afterAccepted: { draft: textarea.value, references: element.references.length, changes },
-      }
+	  return {
+		  afterSubmit,
+		  afterRejected,
+		  afterAccepted: { draft: textarea.value, references: element.references.length, editMessageId: element.editMessageId, editing: element.editing, changes },
+	  }
     })
 
-    expect(result.afterSubmit).toEqual({ draft: 'Why did revenue fall?', references: 1, changes: 0 })
-    expect(result.afterRejected).toEqual({ draft: 'Why did revenue fall?', references: 1, changes: 0 })
-    expect(result.afterAccepted).toEqual({ draft: '', references: 0, changes: [[]] })
+	 expect(result.afterSubmit).toEqual({ draft: 'Why did revenue fall?', references: 1, editMessageId: 'user-1', changes: 0 })
+	 expect(result.afterRejected).toEqual({ draft: 'Why did revenue fall?', references: 1, editMessageId: 'user-1', changes: 0 })
+	 expect(result.afterAccepted).toEqual({ draft: '', references: 0, editMessageId: '', editing: false, changes: [[]] })
   } finally {
     await page.close()
   }
@@ -427,14 +554,14 @@ test('composer distinguishes matching reference IDs from different kinds', async
       }))
       element.suggestions = references
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
 
       for (const reference of references) {
         textarea.value = '@revenue'
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
         await element.updateComplete
-        const option = Array.from(element.shadowRoot.querySelectorAll('.mention-option'))
+        const option = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option'))
 		  .find((candidate: any) => candidate.textContent.includes(reference.name)) as HTMLButtonElement
         option.click()
         await element.updateComplete
@@ -455,7 +582,7 @@ test('mention picker opens immediately, renders compact rows, and scrolls with k
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       textarea.value = '@'
       textarea.setSelectionRange(1, 1)
@@ -530,7 +657,7 @@ test('mention picker ignores search responses from an older request', async () =
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-chat-composer'))
     const result = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       const requests: Array<{ query: string; requestId: number }> = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => requests.push(event.detail))
 
@@ -547,7 +674,7 @@ test('mention picker ignores search responses from an older request', async () =
       element.suggestionRequestId = first.requestId
 	  element.suggestions = [{ reference: { kind: 'visual', id: 'orders' }, name: 'Orders', href: '/dashboards/orders', locations: [], context: [] }]
       await element.updateComplete
-      const optionText = () => element.shadowRoot.querySelector('.mention-option')?.textContent?.replace(/\s+/g, ' ').trim()
+      const optionText = () => (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.textContent?.replace(/\s+/g, ' ').trim()
       const firstVisible = optionText()
 
       await search('@revenue')
@@ -556,8 +683,8 @@ test('mention picker ignores search responses from an older request', async () =
       element.suggestionRequestId = first.requestId
 	  element.suggestions = [{ reference: { kind: 'visual', id: 'orders-old' }, name: 'Old orders response', href: '/dashboards/orders-old', locations: [], context: [] }]
       await element.updateComplete
-      const staleVisible = element.shadowRoot.querySelector('.mention-option')?.textContent?.trim() ?? ''
-      const staleStatus = element.shadowRoot.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim()
+      const staleVisible = (element.shadowRoot as ShadowRoot).querySelector('.mention-option')?.textContent?.trim() ?? ''
+      const staleStatus = (element.shadowRoot as ShadowRoot).querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim()
 
       element.suggestionQuery = second.query
       element.suggestionRequestId = second.requestId
@@ -606,15 +733,15 @@ test('mention picker pins on-page results above deduplicated accessible results'
 		{ reference: { kind: 'metric', id: 'orders-metric' }, name: 'Orders metric', description: 'Sales model', hierarchy: ['Sales model'], href: '/explore?metric=orders', locations: [], context: [] },
       ]
       await element.updateComplete
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = (element.shadowRoot as ShadowRoot).querySelector('textarea') as HTMLTextAreaElement
       textarea.value = '@orders'
       textarea.setSelectionRange(textarea.value.length, textarea.value.length)
       textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
       await element.updateComplete
 
       return {
-        labels: Array.from(element.shadowRoot.querySelectorAll('.mention-section-label')).map((node: any) => node.textContent.trim()),
-        options: Array.from(element.shadowRoot.querySelectorAll('.mention-option')).map((node: any) => node.textContent.replace(/\s+/g, ' ').trim()),
+        labels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-section-label')).map((node) => node.textContent.trim()),
+        options: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('.mention-option')).map((node) => node.textContent.replace(/\s+/g, ' ').trim()),
       }
     })
 
@@ -634,14 +761,15 @@ test('composer enforces the server-provided reference limit', async () => {
       element.referenceLimit = 2
       const searches: string[] = []
       element.addEventListener('lv-chat-reference-search', (event: CustomEvent) => searches.push(event.detail.query))
-      const textarea = element.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      const root = element.shadowRoot as ShadowRoot
+      const textarea = root.querySelector('textarea') as HTMLTextAreaElement
       for (const id of ['one', 'two', 'three']) {
 	 element.suggestions = [{ reference: { kind: 'metric', id }, name: id, href: `/explore?metric=${id}`, locations: [], context: [] }]
         textarea.value = `@${id}`
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
         textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
         await element.updateComplete
-        element.shadowRoot.querySelector('.mention-option')?.click()
+        root.querySelector<HTMLElement>('.mention-option')?.click()
         await element.updateComplete
       }
       textarea.value = '@three'
@@ -650,10 +778,10 @@ test('composer enforces the server-provided reference limit', async () => {
       await element.updateComplete
       const limited = {
 		references: element.references.map((reference: any) => reference.reference.id),
-        status: element.shadowRoot.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
-        optionCount: element.shadowRoot.querySelectorAll('.mention-option').length,
-      }
-      element.shadowRoot.querySelector('.reference-chip')?.click()
+        status: root.querySelector('.mention-status')?.textContent?.replace(/\s+/g, ' ').trim(),
+        optionCount: root.querySelectorAll('.mention-option').length,
+      };
+      (root.querySelector('.reference-chip') as HTMLElement | null)?.click()
       await element.updateComplete
       return {
         limited,

@@ -35,8 +35,7 @@ type PaginationOptions struct {
 }
 
 const (
-	DefaultPageLimit = 50
-	MaxPageLimit     = 200
+	MaxPageLimit = 200
 )
 
 // AddFlags binds cursor pagination flags to a command.
@@ -69,14 +68,6 @@ func (options PaginationOptions) LimitPtr() *int32 {
 		return nil
 	}
 	value := int32(options.Limit)
-	return &value
-}
-
-func (options PaginationOptions) PageTokenPtr() *string {
-	if options.PageToken == "" {
-		return nil
-	}
-	value := options.PageToken
 	return &value
 }
 

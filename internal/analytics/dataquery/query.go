@@ -297,7 +297,6 @@ const (
 	StatusCanceled = "canceled"
 	StatusTimeout  = "timeout"
 
-	ExecutionStarted   = "started"
 	ExecutionRejected  = "rejected"
 	ExecutionCanceled  = "canceled"
 	ExecutionTimeout   = "timeout"

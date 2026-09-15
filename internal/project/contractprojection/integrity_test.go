@@ -12,7 +12,7 @@ import (
 func testSource(t *testing.T) contracts.Source {
 	t.Helper()
 	var source contracts.Source
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"id":{"datatype":"Integer"}}}}}`), &source); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"id","datatype":"Integer"}]}}`), &source); err != nil {
 		t.Fatal(err)
 	}
 	return source
@@ -114,7 +114,7 @@ func TestAuthoredContractMetadataIsAuthoritative(t *testing.T) {
 
 func TestGovernanceFieldsAreProjectedAndAnnotationsExcluded(t *testing.T) {
 	var input contracts.Source
-	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{"order_id":{"datatype":"String","nullable":false,"tags":["identifier"],"criticalDataElement":true,"classification":"restricted","authoritativeDefinitions":[{"type":"transformationImplementation","url":"https://CATALOG.example:443/definitions/../customer%2Did"},{"type":"transformationImplementation","url":"https://catalog.example/customer-id"},{"type":"businessDefinition","url":"https://catalog.example/customer-id"}],"deprecation":{"since":"1.0.0","reason":"Use customer_key instead","replacement":"customer_key"}}}}}}`
+	const raw = `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"order_id","datatype":"String","tags":["identifier"],"criticalDataElement":true,"classification":"restricted","authoritativeDefinitions":[{"type":"transformationImplementation","url":"https://CATALOG.example:443/definitions/../customer%2Did"},{"type":"transformationImplementation","url":"https://catalog.example/customer-id"},{"type":"businessDefinition","url":"https://catalog.example/customer-id"}],"deprecation":{"since":"1.0.0","reason":"Use customer_key instead","replacement":"customer_key"}},{"name":"customer_key","datatype":"String"}],"checks":[{"id":"order_id_present","type":"non_null","field":"order_id"}]}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

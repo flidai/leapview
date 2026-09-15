@@ -1,5 +1,13 @@
 declare module '*.css'
 
+declare module '*/static/vendor/datastar-1.0.2.js?v=dev' {
+  export function mergePatch(...args: unknown[]): unknown
+}
+
+declare module '*settings-surfaces.js' {
+  export function setDatastarLitRuntimeForTests(runtime: unknown): void
+}
+
 declare module 'p5/accessibility' {
   const addon: Function
   export default addon

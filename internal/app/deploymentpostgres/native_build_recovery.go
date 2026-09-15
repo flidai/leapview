@@ -201,10 +201,23 @@ func deriveNativeBuildRecoveryArtifactValues(
 	if err != nil {
 		return release.CandidateArtifactRecoveryRequest{}, deploymentnative.BuildArtifactBinding{}, catalogartifact.CommitMarker{}, err
 	}
+	policyDigest := plan.Governance.PolicyDigest
+	if plan.Governance.PolicyRevision == 0 {
+		if policyDigest != plan.Governance.AuthorizationDigest {
+			return release.CandidateArtifactRecoveryRequest{}, deploymentnative.BuildArtifactBinding{}, catalogartifact.CommitMarker{}, fmt.Errorf("%w: pre-017 authorization policy digest differs from its fingerprint", deploymentdomain.ErrDeliveryConflict)
+		}
+		policyDigest = ""
+	}
 	marker := nativeBuildMarker(prepared.Operation.OperationID, prepared.GenerationID, prepared.AttemptID, requestDigest, request, plan.Digest, physicalPoolID, prepared.DeliveryAttempt.FencingEpoch)
 	marker.FencingToken = fmt.Sprintf("%d", prepared.DeliveryAttempt.FencingEpoch)
 	binding := deploymentnative.BuildArtifactBinding{AttemptID: prepared.AttemptID, ServingArtifactID: artifactIdentity.ServingArtifactID, ServingArtifactDigest: artifactIdentity.ServingArtifactDigest, ServingStateID: artifactIdentity.ServingStateID}
-	return release.CandidateArtifactRecoveryRequest{CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest, ManagedDataPins: managedPins, Artifact: artifactIdentity}, binding, marker, nil
+	return release.CandidateArtifactRecoveryRequest{
+		CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest,
+		AuthorizationPolicyRevision: plan.Governance.PolicyRevision,
+		AuthorizationPolicyDigest:   policyDigest,
+		AuthorizationFingerprint:    plan.Governance.AuthorizationDigest,
+		ManagedDataPins:             managedPins, Artifact: artifactIdentity,
+	}, binding, marker, nil
 }
 
 // nativeRecoveryPlanManagedDataPins lowers the exact pinned managed-data

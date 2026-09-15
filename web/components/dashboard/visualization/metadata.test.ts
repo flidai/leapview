@@ -34,7 +34,7 @@ function envelope(rows: unknown[][]): VisualizationEnvelope {
         { id: 'context', specRevision: 'sha256:spec', dataRevision: 3, generation: 1, columns: ['region', 'target'], rows, completeness: rows.length ? 'complete' : 'empty' },
       ],
     },
-    status: { kind: 'ready' }, diagnostics: [], selection: [],
+    status: { kind: 'ready' }, diagnostics: [], selection: [], highlights: [],
   }
 }
 

@@ -67,6 +67,9 @@ func (s *Store) Claim(ctx context.Context, scope, digest, owner string, lease, l
 
 func (s *Store) Load(ctx context.Context, scope string) (Record, error) {
 	row, err := s.q.GetAPIIdempotencyRecord(ctx, scope)
+	if err == sql.ErrNoRows {
+		return Record{}, idempotency.ErrNotFound
+	}
 	if err != nil {
 		return Record{}, err
 	}

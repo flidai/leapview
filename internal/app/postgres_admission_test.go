@@ -113,6 +113,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	cfg.QueryCacheRuntimeMaxBytes = 4 << 20
 	cfg.QueryCacheNodeMaxEntries = 64
 	cfg.QueryCacheNodeMaxBytes = 16 << 20
+	cfg.JobExecutionTimeout = 24 * time.Hour
 	cfg.CSRFKey = strings.Repeat("c", 32)
 	cfg.TokenHashKey = strings.Repeat("t", 32)
 	cfg.MetricsBearerToken = strings.Repeat("m", 32)
@@ -146,8 +147,8 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	request.Host = "localhost"
 	response := httptest.NewRecorder()
 	target.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("fresh production readiness status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"runtime":"no_active_deployments"`) {
+		t.Fatalf("fresh production readiness status = %d, want %d with no_active_deployments; body=%s", response.Code, http.StatusServiceUnavailable, response.Body.String())
 	}
 	if err := target.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown production application: %v", err)

@@ -14,21 +14,6 @@ type DevelopView struct {
 	UpdatedAt            string
 }
 
-func FilterDevelopViews(projects []DevelopView, query string) []DevelopView {
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return projects
-	}
-	filtered := make([]DevelopView, 0, len(projects))
-	for _, project := range projects {
-		haystack := strings.ToLower(strings.Join([]string{project.ID, project.Title, project.Description}, " "))
-		if strings.Contains(haystack, query) {
-			filtered = append(filtered, project)
-		}
-	}
-	return filtered
-}
-
 type DevelopAssetView struct {
 	ID             string
 	SnapshotID     string
@@ -85,10 +70,6 @@ func DevelopEdgeViewFromCatalogRecord(row DevelopEdgeRecord) DevelopEdgeView {
 	}
 }
 
-func AssetHref(projectID, assetType, key string) string {
-	return AssetHrefForAsset(projectID, assetType, key, nil)
-}
-
 func AssetHrefForAsset(projectID, assetType, key string, payload map[string]any) string {
 	switch assetType {
 	case string(AssetTypeDashboard):
@@ -113,35 +94,6 @@ func dashboardRouteID(projectID, key string, payload map[string]any) string {
 		}
 	}
 	return key
-}
-
-func FilterAssets(assets []DevelopAssetView, typ, query string) []DevelopAssetView {
-	typ = strings.TrimSpace(typ)
-	query = strings.ToLower(strings.TrimSpace(query))
-	if typ == "" && query == "" {
-		return assets
-	}
-	out := make([]DevelopAssetView, 0, len(assets))
-	for _, asset := range assets {
-		if typ != "" && asset.Type != typ {
-			continue
-		}
-		haystack := strings.ToLower(asset.Type + " " + asset.Key + " " + asset.Title + " " + asset.Description)
-		if query != "" && !strings.Contains(haystack, query) {
-			continue
-		}
-		out = append(out, asset)
-	}
-	return out
-}
-
-func FilterProjectAssets(assets []DevelopAssetView, typ, query string) []DevelopAssetView {
-	typ = strings.TrimSpace(typ)
-	query = strings.TrimSpace(query)
-	if typ != "" || query != "" {
-		return FilterAssets(assets, typ, query)
-	}
-	return FilterProjectLandingAssets(assets, "", "")
 }
 
 // FilterProjectLandingAssets limits the project landing surface to assets

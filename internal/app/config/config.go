@@ -13,6 +13,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 	"github.com/flidai/leapview/internal/app/config/spec"
+	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -142,16 +143,8 @@ func (c Config) AzureConfigured() bool {
 	return c.AzureClientID != "" && c.AzureSecret != "" && c.AzureCallbackURL != ""
 }
 
-func (c Config) AzurePartiallyConfigured() bool {
-	return c.AzureClientID != "" || c.AzureSecret != "" || c.AzureCallbackURL != "" || c.AzureTenant != ""
-}
-
 func (c Config) OIDCConfigured() bool {
 	return c.OIDCIssuerURL != "" && c.OIDCClientID != "" && c.OIDCSecret != "" && c.OIDCCallbackURL != ""
-}
-
-func (c Config) OIDCPartiallyConfigured() bool {
-	return c.OIDCIssuerURL != "" || c.OIDCClientID != "" || c.OIDCSecret != "" || c.OIDCCallbackURL != "" || c.OIDCScopes != ""
 }
 
 func (c Config) OIDCScopesList() []string {
@@ -217,6 +210,9 @@ func (c Config) Validate(profile Profile) error {
 	if profile != ProfileServe {
 		return fmt.Errorf("unsupported configuration profile %q", profile)
 	}
+	if c.ManagedDataMaxFiles > manageddata.MaxManifestFiles {
+		return fmt.Errorf("LEAPVIEW_MANAGED_DATA_MAX_FILES must not exceed %d", manageddata.MaxManifestFiles)
+	}
 	listen, err := ParseListenAddr(c.ListenAddr())
 	if err != nil {
 		return err
@@ -235,6 +231,9 @@ func (c Config) Validate(profile Profile) error {
 	values[configspec.EnvLEAPVIEW_COOKIE_SECURE] = cookieSecure
 	if err := configspec.Validate(values); err != nil {
 		return err
+	}
+	if c.JobExecutionTimeout <= 0 {
+		return fmt.Errorf("LEAPVIEW_JOB_EXECUTION_TIMEOUT must be positive")
 	}
 	if err := c.WorkloadConfig().Validate(); err != nil {
 		return fmt.Errorf("invalid workload configuration: %w", err)

@@ -9,29 +9,29 @@ import (
 )
 
 func semanticAccessDocument(name, model, accessGrants string) []byte {
+	accessGrants = strings.ReplaceAll(accessGrants, "\n    canViewSales:", "\n  - name: canViewSales")
+	accessGrants = strings.ReplaceAll(accessGrants, "\n      ", "\n    ")
 	return []byte(fmt.Sprintf(`apiVersion: leapview.dev/v1
 kind: SemanticModel
 metadata: {id: semantic-model:sales, name: %s}
 spec:
   accessGrants:%s
   datasets:
-    orders:
-      model: %s
+  - name: orders
+    model: %s
+    requiredAccessGrants: [canViewSales]
+    accessFilters:
+      - {field: region, userAttribute: allowedRegions}
+    metrics:
+    - name: revenue
+      type: simple
+      agg: sum
       requiredAccessGrants: [canViewSales]
-      accessFilters:
-        - {field: region, userAttribute: allowedRegions}
   dimensions:
-    region:
-      datatype: String
-      bindings: {orders: {field: orders.region}}
-      requiredAccessGrants: [canViewSales]
-  metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      requiredAccessGrants: [canViewSales]
+  - name: region
+    datatype: String
+    bindings: [{dataset: orders, field: orders.region}]
+    requiredAccessGrants: [canViewSales]
 `, name, accessGrants, model))
 }
 
@@ -229,13 +229,28 @@ spec:
 
 	model := []byte(`apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata:
+  id: model:orders
+  name: orders
 spec:
-  definition: {type: direct, source: source:orders}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
-  fields: {order_id: {datatype: String}}
-  accessGrants: {canViewSales: {userAttribute: department, allowedValues: [sales]}}
+  definition:
+    type: direct
+    source: source:orders
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
+  fields:
+  - name: order_id
+    datatype: String
+  accessGrants:
+    canViewSales:
+      userAttribute: department
+      allowedValues:
+      - sales
 `)
 	if err := ValidateBytes(KindModel, "model.yaml", model); err == nil {
 		t.Fatal("Model accepted SemanticModel access policy fields")

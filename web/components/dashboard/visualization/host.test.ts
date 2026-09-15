@@ -27,12 +27,13 @@ function envelope(dataRevision: number, specRevision = 'sha256:spec', rendererID
       accessibility: { title: 'Revenue', description: 'Current revenue' },
       interactions: [],
       value: { dataset: 'primary', field: 'value' },
-      presentation: { trend: 'neutral' },
+      presentation: { mode: 'compact', delta: 'absolute', favorableDirection: 'neutral', missingComparison: 'show_unavailable', ranges: [] },
     },
     dataState: { kind: 'inline', specRevision, dataRevision, generation: 1, datasets: [] },
     selection: [],
     status: { kind: 'ready' },
     diagnostics: [],
+    highlights: [],
   }
 }
 
@@ -57,7 +58,7 @@ test('controller mounts lazily, rejects stale revisions, and disposes determinis
   let mounts = 0
   let disposals = 0
   const handle: RendererHandle = {
-    update: (_value, change) => updates.push(change),
+    update: (_value, change) => { updates.push(change) },
     resize: () => {},
     snapshot: async () => new Blob(),
     dispose: () => { disposals++ },
@@ -110,7 +111,7 @@ test('controller coalesces resize and applies the latest size after a lazy mount
 test('controller sends context-only changes without replacing visualization data', async () => {
   const updates: Change[] = []
   const handle: RendererHandle = {
-    update: (_value, change) => updates.push(change), resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
+    update: (_value, change) => { updates.push(change) }, resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
   }
   const registry = new RendererRegistry()
   registry.register({
@@ -164,7 +165,7 @@ test('controller disposes a failed update and remounts the same envelope on retr
 test('controller updates data when a loading envelope is populated at the same revision', async () => {
   const updates: Change[] = []
   const handle: RendererHandle = {
-    update: (_value, change) => updates.push(change), resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
+    update: (_value, change) => { updates.push(change) }, resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
   }
   const registry = new RendererRegistry()
   registry.register({
@@ -182,7 +183,7 @@ test('controller does not serialize an unchanged shared data frame for status-on
   const updates: Change[] = []
   let serializations = 0
   const handle: RendererHandle = {
-    update: (_value, change) => updates.push(change), resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
+    update: (_value, change) => { updates.push(change) }, resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
   }
   const registry = new RendererRegistry()
   registry.register({
@@ -207,7 +208,7 @@ test('controller does not serialize an unchanged shared data frame for status-on
 test('controller sends highlight-only changes so renderers can update and clear emphasis', async () => {
   const updates: Change[] = []
   const handle: RendererHandle = {
-    update: (_value, change) => updates.push(change), resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
+    update: (_value, change) => { updates.push(change) }, resize: () => {}, snapshot: async () => new Blob(), dispose: () => {},
   }
   const registry = new RendererRegistry()
   registry.register({

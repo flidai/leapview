@@ -151,6 +151,15 @@ func (d *APIGenDispatcher) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.R
 func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RemoveGroupMember(w, r)
 }
+func (d *APIGenDispatcher) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListProjectRoleBindingsParams) {
+	d.handler.ListProjectRoleBindings(w, r)
+}
+func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenCreateProjectRoleBindingHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.CreateProjectRoleBinding(w, r)
+}
 func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
 	d.handler.ListGroupSemanticAttributeAssignments(w, r)
 }
@@ -238,8 +247,8 @@ func (d *APIGenDispatcher) RestoreSemanticAttribute(w stdhttp.ResponseWriter, r 
 	}
 	d.handler.RestoreSemanticAttribute(w, r)
 }
-func (d *APIGenDispatcher) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ accessgen.GenListAuditEventsParams) {
-	d.handler.ListAuditEvents(w, r)
+func (d *APIGenDispatcher) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _, project string, _ accessgen.GenListAuditEventsParams) {
+	d.handler.ListAuditEventsForProject(w, r, project)
 }
 func (d *APIGenDispatcher) ListPlatformAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListPlatformAuditEventsParams) {
 	d.handler.ListPlatformAuditEvents(w, r)

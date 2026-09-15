@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestRegistryIncludesSupportedFormats(t *testing.T) {
 	expected := []string{"csv", "json", "parquet", "excel", "text", "blob", "vortex", "delta", "iceberg", "lance"}
@@ -84,15 +87,7 @@ func TestRegistrySpecializedCapabilities(t *testing.T) {
 }
 
 func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func TestRegistryConnectionAuthPolicy(t *testing.T) {

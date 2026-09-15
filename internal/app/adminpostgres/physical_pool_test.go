@@ -58,6 +58,23 @@ func testCatalogUpgradeConfig(t *testing.T) config.Config {
 	}
 }
 
+func TestPhysicalPoolS3ConfigResolvesOnlyTheConfiguredEncryptionReference(t *testing.T) {
+	cfg := physicalPoolS3Config(config.Config{
+		ObjectStoreS3EncryptionKeyRef:      "pool-key",
+		ObjectStoreS3EncryptionProviderKey: "arn:aws:kms:us-east-1:123456789012:key/provider-key",
+	}, nil)
+	got, err := cfg.ResolveEncryptionKey(t.Context(), "pool-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "arn:aws:kms:us-east-1:123456789012:key/provider-key"; got != want {
+		t.Fatalf("resolved provider key = %q, want %q", got, want)
+	}
+	if _, err := cfg.ResolveEncryptionKey(t.Context(), "another-key"); err == nil {
+		t.Fatal("unconfigured physical-pool encryption reference unexpectedly resolved")
+	}
+}
+
 func TestProductionPhysicalPoolBootstrapDryRunStaysReadOnly(t *testing.T) {
 	request := testNativePoolBootstrapRequest(t, false)
 	called, locked := false, false

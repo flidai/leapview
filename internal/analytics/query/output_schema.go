@@ -280,21 +280,30 @@ func (p *Planner) physicalOutputNullability(lineage planir.PhysicalLineage) Outp
 
 func deriveAggregateOutput(node planir.AggregateMetrics, input map[string]derivedOutputField) map[string]derivedOutputField {
 	states := make(map[string]derivedOutputField, len(node.GroupBy)+len(node.Metrics))
-	for _, name := range node.GroupBy {
+	for index, name := range node.GroupBy {
+		identity := name
+		if index < len(node.GroupByAliases) && node.GroupByAliases[index] != "" {
+			identity = node.GroupByAliases[index]
+		}
 		state, ok := input[name]
 		if !ok {
 			state = derivedOutputField{logicalType: logicalTypeFromMeta(node.NodeMeta, name), nullability: OutputNullabilityUnknown}
 		}
-		states[name] = state
+		state.logicalType = logicalTypeFromMeta(node.NodeMeta, identity)
+		states[identity] = state
 	}
 	for _, bucket := range node.TimeBuckets {
+		identity := bucket.Group
+		if identity == "" {
+			identity = bucket.Field
+		}
 		state, ok := input[bucket.Field]
 		if !ok {
 			state = derivedOutputField{nullability: OutputNullabilityUnknown}
 		}
-		state.logicalType = logicalTypeFromMeta(node.NodeMeta, bucket.Field)
+		state.logicalType = logicalTypeFromMeta(node.NodeMeta, identity)
 		state.provenance.transformation = "time_bucket"
-		states[bucket.Field] = state
+		states[identity] = state
 	}
 	for _, metric := range node.Metrics {
 		states[metric.Name] = derivedOutputField{

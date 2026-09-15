@@ -163,8 +163,8 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
     await page.goto(`${baseURL}/upgraded-shell`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const identity = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       return {
         navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
         name: root.querySelector('.brand .name')?.textContent?.trim(),
@@ -190,10 +190,10 @@ test('app shell renders custom identity with permanent LeapView attribution', as
     await page.goto(`${baseURL}/upgraded-shell`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const identity = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       sidebar.config = { ...sidebar.config, productName: 'Northstar Analytics', productLogoUrl: '/instance-logo.png' }
       await sidebar.updateComplete
-      const root = sidebar.shadowRoot!
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       return {
         navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
         name: root.querySelector('.brand .name')?.textContent?.trim(),
@@ -220,16 +220,16 @@ test('app dashboard routes suppress the main sidebar', async () => {
     await page.goto(`${baseURL}/dashboard-shell`)
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement | null
-      return shell?.hasAttribute('data-dashboard') && !shell.shadowRoot?.querySelector('lv-sidebar')
+      return shell?.hasAttribute('data-dashboard') && !(shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar')
     })
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const main = element.shadowRoot.querySelector('main') as HTMLElement
+      const main = (element.shadowRoot as ShadowRoot).querySelector('main') as HTMLElement
       const shellRect = element.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
       return {
         dashboard: element.hasAttribute('data-dashboard'),
-        sidebarCount: element.shadowRoot.querySelectorAll('lv-sidebar').length,
+        sidebarCount: (element.shadowRoot as ShadowRoot).querySelectorAll('lv-sidebar').length,
         columns: getComputedStyle(element).gridTemplateColumns,
         mainLeft: Math.round(mainRect.left),
         mainWidth: Math.round(mainRect.width),
@@ -256,9 +256,9 @@ test('main sidebar keeps the product toggle in the upper-right and utility actio
     await page.goto(`${baseURL}/sidebar-active-nav`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       await sidebar.updateComplete
-      const root = sidebar.shadowRoot!
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const search = root.querySelector('.search-button') as HTMLButtonElement
       const collapse = root.querySelector('.collapse-button') as HTMLButtonElement
       const actions = root.querySelector('.footer-actions') as HTMLElement | null
@@ -337,7 +337,7 @@ test('product search uses one modal for the sidebar action and Command-K', async
     await page.locator('lv-sidebar .search-button').click()
     const search = page.locator('lv-product-search')
     await search.locator('dialog[open]').waitFor()
-    expect(await search.locator('input[type="search"]').evaluate((input) => input === input.getRootNode().activeElement)).toBe(true)
+    expect(await search.locator('input[type="search"]').evaluate((input) => input === (input.getRootNode() as Document).activeElement)).toBe(true)
     expect(await search.locator('[role="dialog"]').getAttribute('aria-label')).toBe('Search LeapView')
     expect(await search.locator('.result').count()).toBe(0)
     expect(await search.locator('.empty').textContent()).toContain('Search dashboards, models, sources, connections, semantic models, and pipelines')
@@ -351,14 +351,14 @@ test('product search uses one modal for the sidebar action and Command-K', async
     await page.keyboard.press('Escape')
     await page.waitForTimeout(100)
     const escapeState = await page.locator('lv-app-shell').evaluate((shell: any) => {
-      const search = shell.shadowRoot.querySelector('lv-product-search') as any
-      return { shellOpen: shell.productSearchOpen, searchOpen: search.open, dialogOpen: search.shadowRoot.querySelector('dialog').open }
+      const search = (shell.shadowRoot as ShadowRoot).querySelector('lv-product-search') as any
+      return { shellOpen: shell.productSearchOpen, searchOpen: search.open, dialogOpen: ((search.shadowRoot as ShadowRoot).querySelector('dialog') as any).open }
     })
     expect(escapeState).toEqual({ shellOpen: false, searchOpen: false, dialogOpen: false })
 
     await page.keyboard.press('Control+k')
     await search.locator('dialog[open]').waitFor()
-    expect(await search.locator('input[type="search"]').evaluate((input) => input === input.getRootNode().activeElement)).toBe(true)
+    expect(await search.locator('input[type="search"]').evaluate((input) => input === (input.getRootNode() as Document).activeElement)).toBe(true)
     await page.keyboard.press('Escape')
 
     await page.keyboard.press('Meta+k')
@@ -380,9 +380,9 @@ test('desktop sidebar shares its accessible persisted width with admin routes', 
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
 
     const initial = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       await sidebar.updateComplete
-      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      const handle = (sidebar.shadowRoot as ShadowRoot).querySelector('.resize-handle') as HTMLElement
       handle.focus()
       handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
       await sidebar.updateComplete
@@ -409,8 +409,8 @@ test('desktop sidebar shares its accessible persisted width with admin routes', 
     })
 
     const handleBox = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const handle = sidebar.shadowRoot!.querySelector('.resize-handle') as HTMLElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const handle = (sidebar.shadowRoot as ShadowRoot)!.querySelector('.resize-handle') as HTMLElement
       const box = handle.getBoundingClientRect()
       return { x: box.x, y: box.y, width: box.width, height: box.height }
     })
@@ -466,8 +466,8 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
 
     const state = await shellGeometry(page)
     const compactIdentity = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const trigger = root.querySelector('.collapsed-trigger') as HTMLButtonElement | null
       const triggerRect = trigger?.getBoundingClientRect()
       return {
@@ -524,8 +524,8 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
       return shell.shadowRoot?.querySelector('lv-sidebar')?.hasAttribute('data-peeking')
     })
     const peek = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const aside = root.querySelector('aside') as HTMLElement
       const nav = root.querySelector('nav') as HTMLElement
       const brand = root.querySelector('.brand') as HTMLElement
@@ -560,20 +560,20 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
     await page.mouse.move(900, 400)
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
-      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
       return !sidebar.hasAttribute('data-peeking')
-        && (sidebar.shadowRoot?.querySelector('.sidebar-content') as HTMLElement)?.inert
+        && ((sidebar.shadowRoot as ShadowRoot)?.querySelector('.sidebar-content') as HTMLElement)?.inert
     })
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
-      const button = sidebar.shadowRoot.querySelector('.collapsed-trigger') as HTMLButtonElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
+      const button = (sidebar.shadowRoot as ShadowRoot).querySelector('.collapsed-trigger') as HTMLButtonElement
       button.click()
       await sidebar.updateComplete
     })
     const expanded = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const button = root.querySelector('.collapse-button') as HTMLButtonElement
       return {
         width: Math.round(sidebar.getBoundingClientRect().width),
@@ -671,7 +671,7 @@ test('collapsed main sidebar keeps peeking across navigation while the pointer r
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
-      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
       return sidebar?.hasAttribute('data-collapsed') && sidebar.hasAttribute('data-peeking')
     })
 
@@ -687,7 +687,7 @@ test('collapsed main sidebar keeps peeking across navigation while the pointer r
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     await page.waitForTimeout(100)
     expect(await page.locator('lv-app-shell').evaluate((shell: any) => {
-      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
       return sidebar?.hasAttribute('data-collapsed') && sidebar.hasAttribute('data-peeking')
     })).toBe(true)
   } finally {
@@ -742,10 +742,10 @@ test('mobile navigation opens in an accessible drawer', async () => {
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       const nav = root.querySelector('nav') as HTMLElement
-      const main = element.shadowRoot.querySelector('main') as HTMLElement
+      const main = (element.shadowRoot as ShadowRoot).querySelector('main') as HTMLElement
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
       const sidebarBox = sidebar.getBoundingClientRect()
       const mainBox = main.getBoundingClientRect()
@@ -760,7 +760,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
           expanded: menuButton.getAttribute('aria-expanded'),
         },
         mobileHeader: {
-          display: getComputedStyle(root.querySelector('.mobile-header')).display,
+          display: getComputedStyle(root.querySelector('.mobile-header')!).display,
           width: Math.round((root.querySelector('.mobile-header') as HTMLElement).getBoundingClientRect().width),
           height: Math.round((root.querySelector('.mobile-header') as HTMLElement).getBoundingClientRect().height),
           title: root.querySelector('.mobile-header-title')?.textContent?.trim() ?? null,
@@ -789,8 +789,8 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(state.sidebarContentInert).toBe(false)
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as TestDomElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       ;(root.querySelector('.mobile-menu-button') as HTMLButtonElement).click()
       await sidebar.updateComplete
     })
@@ -803,8 +803,8 @@ test('mobile navigation opens in an accessible drawer', async () => {
     })
 
     const openState = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as TestDomElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       const nav = root.querySelector('nav') as HTMLElement
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
       const drawerHeader = root.querySelector('.mobile-drawer-header') as HTMLElement
@@ -904,14 +904,14 @@ test('mobile navigation opens in an accessible drawer', async () => {
     })
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
-      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
-      const nav = sidebar.shadowRoot?.querySelector('nav') as HTMLElement
+      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
+      const nav = (sidebar.shadowRoot as ShadowRoot)?.querySelector('nav') as HTMLElement
       return getComputedStyle(nav).visibility === 'hidden'
     })
 
     const closedState = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       const nav = root.querySelector('nav') as HTMLElement
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
       const main = element.shadowRoot.querySelector('main') as HTMLElement
@@ -936,6 +936,287 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
+test('chat inline hover actions support pinning without navigating the row', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+  })
+  const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
+  await row.hover()
+  expect(await row.getByRole('button').count()).toBe(3)
+  expect(await page.getByRole('menu').count()).toBe(0)
+  await row.getByRole('button', { name: 'Pin chat', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
+  expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  await page.close()
+})
+
+test('chat deletion requires confirmation and cancel sends no command', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } }))
+  })
+  await page.getByRole('dialog', { name: 'Delete chat?' }).waitFor()
+  expect(await page.getByRole('dialog').textContent()).toContain('Inventory status')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions)).toEqual([])
+  await page.close()
+})
+
+test('archive persists before showing five-second Undo and waits for cancellation acknowledgement', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('archive_pending')
+    expect(await page.getByRole('button', { name: 'Undo', exact: true }).count()).toBe(0)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    })
+    await page.getByRole('status').filter({ hasText: 'Archived chat' }).waitFor()
+    expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!)[0].deadline - Date.now())).toBeGreaterThan(4_000)
+    await page.locator('button.undo').click()
+    expect(await page.evaluate(() => (window as any).chatActions.map((a: any) => a.action))).toEqual(['archive_pending', 'undo'])
+    expect(await page.evaluate(() => (window as any).chatActions[0].requestId === (window as any).chatActions[1].requestId)).toBe(true)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[1].requestId, message: 'Conversation action canceled.', archivedConversations: [] } })
+    })
+    await page.getByRole('status').filter({ hasText: 'Conversation action canceled.' }).waitFor()
+    expect(await page.evaluate(() => sessionStorage.getItem('lv-chat-manager.pending-undo'))).toBeNull()
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat actions keep independent Undo notifications without waiting for the first window', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.waitForFunction(() => (window as any).chatActions.length === 1)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    })
+    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+
+    await page.evaluate(() => {
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete', conversationId: 'c2', title: 'Inventory status' } }))
+    })
+    await page.getByRole('dialog', { name: 'Delete chat?' }).waitFor()
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    await page.waitForFunction(() => (window as any).chatActions.length === 2)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'delete_pending', completedRequestId: (window as any).chatActions[1].requestId, undoDeadline: new Date(Date.now() + 5_000).toISOString(), archivedConversations: [] } })
+    })
+
+    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    expect(await page.locator('button.undo').count()).toBe(2)
+    expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('lv-chat-manager.pending-undo')!).length)).toBe(2)
+    expect(await page.locator('a[href="/chats/c1"], a[href="/chats/c2"]').count()).toBe(0)
+
+    await page.locator('button.undo[data-conversation-id="c1"]').click()
+    await page.waitForFunction(() => (window as any).chatActions.length === 3)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'undo', completedRequestId: (window as any).chatActions[2].requestId, message: '', archivedConversations: [] } })
+    })
+
+    await page.locator('button.undo[data-conversation-id="c2"]').waitFor()
+    expect(await page.locator('button.undo').count()).toBe(1)
+    expect(await page.locator('a[href="/chats/c1"]').count()).toBe(1)
+    expect(await page.locator('a[href="/chats/c2"]').count()).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('expired chat Undo refreshes the sidebar before releasing its temporary hide', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      ;(window as any).managementLoads = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-management-load', (event: Event) => (window as any).managementLoads.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.waitForFunction(() => (window as any).chatActions.length === 1)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    })
+    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.waitForFunction(() => (window as any).managementLoads.length > 0)
+
+    const duringRefresh = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      return {
+        refreshRequested: Boolean(manager.pending),
+        hidden: !sidebar.shadowRoot.querySelector('a[href="/chats/c1"]'),
+      }
+    })
+    expect(duringRefresh).toEqual({ refreshRequested: true, hidden: true })
+
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager')
+      document.dispatchEvent(new CustomEvent('datastar-fetch', {
+        detail: { type: 'error', el: manager, argsRaw: { status: 503 } },
+      }))
+    })
+    await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
+    const afterFailure = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      return {
+        refreshPending: Boolean(manager.pending),
+        visible: Boolean(sidebar.shadowRoot.querySelector('a[href="/chats/c1"]')),
+      }
+    })
+    expect(afterFailure).toEqual({ refreshPending: false, visible: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('expired chat refresh keeps the current focus when the sidebar read succeeds', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.locator('lv-chat-manager').waitFor({ state: 'attached' })
+    await page.evaluate(() => {
+      sessionStorage.removeItem('lv-chat-manager.pending-undo')
+      ;(window as any).chatActions = []
+      ;(window as any).managementLoads = []
+      document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+      document.addEventListener('lv-chat-management-load', (event: Event) => (window as any).managementLoads.push((event as CustomEvent).detail))
+      document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'archive', conversationId: 'c1', title: 'Revenue check' } }))
+    })
+    await page.waitForFunction(() => (window as any).chatActions.length === 1)
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      runtime.mergePatch({ chatManagement: { action: 'archive_pending', completedRequestId: (window as any).chatActions[0].requestId, undoDeadline: new Date(Date.now() + 40).toISOString(), archivedConversations: [] } })
+    })
+    await page.locator('button.undo[data-conversation-id="c1"]').waitFor()
+    await page.waitForFunction(() => (window as any).managementLoads.length > 0)
+    await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      ;(sidebar.shadowRoot.querySelector('a[href="/"]') as HTMLElement).focus()
+    })
+
+    await page.evaluate(async () => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const requestId = (window as any).managementLoads.at(-1).requestId
+      runtime.mergePatch({ chatManagement: { action: '', completedRequestId: requestId, archivedConversations: [] } })
+    })
+    await page.locator('lv-chat-manager').evaluate((element: any) => element.updateComplete)
+    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const manager = element.shadowRoot.querySelector('lv-chat-manager') as any
+      return {
+        focusHref: sidebar.shadowRoot.activeElement?.getAttribute('href'),
+        managerOpen: manager.opened,
+        refreshPending: Boolean(manager.pending),
+      }
+    })
+    expect(state).toEqual({ focusHref: '/', managerOpen: false, refreshPending: false })
+  } finally {
+    await page.close()
+  }
+})
+
+test('archived chat manager restores a saved chat and waits for server acknowledgement', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    (window as any).chatActions = []
+    document.addEventListener('lv-chat-management-load', (event: Event) => { (window as any).loadID = (event as CustomEvent).detail.requestId })
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-settings-open'))
+  })
+  await page.getByRole('dialog', { name: 'Archived chats' }).waitFor()
+  await page.waitForFunction(() => Boolean((window as any).loadID))
+  await page.evaluate(async () => {
+    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    runtime.mergePatch({ chatManagement: { action: '', conversationId: '', completedRequestId: (window as any).loadID, archivedConversations: [{ id: 'archived-1', title: 'Last quarter', status: 'archived' }] } })
+  })
+  await page.getByRole('button', { name: 'Restore Last quarter', exact: true }).click()
+  expect(await page.evaluate(() => (window as any).chatActions[0].action)).toBe('restore')
+  await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
+  await page.evaluate(async () => {
+    const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+    runtime.mergePatch({ chatManagement: { action: 'restore', completedRequestId: (window as any).chatActions[0].requestId, archivedConversations: [], message: 'Chat restored.' } })
+  })
+  await page.getByText('No archived chats yet.', { exact: true }).waitFor()
+  await page.close()
+})
+
+test('chat management network failure unlocks the dialog without handling unrelated requests', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-settings-open')))
+  await page.getByRole('status').filter({ hasText: 'Loading' }).waitFor()
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } })))
+  expect(await page.getByRole('button', { name: 'Close', exact: true }).isDisabled()).toBe(true)
+  await page.evaluate(() => document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.querySelector('lv-app-shell'), argsRaw: { status: 503 } } })))
+  await page.getByRole('alert').filter({ hasText: 'temporarily unavailable' }).waitFor()
+  expect(await page.getByRole('button', { name: 'Close', exact: true }).isEnabled()).toBe(true)
+  await page.getByRole('button', { name: 'Close', exact: true }).click()
+  await page.close()
+})
+
+test('chat history can be hidden and reopened with mouse and keyboard without losing updates', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    const heading = page.locator('summary.history-label')
+    await heading.waitFor({ timeout: 2000 })
+    const history = page.locator('details.history')
+    await heading.click()
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    expect(await page.getByRole('link', { name: 'Revenue check', exact: true }).isVisible()).toBe(false)
+    await page.locator('lv-sidebar').evaluate(async (sidebar: any) => {
+      sidebar.config = { ...sidebar.config, history: { ...sidebar.config.history, items: sidebar.config.history.items.map((item: any) => item.id === 'c1' ? { ...item, title: 'Updated revenue check' } : item) } }
+      await sidebar.updateComplete
+    })
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    await heading.focus()
+    await page.keyboard.press('Enter')
+    await page.getByRole('link', { name: 'Updated revenue check', exact: true }).waitFor()
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(true)
+    await page.keyboard.press('Space')
+    expect(await history.evaluate((element: HTMLDetailsElement) => element.open)).toBe(false)
+    expect(await page.getByRole('link', { name: 'New chat', exact: true }).isVisible()).toBe(true)
+    expect(new URL(page.url()).pathname).toBe('/sidebar-history')
+  } finally {
+    await page.close()
+  }
+})
+
 test('sidebar renders global chat action and recent history', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -944,8 +1225,8 @@ test('sidebar renders global chat action and recent history', async () => {
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       return {
         links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
           href: link.getAttribute('href'),
@@ -1046,8 +1327,8 @@ test('sidebar active nav item uses a full-row highlight without selector rail', 
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)
       const active = root.querySelector('a[href="/sources"]') as HTMLElement
       const icon = active.querySelector('.nav-icon') as HTMLElement
       const style = getComputedStyle(active)
@@ -1094,10 +1375,18 @@ test('admin sidebar replaces global navigation and provides a back to app action
       return sidebar?.hasAttribute('data-admin') && Math.round(sidebar.getBoundingClientRect().width) === 248
     })
 
-    const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+    const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
+      const pendingIdentity = document.createElement('lv-sidebar') as any
+      pendingIdentity.config = { productName: 'LeapView', groups: [] }
+      document.body.append(pendingIdentity)
+      await pendingIdentity.updateComplete
       return {
+        pendingIdentity: {
+          hasLocalUser: pendingIdentity.shadowRoot.textContent.includes('Local user'),
+          loadingColumn: getComputedStyle(pendingIdentity.shadowRoot.querySelector('.user-name')).gridColumn,
+        },
         adminMode: sidebar.hasAttribute('data-admin'),
         width: Math.round(sidebar.getBoundingClientRect().width),
         links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
@@ -1180,29 +1469,30 @@ test('admin sidebar replaces global navigation and provides a back to app action
     expect(state.hasNavPrimaryAction).toBe(false)
     expect(state.hasHistory).toBe(false)
     expect(state.hasThemeToggle).toBe(false)
+    expect(state.pendingIdentity).toEqual({ hasLocalUser: false, loadingColumn: '1 / -1' })
     expect(state.currentUser).toEqual({
       title: 'Ada Lovelace', name: 'Ada Lovelace', initials: '',
       avatarSrc: '/profile/avatars/ada/avatar-digest', role: 'Platform admin',
     })
 
     const updatedAvatarSrc = await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
       document.dispatchEvent(new CustomEvent('leapview-avatar-change', { detail: { url: '/profile/avatars/ada/new-digest' } }))
       await sidebar.updateComplete
-      return (sidebar.shadowRoot!.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src')
+      return ((sidebar.shadowRoot as ShadowRoot)!.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src')
     })
     expect(updatedAvatarSrc).toBe('/profile/avatars/ada/new-digest')
 
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
-      const input = sidebar.shadowRoot!.querySelector('.brand .sidebar-search input') as HTMLInputElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement & { updateComplete: Promise<unknown> }
+      const input = (sidebar.shadowRoot as ShadowRoot)!.querySelector('.brand .sidebar-search input') as HTMLInputElement
       input.value = 'storage'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await sidebar.updateComplete
     })
     const filtered = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       return {
         groupLabels: Array.from(root.querySelectorAll('.nav-group:not(.primary-action)')).map((group) => group.getAttribute('aria-label')),
         links: Array.from(root.querySelectorAll('#mobile-navigation a[href^="/admin/"]')).map((link) => link.getAttribute('href')),
@@ -1247,8 +1537,8 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(developState.areaIconDisplay).toBe('grid')
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      ;(sidebar.shadowRoot!.querySelector('.area-item[aria-label="Insights"]') as HTMLAnchorElement).click()
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      ;((sidebar.shadowRoot as ShadowRoot)!.querySelector('.area-item[aria-label="Insights"]') as HTMLAnchorElement).click()
     })
     await page.waitForURL(`${baseURL}/`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
@@ -1259,8 +1549,8 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(insightsState.visibleGroupLabels).toEqual([])
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      ;(sidebar.shadowRoot!.querySelector('.area-item[aria-label="Develop"]') as HTMLAnchorElement).click()
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      ;((sidebar.shadowRoot as ShadowRoot)!.querySelector('.area-item[aria-label="Develop"]') as HTMLAnchorElement).click()
     })
     await page.waitForURL(`${baseURL}/sidebar-active-nav`)
   } finally {
@@ -1295,8 +1585,8 @@ test('insights and develop navigation expose the stable route contract with grou
     await page.goto(`${baseURL}/sidebar-active-nav`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const navigationState = () => page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const links = (group: string) => Array.from(root.querySelectorAll(`#mobile-navigation .nav-group[aria-label="${group}"] a`)).map((link: Element) => ({
         label: link.textContent?.trim(), href: link.getAttribute('href'),
         icon: link.querySelector('svg')?.innerHTML ?? '',
@@ -1350,8 +1640,8 @@ test('admin sidebar keeps chrome fixed while only navigation items scroll', asyn
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const aside = root.querySelector('aside') as HTMLElement
       const nav = root.querySelector('nav') as HTMLElement
       const header = root.querySelector('.brand') as HTMLElement
@@ -1390,8 +1680,8 @@ test('desktop page content scrolls without moving the sidebar', async () => {
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
     const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
       await element.updateComplete
-      const main = element.shadowRoot.querySelector('main') as HTMLElement
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const main = (element.shadowRoot as ShadowRoot).querySelector('main') as HTMLElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
       const pageContent = element.querySelector('[slot="page"]') as HTMLElement
       pageContent.style.minHeight = '1200px'
       const sidebarTopBefore = Math.round(sidebar.getBoundingClientRect().top)
@@ -1446,8 +1736,8 @@ test('mobile admin sidebar uses the same compact rail without a page header', as
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const root = sidebar.shadowRoot!
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const root = (sidebar.shadowRoot as ShadowRoot)!
       const header = root.querySelector('.mobile-header') as HTMLElement
       const menu = root.querySelector('.mobile-menu-button') as HTMLButtonElement
       return {
@@ -1508,6 +1798,37 @@ test('active chat history item navigates to its conversation', async () => {
   }
 })
 
+test('pinned pending chat keeps its icon, title, and spinner on one row', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const geometry = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
+      await sidebar.updateComplete
+      const link = (sidebar.shadowRoot as ShadowRoot).querySelector('a[href="/chats/c3"]') as HTMLElement
+      const children = Array.from(link.children) as HTMLElement[]
+      return {
+        columns: getComputedStyle(link).gridTemplateColumns.split(' ').length,
+        linkHeight: Math.round(link.getBoundingClientRect().height),
+        childCenters: children.map((child) => {
+          const rect = child.getBoundingClientRect()
+          return Math.round(rect.top + rect.height / 2)
+        }),
+        titleWidth: Math.round((link.querySelector('.history-title') as HTMLElement).getBoundingClientRect().width),
+      }
+    })
+
+    expect(geometry.columns).toBe(3)
+    expect(Math.max(...geometry.childCenters) - Math.min(...geometry.childCenters)).toBeLessThanOrEqual(2)
+    expect(geometry.linkHeight).toBeLessThanOrEqual(44)
+    expect(geometry.titleWidth).toBeGreaterThan(80)
+  } finally {
+    await page.close()
+  }
+})
+
 test('app shell reads chrome from Datastar signals without a payload attribute', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -1517,11 +1838,11 @@ test('app shell reads chrome from Datastar signals without a payload attribute',
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     const state = await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as any
       return {
         hasChromeAttr: element.hasAttribute('chrome'),
         active: element.chrome.sidebar.active,
-        text: sidebar.shadowRoot.textContent.replace(/\s+/g, ' ').trim(),
+        text: (sidebar.shadowRoot as ShadowRoot).textContent.replace(/\s+/g, ' ').trim(),
       }
     })
 
@@ -1541,8 +1862,8 @@ test('app shell routes retargeted sidebar clicks to the visual link', async () =
     await page.locator('lv-app-shell').evaluate((element: any) => element.updateComplete)
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
-      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-      const link = sidebar.shadowRoot.querySelector('a[href="/chats/c1"]') as HTMLElement
+      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+      const link = (sidebar.shadowRoot as ShadowRoot).querySelector('a[href="/chats/c1"]') as HTMLElement
       const rect = link.getBoundingClientRect()
       element.dispatchEvent(new MouseEvent('click', {
         bubbles: true,
@@ -1565,8 +1886,8 @@ async function shellGeometry(page: any) {
   return await page.evaluate(() => {
     const shell = document.querySelector('lv-app-shell') as HTMLElement
     const route = document.querySelector('lv-route-page') as HTMLElement
-    const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
-    const shellMain = shell.shadowRoot?.querySelector('main') as HTMLElement
+    const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
+    const shellMain = (shell.shadowRoot as ShadowRoot)?.querySelector('main') as HTMLElement
     const box = (element?: HTMLElement | null) => {
       if (!element) return null
       const rect = element.getBoundingClientRect()
@@ -1679,6 +2000,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         items: [
           { id: 'c1', title: 'Revenue check', href: '/chats/c1', active: true, pending: true },
           { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
+          { id: 'c3', title: 'Pinned title loading', href: '/chats/c3', pending: true, pinned: true },
         ],
       } : undefined,
       groups: admin ? [
@@ -1791,8 +2113,8 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
 
 async function sidebarAreaState(page: import('@playwright/test').Page) {
   return page.locator('lv-app-shell').evaluate((element: any) => {
-    const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-    const root = sidebar.shadowRoot!
+    const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+    const root = (sidebar.shadowRoot as ShadowRoot)!
     return {
       area: sidebar.getAttribute('data-area'),
       areas: Array.from(root.querySelectorAll('.brand .area-item')).map((item) => ({
@@ -1847,8 +2169,8 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
 
 async function sidebarAlignment(page: import('@playwright/test').Page) {
   return page.locator('lv-app-shell').evaluate((element: any) => {
-    const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
-    const root = sidebar.shadowRoot!
+    const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
+    const root = (sidebar.shadowRoot as ShadowRoot)!
     const center = (target: Element | null): number => {
       const box = (target as HTMLElement).getBoundingClientRect()
       return box.left + box.width / 2

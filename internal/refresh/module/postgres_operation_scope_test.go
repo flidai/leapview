@@ -11,8 +11,9 @@ import (
 func TestRefreshOperationScopeIsBoundedAndSeparated(t *testing.T) {
 	project := strings.Repeat("p", 255)
 	environment := strings.Repeat("e", 128)
-	scope := refreshOperationScope(project, environment)
-	if len(scope) > 255 || scope == refreshOperationScope(project, environment+"x") || scope == refreshOperationScope(project+"x", environment) {
+	generation := strings.Repeat("g", 128)
+	scope := refreshOperationScope(project, environment, generation)
+	if len(scope) > 255 || scope == refreshOperationScope(project, environment+"x", generation) || scope == refreshOperationScope(project+"x", environment, generation) || scope == refreshOperationScope(project, environment, generation+"x") {
 		t.Fatalf("scope is not bounded/separated: %q", scope)
 	}
 }

@@ -94,8 +94,12 @@ func successorDatabase(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, string) {
 func successorGolden(t *testing.T, name string) (successor.RecoverySet3, successor.Evidence, map[string][]byte) {
 	t.Helper()
 	docs := make(map[string][]byte)
-	for _, part := range []string{"set", "manifest", "anchor", "profiles", "receipt", "authority"} {
-		raw, err := os.ReadFile(filepath.Join("..", "successor", "testdata", "frozen", name+"-"+part+".json"))
+	for _, part := range []string{"set", "manifest", "anchor", "profiles", "core", "receipt", "authority"} {
+		filePart := part
+		if part == "core" {
+			filePart = "receipt-core"
+		}
+		raw, err := os.ReadFile(filepath.Join("..", "successor", "testdata", "frozen", name+"-"+filePart+".json"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,6 +124,15 @@ func successorGolden(t *testing.T, name string) (successor.RecoverySet3, success
 	receipt, err := successor.ParseReceipt(docs["receipt"])
 	if err != nil {
 		t.Fatal(err)
+	}
+	core, err := successor.ParseReceiptCore(docs["core"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	coreDigest, coreErr := core.Digest()
+	receiptCoreDigest, receiptCoreErr := receipt.Core.Digest()
+	if coreErr != nil || receiptCoreErr != nil || coreDigest != receiptCoreDigest {
+		t.Fatalf("capture core fixture does not match receipt: core=%v receipt=%v", coreErr, receiptCoreErr)
 	}
 	authority, err := successor.ParseAuthorityRegistry(docs["authority"])
 	if err != nil {

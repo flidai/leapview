@@ -6,7 +6,7 @@ Use a pivot for a compact cross-tab with one row dimension, one column dimension
 
 ```yaml visual-example=category_pivot
 visuals:
-  category_pivot:
+  - id: category_pivot
     type: pivot
     title: Order count by category and status
     query:

@@ -3,7 +3,6 @@ package stream
 import (
 	"reflect"
 	"sync"
-	"time"
 
 	"github.com/flidai/leapview/pkg/pagestream"
 )
@@ -18,33 +17,58 @@ type Envelope struct {
 // DeliveryMetadata defines dashboard refresh ordering and coalescing.
 // Generation zero means the message is not generation scoped.
 type DeliveryMetadata struct {
-	Generation    uint64
-	Boundary      bool
-	CoalesceGroup string
-	MergeRoots    []string
+	Generation              uint64
+	SequenceKey             string
+	Sequence                uint64
+	Boundary                bool
+	PreservePriorGeneration bool
+	CoalesceGroup           string
+	MergeRoots              []string
 }
 
 // DeliveryBroker fans dashboard refresh envelopes out to subscribers while
 // rejecting stale generations and coalescing explicitly compatible results.
 type DeliveryBroker struct {
-	mu      sync.Mutex
-	clients map[string]map[*deliverySubscription]struct{}
+	mu           sync.Mutex
+	pendingLimit int
+	clients      map[string]map[*deliverySubscription]struct{}
 }
 
 type deliverySubscription struct {
-	mu            sync.Mutex
-	pending       []Envelope
-	generation    uint64
-	hasGeneration bool
-	closed        bool
-	out           chan pagestream.SignalPatch
-	wake          chan struct{}
-	done          chan struct{}
-	once          sync.Once
+	mu                sync.Mutex
+	pending           []queuedEnvelope
+	pendingLimit      int
+	generation        uint64
+	hasGeneration     bool
+	sequences         map[string]uint64
+	nextID            uint64
+	generationChanged chan struct{}
+	closed            bool
+	out               chan pagestream.SignalPatch
+	wake              chan struct{}
+	done              chan struct{}
+	once              sync.Once
+	detach            func()
+}
+
+type queuedEnvelope struct {
+	id       uint64
+	version  uint64
+	changed  chan struct{}
+	envelope Envelope
 }
 
 func NewDeliveryBroker() *DeliveryBroker {
-	return &DeliveryBroker{clients: map[string]map[*deliverySubscription]struct{}{}}
+	return NewDeliveryBrokerWithPendingLimit(256)
+}
+
+// NewDeliveryBrokerWithPendingLimit bounds each subscriber's pending
+// envelopes. A slow subscriber is disconnected once this mailbox is full.
+func NewDeliveryBrokerWithPendingLimit(pendingLimit int) *DeliveryBroker {
+	if pendingLimit < 1 {
+		panic("dashboard stream delivery pending limit must be positive")
+	}
+	return &DeliveryBroker{pendingLimit: pendingLimit, clients: map[string]map[*deliverySubscription]struct{}{}}
 }
 
 func (b *DeliveryBroker) Subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
@@ -60,9 +84,22 @@ func (b *DeliveryBroker) SubscribeForPublication(publicationID, streamID string)
 
 func (b *DeliveryBroker) subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
 	subscription := &deliverySubscription{
-		out:  make(chan pagestream.SignalPatch, 1),
-		wake: make(chan struct{}, 1),
-		done: make(chan struct{}),
+		pendingLimit:      b.pendingLimit,
+		sequences:         map[string]uint64{},
+		out:               make(chan pagestream.SignalPatch),
+		wake:              make(chan struct{}, 1),
+		done:              make(chan struct{}),
+		generationChanged: make(chan struct{}),
+	}
+	subscription.detach = func() {
+		b.mu.Lock()
+		if clients := b.clients[streamID]; clients != nil {
+			delete(clients, subscription)
+			if len(clients) == 0 {
+				delete(b.clients, streamID)
+			}
+		}
+		b.mu.Unlock()
 	}
 
 	b.mu.Lock()
@@ -72,17 +109,7 @@ func (b *DeliveryBroker) subscribe(streamID string) (<-chan pagestream.SignalPat
 	b.clients[streamID][subscription] = struct{}{}
 	b.mu.Unlock()
 	go subscription.forward()
-	return subscription.out, func() {
-		subscription.once.Do(func() {
-			b.mu.Lock()
-			delete(b.clients[streamID], subscription)
-			if len(b.clients[streamID]) == 0 {
-				delete(b.clients, streamID)
-			}
-			b.mu.Unlock()
-			subscription.close()
-		})
-	}
+	return subscription.out, subscription.disconnect
 }
 
 func (b *DeliveryBroker) PublishEnvelope(streamID string, envelope Envelope) {
@@ -115,34 +142,70 @@ func (s *deliverySubscription) enqueue(envelope Envelope) {
 		return
 	}
 	generation := envelope.Delivery.Generation
+	sequenceKey := envelope.Delivery.SequenceKey
+	sequence := envelope.Delivery.Sequence
 	if generation > 0 && s.hasGeneration && generation < s.generation {
 		s.mu.Unlock()
 		return
 	}
+	if sequenceKey != "" {
+		if sequence == 0 {
+			s.mu.Unlock()
+			return
+		}
+		if current, exists := s.sequences[sequenceKey]; exists && sequence < current {
+			s.mu.Unlock()
+			return
+		}
+		if current := s.sequences[sequenceKey]; sequence > current {
+			s.sequences[sequenceKey] = sequence
+			kept := s.pending[:0]
+			for _, pending := range s.pending {
+				metadata := pending.envelope.Delivery
+				if metadata.SequenceKey == sequenceKey && metadata.Sequence < sequence {
+					close(pending.changed)
+					continue
+				}
+				kept = append(kept, pending)
+			}
+			s.pending = kept
+		}
+	}
 	if generation > 0 && (!s.hasGeneration || generation > s.generation) {
+		hadGeneration := s.hasGeneration
 		s.generation = generation
 		s.hasGeneration = true
 		kept := s.pending[:0]
 		for _, pending := range s.pending {
-			if pending.Delivery.Generation >= generation {
+			// Generation-zero status envelopes are durable metadata (for
+			// example lastUpdated), not stale result payloads.
+			pendingGeneration := pending.envelope.Delivery.Generation
+			if pendingGeneration == 0 || pendingGeneration >= generation || (envelope.Delivery.PreservePriorGeneration && hadGeneration && pendingGeneration > 0 && pendingGeneration < generation) {
 				kept = append(kept, pending)
 			}
 		}
 		s.pending = kept
-		select {
-		case <-s.out:
-		default:
+		if hadGeneration {
+			close(s.generationChanged)
+			s.generationChanged = make(chan struct{})
 		}
 	}
 
 	next := cloneEnvelope(envelope)
-	if len(s.pending) > 0 && shouldCoalesce(s.pending[len(s.pending)-1], next) {
+	if len(s.pending) > 0 && shouldCoalesce(s.pending[len(s.pending)-1].envelope, next) {
 		last := len(s.pending) - 1
-		s.pending[last] = coalesceEnvelopes(s.pending[last], next)
+		close(s.pending[last].changed)
+		s.pending[last].changed = make(chan struct{})
+		s.pending[last].envelope = coalesceEnvelopes(s.pending[last].envelope, next)
+		s.pending[last].version++
 	} else {
-		// Boundaries are lossless. Coalescible result bursts remain bounded by
-		// collapsing into the preceding compatible envelope.
-		s.pending = append(s.pending, next)
+		if len(s.pending) >= s.pendingLimit {
+			s.mu.Unlock()
+			s.disconnect()
+			return
+		}
+		s.nextID++
+		s.pending = append(s.pending, queuedEnvelope{id: s.nextID, version: 1, changed: make(chan struct{}), envelope: next})
 	}
 	s.mu.Unlock()
 	select {
@@ -156,6 +219,9 @@ func shouldCoalesce(current, next Envelope) bool {
 		return false
 	}
 	if current.Delivery.Generation != next.Delivery.Generation {
+		return false
+	}
+	if current.Delivery.SequenceKey != next.Delivery.SequenceKey || current.Delivery.Sequence != next.Delivery.Sequence {
 		return false
 	}
 	return current.Delivery.CoalesceGroup != "" && current.Delivery.CoalesceGroup == next.Delivery.CoalesceGroup
@@ -188,22 +254,8 @@ func (s *deliverySubscription) forward() {
 	defer close(s.out)
 	for {
 		s.mu.Lock()
-		pending := len(s.pending) > 0
-		sent := false
-		if pending {
-			envelope := s.pending[0]
-			select {
-			case s.out <- envelope.Signals:
-				s.pending = s.pending[1:]
-				sent = true
-			default:
-			}
-		}
-		s.mu.Unlock()
-		if sent {
-			continue
-		}
-		if !pending {
+		if len(s.pending) == 0 {
+			s.mu.Unlock()
 			select {
 			case <-s.done:
 				return
@@ -211,20 +263,45 @@ func (s *deliverySubscription) forward() {
 			}
 			continue
 		}
-		timer := time.NewTimer(time.Millisecond)
-		select {
-		case <-s.done:
-			if !timer.Stop() {
-				<-timer.C
+		item := s.pending[0]
+		envelope := item.envelope
+		generationChanged := s.generationChanged
+		itemChanged := item.changed
+		s.mu.Unlock()
+		if envelope.Delivery.Generation > 0 {
+			select {
+			case s.out <- envelope.Signals:
+			case <-itemChanged:
+				continue
+			case <-s.done:
+				return
+			case <-generationChanged:
+				continue
 			}
-			return
-		case <-s.wake:
-			if !timer.Stop() {
-				<-timer.C
+		} else {
+			select {
+			case s.out <- envelope.Signals:
+			case <-itemChanged:
+				continue
+			case <-s.done:
+				return
 			}
-		case <-timer.C:
 		}
+		s.mu.Lock()
+		if len(s.pending) > 0 && s.pending[0].id == item.id && s.pending[0].version == item.version {
+			s.pending = s.pending[1:]
+		}
+		s.mu.Unlock()
 	}
+}
+
+func (s *deliverySubscription) disconnect() {
+	s.once.Do(func() {
+		if s.detach != nil {
+			s.detach()
+		}
+		s.close()
+	})
 }
 
 func (s *deliverySubscription) close() {

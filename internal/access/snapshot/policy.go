@@ -43,15 +43,29 @@ type Grant struct {
 	Canonical access.CanonicalGrant
 }
 
-// RoleBinding is one explicit project-wide RBAC assignment. Capabilities are
-// captured when the snapshot is compiled so later edits to mutable role
-// templates cannot change an installed generation.
-type RoleBinding struct {
-	ID           string
-	Name         string
-	Subject      access.SubjectRef
-	Role         access.ProjectRole
-	Capabilities []access.Capability
+// RoleBinding is one explicit project-wide RBAC assignment. It aliases the
+// target-owned access policy type so mutable policy reads and immutable
+// serving snapshots cannot drift into subtly different role contracts.
+type RoleBinding = access.RoleBinding
+
+// RoleAllowsCapability reports whether any supplied subject has the captured
+// capability in an explicit project-wide role binding. Role capabilities are
+// immutable snapshot data, so callers do not consult mutable role templates
+// while authorizing a serving generation.
+func RoleAllowsCapability(snapshot AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
+	for _, binding := range snapshot.RoleBindings() {
+		for _, subject := range subjects {
+			if binding.Subject != subject {
+				continue
+			}
+			for _, captured := range binding.Capabilities {
+				if captured == capability {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 type DataPolicy struct {

@@ -302,44 +302,14 @@ model QuackConnection extends ConnectionSpec {
   type: "quack";
 }
 
-model SourceSchemaField {
-  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
-  nullable?: boolean;
-  description?: string;
-  tags?: string[];
-  criticalDataElement?: boolean;
-  classification?: Identifier;
-  authoritativeDefinitions?: AuthoritativeDefinition[];
-  deprecation?: FieldDeprecation;
-}
-
 model AIContext {
   instructions?: string;
   synonyms?: string[];
   examples?: string[];
 }
 
-model InferredSourceSchema {
-  mode: "inferred";
-}
-
-model CompatibleSourceSchema {
-  mode: "compatible";
-  @apigen.propertyNames(Identifier)
-  fields: Record<SourceSchemaField>;
-}
-
-model StrictSourceSchema {
-  mode: "strict";
-  @apigen.propertyNames(Identifier)
-  fields: Record<SourceSchemaField>;
-}
-
-@discriminated(#{ envelope: "none", discriminatorPropertyName: "mode" })
-union SourceSchema {
-  inferred: InferredSourceSchema,
-  compatible: CompatibleSourceSchema,
-  strict: StrictSourceSchema,
+model DatasetSchema {
+  mode: "compatible" | "strict";
 }
 
 model FreshnessDuration {
@@ -446,8 +416,9 @@ union SourceLocation {
 model SourceSpec {
   connection: ResourceID;
   location: SourceLocation;
-  schema?: SourceSchema;
-  freshness?: SourceFreshness;
+  schema?: DatasetSchema;
+  fields?: DatasetField[];
+  checks?: DatasetCheck[];
 }
 
 model DirectModelDefinition extends ModelDefinition {
@@ -465,12 +436,12 @@ model ModelDefinition {
   type: string;
 }
 
-model ModelField {
+model DatasetField {
+  name: Identifier;
   datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   label?: string;
   description?: string;
   aiContext?: AIContext;
-  nullable?: boolean;
   tags?: string[];
   criticalDataElement?: boolean;
   classification?: Identifier;
@@ -479,6 +450,7 @@ model ModelField {
 }
 
 model ModelEntity {
+  name: Identifier;
   type: "primary" | "unique" | "foreign" | "natural";
   fields: Identifier[];
   description?: string;
@@ -489,7 +461,7 @@ model ModelGrain {
   entity: Identifier;
 }
 
-model NonNullModelCheck {
+model NonNullDatasetCheck {
   id: Identifier;
   type: "non_null";
   field: Identifier;
@@ -498,7 +470,7 @@ model NonNullModelCheck {
   tags?: string[];
 }
 
-model UniqueModelCheck {
+model UniqueDatasetCheck {
   id: Identifier;
   type: "unique";
   fields: Identifier[];
@@ -507,7 +479,7 @@ model UniqueModelCheck {
   tags?: string[];
 }
 
-model AcceptedValuesModelCheck {
+model AcceptedValuesDatasetCheck {
   id: Identifier;
   type: "accepted_values";
   field: Identifier;
@@ -517,7 +489,7 @@ model AcceptedValuesModelCheck {
   tags?: string[];
 }
 
-model RelationshipModelCheck {
+model RelationshipDatasetCheck {
   id: Identifier;
   type: "relationship";
   field: Identifier;
@@ -527,7 +499,7 @@ model RelationshipModelCheck {
   tags?: string[];
 }
 
-model RowCountModelCheck {
+model RowCountDatasetCheck {
   id: Identifier;
   type: "row_count";
   minimum?: int64;
@@ -537,23 +509,35 @@ model RowCountModelCheck {
   tags?: string[];
 }
 
+model FreshnessDatasetCheck {
+  id: Identifier;
+  type: "freshness";
+  basis: "field" | "revision";
+  field?: Identifier;
+  revision?: utcDateTime;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
+  description?: string;
+  tags?: string[];
+}
+
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
-union ModelCheck {
-  non_null: NonNullModelCheck,
-  unique: UniqueModelCheck,
-  accepted_values: AcceptedValuesModelCheck,
-  relationship: RelationshipModelCheck,
-  row_count: RowCountModelCheck,
+union DatasetCheck {
+  non_null: NonNullDatasetCheck,
+  unique: UniqueDatasetCheck,
+  accepted_values: AcceptedValuesDatasetCheck,
+  relationship: RelationshipDatasetCheck,
+  row_count: RowCountDatasetCheck,
+  freshness: FreshnessDatasetCheck,
 }
 
 model ModelSpec {
   definition: ModelDefinition;
-  @apigen.propertyNames(Identifier)
-  entities: Record<ModelEntity>;
+  entities: ModelEntity[];
   grain: ModelGrain;
-  @apigen.propertyNames(Identifier)
-  fields?: Record<ModelField>;
-  checks?: ModelCheck[];
+  fields?: DatasetField[];
+  schema?: DatasetSchema;
+  checks?: DatasetCheck[];
 }
 
 @pattern("^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$")
@@ -565,11 +549,14 @@ model SemanticAccessFilter {
 }
 
 model SemanticDataset {
+  name: Identifier;
   `model`: SemanticModelResourceName;
   defaultTimeDimension?: Identifier;
   displayName?: string;
   description?: string;
   aiContext?: AIContext;
+  dimensions?: LocalSemanticDimension[];
+  metrics?: SimpleSemanticMetric[];
   @minItems(1)
   @apigen.uniqueItems
   requiredAccessGrants?: Identifier[];
@@ -594,6 +581,7 @@ union SemanticRelationshipEndpoint {
 }
 
 model SemanticRelationship {
+  name: Identifier;
   from: SemanticRelationshipEndpoint;
   to: SemanticRelationshipEndpoint;
   description?: string;
@@ -601,6 +589,7 @@ model SemanticRelationship {
 }
 
 model SemanticDimensionBinding {
+  dataset: Identifier;
   field: SemanticFieldReference;
   path?: Identifier[];
 }
@@ -614,13 +603,27 @@ model SemanticTimeSemantics {
 }
 
 model SemanticDimension {
+  name: Identifier;
   label?: string;
   description?: string;
   aiContext?: AIContext;
-  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   time?: SemanticTimeSemantics;
-  @apigen.propertyNames(Identifier)
-  bindings: Record<SemanticDimensionBinding>;
+  bindings: SemanticDimensionBinding[];
+  @minItems(1)
+  @apigen.uniqueItems
+  requiredAccessGrants?: Identifier[];
+}
+
+/** A local dimension binds one field in its containing dataset. */
+model LocalSemanticDimension {
+  name: Identifier;
+  field?: Identifier;
+  label?: string;
+  description?: string;
+  aiContext?: AIContext;
+  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  time?: SemanticTimeSemantics;
   @minItems(1)
   @apigen.uniqueItems
   requiredAccessGrants?: Identifier[];
@@ -654,6 +657,7 @@ union SemanticAllowedValues {
 }
 
 model SemanticAccessGrant {
+  name: Identifier;
   userAttribute: Identifier;
   @apigen.uniqueItems
   allowedValues: SemanticAllowedValues;
@@ -771,6 +775,12 @@ union SemanticFilter {
   not: NotSemanticFilter,
 }
 
+/** Only a top-level reusable filter has an identity; child expressions do not. */
+model NamedSemanticFilter {
+  name: Identifier;
+  definition: SemanticFilter;
+}
+
 model SemanticMetricCommon {
   label?: string;
   description?: string;
@@ -783,15 +793,11 @@ model SemanticMetricCommon {
   requiredAccessGrants?: Identifier[];
 }
 
-model SemanticMetricInput {
-  field: SemanticFieldReference;
-}
-
-model AggregateSemanticMetric {
-  type: "aggregate";
-  dataset: Identifier;
-  aggregation: "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
-  input: SemanticMetricInput;
+model SimpleSemanticMetric {
+  name: Identifier;
+  type: "simple";
+  agg: "sum" | "count" | "count_distinct" | "avg" | "min" | "max";
+  field?: Identifier;
   @minItems(1)
   where?: Identifier[];
   empty?: "zero" | "null";
@@ -800,12 +806,14 @@ model AggregateSemanticMetric {
 }
 
 model DerivedSemanticMetric {
+  name: Identifier;
   type: "derived";
   expression: string;
   ...SemanticMetricCommon;
 }
 
 model RatioSemanticMetric {
+  name: Identifier;
   type: "ratio";
   numerator: Identifier;
   denominator: Identifier;
@@ -814,25 +822,18 @@ model RatioSemanticMetric {
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
 union SemanticMetric {
-  aggregate: AggregateSemanticMetric,
   derived: DerivedSemanticMetric,
   ratio: RatioSemanticMetric,
 }
 
 model SemanticModelSpec {
-  @apigen.minProperties(1)
-  @apigen.propertyNames(Identifier)
-  datasets: Record<SemanticDataset>;
-  @apigen.propertyNames(Identifier)
-  accessGrants?: Record<SemanticAccessGrant>;
-  @apigen.propertyNames(Identifier)
-  relationships?: Record<SemanticRelationship>;
-  @apigen.propertyNames(Identifier)
-  dimensions?: Record<SemanticDimension>;
-  @apigen.propertyNames(Identifier)
-  filters?: Record<SemanticFilter>;
-  @apigen.propertyNames(Identifier)
-  metrics: Record<SemanticMetric>;
+  @minItems(1)
+  datasets: SemanticDataset[];
+  accessGrants?: SemanticAccessGrant[];
+  relationships?: SemanticRelationship[];
+  dimensions?: SemanticDimension[];
+  filters?: NamedSemanticFilter[];
+  metrics?: SemanticMetric[];
 }
 
 model ResourceProvenance {

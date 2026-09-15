@@ -246,11 +246,20 @@ func generateSchema() ([]byte, error) {
 	for _, rule := range configspec.Rules() {
 		entry := map[string]any{
 			"description":     rule.Description,
-			"then":            predicateSchema(rule.Assert),
 			"x-error-message": rule.Message,
 		}
 		if rule.When.Kind != "" {
 			entry["if"] = predicateSchema(rule.When)
+			entry["then"] = predicateSchema(rule.Assert)
+		} else if assertion, ok := predicateSchema(rule.Assert).(map[string]any); ok {
+			for key, value := range assertion {
+				entry[key] = value
+			}
+		} else {
+			// Keep non-object assertions valid when a future rule uses a
+			// boolean schema. Object predicates are merged above so an
+			// unconditional rule is effective without an inert `then`.
+			entry["allOf"] = []any{predicateSchema(rule.Assert)}
 		}
 		allOf = append(allOf, entry)
 	}

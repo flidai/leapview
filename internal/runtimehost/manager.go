@@ -416,12 +416,6 @@ func (m *Manager) LeaseRenewalError() error {
 	}
 	return errors.Join(errs...)
 }
-func (m *Manager) SnapshotLeaseReleaseBacklog() int {
-	if m == nil || m.releaseQueue == nil {
-		return 0
-	}
-	return m.releaseQueue.len()
-}
 func (m *Manager) setLeaseRenewalError(id string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

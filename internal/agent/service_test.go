@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1168,6 +1170,299 @@ func TestServiceConversationTranscriptRejectsVerboseArtifactPayload(t *testing.T
 	}
 }
 
+func TestServiceEditReplacesActiveBranchAndRetainsImmutableHistory(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "edit@example.com")
+	model := newRecordingAgentModel(
+		agentcore.ModelResponse{Content: "Original answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "Later answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "Revised answer", FinishReason: agentcore.FinishReasonStop},
+	)
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"Original question", "Later question"} {
+		if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: input}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedID := ""
+	for _, item := range before.Transcript {
+		if item.Kind == "user" && item.Text == "Original question" {
+			selectedID = item.ID
+			break
+		}
+	}
+	if selectedID == "" {
+		t.Fatalf("selected user turn missing: %#v", before.Transcript)
+	}
+
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Revised question", EditMessageID: selectedID}); err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 3 {
+		t.Fatalf("model requests = %d, want three turns", len(requests))
+	}
+	for _, message := range requests[2].Messages {
+		if strings.Contains(message.Content, "Original question") || strings.Contains(message.Content, "Original answer") || strings.Contains(message.Content, "Later question") || strings.Contains(message.Content, "Later answer") {
+			t.Fatalf("edited request retained replaced branch: %#v", requests[2].Messages)
+		}
+	}
+	if len(requests[2].Messages) != 2 || requests[2].Messages[1].Content != "Revised question" {
+		t.Fatalf("edited request messages = %#v, want system plus revised user", requests[2].Messages)
+	}
+
+	after, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var questions []string
+	for _, item := range after.Transcript {
+		if item.Kind == "user" {
+			questions = append(questions, item.Text)
+		}
+	}
+	if len(questions) != 1 || questions[0] != "Revised question" {
+		t.Fatalf("active questions = %v, want revised question only", questions)
+	}
+	stored, err := service.ListMessages(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 6 {
+		t.Fatalf("stored history length = %d, want original two turns plus replacement", len(stored))
+	}
+}
+
+func TestServiceRejectsEditTargetOutsideActiveTranscript(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "edit-invalid@example.com")
+	model := newRecordingAgentModel(agentcore.ModelResponse{Content: "answer", FinishReason: agentcore.FinishReasonStop})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Question"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "Replacement", EditMessageID: "agentmsg-downstream"}); err == nil {
+		t.Fatal("edit with unknown target unexpectedly succeeded")
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Transcript) != 2 || state.Transcript[0].Text != "Question" {
+		t.Fatalf("invalid edit changed active transcript: %#v", state.Transcript)
+	}
+}
+
+func TestServiceRepeatedIdenticalEditsFollowCurrentActiveMessage(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "edit-identical@example.com")
+	model := newRecordingAgentModel(
+		agentcore.ModelResponse{Content: "answer one", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "answer two", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "answer three", FinishReason: agentcore.FinishReasonStop},
+	)
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID := state.Transcript[0].ID
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question", EditMessageID: firstID}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondID := state.Transcript[0].ID
+	if secondID == firstID {
+		t.Fatalf("replacement reused immutable message ID %q", secondID)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question", EditMessageID: secondID}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var questions []string
+	for _, item := range state.Transcript {
+		if item.Kind == "user" {
+			questions = append(questions, item.Text)
+		}
+	}
+	if len(questions) != 1 || questions[0] != "same question" {
+		t.Fatalf("repeated edit active questions = %v", questions)
+	}
+	stored, err := service.ListMessages(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 6 {
+		t.Fatalf("repeated edit stored history = %d, want six rows", len(stored))
+	}
+}
+
+func TestServiceDurableEditResumeUsesTrimmedActiveTranscript(t *testing.T) {
+	ctx := context.Background()
+	base := newTestAgentStore()
+	store := &workflowAgentStore{testAgentStore: base}
+	principal := "principal_edit_resume"
+	store.upsertPrincipal(principal)
+	model := newRecordingAgentModel(
+		agentcore.ModelResponse{Content: "original answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "later answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "resumed answer", FinishReason: agentcore.FinishReasonStop},
+	)
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetPromptWorkflow(func(_ PromptInput, _ string, _ PromptDispatch) jobs.WorkflowIntent { return jobs.WorkflowIntent{} })
+	scope := Scope{ProjectID: "test", PrincipalID: principal}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"original question", "later question"} {
+		if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: input}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID := state.Transcript[0].ID
+	started, err := service.StartDurablePrompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "revised question", EditMessageID: targetID, RequestID: "edit-resume"}, PromptDispatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := service.ResumePrompt(ctx, scope, conversation.ID, started.RunID, "resume-correlation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resumed.Complete(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 3 {
+		t.Fatalf("model requests = %d, want three turns", len(requests))
+	}
+	for _, message := range requests[2].Messages {
+		if strings.Contains(message.Content, "original question") || strings.Contains(message.Content, "later question") || strings.Contains(message.Content, "later answer") {
+			t.Fatalf("resumed edit retained replaced branch: %#v", requests[2].Messages)
+		}
+	}
+}
+
+func TestServiceDurableEditRetryAfterReplacementAppendTrimsIdenticalBranch(t *testing.T) {
+	ctx := context.Background()
+	base := newTestAgentStore()
+	store := &duplicateRunWorkflowAgentStore{workflowAgentStore: &workflowAgentStore{testAgentStore: base}}
+	principal := "principal_edit_retry"
+	store.upsertPrincipal(principal)
+	model := newRecordingAgentModel(
+		agentcore.ModelResponse{Content: "original answer", FinishReason: agentcore.FinishReasonStop},
+		agentcore.ModelResponse{Content: "replacement answer", FinishReason: agentcore.FinishReasonStop},
+	)
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetPromptWorkflow(func(_ PromptInput, _ string, _ PromptDispatch) jobs.WorkflowIntent { return jobs.WorkflowIntent{} })
+	scope := Scope{ProjectID: "test", PrincipalID: principal}
+	conversation, err := service.CreateConversation(ctx, scope, "Edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prompt(ctx, PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question"}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetID := state.Transcript[0].ID
+	requestID := "edit-retry"
+	input := PromptInput{Scope: scope, ConversationID: conversation.ID, Input: "same question", EditMessageID: targetID, RequestID: requestID}
+	hash := sha256.Sum256([]byte(scope.PrincipalID + "\x00" + conversation.ID + "\x00" + requestID))
+	runID := "run_" + hex.EncodeToString(hash[:12])
+	if _, err := store.workflowAgentStore.CreateRun(ctx, RunInput{
+		PrincipalID: scope.PrincipalID, ConversationID: conversation.ID, RunID: runID,
+		Model: service.config.Model, MetadataJSON: metadataJSON(map[string]any{
+			"request_digest": promptDigest(input), "edit_message_id": targetID,
+		}), Status: RunStatusPreparing,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	replacementCoreID := "msg_replacement_retry"
+	if _, err := store.AppendMessage(ctx, MessageInput{
+		PrincipalID: scope.PrincipalID, ConversationID: conversation.ID, RunID: runID,
+		Role: MessageRoleUser, ContentText: input.Input,
+		ContentJSON: messageContentJSONWithEdit(agentcore.Message{ID: replacementCoreID, Role: agentcore.RoleUser, Content: input.Input}, nil, targetID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	started, err := service.StartDurablePrompt(ctx, input, PromptDispatch{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.RunID != runID {
+		t.Fatalf("repaired run ID = %q, want %q", started.RunID, runID)
+	}
+	if _, err := started.Complete(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	requests := model.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want original and repaired request", len(requests))
+	}
+	if len(requests[1].Messages) != 2 || requests[1].Messages[1].Content != input.Input {
+		t.Fatalf("repaired request messages = %#v, want system plus replacement", requests[1].Messages)
+	}
+	for _, message := range requests[1].Messages {
+		if message.Content == "original answer" {
+			t.Fatalf("repaired request retained original branch: %#v", requests[1].Messages)
+		}
+	}
+	conversation, err = store.GetConversation(ctx, scope.PrincipalID, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := decodeTranscript(conversation.TranscriptJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastUser, ok := lastVisibleUserMessage(transcript)
+	if !ok || lastUser.ID != replacementCoreID {
+		t.Fatalf("repaired prompt ID = %q, want %q; transcript = %#v", lastUser.ID, replacementCoreID, transcript)
+	}
+}
+
 func TestServiceRejectsConcurrentConversationTurns(t *testing.T) {
 	ctx := context.Background()
 	store := openAgentAppStore(t, ctx)
@@ -1451,6 +1746,19 @@ type workflowAgentStore struct {
 	workflows []jobs.WorkflowIntent
 }
 
+type duplicateRunWorkflowAgentStore struct {
+	*workflowAgentStore
+}
+
+func (s *duplicateRunWorkflowAgentStore) CreateRun(ctx context.Context, input RunInput) (Run, error) {
+	if strings.TrimSpace(input.RunID) != "" {
+		if _, err := s.testAgentStore.GetRun(ctx, input.PrincipalID, input.ConversationID, input.RunID); err == nil {
+			return Run{}, fmt.Errorf("run already exists")
+		}
+	}
+	return s.workflowAgentStore.CreateRun(ctx, input)
+}
+
 type completionWorkflowAgentStore struct {
 	*workflowAgentStore
 	atomicErr           error
@@ -1459,7 +1767,7 @@ type completionWorkflowAgentStore struct {
 	committedMessages   int
 }
 
-func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, finish RunFinish, messages []MessageInput, transcript string, _ jobs.WorkflowIntent) ([]Message, bool, error) {
+func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, finish RunFinish, messages []MessageInput, transcript string, expectedRevision int64, _ jobs.WorkflowIntent) ([]Message, bool, error) {
 	s.completionCalls++
 	if s.atomicErr != nil {
 		return nil, false, s.atomicErr
@@ -1472,7 +1780,7 @@ func (s *completionWorkflowAgentStore) CompleteRunWorkflow(ctx context.Context, 
 		}
 		rows = append(rows, row)
 	}
-	if _, err := s.testAgentStore.UpdateConversationTranscript(ctx, finish.PrincipalID, finish.ConversationID, transcript); err != nil {
+	if _, err := s.testAgentStore.UpdateConversationTranscript(ctx, finish.PrincipalID, finish.ConversationID, transcript, expectedRevision); err != nil {
 		return nil, false, err
 	}
 	if _, err := s.testAgentStore.FinishRun(ctx, finish); err != nil {
@@ -1542,14 +1850,15 @@ func (s *testAgentStore) CreateConversation(_ context.Context, input Conversatio
 		title = ConversationDefaultTitle
 	}
 	conversation := Conversation{
-		ID:             s.id("agentconv"),
-		PrincipalID:    input.PrincipalID,
-		Title:          title,
-		Status:         ConversationStatusActive,
-		MetadataJSON:   firstNonEmpty(input.MetadataJSON, "{}"),
-		TranscriptJSON: "[]",
-		CreatedAt:      testNow(),
-		UpdatedAt:      testNow(),
+		ID:                 s.id("agentconv"),
+		PrincipalID:        input.PrincipalID,
+		Title:              title,
+		Status:             ConversationStatusActive,
+		MetadataJSON:       firstNonEmpty(input.MetadataJSON, "{}"),
+		TranscriptJSON:     "[]",
+		TranscriptRevision: 1,
+		CreatedAt:          testNow(),
+		UpdatedAt:          testNow(),
 	}
 	s.conversations[conversation.ID] = conversation
 	return conversation, nil
@@ -1644,14 +1953,18 @@ func (s *testAgentStore) UpdateDefaultConversationTitle(_ context.Context, princ
 	return conversation, nil
 }
 
-func (s *testAgentStore) UpdateConversationTranscript(_ context.Context, principalID, conversationID, transcriptJSON string) (Conversation, error) {
+func (s *testAgentStore) UpdateConversationTranscript(_ context.Context, principalID, conversationID, transcriptJSON string, expectedRevision int64) (Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	conversation, err := s.conversationLocked(principalID, conversationID)
 	if err != nil {
 		return Conversation{}, err
 	}
+	if expectedRevision <= 0 || conversation.TranscriptRevision != expectedRevision {
+		return Conversation{}, ErrTranscriptConflict
+	}
 	conversation.TranscriptJSON = transcriptJSON
+	conversation.TranscriptRevision++
 	conversation.UpdatedAt = testNow()
 	s.conversations[conversation.ID] = conversation
 	return conversation, nil

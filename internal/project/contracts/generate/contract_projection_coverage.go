@@ -81,6 +81,9 @@ func verifyContractProjectionCoverage(doc document, manifestPath string) error {
 }
 
 func projectionTarget(kind, path string) string {
+	if kind == "SemanticModel" && strings.HasPrefix(path, "spec.filters.*.definition.") {
+		return "contract.filters.*." + strings.TrimPrefix(path, "spec.filters.*.definition.")
+	}
 	if kind == "Model" && path == "spec.definition.sql" {
 		return "contract.definition.sqlAst"
 	}
@@ -106,17 +109,31 @@ type projectionAlias struct {
 
 var projectionAliases = map[string][]projectionAlias{
 	"SemanticModel": {
+		{Authored: "spec.datasets.*.dimensions.*.field", Projected: []string{"contract.dimensions.*.bindings.*.field"}},
+		{Authored: "spec.datasets.*.dimensions.*.datatype", Projected: []string{"contract.dimensions.*.datatype"}},
+		{Authored: "spec.datasets.*.dimensions.*.requiredAccessGrants.*", Projected: []string{"contract.dimensions.*.requiredAccessGrants.*"}},
+		{Authored: "spec.datasets.*.dimensions.*.time.*", Projected: []string{"contract.dimensions.*.time.*"}},
+		{Authored: "spec.datasets.*.dimensions.*.time.grains.*", Projected: []string{"contract.dimensions.*.time.grains.*"}},
+		{Authored: "spec.datasets.*.metrics.*.type", Projected: []string{"contract.metrics.*.type", "contract.metrics.*.dataset"}},
+		{Authored: "spec.datasets.*.metrics.*.agg", Projected: []string{"contract.metrics.*.aggregation"}},
+		{Authored: "spec.datasets.*.metrics.*.field", Projected: []string{"contract.metrics.*.input.field"}},
+		{Authored: "spec.datasets.*.metrics.*.where.*", Projected: []string{"contract.metrics.*.where.*"}},
+		{Authored: "spec.datasets.*.metrics.*.empty", Projected: []string{"contract.metrics.*.empty"}},
+		{Authored: "spec.datasets.*.metrics.*.timeDimension", Projected: []string{"contract.metrics.*.timeDimension"}},
+		{Authored: "spec.datasets.*.metrics.*.unit", Projected: []string{"contract.metrics.*.unit"}},
+		{Authored: "spec.datasets.*.metrics.*.format", Projected: []string{"contract.metrics.*.format"}},
+		{Authored: "spec.datasets.*.metrics.*.requiredAccessGrants.*", Projected: []string{"contract.metrics.*.requiredAccessGrants.*"}},
 		{Authored: "spec.accessGrants.*.allowedValues.*", Projected: []string{
 			"contract.accessGrants.*.allowedValues.*.type",
 			"contract.accessGrants.*.allowedValues.*.value",
 		}},
-		{Authored: "spec.filters.*.value", Projected: []string{
+		{Authored: "spec.filters.*.definition.value", Projected: []string{
 			"contract.filters.*.value.type",
 			"contract.filters.*.value.value",
 			"contract.filters.*.values.*.type",
 			"contract.filters.*.values.*.value",
 		}},
-		{Authored: "spec.filters.*.value.*", Projected: []string{
+		{Authored: "spec.filters.*.definition.value.*", Projected: []string{
 			"contract.filters.*.value.type",
 			"contract.filters.*.value.value",
 			"contract.filters.*.values.*.type",
@@ -132,6 +149,13 @@ var projectionOnlyAllowlist = map[string][]string{
 }
 
 func authoredFieldProjected(kind, path, target string, projectionPaths []string) bool {
+	// Authored list identity is represented by the corresponding key in the
+	// canonical contract map. It is a projection, not an excluded annotation.
+	for _, identity := range authoredListIdentityPaths[kind] {
+		if path == identity {
+			return true
+		}
+	}
 	for _, projected := range projectionPaths {
 		if matchesAnyProjectionPath([]string{target}, projected) {
 			return true
@@ -150,6 +174,18 @@ func authoredFieldProjected(kind, path, target string, projectionPaths []string)
 		}
 	}
 	return false
+}
+
+var authoredListIdentityPaths = map[string][]string{
+	"Source": {"spec.fields.*.name"},
+	"Model": {"spec.entities.*.name", "spec.fields.*.name"},
+	"SemanticModel": {
+		"spec.datasets.*.name", "spec.datasets.*.dimensions.*.name",
+		"spec.datasets.*.metrics.*.name", "spec.accessGrants.*.name",
+		"spec.relationships.*.name", "spec.dimensions.*.name",
+		"spec.dimensions.*.bindings.*.dataset", "spec.filters.*.name",
+		"spec.metrics.*.name",
+	},
 }
 
 func projectionExtras(kind string, projectionPaths []string, sourceFields []sourceField) []string {

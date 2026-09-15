@@ -186,6 +186,18 @@ func TestBeginUploadEnforcesLimitsAndChecksBaseRevision(t *testing.T) {
 	}
 }
 
+func TestNewRejectsUploadFileLimitAboveCaptureBound(t *testing.T) {
+	repo := newFakeRepository()
+	_, err := control.New(repo, &fakeBlobStore{blobs: make(map[string]storage.Blob)}, control.Config{
+		Limits:    manageddata.Limits{MaxFiles: manageddata.MaxManifestFiles + 1},
+		UploadTTL: time.Hour,
+		Transport: &fakeTransport{backend: "local"},
+	})
+	if !errors.Is(err, control.ErrInvalid) {
+		t.Fatalf("file limit error = %v, want control.ErrInvalid", err)
+	}
+}
+
 func TestRecoverDerivesProgressFromVerifiedBlobsInsteadOfStoredCounters(t *testing.T) {
 	now := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
 	repo := newFakeRepository()

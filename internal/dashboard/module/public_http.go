@@ -168,7 +168,7 @@ func (m *Module) PublicDashboardUpdates(w http.ResponseWriter, r *http.Request) 
 	r.URL.RawQuery = query.Encode()
 	ctx = PublicationExecutionContext(ctx, resolved.Publication, resolved.ModelID)
 	ctx = dashboardruntime.WithPublicSpatialTiles(ctx, resolved.Publication.PublicID)
-	ctx = dashboardhttp.WithPublicPresentation(ctx, dashboardhttp.PublicPresentation{PublicID: resolved.Publication.PublicID, Presentation: presentation})
+	ctx = dashboardhttp.WithPublicPresentation(ctx, dashboardhttp.PublicPresentation{PublicID: resolved.Publication.PublicID, PublicationID: resolved.Publication.ID, Presentation: presentation})
 	SetPublicDashboardSecurityHeaders(w.Header(), presentation, resolved.Publication.AllowedOrigins)
 	m.PublicDashboardHTTP(resolved).Updates(w, r.WithContext(ctx))
 }

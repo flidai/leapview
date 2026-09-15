@@ -25,7 +25,8 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 192
+// Current main's generated surface plus the two target-policy operations.
+const expectedAPIGenAggregateOperationCount = 191
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -189,7 +190,7 @@ func TestAPIGenAgentCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAgentCapabilityOwnsItsOperationSurface(t *testing.T) {
 	agentContracts := agentgen.GetAPIGenOperationContracts()
-	if got, want := len(agentContracts), 13; got != want {
+	if got, want := len(agentContracts), 15; got != want {
 		t.Fatalf("Agent generated operations = %d, want %d", got, want)
 	}
 	for operationID, contract := range agentContracts {
@@ -242,7 +243,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 74; got != want {
+	if got, want := len(accessContracts), 71; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
@@ -800,8 +801,8 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 127 {
-		t.Fatalf("UI signal IR contracts = %d, want 127", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 129 {
+		t.Fatalf("UI signal IR contracts = %d, want 129", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
@@ -915,6 +916,8 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 		"/api/v1/projects/{project}/refresh-runs/{run}",
 		"/api/v1/agent/config",
 		"/api/v1/agent/conversations",
+		"/api/v1/agent/conversations/manage",
+		"/api/v1/agent/conversations/archived",
 		"/api/v1/agent/conversations/{conversation}",
 		"/api/v1/agent/conversations/{conversation}/messages",
 		"/api/v1/agent/conversations/{conversation}/runs",
@@ -1003,6 +1006,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getServicePrincipal":              true,
 		"getServicePrincipalSecret":        true,
 		"listAgentConversations":           true,
+		"listArchivedAgentConversations":   true,
 		"listAgentEvents":                  true,
 		"listAgentMessages":                true,
 		"listAgentRuns":                    true,
@@ -1035,6 +1039,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"search":                           true,
 		"updateAgentConfig":                true,
 		"updateAgentConversation":          true,
+		"manageAgentConversations":         true,
 		"updateCurrentPrincipal":           true,
 		"updateCurrentTheme":               true,
 		"updateGroup":                      true,

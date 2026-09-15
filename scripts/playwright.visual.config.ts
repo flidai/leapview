@@ -22,9 +22,11 @@ export default defineConfig({
     baseURL: process.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195',
     browserName: 'chromium',
     colorScheme: 'light',
+    contextOptions: {
+      reducedMotion: 'reduce',
+    },
     deviceScaleFactor: 1,
     locale: 'en-US',
-    reducedMotion: 'reduce',
     timezoneId: 'UTC',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

@@ -170,6 +170,41 @@ running_server_pid() {
 
 ensure_port() {
   local candidate="$1"
+
+  if [[ -n "${PORT:-}" ]]; then
+    if [[ ! "$candidate" =~ ^[0-9]+$ ]] || (( candidate < 1 || candidate > 65535 )); then
+      echo "Explicit PORT must be an integer between 1 and 65535 (got ${PORT@Q})" >&2
+      exit 1
+    fi
+
+    local pids
+    pids="$(port_pids "$candidate")"
+    if [[ -z "$pids" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+
+    local stopped=false
+    local blocked=false
+    while read -r pid; do
+      [[ -z "$pid" ]] && continue
+      if same_worktree_pid "$pid"; then
+        stop_pid "$pid" "LeapView dev server on port $candidate"
+        stopped=true
+      else
+        blocked=true
+      fi
+    done <<< "$pids"
+
+    if [[ "$stopped" == true && "$blocked" == false ]] && port_is_free "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+
+    echo "Explicit PORT $candidate is already in use; choose a free port" >&2
+    exit 1
+  fi
+
   local end=$((PORT_START + PORT_COUNT - 1))
   local offset=0
 

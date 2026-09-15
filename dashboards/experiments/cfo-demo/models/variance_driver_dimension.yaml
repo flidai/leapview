@@ -7,8 +7,8 @@ metadata:
   description: Ordered finance-driver dimension used by the EBITDA variance fact.
 spec:
   fields:
-    driver_order: {datatype: Integer, label: Order}
-    driver: {datatype: String, label: Variance driver}
+    - {name: driver_order, datatype: Integer, label: Order}
+    - {name: driver, datatype: String, label: Variance driver}
   definition:
     type: sql
     sql: |
@@ -29,7 +29,7 @@ spec:
       FROM drivers
       INNER JOIN source_anchor ON true
   entities:
-    variance_driver:
+    - name: variance_driver
       type: primary
       fields: [driver_order]
   grain:

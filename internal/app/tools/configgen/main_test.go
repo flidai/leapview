@@ -55,6 +55,19 @@ func TestGeneratedEnvironmentSchemaEnforcesProductionRelationships(t *testing.T)
 	}
 }
 
+func TestGeneratedEnvironmentSchemaEnforcesUnconditionalRules(t *testing.T) {
+	schema := compileEnvironmentSchema(t)
+	if err := schema.Validate(map[string]any{}); err == nil {
+		t.Fatal("schema accepted an environment without a CSRF key")
+	}
+	if err := schema.Validate(map[string]any{"LEAPVIEW_CSRF_KEY": "short"}); err == nil {
+		t.Fatal("schema accepted a short CSRF key outside production")
+	}
+	if err := schema.Validate(map[string]any{"LEAPVIEW_CSRF_KEY": "0123456789abcdef0123456789abcdef"}); err != nil {
+		t.Fatalf("schema rejected a valid CSRF key outside production: %v", err)
+	}
+}
+
 func compileEnvironmentSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
 	outputs, err := generatedOutputs()

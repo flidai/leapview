@@ -258,7 +258,10 @@ func sourceAssemblyDeterministic(project sourceAssembly) bool {
 		}
 	}
 	for _, semantic := range project.SemanticModels {
-		for _, metric := range semantic.Metrics {
+		if semantic.Metrics == nil {
+			continue
+		}
+		for _, metric := range *semantic.Metrics {
 			if derived, ok := metric.Value.(*projectcontracts.SemanticMetricDerivedVariant); ok && derived.Expression != "" {
 				return false
 			}

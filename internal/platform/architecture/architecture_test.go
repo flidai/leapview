@@ -678,7 +678,7 @@ func TestMinIOIntegrationOwnsItsContainerLifecycle(t *testing.T) {
 		`github.com/testcontainers/testcontainers-go/modules/minio`,
 		`testcontainers.CleanupContainer(t, minioContainer)`,
 		`testcontainers.WithLogger(log.TestLogger(t))`,
-		`minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`,
+		`quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e`,
 	} {
 		if !strings.Contains(testText, want) {
 			t.Errorf("MinIO integration test must own container lifecycle: missing %q", want)
@@ -688,7 +688,7 @@ func TestMinIOIntegrationOwnsItsContainerLifecycle(t *testing.T) {
 		"LEAPVIEW_TEST_MINIO_ENDPOINT",
 		"Start MinIO source integration service",
 		"docker run --detach --name leapview-minio",
-		"minio/minio@sha256:",
+		"quay.io/minio/minio@sha256:",
 	} {
 		if strings.Contains(string(workflow), forbidden) {
 			t.Errorf("CI workflow must not own MinIO integration lifecycle: found %q", forbidden)
@@ -2548,8 +2548,8 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
 		"CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags=\"$BUILD_LDFLAGS\" -o /out/leapviewctl ./cmd/leapviewctl",
-		"FROM debian:bookworm-slim@sha256:",
-		"USER leapview",
+		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:",
+		"USER leapview:leapview",
 		"WORKDIR /app",
 		"COPY --from=web /src/static ./static",
 		"COPY --from=sourcegen /src/.data/map-assets ./.data/map-assets",
@@ -3170,6 +3170,7 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"qualify-production-image:",
 		"name: Qualify production image",
 		"needs: build-production-image",
+		"if: ${{ always() && needs.build-production-image.result == 'success' }}",
 		"uses: ./.github/actions/setup-ci",
 		"task image:qualify:production IMAGE=\"${immutable_image}\"",
 	} {
@@ -3574,7 +3575,7 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		frontendTimeout string
 	}{
 		"ci.yml":               {prepareCount: 5, frontendTimeout: "timeout-minutes: 30"},
-		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
+		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: ${{ matrix.shard == 'site' && 120 || 20 }}"},
 		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))

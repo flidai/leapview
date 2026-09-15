@@ -45,6 +45,9 @@ func (g *Graph) Explain() (string, error) {
 			fmt.Fprintf(&b, " predicate=%s", predicateExplain(value.Predicate))
 		case AggregateMetrics:
 			fmt.Fprintf(&b, " group_by=%v", value.GroupBy)
+			if len(value.GroupByAliases) > 0 {
+				fmt.Fprintf(&b, " group_aliases=%v", value.GroupByAliases)
+			}
 			if value.Spatial != nil {
 				fmt.Fprintf(&b, " spatial=%+v", *value.Spatial)
 			}

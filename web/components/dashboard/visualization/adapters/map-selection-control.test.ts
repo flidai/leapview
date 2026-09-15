@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 
 import { MapSelectionControl } from './map-selection-control'
+import type { OptimisticInteractionCommand } from '../../interaction-selection'
 
 test('map selection dropdown reports state and closes when focus moves outside', () => {
   const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true })
@@ -50,7 +51,7 @@ test('map selection dropdown activates aggregate refinement options', () => {
     expect(trigger.querySelector('[data-map-selection-label]')?.textContent).toBe('Zoom to points')
     expect(trigger.getAttribute('aria-haspopup')).toBe('listbox')
     trigger.click()
-    expect(control.element.querySelector('[role="menu"]')?.hidden).toBe(true)
+    expect(control.element.querySelector<HTMLElement>('[role="menu"]')?.hidden).toBe(true)
     expect(control.element.querySelector<HTMLButtonElement>('[aria-label="Back to selection tools"]')?.hidden).toBe(true)
     expect(control.element.querySelector<HTMLButtonElement>('[aria-label="Back to selection tools"]')?.style.display).toBe('none')
     expect(search.hidden).toBe(true)
@@ -80,10 +81,10 @@ test('map selection dropdown marks selected data and always dispatches clear', (
     const commands: any[] = []
     const control = new MapSelectionControl((command) => commands.push(command))
     document.body.append(control.element)
-    const command = {
+    const command: OptimisticInteractionCommand = {
       sourceKind: 'visual', sourceId: 'orders', interactionKind: 'point_selection',
       action: 'set', toggle: true, mappings: [{ field: 'orders.zip', value: '69307' }],
-    } as const
+    }
     control.update({
       visualID: 'orders', dataState: { kind: 'spatial_tiled' }, selection: [],
       spec: { interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple' }] },

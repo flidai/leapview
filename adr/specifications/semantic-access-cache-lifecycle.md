@@ -1,6 +1,6 @@
 # Semantic access cache, lifecycle, and audit boundary
 
-Status: implementation in progress (FAI-645).
+Status: implemented by FAI-645 and active within the qualified supported profile.
 
 This boundary extends ADR-0017 on the merged FAI-619/636/637/639/641/642
 foundations. It does not activate protected authoring, qualify every consumer,
@@ -17,8 +17,8 @@ or complete VAL-11.
 - The planner owns pre-relational SecurityBarrier placement and admitted-plan
   provenance. Cache reuse cannot substitute for admission or revalidation.
 - Result identity and resultcache own cache keys, retention, generations, and
-  coalescing. FAI-642 currently bypasses protected shared-result reuse and
-  rejects protected opaque byte/bundle reuse.
+  coalescing. FAI-645 supplies the qualified protected result-cache path;
+  protected opaque byte/bundle reuse remains rejected or bypassed.
 - FAI-622 owns immutable contract publication, compatibility/security
   classification, policy evidence, and widening-approval evidence. The
   Project adapter validates historical evidence against exact canonical bytes
@@ -113,12 +113,12 @@ through one narrow adapter that calls historical publication validation and
 copies only its immutable identity and evidence digests; cache code does not
 classify contracts or approve widening. Protected cache reuse fails closed
 when this exact publication evidence is unavailable. Selecting the active
-publication for a serving generation remains FAI-649 activation/cutover work,
-so this slice exposes the validated injection boundary without inventing a
-latest-publication lookup or activation rule.
+publication for a serving generation remains outside this component; FAI-649
+now consumes the validated injection boundary during activation/cutover without
+adding a latest-publication lookup or activation rule to cache code.
 
-FAI-648 owns exhaustive qualification. FAI-649 owns production activation,
-approval/cutover, and legacy DataPolicy removal. Provider adapters, new consumer
+FAI-648 records the supported-profile qualification boundary, and FAI-649 owns
+its activation, approval/cutover, and legacy DataPolicy removal. Provider adapters, new consumer
 integrations, UI/admin workflows, and VAL-11 completion are excluded.
 Already delivered rows cannot be retracted; revalidation guards subsequent
 lookup, admission, storage, and output boundaries, not atomic retroactive
@@ -135,5 +135,6 @@ transactions rather than interpreting a Docker skip as a pass.
 The current-main reconciliation adds exact FAI-622 genesis/update replay,
 widening-approval binding, tamper rejection, and publication/policy identity
 rotation evidence. Final repository-wide validation is recorded with the
-FAI-645 handoff; this document does not turn FAI-645 checks into FAI-648
-qualification or claim that FAI-649 activation selection is complete.
+FAI-645 evidence. The FAI-648 qualification matrix and FAI-649 activation
+contract remain the authorities for supported combinations; this document does
+not broaden them or complete VAL-11.

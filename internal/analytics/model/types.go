@@ -60,10 +60,6 @@ type EntityDefinition struct {
 	AIContext   *AIContext `yaml:"aiContext"`
 }
 
-type GrainDefinition struct {
-	Entity string `yaml:"entity"`
-}
-
 type SemanticDatasetSpec struct {
 	Model                string     `yaml:"model"`
 	DefaultTimeDimension string     `yaml:"defaultTimeDimension"`
@@ -110,27 +106,6 @@ type SemanticFilterSpec struct {
 	Any       []SemanticFilterSpec `yaml:"any,omitempty"`
 	Not       *SemanticFilterSpec  `yaml:"not,omitempty"`
 	AIContext *AIContext           `yaml:"aiContext,omitempty"`
-}
-
-type AggregateMetricSpec struct {
-	Type          string      `yaml:"type"`
-	Dataset       string      `yaml:"dataset"`
-	Aggregation   string      `yaml:"aggregation"`
-	Input         MetricInput `yaml:"input"`
-	Where         []string    `yaml:"where"`
-	Empty         string      `yaml:"empty"`
-	TimeDimension string      `yaml:"timeDimension"`
-}
-
-type DerivedMetricSpec struct {
-	Type       string `yaml:"type"`
-	Expression string `yaml:"expression"`
-}
-
-type RatioMetricSpec struct {
-	Type        string `yaml:"type"`
-	Numerator   string `yaml:"numerator"`
-	Denominator string `yaml:"denominator"`
 }
 
 type MetricCommonSpec struct {
@@ -243,6 +218,7 @@ type Source struct {
 	// beside the source so candidate qualification can evaluate the authored
 	// expectation without re-decoding a project document.
 	Freshness *SourceFreshnessSpec `yaml:"-" json:"freshness,omitempty"`
+	Checks []ModelCheck `yaml:"-" json:"checks,omitempty"`
 }
 
 // PathLocationHasOptions checks typed option presence without lowering the
@@ -322,6 +298,7 @@ type Table struct {
 	// schema. A non-nil empty map means the author omitted fields. Nil is
 	// reserved for legacy/runtime tables whose Columns are already resolved.
 	AuthoredFields      map[string]ModelFieldDeclaration `yaml:"-" json:"authoredFields"`
+	SchemaMode          string                           `yaml:"-" json:"schemaMode,omitempty"`
 	Columns             map[string]ModelColumn           `yaml:"columns"`
 	Entities            map[string]EntityDefinition      `yaml:"entities"`
 	GrainEntity         string                           `yaml:"grain_entity"`
@@ -358,6 +335,7 @@ type ModelCheck struct {
 	Severity    string
 	Description string
 	Tags        []string
+	Freshness *SourceFreshnessSpec
 }
 
 // FreshnessDurationSpec is intentionally scalar and portable. The generated

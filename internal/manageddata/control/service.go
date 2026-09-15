@@ -58,6 +58,15 @@ func New(repo Repository, blobs storage.BlobStore, config Config) (*Service, err
 	if config.Limits.MaxFiles < 0 || config.Limits.MaxFileBytes < 0 || config.Limits.MaxRevisionBytes < 0 {
 		return nil, fmt.Errorf("%w: upload limits must not be negative", ErrInvalid)
 	}
+	if config.Limits.MaxFiles > manageddata.MaxManifestFiles {
+		return nil, fmt.Errorf("%w: upload file limit %d exceeds hard admission bound %d", ErrInvalid, config.Limits.MaxFiles, manageddata.MaxManifestFiles)
+	}
+	if config.Limits.MaxFiles == 0 {
+		// A zero limit historically meant "unbounded" at the generic manifest
+		// layer. The upload service has a hard protocol bound so its admission
+		// contract remains capturable by recovery observation.
+		config.Limits.MaxFiles = manageddata.MaxManifestFiles
+	}
 	concurrency := config.VerifyConcurrency
 	if concurrency == 0 {
 		concurrency = defaultVerifyConcurrency

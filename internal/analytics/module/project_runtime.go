@@ -20,10 +20,6 @@ type projectRuntimeFactory struct {
 	environment *analyticsducklake.Environment
 }
 
-func (m *Module) ProjectRuntimeFactory() analyticsruntime.ProjectFactory {
-	return projectRuntimeFactory{module: m}
-}
-
 // ProjectRuntimeFactoryForEnvironment builds the governed project runtime
 // against one caller-owned immutable DuckLake environment. The module keeps
 // credential, binding, and cache policy while the caller owns that

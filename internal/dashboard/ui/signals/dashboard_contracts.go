@@ -9,9 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
-	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
-	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 )
 
 func optionalValue[T comparable](value T) *T {
@@ -208,14 +206,6 @@ func DashboardVisualWindowRequestFromDashboard(value dashboard.TableRequest) vis
 	}
 }
 
-func DashboardTabularVisualFromDefinitionAtRevision(definition visualizationdefinition.Definition, value dashboard.Table, dataRevision, generation int64) visualizationir.VisualizationEnvelope {
-	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(definition, value, dataRevision, generation)
-	if err != nil {
-		panic(fmt.Sprintf("compiled tabular visualization %q reached the signal boundary with invalid data: %v", definition.ID, err))
-	}
-	return envelope
-}
-
 func DashboardVisualizationSignalFromIR(value visualizationir.VisualizationEnvelope) DashboardVisualizationSignal {
 	transport, err := visualizationir.EncodeDataStateTransport(value.DataState)
 	if err != nil {
@@ -289,4 +279,15 @@ func dashboardInteractionSelectionEntries(values []dashboard.InteractionSelectio
 		out[index] = DashboardInteractionSelectionEntry{Mappings: mappings, Label: optionalValue(value.Label)}
 	}
 	return out
+}
+
+// MarshalJSON explicitly clears absent range bounds in Datastar merge patches.
+// Omitting a removed bound would retain the prior date or numeric limit.
+func (value DashboardRangeExpression) MarshalJSON() ([]byte, error) {
+	type rangeExpression DashboardRangeExpression
+	return json.Marshal(struct {
+		rangeExpression
+		Lower *DashboardFilterBound `json:"lower"`
+		Upper *DashboardFilterBound `json:"upper"`
+	}{rangeExpression(value), value.Lower, value.Upper})
 }

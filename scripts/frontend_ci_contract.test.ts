@@ -36,3 +36,15 @@ for (const workflow of ['ci', 'merge-validation', 'nightly']) {
       .toBe(true)
   })
 }
+
+test('hosted demo generates build-only packages before publishing', () => {
+  const config = parse(readFileSync('.github/workflows/demo-deploy.yml', 'utf8'))
+  const steps = config.jobs.deploy.steps
+  const setupIndex = steps.findIndex((step: any) => step.uses === './.github/actions/setup-ci')
+  const generateIndex = steps.findIndex((step: any) => step.run === 'task generate')
+  const publishIndex = steps.findIndex((step: any) => step.run === './scripts/deploy_demo.sh')
+
+  expect(setupIndex).toBeGreaterThan(-1)
+  expect(generateIndex).toBeGreaterThan(setupIndex)
+  expect(publishIndex).toBeGreaterThan(generateIndex)
+})

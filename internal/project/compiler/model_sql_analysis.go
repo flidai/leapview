@@ -10,6 +10,22 @@ import (
 	"github.com/flidai/leapview/internal/analytics/modelsql"
 )
 
+// modelSQLDependencyError preserves the table identity while dependency
+// analysis walks a sorted model map. Callers can therefore attach diagnostics
+// to the exact authored resource instead of selecting an arbitrary map key.
+type modelSQLDependencyError struct {
+	ModelName string
+	Err       error
+}
+
+func (e *modelSQLDependencyError) Error() string {
+	return fmt.Sprintf("Model %q SQL: %v", e.ModelName, e.Err)
+}
+
+func (e *modelSQLDependencyError) Unwrap() error {
+	return e.Err
+}
+
 // deriveModelSQLDependencies is the compiler-owned SQL boundary. It parses
 // each authored SQL definition exactly through DuckDB's pinned JSON AST and
 // persists only normalized lineage evidence on the runtime table.
@@ -30,19 +46,19 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 		}
 		analysis, err := modelsql.Analyze(context.Background(), sqlText)
 		if err != nil {
-			return fmt.Errorf("Model %q SQL: %w", tableName, err)
+			return &modelSQLDependencyError{ModelName: tableName, Err: err}
 		}
 		for _, source := range analysis.SourceRefs {
 			if _, ok := model.Sources[source]; !ok {
-				return fmt.Errorf("Model %q SQL references unknown source %q", tableName, source)
+				return &modelSQLDependencyError{ModelName: tableName, Err: fmt.Errorf("SQL references unknown source %q", source)}
 			}
 		}
 		for _, dependency := range analysis.ModelRefs {
 			if dependency == tableName || (table.ModelName != "" && dependency == table.ModelName) {
-				return fmt.Errorf("Model %q cannot read itself", tableName)
+				return &modelSQLDependencyError{ModelName: tableName, Err: fmt.Errorf("cannot read itself")}
 			}
 			if _, err := resolveCompilerModelDependency(model, dependency); err != nil {
-				return fmt.Errorf("Model %q SQL references %w", tableName, err)
+				return &modelSQLDependencyError{ModelName: tableName, Err: fmt.Errorf("SQL references %w", err)}
 			}
 		}
 		table.SourceDependencies = append([]string(nil), analysis.SourceRefs...)

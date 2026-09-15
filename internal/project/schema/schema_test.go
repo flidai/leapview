@@ -30,6 +30,63 @@ spec: {}
 	}
 }
 
+func TestNamedAuthoringListsRejectDuplicateIdentitiesAtSecondEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, collection, identity string
+	}{
+		{"source field", "Source", "fields", "name"},
+		{"model entity", "Model", "entities", "name"},
+		{"semantic dataset", "SemanticModel", "datasets", "name"},
+		{"semantic grant", "SemanticModel", "accessGrants", "name"},
+		{"dashboard visual", "Dashboard", "visuals", "id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := []byte("apiVersion: leapview.dev/v1\nkind: " + tc.kind + "\nmetadata: {id: test:duplicate, name: duplicate}\nspec:\n  " + tc.collection + ":\n  - " + tc.identity + ": repeated\n  - " + tc.identity + ": repeated\n")
+			err := ValidateBytes(Kind(strings.ToLower(strings.ReplaceAll(tc.kind, "SemanticModel", "semantic-model"))), "duplicate.yaml", document)
+			var diagnostic *Error
+			if !errors.As(err, &diagnostic) || len(diagnostic.Diagnostics) == 0 {
+				t.Fatalf("duplicate identity diagnostic = %v", err)
+			}
+			got := diagnostic.Diagnostics[0]
+			if got.Code != "schema.duplicate_identity" || got.Line != 7 || !strings.Contains(got.Message, "first defined at line 6") {
+				t.Fatalf("duplicate identity diagnostic = %#v", got)
+			}
+		})
+	}
+}
+
+func TestNamedFieldListOrderDoesNotChangeIndexedProjection(t *testing.T) {
+	resource := func(fields string) []byte {
+		return []byte("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec:\n  connection: warehouse\n  location: {type: path, path: orders.csv, format: csv}\n" + fields)
+	}
+	first := resource("  fields:\n  - {name: order_id, datatype: String}\n  - {name: amount, datatype: Decimal}\n")
+	second := resource("  fields:\n  - {name: amount, datatype: Decimal}\n  - {name: order_id, datatype: String}\n")
+	var left, right projectcontracts.Source
+	if err := DecodeResource(KindSource, "first.yaml", first, &left); err != nil {
+		t.Fatal(err)
+	}
+	if err := DecodeResource(KindSource, "second.yaml", second, &right); err != nil {
+		t.Fatal(err)
+	}
+	leftProjection, err := projectcontracts.IndexedAuthoringJSON(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightProjection, err := projectcontracts.IndexedAuthoringJSON(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(leftProjection, rightProjection) {
+		t.Fatalf("field reordering changed the indexed projection:\n%s\n%s", leftProjection, rightProjection)
+	}
+	if err := ValidateBytes(KindSource, "null.yaml", resource("  fields: null\n")); err == nil {
+		t.Fatal("null field collection accepted as a list")
+	}
+	if err := ValidateBytes(KindSource, "empty.yaml", resource("  fields: []\n")); err != nil {
+		t.Fatalf("empty optional field list rejected: %v", err)
+	}
+}
+
 func TestJSONSchemaRejectsRemovedPublicAuthoringKinds(t *testing.T) {
 	for _, kind := range []Kind{KindProjectNamespace, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -50,7 +107,7 @@ metadata:
 spec:
   semanticModel: sales
   visuals:
-    revenue:
+    - id: revenue
       type: volcano
       query:
         metrics:
@@ -84,58 +141,58 @@ spec:
     type: direct
     source: source:orders
   entities:
-    order: {type: primary, fields: [order_id]}
-    customer: {type: foreign, fields: [customer_id]}
+    - {name: order, type: primary, fields: [order_id]}
+    - {name: customer, type: foreign, fields: [customer_id]}
   grain: {entity: order}
   fields:
-    order_id: {datatype: String}
-    customer_id: {datatype: String}
-    purchased_at: {datatype: DateTimeTz}
-    revenue: {datatype: Decimal}
+    - {name: order_id, datatype: String}
+    - {name: customer_id, datatype: String}
+    - {name: purchased_at, datatype: DateTimeTz}
+    - {name: revenue, datatype: Decimal}
 `)
 	if err := ValidateBytes(KindModel, "model.yaml", model); err != nil {
 		t.Fatalf("canonical Model rejected: %v", err)
 	}
-	semantic := []byte(`
-apiVersion: leapview.dev/v1
+	semantic := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata: { id: semantic-model:sales, name: sales }
 aiContext:
-  synonyms: [sales analysis]
+  synonyms: [ sales analysis ]
 spec:
   datasets:
-    orders: {model: sales_orders, defaultTimeDimension: purchase_date}
-    customers: {model: sales_customers}
+    - name: orders
+      model: sales_orders
+      defaultTimeDimension: purchase_date
+      metrics:
+        - name: order_count
+          type: simple
+          where: [ captured ]
+          empty: zero
+          agg: count_distinct
+          field: order_id
+        - name: revenue
+          type: simple
+          unit: BRL
+          format: currency
+          agg: sum
+      dimensions:
+        - name: purchase_date
+          datatype: Date
+          time: { nativeGrain: day, grains: [ day, week, month ], calendar: iso8601 }
+          field: purchased_at
+    - {name: customers, model: sales_customers}
   relationships:
-    orders_customers:
-      from: {dataset: orders, entity: customer}
-      to: {dataset: customers, entity: customer}
+    - name: orders_customers
+      from: { dataset: orders, entity: customer }
+      to: { dataset: customers, entity: customer }
   filters:
-    captured:
-      field: orders.status
-      operator: in
-      value: [captured, settled]
-  dimensions:
-    purchase_date:
-      datatype: Date
-      time: {nativeGrain: day, grains: [day, week, month], calendar: iso8601}
-      bindings: {orders: {field: orders.purchased_at}}
+    - name: captured
+      definition:
+        field: orders.status
+        operator: in
+        value: [ captured, settled ]
   metrics:
-    order_count:
-      type: aggregate
-      dataset: orders
-      aggregation: count_distinct
-      input: {field: orders.order_id}
-      where: [captured]
-      empty: zero
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
-      unit: BRL
-      format: currency
-    average_order_value:
+    - name: average_order_value
       type: ratio
       numerator: revenue
       denominator: order_count
@@ -147,34 +204,53 @@ spec:
 }
 
 func TestCanonicalContractRejectsRemovedSemanticForms(t *testing.T) {
-	model := []byte(`
-apiVersion: leapview.dev/v1
+	model := []byte(`apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:sales_orders, name: sales_orders}
+metadata:
+  id: model:sales_orders
+  name: sales_orders
 spec:
   primaryKey: order_id
-  fields: {order_id: {type: String}}
+  fields:
+  - name: order_id
+    type: String
 `)
 	if err := ValidateBytes(KindModel, "model.yaml", model); err == nil {
 		t.Fatal("canonical Model accepted removed scalar primaryKey/type fields")
 	}
-	semantic := []byte(`
-apiVersion: leapview.dev/v1
+	semantic := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: model:sales_orders}}
+  datasets:
+  - name: orders
+    model: model:sales_orders
+    metrics:
+    - name: revenue
+      type: simple
+      expression: bad
+      agg: sum
   relationships:
-    orders_customers:
-      from: orders.customer_id
-      to: customers.customer_id
-      cardinality: many_to_one
+  - name: orders_customers
+    from: orders.customer_id
+    to: customers.customer_id
+    cardinality: many_to_one
   filters:
-    captured: {field: orders.status, operator: in, values: [captured]}
+  - name: captured
+    definition:
+      field: orders.status
+      operator: in
+      values:
+      - captured
   measures:
-    revenue: {fact: orders, aggregation: sum, input: {field: orders.revenue}, empty: zero}
-  metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, expression: bad}
+    revenue:
+      fact: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+      empty: zero
 `)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", semantic); err == nil {
 		t.Fatal("canonical SemanticModel accepted removed/legacy semantic forms")
@@ -182,15 +258,23 @@ spec:
 }
 
 func TestCanonicalModelRejectsTopLevelSQLAlias(t *testing.T) {
-	err := ValidateBytes(KindModel, "model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:sales_orders, name: sales_orders}
+metadata:
+  id: model:sales_orders
+  name: sales_orders
 spec:
   sql: SELECT order_id FROM source.orders
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
-  fields: {order_id: {datatype: String}}
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
+  fields:
+  - name: order_id
+    datatype: String
 `))
 	if err == nil {
 		t.Fatal("Model accepted removed top-level spec.sql alias")
@@ -206,7 +290,7 @@ metadata: {id: model:orders, name: orders}
 spec:
   sources: [source:orders]
   fields:
-    order_id: {datatype: String}
+    - {name: order_id, datatype: String}
 `))
 	if err == nil {
 		t.Fatal("ValidateBytes accepted legacy Model source list")
@@ -214,14 +298,19 @@ spec:
 }
 
 func TestCanonicalDatasetModelUsesAuthoringName(t *testing.T) {
-	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: model:sales_orders}}
-  metrics:
-    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}}
+  datasets:
+  - name: orders
+    model: model:sales_orders
+    metrics:
+    - name: revenue
+      type: simple
+      agg: sum
 `))
 	if err == nil {
 		t.Fatal("SemanticModel accepted external Model resource ID in dataset.model")
@@ -229,38 +318,54 @@ spec:
 }
 
 func TestCanonicalFilterUsesValueAndRejectsValuesAlias(t *testing.T) {
-	valid := []byte(`
-apiVersion: leapview.dev/v1
+	valid := []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: sales_orders}}
-  filters: {captured: {field: orders.status, operator: in, value: [captured, settled]}}
-  metrics: {revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured]}}
+  datasets:
+  - name: orders
+    model: sales_orders
+    metrics:
+    - name: revenue
+      type: simple
+      where:
+      - captured
+      agg: sum
+  filters:
+  - name: captured
+    definition:
+      field: orders.status
+      operator: in
+      value:
+      - captured
+      - settled
 `)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", valid); err != nil {
 		t.Fatalf("filter value list rejected: %v", err)
 	}
-	invalid := strings.Replace(string(valid), "value: [captured, settled]", "values: [captured, settled]", 1)
+	invalid := strings.Replace(string(valid), "      value:\n      - captured\n      - settled", "      values:\n      - captured\n      - settled", 1)
 	if err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(invalid)); err == nil {
 		t.Fatal("SemanticModel accepted removed filter values property")
 	}
 }
 
 func TestCanonicalMetricTagsRejectIncompatibleFields(t *testing.T) {
-	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindSemanticModel, "semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: SemanticModel
-metadata: {id: semantic-model:sales, name: sales}
+metadata:
+  id: semantic-model:sales
+  name: sales
 spec:
-  datasets: {orders: {model: sales_orders}}
-  metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}
+  datasets:
+  - name: orders
+    model: sales_orders
+    metrics:
+    - name: revenue
+      type: simple
       expression: forbidden
+      agg: sum
 `))
 	if err == nil {
 		t.Fatal("aggregate metric accepted derived-only expression field")
@@ -282,7 +387,7 @@ spec:
       dimension: state
       control: {type: multiSelect}
   visuals:
-    revenue:
+    - id: revenue
       type: line
       title: Revenue
       query:
@@ -290,11 +395,11 @@ spec:
         dimensions: [purchase_month]
         metrics: [revenue]
       presentation: {type: cartesian}
-    total:
+    - id: total
       type: kpi
       query: {type: aggregate, dimensions: [], metrics: [revenue]}
       presentation: {type: kpi}
-    orders:
+    - id: orders
       type: table
       title: Orders
       query:
@@ -302,7 +407,7 @@ spec:
         dataset: orders
         fields: [order_id, revenue]
       presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
-    state_status:
+    - id: state_status
       type: matrix
       title: State status
       query:
@@ -311,7 +416,7 @@ spec:
         columns: [order_status]
         metrics: [order_count]
       presentation: {type: table, rowHeight: 28, showHeader: true, striped: false}
-    category_status:
+    - id: category_status
       type: pivot
       title: Category status
       query:
@@ -353,7 +458,7 @@ spec:
   semanticModel: sales
   filters: []
   visuals:
-    revenue:
+    - id: revenue
       type: line
       title: Revenue
       query:
@@ -394,7 +499,7 @@ func TestDashboardVisualContractRejectsLegacyChartTableSplit(t *testing.T) {
 			name: "visual kind",
 			body: `
   visuals:
-    total:
+    - id: total
       kind: kpi
       query: {metrics: [revenue]}
 `,
@@ -429,7 +534,7 @@ metadata:
 spec:
   semanticModel: sales
   visuals:
-    revenue:
+    - id: revenue
       type: line
       title: Revenue
       query: {dimensions: [orders.status], metrics: [revenue]}
@@ -459,21 +564,27 @@ spec:
 }
 
 func TestValidateBytesRejectsGeneratedInvalidFieldName(t *testing.T) {
-	err := ValidateBytes(KindModel, "orders.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindModel, "orders.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: Model
 metadata:
   id: model:orders
   name: orders
 spec:
-  definition: {type: direct, source: orders}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
+  definition:
+    type: direct
+    source: orders
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
   fields:
-    invalid-name:
-      datatype: String
-    order_id:
-      datatype: String
+  - name: invalid-name
+    datatype: String
+  - name: order_id
+    datatype: String
 `))
 	if err == nil {
 		t.Fatal("generated Model schema accepted invalid field key")
@@ -489,15 +600,25 @@ func TestValidateBytesRejectsGeneratedMetadataAndMapViolations(t *testing.T) {
 		{
 			name: "resource id pattern",
 			kind: KindModel,
-			yaml: `
-apiVersion: leapview.dev/v1
+			yaml: `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: "model:invalid id", name: orders}
+metadata:
+  id: model:invalid id
+  name: orders
 spec:
-  definition: {type: direct, source: orders}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
-  fields: {order_id: {datatype: String}}
+  definition:
+    type: direct
+    source: orders
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
+  fields:
+  - name: order_id
+    datatype: String
 `,
 		},
 		{
@@ -542,15 +663,25 @@ spec:
 }
 
 func TestGeneratedSchemaDiagnosticsPointToField(t *testing.T) {
-	err := ValidateBytes(KindModel, "model.yaml", []byte(`
-apiVersion: leapview.dev/v1
+	err := ValidateBytes(KindModel, "model.yaml", []byte(`apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:orders, name: orders}
+metadata:
+  id: model:orders
+  name: orders
 spec:
-  definition: {type: direct, source: orders}
-  entities: {order: {type: primary, fields: [order_id]}}
-  grain: {entity: order}
-  fields: {order_id: {datatype: String}}
+  definition:
+    type: direct
+    source: orders
+  entities:
+  - name: order
+    type: primary
+    fields:
+    - order_id
+  grain:
+    entity: order
+  fields:
+  - name: order_id
+    datatype: String
   unexpected: true
 `))
 	diagnostics := Diagnostics(err)
@@ -612,18 +743,7 @@ func TestGeneratedPerKindSchemaPreservesAPIGenRootStructure(t *testing.T) {
 	}
 }
 
-func TestSourceFreshnessOverlayIsContextOnly(t *testing.T) {
-	for _, forbidden := range []string{"basis", "field", "revision", "close"} {
-		if strings.Contains(strings.ToLower(sourceFreshnessConstraint), forbidden) {
-			t.Fatalf("freshness overlay contains structural vocabulary %q: %s", forbidden, sourceFreshnessConstraint)
-		}
-	}
-	if !strings.Contains(sourceFreshnessConstraint, "warningAfter!") || !strings.Contains(sourceFreshnessConstraint, "errorAfter!") {
-		t.Fatalf("freshness overlay does not express threshold disjunction: %s", sourceFreshnessConstraint)
-	}
-}
-
-func TestSourceFreshnessDiagnosticPointsToContextualField(t *testing.T) {
+func TestDatasetFreshnessDiagnosticPointsToCheck(t *testing.T) {
 	err := ValidateBytes(KindSource, "source.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Source
@@ -631,9 +751,11 @@ metadata: {id: source:orders, name: orders}
 spec:
   connection: files
   location: {type: path, path: orders.csv, format: csv}
-  freshness:
-    basis: field
-    field: updated_at
+  checks:
+    - id: updated_at_fresh
+      type: freshness
+      basis: field
+      field: updated_at
 `))
 	if err == nil {
 		t.Fatal("source freshness without thresholds was accepted")
@@ -643,8 +765,8 @@ spec:
 		t.Fatalf("diagnostics = %#v, want one contextual freshness diagnostic", diagnostics)
 	}
 	diagnostic := diagnostics[0]
-	if diagnostic.FieldPath != "spec.freshness" || diagnostic.Line == 0 || diagnostic.Column == 0 {
-		t.Fatalf("diagnostic = %#v, want spec.freshness with source position", diagnostic)
+	if diagnostic.FieldPath != "spec.checks" || diagnostic.Line == 0 || diagnostic.Column == 0 {
+		t.Fatalf("diagnostic = %#v, want spec.checks with source position", diagnostic)
 	}
 }
 
@@ -689,14 +811,13 @@ func TestValidateBytesRejectsMissingRequiredRootFields(t *testing.T) {
 		{
 			name: "dashboard semantic model",
 			kind: KindDashboard,
-			content: `
-apiVersion: leapview.dev/v1
+			content: `apiVersion: leapview.dev/v1
 kind: Dashboard
 metadata:
   id: dashboard:sales
   name: sales
 spec:
-  visuals: {}
+  visuals: []
   pages: []
 `,
 			contains: "semanticModel",

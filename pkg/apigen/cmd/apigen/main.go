@@ -51,6 +51,7 @@ type commandConfig struct {
 	GenerateCLI          bool
 	GoModelsOut          string
 	GoModelsPackage      string
+	GoFieldOverrides     map[string]string
 	TSOut                string
 	FailureTSOut         string
 	JSONSchemaOut        string
@@ -117,6 +118,7 @@ type targetSpec struct {
 	CLIOutGroup          *cliOutputSpec                `yaml:"-"`
 	GoModelsOut          string                        `yaml:"go_models_out"`
 	GoModelsPackage      string                        `yaml:"go_models_package"`
+	GoFieldOverrides     map[string]string             `yaml:"go_field_overrides"`
 	TSOut                string                        `yaml:"ts_out"`
 	FailureTSOut         string                        `yaml:"failure_ts_out"`
 	JSONSchemaOut        string                        `yaml:"json_schema_out"`
@@ -160,6 +162,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		GoOut                *goOutputSpec                 `yaml:"go_out"`
 		GoModelsOut          string                        `yaml:"go_models_out"`
 		GoModelsPackage      string                        `yaml:"go_models_package"`
+		GoFieldOverrides     map[string]string             `yaml:"go_field_overrides"`
 		TSOut                string                        `yaml:"ts_out"`
 		FailureTSOut         string                        `yaml:"failure_ts_out"`
 		JSONSchemaOut        string                        `yaml:"json_schema_out"`
@@ -190,6 +193,7 @@ func (target *targetSpec) UnmarshalYAML(unmarshal func(any) error) error {
 		GoOut:                raw.GoOut,
 		GoModelsOut:          raw.GoModelsOut,
 		GoModelsPackage:      raw.GoModelsPackage,
+		GoFieldOverrides:     raw.GoFieldOverrides,
 		TSOut:                raw.TSOut,
 		FailureTSOut:         raw.FailureTSOut,
 		JSONSchemaOut:        raw.JSONSchemaOut,
@@ -385,6 +389,7 @@ func resolveCommandConfig(command string, manifestPath string, targetName string
 	config.CanonicalOpenAPIPath = target.OpenAPIOut
 	config.GoModelsOut = target.GoModelsOut
 	config.GoModelsPackage = coalesceString(target.GoModelsPackage, defaults.GoModelsPackage)
+	config.GoFieldOverrides = target.GoFieldOverrides
 	config.TSOut = target.TSOut
 	config.FailureTSOut = target.FailureTSOut
 	config.JSONSchemaOut = target.JSONSchemaOut
@@ -1133,7 +1138,7 @@ func generateContracts(doc ir.Document, config commandConfig) error {
 		return fmt.Errorf("document does not declare contracts")
 	}
 	if config.GoModelsOut != "" {
-		b, err := modelgoemit.Emit(doc, modelgoemit.Options{PackageName: config.GoModelsPackage, ContractImports: emitterContractImports(config.ContractImports)})
+		b, err := modelgoemit.Emit(doc, modelgoemit.Options{PackageName: config.GoModelsPackage, ContractImports: emitterContractImports(config.ContractImports), GoFieldOverrides: config.GoFieldOverrides})
 		if err != nil {
 			return fmt.Errorf("emit go models: %w", err)
 		}

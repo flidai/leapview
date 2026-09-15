@@ -8,6 +8,7 @@ import (
 
 func TestConfigValidateUsesServeProfile(t *testing.T) {
 	t.Setenv("LEAPVIEW_PRODUCTION", "")
+	t.Setenv("LEAPVIEW_CSRF_KEY", "0123456789abcdef0123456789abcdef")
 	cmd := configCommand()
 	var output bytes.Buffer
 	cmd.SetOut(&output)

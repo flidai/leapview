@@ -31,9 +31,12 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/chats", authenticated(h.Chat))
 	r.Get("/chats/new", authenticated(h.ChatNew))
 	r.Get("/chats/references/search", authenticated(h.ChatReferenceSearch))
+	r.Get("/chats/management", authenticated(h.ChatManagementLoad))
 	r.Get("/chats/restore", authenticated(h.ChatRestore))
 	r.Get("/chats/{conversation}", authenticated(h.ChatConversation))
+	r.Post("/chats/manage", authenticated(h.ChatManagement))
 	r.Post("/chats/turns", authenticated(h.ChatTurn))
+	r.Post("/chats/stop", authenticated(h.ChatStop))
 	r.Patch("/admin/agent/config", platformAdmin(h.UpdateAdminConfig))
 }
 

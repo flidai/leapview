@@ -130,7 +130,10 @@ func (s *Store) Stat(ctx context.Context, digest string) (storage.Blob, error) {
 }
 
 func (s *Store) Open(ctx context.Context, digest string) (io.ReadCloser, error) {
-	if _, err := s.Stat(ctx, digest); err != nil {
+	if err := storage.ValidateSHA256(digest); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	file, err := s.openStoreFile(s.blobPath(digest))
@@ -139,6 +142,15 @@ func (s *Store) Open(ctx context.Context, digest string) (io.ReadCloser, error) 
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open filesystem blob: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("stat filesystem blob: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, fmt.Errorf("%w: filesystem blob is not a regular file", storage.ErrIntegrity)
 	}
 	return file, nil
 }

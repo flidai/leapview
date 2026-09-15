@@ -61,6 +61,7 @@ func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_maintenance",
 		"GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_maintenance",
 		"REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC",
+		"REVOKE ALL ON FUNCTION delivery.sync_managed_data_generation_root(uuid, text) FROM PUBLIC",
 		"GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_runtime",
 		"GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_maintenance",
 		"REVOKE EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM leapview_control_readonly",

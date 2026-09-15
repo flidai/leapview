@@ -7,17 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 )
 
 // CanonicalBytes serializes only sealed leapview.contract/v1 projections. It
 // is intentionally not a generic canonical JSON helper.
 func CanonicalBytes(value Projection) ([]byte, error) {
-	if value == nil || reflect.ValueOf(value).Kind() == reflect.Pointer && reflect.ValueOf(value).IsNil() {
+	if platformtypednil.IsNil(value) {
 		return nil, errors.New("canonicalize contract projection: nil projection")
 	}
 	if err := validateProjectionEnvelope(value); err != nil {

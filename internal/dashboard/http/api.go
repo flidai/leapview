@@ -70,26 +70,6 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	writeJSON(w, nethttp.StatusOK, DashboardManifestProjection(report, model, metrics.Pages(dashboardID)))
 }
 
-func (h Handler) ListDashboardComponents(w nethttp.ResponseWriter, r *nethttp.Request) {
-	report, page, ok := h.dashboardReportPage(w, r)
-	if !ok {
-		return
-	}
-	if err := authorizeDashboardReportVisuals(r.Context(), h.Metrics, chi.URLParam(r, "dashboard"), report); err != nil {
-		writeJSONError(w, requireDashboardSemanticAuthorization(err), dashboardSemanticAuthorizationStatus(err))
-		return
-	}
-	out := make([]api.DashboardComponentResponse, 0, len(page.Visuals))
-	for _, component := range page.PlacedVisuals() {
-		out = append(out, dashboardComponentDTO(component, report, page))
-	}
-	items, nextCursor, ok := pageSliceForRequest(w, r, out)
-	if !ok {
-		return
-	}
-	writeJSON(w, nethttp.StatusOK, api.DashboardComponentListResponse{Items: items, Page: api.PageInfo{NextCursor: nextCursor}})
-}
-
 func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {

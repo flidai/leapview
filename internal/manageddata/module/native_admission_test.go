@@ -2,12 +2,14 @@ package module
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
+	"github.com/flidai/leapview/internal/manageddata/storage"
 	jobspkg "github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -80,5 +82,30 @@ func TestBuildProductionNativePersistenceRequiresMaintenanceCleanupAuthority(t *
 	_, err = Build(t.Context(), Config{Persistence: &persistence, Production: true, CleanupAcker: typedNil})
 	if err == nil || !strings.Contains(err.Error(), "maintenance cleanup authority") {
 		t.Fatalf("production typed-nil build error = %v, want maintenance cleanup authority requirement", err)
+	}
+}
+
+func TestBuildProductionS3RequiresObservationProfile(t *testing.T) {
+	repository := manageddatapostgres.NewWithOptions(admissionDB{}, manageddatapostgres.Options{
+		Workflow: admissionWorkflow{}, Audit: admissionAudit{},
+	})
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Build(t.Context(), Config{
+		Persistence:  &persistence,
+		Production:   true,
+		CleanupAcker: manageddatapostgres.NewMaintenance(admissionDB{}),
+		Product: ProductConfig{
+			Backend:  "s3",
+			Dir:      t.TempDir(),
+			S3Region: "eu-west-1",
+			S3Bucket: "managed-data",
+			S3Prefix: "managed-data",
+		},
+	})
+	if err == nil || !errors.Is(err, storage.ErrProviderVersion) {
+		t.Fatalf("production S3 build error = %v, want provider-version observation requirement", err)
 	}
 }

@@ -937,6 +937,7 @@ paths:
                     id: example
                     lastMessageText: example
                     messageCount: 1
+                    pinned: true
                     principalId: example
                     status: example
                     title: example
@@ -1213,6 +1214,7 @@ paths:
                 id: example
                 lastMessageText: example
                 messageCount: 1
+                pinned: true
                 principalId: example
                 status: example
                 title: example
@@ -1495,6 +1497,595 @@ paths:
         owner: LeapViewAPI.Agent
         ui:
           action_id: agent.conversation.create
+  /api/v1/agent/conversations/archived:
+    get:
+      operationId: listArchivedAgentConversations
+      summary: List archived agent conversations
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversationListResponse'
+              example:
+                items:
+                  - archivedAt: "2026-01-02T15:04:05Z"
+                    createdAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    lastMessageText: example
+                    messageCount: 1
+                    pinned: true
+                    principalId: example
+                    status: example
+                    title: example
+                    titlePending: true
+                    updatedAt: "2026-01-02T15:04:05Z"
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Agent
+      x-apigen-operation-kind: query
+  /api/v1/agent/conversations/manage:
+    post:
+      operationId: manageAgentConversations
+      summary: Manage an owned agent conversation
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentConversationManagementResponse'
+              example:
+                action: pin
+                conversationId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentConversationManagementRequest'
+            example:
+              action: pin
+              conversationId: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        additional_exposures:
+          - ui
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: resourceId
+                sensitivity: internal
+              - name: resourceKind
+                sensitivity: public
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: AgentCommandAuditPayload
+            schema_version: 1
+          required: true
+          success_action: agent.conversation.managed
+        authz_mode: authenticated
+        failures:
+          - code: INVALID_AGENT_CONVERSATION
+            kind: invalid
+            public_detail: The agent conversation request is invalid.
+            status_code: 422
+          - code: AGENT_CONVERSATION_NOT_FOUND
+            kind: not_found
+            public_detail: Agent conversation not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Agent
+        ui:
+          action_id: agent.conversations.manage
   /api/v1/agent/conversations/{conversation}:
     delete:
       operationId: archiveAgentConversation
@@ -1800,6 +2391,7 @@ paths:
                 id: example
                 lastMessageText: example
                 messageCount: 1
+                pinned: true
                 principalId: example
                 status: example
                 title: example
@@ -2072,6 +2664,7 @@ paths:
                 id: example
                 lastMessageText: example
                 messageCount: 1
+                pinned: true
                 principalId: example
                 status: example
                 title: example
@@ -3845,6 +4438,8 @@ paths:
         - Agent
       x-apigen-operation-kind: command
       x-apigen-command:
+        additional_exposures:
+          - ui
         audit:
           guarantee: transactional
           payload:
@@ -3882,6 +4477,8 @@ paths:
         target:
           parameter: conversation
           type: conversation
+        ui:
+          action_id: agent.run.cancel
   /api/v1/agent/conversations/{conversation}/runs/{run}/events:
     get:
       operationId: listAgentEvents
@@ -23984,71 +24581,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 draftId: example
                 lifecycle:
                   draft:
@@ -24938,71 +25471,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 projectId: example
                 provenance:
                   actorId: example
@@ -25368,71 +25837,7 @@ paths:
                         title: example
                     semanticModel: example
                     visuals:
-                      key:
-                        accessibility:
-                          announceChanges: true
-                          description: example
-                          summary: example
-                          title: example
-                        calculations:
-                          - axis: rows
-                            hidden: true
-                            id: example
-                            label: example
-                            lookup:
-                              field: example
-                              value: example
-                            offset: 1
-                            orderBy:
-                              - direction: asc
-                                field: example
-                            parent: example
-                            partitionBy:
-                              - example
-                            reset: none
-                            source: example
-                            template: running_total
-                            window: 1
-                        dataBudget:
-                          maxRows: 1
-                          requiredCompleteness: complete
-                        datasets:
-                          key: {}
-                        description: example
-                        interactions: []
-                        metadata:
-                          description:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          subtitle:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          summary:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                          title:
-                            dataset: example
-                            fallback: example
-                            field: example
-                            prefix: example
-                            reducer: first
-                            suffix: example
-                        subtitle: example
-                        title: example
-                        titleVisible: true
-                        type: line
+                      - id: example
                 projectId: example
                 provenance:
                   actorId: example
@@ -34810,1561 +35215,6 @@ paths:
         mode: privilege
         privilege: RESOURCE_PUBLISH
       x-leapview-object-scope: project
-  /api/v1/projects/{project}/data-policies:
-    get:
-      operationId: listDataPolicies
-      summary: List data policies
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: resourceKind
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/ResourceKind'
-          example: project
-          explode: false
-        - name: resourceId
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-          explode: false
-        - name: includeInherited
-          in: query
-          required: false
-          schema:
-            type: boolean
-          example: true
-          explode: false
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int32
-            minimum: 1
-            maximum: 200
-          example: 1
-          explode: false
-        - name: pageToken
-          in: query
-          required: false
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 2048
-          example: example
-          explode: false
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataPolicyListResponse'
-              example:
-                items:
-                  - createdAt: "2026-01-02T15:04:05Z"
-                    expression:
-                      key: example
-                    id: example
-                    policyType: example
-                    resourceId: example
-                    resourceKind: project
-                    subjectId: example
-                    subjectType: example
-                    updatedAt: "2026-01-02T15:04:05Z"
-                page:
-                  nextCursor: example
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-    post:
-      operationId: createDataPolicy
-      summary: Create a data policy
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-          example: example
-      responses:
-        '201':
-          description: The request has succeeded and a new resource has been created
-            as a result.
-          headers:
-            location:
-              required: true
-              schema:
-                type: string
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataPolicyResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                expression:
-                  key: example
-                id: example
-                policyType: example
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
-                updatedAt: "2026-01-02T15:04:05Z"
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DataPolicyRequest'
-            example:
-              expression:
-                key: example
-              policyType: example
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        audit:
-          guarantee: transactional
-          payload:
-            fields:
-              - name: policyType
-                sensitivity: public
-              - name: resourceId
-                sensitivity: internal
-              - name: resourceKind
-                sensitivity: public
-            retention: security
-            schema:
-              ref: DataPolicyAuditPayload
-            schema_version: 1
-          required: true
-          success_action: data_policy.created
-        authz_mode: privilege
-        failures:
-          - code: DATA_POLICY_INVALID
-            kind: invalid
-            public_detail: The data policy request is invalid.
-            status_code: 400
-        idempotency: required
-        owner: LeapViewAPI.Access
-        target:
-          parameter: project
-          type: project
-        privilege: PROJECT_ADMIN
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-  /api/v1/projects/{project}/data-policies/{policy}:
-    delete:
-      operationId: deleteDataPolicy
-      summary: Delete a data policy
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: policy
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '204':
-          description: 'There is no content to send for this request, but the headers
-            may be useful. '
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        audit:
-          guarantee: transactional
-          payload:
-            fields:
-              - name: policyType
-                sensitivity: public
-              - name: resourceId
-                sensitivity: internal
-              - name: resourceKind
-                sensitivity: public
-            retention: security
-            schema:
-              ref: DataPolicyAuditPayload
-            schema_version: 1
-          required: true
-          success_action: data_policy.deleted
-        authz_mode: privilege
-        failures:
-          - code: DATA_POLICY_NOT_FOUND
-            kind: not_found
-            public_detail: Data policy not found.
-            status_code: 404
-        owner: LeapViewAPI.Access
-        target:
-          parameter: project
-          type: project
-        privilege: PROJECT_ADMIN
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-    get:
-      operationId: getDataPolicy
-      summary: Get a data policy
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: policy
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataPolicyResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                expression:
-                  key: example
-                id: example
-                policyType: example
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
-                updatedAt: "2026-01-02T15:04:05Z"
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      x-apigen-operation-kind: query
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
-    patch:
-      operationId: updateDataPolicy
-      summary: Update a data policy
-      parameters:
-        - name: project
-          in: path
-          required: true
-          schema:
-            type: string
-            minLength: 1
-            maxLength: 200
-            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        - name: policy
-          in: path
-          required: true
-          schema:
-            type: string
-          example: example
-        - name: If-Match
-          in: header
-          required: true
-          schema:
-            type: string
-          example: example
-      responses:
-        '200':
-          description: The request has succeeded.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataPolicyResponse'
-              example:
-                createdAt: "2026-01-02T15:04:05Z"
-                expression:
-                  key: example
-                id: example
-                policyType: example
-                resourceId: example
-                resourceKind: project
-                subjectId: example
-                subjectType: example
-                updatedAt: "2026-01-02T15:04:05Z"
-        '400':
-          description: The server could not understand the request due to invalid
-            syntax.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '401':
-          description: Access is unauthorized.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '403':
-          description: Access is forbidden.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '404':
-          description: The server cannot find the requested resource.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '409':
-          description: The request conflicts with the current state of the server.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '412':
-          description: Precondition failed.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '413':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '415':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '422':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '429':
-          description: Client error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '500':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '502':
-          description: Server error
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-        '503':
-          description: Service unavailable.
-          content:
-            application/problem+json:
-              schema:
-                $ref: '#/components/schemas/ProblemDetails'
-              example:
-                code: example
-                detail: example
-                errors:
-                  - code: example
-                    detail: example
-                    field: example
-                instance: example
-                requestId: example
-                status: 1
-                title: example
-                type: example
-      tags:
-        - Access
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DataPolicyRequest'
-            example:
-              expression:
-                key: example
-              policyType: example
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
-      x-apigen-operation-kind: command
-      x-apigen-command:
-        audit:
-          guarantee: transactional
-          payload:
-            fields:
-              - name: policyType
-                sensitivity: public
-              - name: resourceId
-                sensitivity: internal
-              - name: resourceKind
-                sensitivity: public
-            retention: security
-            schema:
-              ref: DataPolicyAuditPayload
-            schema_version: 1
-          required: true
-          success_action: data_policy.updated
-        authz_mode: privilege
-        concurrency: if-match
-        failures:
-          - code: DATA_POLICY_INVALID
-            kind: invalid
-            public_detail: The data policy is invalid.
-            status_code: 422
-          - code: DATA_POLICY_NOT_FOUND
-            kind: not_found
-            public_detail: Data policy not found.
-            status_code: 404
-        owner: LeapViewAPI.Access
-        target:
-          parameter: project
-          type: project
-        privilege: PROJECT_ADMIN
-      x-authz:
-        mode: privilege
-        privilege: PROJECT_ADMIN
-      x-leapview-object-scope: project
   /api/v1/projects/{project}/delivery:
     post:
       operationId: createDeliveryPlan
@@ -45660,6 +44510,7 @@ paths:
                           - connectionId: example
                             connectorKind: example
                             displayName: example
+                        authorizationDigest: example
                         baseIdentity:
                           environment: example
                           generationId: example
@@ -45681,6 +44532,7 @@ paths:
                           - connectionId: example
                             revisionId: example
                         policyDigest: example
+                        policyRevision: 1
                         runtimeVersion: example
                         targetId: example
                       planDigest: example
@@ -46003,6 +44855,7 @@ paths:
                       - connectionId: example
                         connectorKind: example
                         displayName: example
+                    authorizationDigest: example
                     baseIdentity:
                       environment: example
                       generationId: example
@@ -46024,6 +44877,7 @@ paths:
                       - connectionId: example
                         revisionId: example
                     policyDigest: example
+                    policyRevision: 1
                     runtimeVersion: example
                     targetId: example
                   planDigest: example
@@ -46303,6 +45157,7 @@ paths:
                     - connectionId: example
                       connectorKind: example
                       displayName: example
+                  authorizationDigest: example
                   baseIdentity:
                     environment: example
                     generationId: example
@@ -46324,6 +45179,7 @@ paths:
                     - connectionId: example
                       revisionId: example
                   policyDigest: example
+                  policyRevision: 1
                   runtimeVersion: example
                   targetId: example
                 planDigest: example
@@ -46439,6 +45295,7 @@ paths:
                       - connectionId: example
                         connectorKind: example
                         displayName: example
+                    authorizationDigest: example
                     baseIdentity:
                       environment: example
                       generationId: example
@@ -46460,6 +45317,7 @@ paths:
                       - connectionId: example
                         revisionId: example
                     policyDigest: example
+                    policyRevision: 1
                     runtimeVersion: example
                     targetId: example
                   planDigest: example
@@ -47110,6 +45968,7 @@ paths:
                       - connectionId: example
                         connectorKind: example
                         displayName: example
+                    authorizationDigest: example
                     baseIdentity:
                       environment: example
                       generationId: example
@@ -47131,6 +45990,7 @@ paths:
                       - connectionId: example
                         revisionId: example
                     policyDigest: example
+                    policyRevision: 1
                     runtimeVersion: example
                     targetId: example
                   planDigest: example
@@ -47439,6 +46299,649 @@ paths:
       x-authz:
         mode: privilege
         privilege: RESOURCE_PUBLISH
+      x-leapview-object-scope: project
+  /api/v1/projects/{project}/role-bindings:
+    get:
+      operationId: listProjectRoleBindings
+      summary: List target-owned project role bindings
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingListResponse'
+              example:
+                environment: example
+                items:
+                  - capabilities:
+                      - PROJECT_ADMIN
+                    id: example
+                    name: example
+                    policyDigest: example
+                    policyRevision: 1
+                    role: example
+                    subjectId: example
+                    subjectType: example
+                page:
+                  nextCursor: example
+                policyDigest: example
+                policyRevision: 1
+                projectId: example
+                targetId: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
+      x-leapview-object-scope: project
+    post:
+      operationId: createProjectRoleBinding
+      summary: Create a target-owned project role binding
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingResponse'
+              example:
+                capabilities:
+                  - PROJECT_ADMIN
+                id: example
+                name: example
+                policyDigest: example
+                policyRevision: 1
+                role: example
+                subjectId: example
+                subjectType: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleBindingCreateRequest'
+            example:
+              expectedRevision: 1
+              id: example
+              name: example
+              role: example
+              subjectId: example
+              subjectType: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: bindingId
+                sensitivity: internal
+              - name: environment
+                sensitivity: internal
+              - name: policyDigest
+                sensitivity: internal
+              - name: policyRevision
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: role
+                sensitivity: public
+              - name: subjectId
+                sensitivity: pii
+              - name: subjectType
+                sensitivity: public
+              - name: targetId
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: RoleBindingAuditPayload
+            schema_version: 1
+          required: true
+          success_action: role_binding.created
+        authz_mode: privilege
+        failures:
+          - code: ROLE_BINDING_CONFLICT
+            kind: conflict
+            public_detail: The authorization policy conflicts with current state.
+            status_code: 409
+          - code: ROLE_BINDING_INVALID
+            kind: invalid
+            public_detail: The role binding request is invalid.
+            status_code: 400
+          - code: ROLE_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: The authorization policy was not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: project
+          type: project
+        privilege: PROJECT_ADMIN
+      x-authz:
+        mode: privilege
+        privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/roles:
     get:
@@ -61166,6 +60669,7 @@ components:
               id: example
               lastMessageText: example
               messageCount: 1
+              pinned: true
               principalId: example
               status: example
               title: example
@@ -61180,6 +60684,7 @@ components:
             id: example
             lastMessageText: example
             messageCount: 1
+            pinned: true
             principalId: example
             status: example
             title: example
@@ -61187,6 +60692,43 @@ components:
             updatedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
+    AgentConversationManagementAction:
+      type: string
+      enum:
+        - pin
+        - unpin
+        - archive
+        - restore
+        - delete
+        - archive_all
+        - delete_all
+      example: pin
+    AgentConversationManagementRequest:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          $ref: '#/components/schemas/AgentConversationManagementAction'
+        conversationId:
+          type: string
+          example: example
+      example:
+        action: pin
+        conversationId: example
+    AgentConversationManagementResponse:
+      type: object
+      required:
+        - action
+      properties:
+        action:
+          $ref: '#/components/schemas/AgentConversationManagementAction'
+        conversationId:
+          type: string
+          example: example
+      example:
+        action: pin
+        conversationId: example
     AgentConversationPatchRequest:
       type: object
       properties:
@@ -61217,6 +60759,9 @@ components:
         status:
           type: string
           example: example
+        pinned:
+          type: boolean
+          example: true
         createdAt:
           type: string
           format: date-time
@@ -61245,6 +60790,7 @@ components:
         id: example
         lastMessageText: example
         messageCount: 1
+        pinned: true
         principalId: example
         status: example
         title: example
@@ -63904,71 +63450,7 @@ components:
                 title: example
             semanticModel: example
             visuals:
-              key:
-                accessibility:
-                  announceChanges: true
-                  description: example
-                  summary: example
-                  title: example
-                calculations:
-                  - axis: rows
-                    hidden: true
-                    id: example
-                    label: example
-                    lookup:
-                      field: example
-                      value: example
-                    offset: 1
-                    orderBy:
-                      - direction: asc
-                        field: example
-                    parent: example
-                    partitionBy:
-                      - example
-                    reset: none
-                    source: example
-                    template: running_total
-                    window: 1
-                dataBudget:
-                  maxRows: 1
-                  requiredCompleteness: complete
-                datasets:
-                  key: {}
-                description: example
-                interactions: []
-                metadata:
-                  description:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  subtitle:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  summary:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  title:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                subtitle: example
-                title: example
-                titleVisible: true
-                type: line
+              - id: example
         draftId: example
         lifecycle:
           draft:
@@ -66809,71 +66291,7 @@ components:
                 title: example
             semanticModel: example
             visuals:
-              key:
-                accessibility:
-                  announceChanges: true
-                  description: example
-                  summary: example
-                  title: example
-                calculations:
-                  - axis: rows
-                    hidden: true
-                    id: example
-                    label: example
-                    lookup:
-                      field: example
-                      value: example
-                    offset: 1
-                    orderBy:
-                      - direction: asc
-                        field: example
-                    parent: example
-                    partitionBy:
-                      - example
-                    reset: none
-                    source: example
-                    template: running_total
-                    window: 1
-                dataBudget:
-                  maxRows: 1
-                  requiredCompleteness: complete
-                datasets:
-                  key: {}
-                description: example
-                interactions: []
-                metadata:
-                  description:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  subtitle:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  summary:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                  title:
-                    dataset: example
-                    fallback: example
-                    field: example
-                    prefix: example
-                    reducer: first
-                    suffix: example
-                subtitle: example
-                title: example
-                titleVisible: true
-                type: line
+              - id: example
         projectId: example
         provenance:
           actorId: example
@@ -68672,71 +68090,7 @@ components:
               title: example
           semanticModel: example
           visuals:
-            key:
-              accessibility:
-                announceChanges: true
-                description: example
-                summary: example
-                title: example
-              calculations:
-                - axis: rows
-                  hidden: true
-                  id: example
-                  label: example
-                  lookup:
-                    field: example
-                    value: example
-                  offset: 1
-                  orderBy:
-                    - direction: asc
-                      field: example
-                  parent: example
-                  partitionBy:
-                    - example
-                  reset: none
-                  source: example
-                  template: running_total
-                  window: 1
-              dataBudget:
-                maxRows: 1
-                requiredCompleteness: complete
-              datasets:
-                key: {}
-              description: example
-              interactions: []
-              metadata:
-                description:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                subtitle:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                summary:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                title:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-              subtitle: example
-              title: example
-              titleVisible: true
-              type: line
+            - id: example
     DashboardEventAnnotation:
       type: object
       required:
@@ -71546,80 +70900,11 @@ components:
                 - example
               urlParameter: example
         visuals:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/DashboardVisual'
-          propertyNames:
-            type: string
-            minLength: 1
-            maxLength: 128
-            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          type: array
+          items:
+            $ref: '#/components/schemas/NamedDashboardVisual'
           example:
-            key:
-              accessibility:
-                announceChanges: true
-                description: example
-                summary: example
-                title: example
-              calculations:
-                - axis: rows
-                  hidden: true
-                  id: example
-                  label: example
-                  lookup:
-                    field: example
-                    value: example
-                  offset: 1
-                  orderBy:
-                    - direction: asc
-                      field: example
-                  parent: example
-                  partitionBy:
-                    - example
-                  reset: none
-                  source: example
-                  template: running_total
-                  window: 1
-              dataBudget:
-                maxRows: 1
-                requiredCompleteness: complete
-              datasets:
-                key: {}
-              description: example
-              interactions: []
-              metadata:
-                description:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                subtitle:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                summary:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-                title:
-                  dataset: example
-                  fallback: example
-                  field: example
-                  prefix: example
-                  reducer: first
-                  suffix: example
-              subtitle: example
-              title: example
-              titleVisible: true
-              type: line
+            - id: example
         pages:
           type: array
           items:
@@ -71694,71 +70979,7 @@ components:
             title: example
         semanticModel: example
         visuals:
-          key:
-            accessibility:
-              announceChanges: true
-              description: example
-              summary: example
-              title: example
-            calculations:
-              - axis: rows
-                hidden: true
-                id: example
-                label: example
-                lookup:
-                  field: example
-                  value: example
-                offset: 1
-                orderBy:
-                  - direction: asc
-                    field: example
-                parent: example
-                partitionBy:
-                  - example
-                reset: none
-                source: example
-                template: running_total
-                window: 1
-            dataBudget:
-              maxRows: 1
-              requiredCompleteness: complete
-            datasets:
-              key: {}
-            description: example
-            interactions: []
-            metadata:
-              description:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              subtitle:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              summary:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-              title:
-                dataset: example
-                fallback: example
-                field: example
-                prefix: example
-                reducer: first
-                suffix: example
-            subtitle: example
-            title: example
-            titleVisible: true
-            type: line
+          - id: example
     DashboardStackingMode:
       type: string
       enum:
@@ -72199,158 +71420,6 @@ components:
         - matrix
         - pivot
       example: line
-    DataPolicyAuditPayload:
-      type: object
-      required:
-        - resourceId
-        - resourceKind
-        - policyType
-      properties:
-        resourceId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        resourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        policyType:
-          type: string
-          example: example
-      example:
-        policyType: example
-        resourceId: example
-        resourceKind: project
-    DataPolicyListResponse:
-      type: object
-      required:
-        - items
-        - page
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/DataPolicyResponse'
-          example:
-            - createdAt: "2026-01-02T15:04:05Z"
-              expression:
-                key: example
-              id: example
-              policyType: example
-              resourceId: example
-              resourceKind: project
-              subjectId: example
-              subjectType: example
-              updatedAt: "2026-01-02T15:04:05Z"
-        page:
-          $ref: '#/components/schemas/PageInfo'
-      example:
-        items:
-          - createdAt: "2026-01-02T15:04:05Z"
-            expression:
-              key: example
-            id: example
-            policyType: example
-            resourceId: example
-            resourceKind: project
-            subjectId: example
-            subjectType: example
-            updatedAt: "2026-01-02T15:04:05Z"
-        page:
-          nextCursor: example
-    DataPolicyRequest:
-      type: object
-      required:
-        - resourceKind
-        - resourceId
-        - policyType
-        - expression
-      properties:
-        resourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        resourceId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        subjectType:
-          type: string
-          example: example
-        subjectId:
-          type: string
-          example: example
-        policyType:
-          type: string
-          example: example
-        expression:
-          type: object
-          additionalProperties: {}
-          example:
-            key: example
-      example:
-        expression:
-          key: example
-        policyType: example
-        resourceId: example
-        resourceKind: project
-        subjectId: example
-        subjectType: example
-    DataPolicyResponse:
-      type: object
-      required:
-        - id
-        - resourceId
-        - resourceKind
-        - policyType
-        - expression
-        - createdAt
-        - updatedAt
-      properties:
-        id:
-          type: string
-          example: example
-        resourceId:
-          type: string
-          minLength: 1
-          maxLength: 200
-          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
-          example: example
-        resourceKind:
-          $ref: '#/components/schemas/ResourceKind'
-        subjectType:
-          type: string
-          example: example
-        subjectId:
-          type: string
-          example: example
-        policyType:
-          type: string
-          example: example
-        expression:
-          type: object
-          additionalProperties: {}
-          example:
-            key: example
-        createdAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-      example:
-        createdAt: "2026-01-02T15:04:05Z"
-        expression:
-          key: example
-        id: example
-        policyType: example
-        resourceId: example
-        resourceKind: project
-        subjectId: example
-        subjectType: example
-        updatedAt: "2026-01-02T15:04:05Z"
     DateDashboardFilterValue:
       type: object
       allOf:
@@ -76607,6 +75676,22 @@ components:
       example:
         maxSelectedValues: 1
         type: example
+    NamedDashboardVisual:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardVisual'
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+      description: A visual declared in a Dashboard document carries its list identity.
+      example:
+        id: example
     NullCheckDashboardFilterExpression:
       type: object
       allOf:
@@ -79494,6 +78579,7 @@ components:
               - connectionId: example
                 connectorKind: example
                 displayName: example
+            authorizationDigest: example
             baseIdentity:
               environment: example
               generationId: example
@@ -79515,6 +78601,7 @@ components:
               - connectionId: example
                 revisionId: example
             policyDigest: example
+            policyRevision: 1
             runtimeVersion: example
             targetId: example
           planDigest: example
@@ -79595,6 +78682,13 @@ components:
         policyDigest:
           type: string
           example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        authorizationDigest:
+          type: string
+          example: example
         dataRevision:
           type: string
           example: example
@@ -79631,6 +78725,7 @@ components:
           - connectionId: example
             connectorKind: example
             displayName: example
+        authorizationDigest: example
         baseIdentity:
           environment: example
           generationId: example
@@ -79652,6 +78747,7 @@ components:
           - connectionId: example
             revisionId: example
         policyDigest: example
+        policyRevision: 1
         runtimeVersion: example
         targetId: example
     ReleaseListResponse:
@@ -79698,6 +78794,7 @@ components:
                     - connectionId: example
                       connectorKind: example
                       displayName: example
+                  authorizationDigest: example
                   baseIdentity:
                     environment: example
                     generationId: example
@@ -79719,6 +78816,7 @@ components:
                     - connectionId: example
                       revisionId: example
                   policyDigest: example
+                  policyRevision: 1
                   runtimeVersion: example
                   targetId: example
                 planDigest: example
@@ -79766,6 +78864,7 @@ components:
                   - connectionId: example
                     connectorKind: example
                     displayName: example
+                authorizationDigest: example
                 baseIdentity:
                   environment: example
                   generationId: example
@@ -79787,6 +78886,7 @@ components:
                   - connectionId: example
                     revisionId: example
                 policyDigest: example
+                policyRevision: 1
                 runtimeVersion: example
                 targetId: example
               planDigest: example
@@ -79895,6 +78995,7 @@ components:
             - connectionId: example
               connectorKind: example
               displayName: example
+          authorizationDigest: example
           baseIdentity:
             environment: example
             generationId: example
@@ -79916,6 +79017,7 @@ components:
             - connectionId: example
               revisionId: example
           policyDigest: example
+          policyRevision: 1
           runtimeVersion: example
           targetId: example
         planDigest: example
@@ -80027,6 +79129,7 @@ components:
               - connectionId: example
                 connectorKind: example
                 displayName: example
+            authorizationDigest: example
             baseIdentity:
               environment: example
               generationId: example
@@ -80048,6 +79151,7 @@ components:
               - connectionId: example
                 revisionId: example
             policyDigest: example
+            policyRevision: 1
             runtimeVersion: example
             targetId: example
           planDigest: example
@@ -80150,6 +79254,213 @@ components:
         - pipeline
         - dashboard
       example: project
+    RoleBindingAuditPayload:
+      type: object
+      required:
+        - targetId
+        - projectId
+        - environment
+        - bindingId
+        - subjectType
+        - subjectId
+        - role
+        - policyRevision
+        - policyDigest
+      properties:
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        bindingId:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        role:
+          type: string
+          example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        bindingId: example
+        environment: example
+        policyDigest: example
+        policyRevision: 1
+        projectId: example
+        role: example
+        subjectId: example
+        subjectType: example
+        targetId: example
+    RoleBindingCreateRequest:
+      type: object
+      required:
+        - id
+        - subjectType
+        - subjectId
+        - role
+        - expectedRevision
+      properties:
+        id:
+          type: string
+          example: example
+        name:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        role:
+          type: string
+          example: example
+        expectedRevision:
+          type: integer
+          format: int64
+          description: Compare-and-swap fence. Use 0 when creating the first policy
+            revision.
+          example: 1
+      example:
+        expectedRevision: 1
+        id: example
+        name: example
+        role: example
+        subjectId: example
+        subjectType: example
+    RoleBindingListResponse:
+      type: object
+      required:
+        - items
+        - page
+        - targetId
+        - projectId
+        - environment
+        - policyRevision
+        - policyDigest
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleBindingResponse'
+          example:
+            - capabilities:
+                - PROJECT_ADMIN
+              id: example
+              name: example
+              policyDigest: example
+              policyRevision: 1
+              role: example
+              subjectId: example
+              subjectType: example
+        page:
+          $ref: '#/components/schemas/PageInfo'
+        targetId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        environment:
+          type: string
+          example: example
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        environment: example
+        items:
+          - capabilities:
+              - PROJECT_ADMIN
+            id: example
+            name: example
+            policyDigest: example
+            policyRevision: 1
+            role: example
+            subjectId: example
+            subjectType: example
+        page:
+          nextCursor: example
+        policyDigest: example
+        policyRevision: 1
+        projectId: example
+        targetId: example
+    RoleBindingResponse:
+      type: object
+      required:
+        - id
+        - name
+        - subjectType
+        - subjectId
+        - role
+        - capabilities
+        - policyRevision
+        - policyDigest
+      properties:
+        id:
+          type: string
+          example: example
+        name:
+          type: string
+          example: example
+        subjectType:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        role:
+          type: string
+          example: example
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Capability'
+          description: The immutable capability bundle derived from role by the target
+            authority.
+          example:
+            - PROJECT_ADMIN
+        policyRevision:
+          type: integer
+          format: int64
+          example: 1
+        policyDigest:
+          type: string
+          example: example
+      example:
+        capabilities:
+          - PROJECT_ADMIN
+        id: example
+        name: example
+        policyDigest: example
+        policyRevision: 1
+        role: example
+        subjectId: example
+        subjectType: example
     RoleListResponse:
       type: object
       required:

@@ -1258,15 +1258,6 @@ func (e *Environment) IsPostgresCatalog() bool {
 	return e != nil && e.postgresCatalog
 }
 
-// PostgresMetadataSchema is the exact per-pool metadata namespace used by the
-// attached PostgreSQL catalog. It is empty for file-backed environments.
-func (e *Environment) PostgresMetadataSchema() string {
-	if e == nil {
-		return ""
-	}
-	return e.postgresMetadata
-}
-
 // PostgresSnapshotVersion returns the exact serving snapshot pinned at
 // attachment time, or zero when the environment is not PostgreSQL-backed.
 func (e *Environment) PostgresSnapshotVersion() int64 {

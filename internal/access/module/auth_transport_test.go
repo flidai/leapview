@@ -12,7 +12,7 @@ import (
 )
 
 func TestSecureAuthCookiesUseHostPrefix(t *testing.T) {
-	auth := NewAuth(nil, AuthConfig{CookieSecure: true, CSRFKey: strings.Repeat("k", 32)})
+	auth := mustNewAuth(t, nil, AuthConfig{CookieSecure: true, CSRFKey: strings.Repeat("k", 32)})
 
 	for label, cookie := range map[string]*http.Cookie{
 		"session":     auth.sessionCookie("token", authNow()),
@@ -33,7 +33,7 @@ func TestSecureAuthCookiesUseHostPrefix(t *testing.T) {
 }
 
 func TestDevelopmentAuthCookiesKeepUnprefixedNames(t *testing.T) {
-	auth := NewAuth(nil, AuthConfig{CSRFKey: strings.Repeat("k", 32)})
+	auth := mustNewAuth(t, nil, AuthConfig{CSRFKey: strings.Repeat("k", 32)})
 
 	if auth.SessionCookieName() != sessionCookieName || auth.csrfCookie != csrfCookieName ||
 		auth.oidcCookie != oidcStateCookieName || auth.returnCookie != authReturnCookieName {
@@ -42,7 +42,7 @@ func TestDevelopmentAuthCookiesKeepUnprefixedNames(t *testing.T) {
 }
 
 func TestLocalLoginRejectsStreamedOversizeBody(t *testing.T) {
-	auth := NewAuth(nil, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("k", 32)})
+	auth := mustNewAuth(t, nil, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("k", 32)})
 	request := httptest.NewRequest(http.MethodPost, "/auth/local/login", strings.NewReader("password="+strings.Repeat("a", int(LocalAuthMaxFormBytes))))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.ContentLength = -1
@@ -56,7 +56,7 @@ func TestLocalLoginRejectsStreamedOversizeBody(t *testing.T) {
 }
 
 func TestOIDCErrorsDoNotExposeProviderDetails(t *testing.T) {
-	auth := NewAuth(nil, AuthConfig{DevBypass: true, CSRFKey: strings.Repeat("k", 32)})
+	auth := mustNewAuth(t, nil, AuthConfig{DevBypass: true, CSRFKey: strings.Repeat("k", 32)})
 	auth.ConfigureOIDCTestClients(map[string]OIDCClient{"azureadv2": rejectingOIDCClient{}})
 	stateCookie := auth.OIDCStateCookie("state", "nonce")
 	request := httptest.NewRequest(http.MethodGet, "/auth/azureadv2/callback?state=state&code=code", nil)

@@ -38,12 +38,6 @@ type InitializeRequest struct {
 	Format string
 }
 
-type ExternalRecoveryPoint struct {
-	Role          string `json:"role"`
-	RecoveryPoint string `json:"recoveryPoint"`
-	EvidenceKey   string `json:"evidenceKey"`
-}
-
 // PhysicalPoolBootstrapRequest is the offline operator input for the
 // controlled pre-release pool admission path. It contains only non-secret
 // pool identity and compatibility evidence; credentials remain target-owned
@@ -114,24 +108,6 @@ type PhysicalPoolBootstrap interface {
 // dry-run result or a database mutation is acknowledged.
 type PhysicalPoolEvidenceValidator interface {
 	ValidateEvidence(physicalpool.Evidence) error
-}
-
-type BackupStorageTopology struct {
-	ControlPlane   string
-	ManagedData    string
-	DuckLake       string
-	ExternalStores []BackupExternalStoreReference
-}
-
-type BackupExternalStoreReference struct {
-	Role          string
-	Provider      string
-	Endpoint      string
-	Region        string
-	Bucket        string
-	Prefix        string
-	RecoveryPoint string
-	EvidenceKey   string
 }
 
 type Dependencies struct {

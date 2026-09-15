@@ -24,6 +24,7 @@ type DataExplorerAgentBootstrap struct {
 type DataExplorerAgentCommandBindings struct {
 	CreateConversation uicommand.Binding
 	CreateRun          uicommand.Binding
+	CancelRun          uicommand.Binding
 }
 
 func (commands DataExplorerAgentCommandBindings) Workflow() []uicommand.Binding {
@@ -37,7 +38,7 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
 	explorerUpdatesURL := dataExplorerUpdatesURL(explorer.Command)
-	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
+	agentTurn := "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 	return webpage.Render(layout, webpage.Spec{
 		Title: page.Title, CSRFToken: csrfToken, Scripts: []string{"/static/data-explorer.js"},
@@ -47,6 +48,7 @@ func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPag
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost("/explore/command")),
 			g.Attr("data-on:lv-chat-submit", agentTurn),
+			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(commands.CancelRun, "/chats/stop", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-restore", agentRestore),
 			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
 		),

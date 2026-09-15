@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_refresh_run_notifications.sql,010_refresh_schedule_notifications.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,219 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestTargetAuthorizationPolicyMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "017_target_authorization_policy.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"access.authorization_policy",
+		"access.authorization_policy_revision",
+		"access.authorization_policy_role_binding",
+		"access.authorization_policy_operation",
+		"source_generation_id",
+		"authorization_policy_revision",
+		"authorization_policy_digest",
+		"authorization policy history is immutable",
+		"REVOKE UPDATE",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("target authorization policy migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("target authorization policy migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("target authorization policy Down must refuse instead of deleting evidence")
+	}
+}
+
+func TestMigrationCapabilityAuthorityMigrationIsImmutableAndRoleSeparated(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "016_migration_capability_authority.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"release.migration_capability",
+		"PRIMARY KEY (artifact_admission_digest, target_identity_digest, subsystem)",
+		"REFERENCES release.oci_artifact_admission(admission_digest) ON DELETE RESTRICT",
+		"capability_version = 'migration-capability/v1'",
+		"owner_evidence_version = 'migration-capability-owner-evidence/v1'",
+		"owner_evidence_digest text NOT NULL UNIQUE",
+		"migration_capability_immutable",
+		"migration_capability_no_truncate",
+		"release.lock_oci_artifact_admission(p_artifact_reference text)",
+		"SECURITY DEFINER",
+		"REVOKE ALL ON FUNCTION release.lock_oci_artifact_admission(text) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_owner",
+		"GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_migrator",
+		"GRANT EXECUTE ON FUNCTION release.lock_oci_artifact_admission(text) TO leapview_control_maintenance",
+		"GRANT SELECT ON release.migration_capability TO leapview_control_runtime",
+		"GRANT SELECT, INSERT ON release.migration_capability TO leapview_control_maintenance",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"migration capability authority migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("migration capability authority migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("migration capability authority Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("migration capability authority migration must restore the migrator role")
+	}
+}
+
+func TestOCIArtifactAdmissionAuthorityMigrationIsImmutableAndRoleSeparated(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "015_oci_artifact_admission_authority.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"release.oci_artifact_admission",
+		"release.oci_artifact_admission_revocation",
+		"artifact_reference = repository_identity || '@' || oci_digest",
+		"admission_digest text NOT NULL UNIQUE",
+		"oci_artifact_admission_immutable",
+		"oci_artifact_admission_no_truncate",
+		"GRANT SELECT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_runtime",
+		"GRANT SELECT, INSERT ON release.oci_artifact_admission, release.oci_artifact_admission_revocation TO leapview_control_maintenance",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"OCI artifact admission authority migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("OCI artifact admission migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("OCI artifact admission migration Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("OCI artifact admission migration must restore the migrator role")
+	}
+}
+
+func TestReleasePolicyAuthorityMigrationIsImmutableAndRoleSeparated(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "014_release_policy_authority.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"release.release_transition_policy",
+		"PRIMARY KEY (predecessor_artifact_digest, candidate_artifact_digest)",
+		"predecessor_artifact_digest <> candidate_artifact_digest",
+		"(policy_json ->> 'digest' = policy_digest) IS TRUE",
+		"(jsonb_typeof(policy_json -> 'rules') = 'array') IS TRUE",
+		"release_transition_policy_immutable",
+		"release_transition_policy_no_truncate",
+		"GRANT SELECT ON release.release_transition_policy TO leapview_control_runtime",
+		"GRANT SELECT, INSERT ON release.release_transition_policy TO leapview_control_maintenance",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"release policy authority migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("release policy migration missing %q", required)
+		}
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("release policy migration Down must refuse instead of deleting policy evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("release policy migration must restore the migrator role")
+	}
+}
+
+func TestUnreachableFencedAttemptStateMigrationNarrowsTheLiveContract(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "010_remove_unreachable_fenced_attempt_state.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"delivery_build_attempt_state_allowed_check",
+		"delivery_build_attempt_evidence_state_check",
+		"pg_get_constraintdef",
+		"state IN ('running','committed','aborted','indeterminate')",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("attempt-state migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("attempt-state migration must restore the migrator role")
+	}
+}
+
+func TestManagedDataRetentionLifecycleMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "009_managed_data_retention_lifecycle.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"retention_root_revision_state_idx",
+		"retention_root_generation_state_idx",
+		"retention_root_reachability_epoch",
+		"retention root must begin in live state",
+		"delivery.sync_managed_data_generation_root",
+		"evidence->>'kind' = 'serving-generation'",
+		"REVOKE ALL ON FUNCTION delivery.sync_managed_data_generation_root(uuid, text) FROM PUBLIC",
+		"destructive down is forbidden",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("retention lifecycle migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("retention lifecycle migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP TABLE") {
+		t.Error("retention lifecycle Down must refuse instead of deleting evidence")
+	}
+}
+
+func TestCaptureCoreTransportMigrationIsAdditiveAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "012_recovery_capture_core_transport.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"leapview/managed-capture-core/v2",
+		"receipt_core_digest",
+		"capture_core_required",
+		"worker_fence",
+		"lock_successor_assignment",
+		"NOT VALID",
+		"guard_successor_set_complete",
+		"GRANT SELECT, INSERT",
+		"capture-core transport migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("capture-core migration missing %q", required)
+		}
+	}
+	if strings.Contains(strings.ToUpper(migration[strings.Index(migration, "-- +goose Down"):]), "DROP TABLE") {
+		t.Error("capture-core migration Down must refuse instead of deleting evidence")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("capture-core migration must restore the migrator role")
 	}
 }
 
@@ -121,6 +334,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		t.Fatal(err)
 	}
 	migration := string(migrationBytes)
+	captureCoreBytes, err := fs.ReadFile(MigrationFS(), "012_recovery_capture_core_transport.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentSuccessorMigrations := migration + "\n" + string(captureCoreBytes)
 	owner := recoverypostgres.SuccessorSchemaSQL()
 	for _, marker := range []string{
 		"recovery.set_identity_registry",
@@ -132,10 +350,11 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 		"recovery.recovery_set_v3_root",
 		"successor_domain_sha256",
 		"lock_successor_generation",
+		"lock_successor_assignment",
 		"guard_successor_set_complete",
 		"successor_registry_immutable",
 	} {
-		if !strings.Contains(owner, marker) || !strings.Contains(migration, marker) {
+		if !strings.Contains(owner, marker) || !strings.Contains(currentSuccessorMigrations, marker) {
 			t.Errorf("successor schema/migration missing %q", marker)
 		}
 	}
@@ -155,14 +374,18 @@ func TestSuccessorV3MigrationMirrorsOwnerSchemaAndRefusesDestructiveDown(t *test
 	for _, pattern := range patterns {
 		matches := func(source string) []string {
 			all := pattern.FindAllStringSubmatch(source, -1)
-			names := make([]string, 0, len(all))
+			unique := make(map[string]struct{}, len(all))
 			for _, match := range all {
-				names = append(names, match[1])
+				unique[match[1]] = struct{}{}
+			}
+			names := make([]string, 0, len(unique))
+			for name := range unique {
+				names = append(names, name)
 			}
 			return names
 		}
 		ownerNames := matches(owner)
-		migrationNames := matches(migration)
+		migrationNames := matches(currentSuccessorMigrations)
 		sort.Strings(ownerNames)
 		sort.Strings(migrationNames)
 		if len(ownerNames) != len(migrationNames) {

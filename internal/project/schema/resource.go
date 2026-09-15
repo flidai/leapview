@@ -170,6 +170,9 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	if err := checkResourceNode(filename, root); err != nil {
 		return nil, err
 	}
+	if err := checkNamedListIdentities(kind, filename, root); err != nil {
+		return nil, err
+	}
 	if err := checkJSONNumbers(filename, content, root); err != nil {
 		return nil, err
 	}
@@ -196,8 +199,6 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	}
 	return normalized, nil
 }
-
-const sourceFreshnessConstraint = `spec: {freshness?: {matchN(>=1, [{warningAfter!: _}, {errorAfter!: _}])}}`
 
 var (
 	generatedSchemaOnce sync.Once
@@ -250,6 +251,33 @@ func validateGeneratedJSON(kind Kind, filename string, root *yaml.Node, content 
 	}
 	if err := validateGeneratedCUEAt(kind, filename, root, value); err != nil {
 		return err
+	}
+	if kind == KindSource || kind == KindModel {
+		if err := validateDatasetChecksAt(filename, root, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateDatasetChecksAt(filename string, root *yaml.Node, value any) error {
+	resource, _ := value.(map[string]any)
+	spec, _ := resource["spec"].(map[string]any)
+	checks, _ := spec["checks"].([]any)
+	for index, item := range checks {
+		check, _ := item.(map[string]any)
+		if check["type"] != "freshness" {
+			continue
+		}
+		if check["warningAfter"] != nil || check["errorAfter"] != nil {
+			continue
+		}
+		path := []string{"spec", "checks", strconv.Itoa(index)}
+		node := yamlNodeAtPath(root, path)
+		if node == nil {
+			node = root
+		}
+		return &Error{Diagnostics: []Diagnostic{{File: filename, Line: node.Line, Column: node.Column, Severity: SeverityError, Code: "schema.generated", FieldPath: "spec.checks", Message: "freshness check requires warningAfter or errorAfter"}}}
 	}
 	return nil
 }
@@ -320,17 +348,7 @@ func validateGeneratedCUEAt(kind Kind, filename string, root *yaml.Node, value a
 		return err
 	}
 	instance := ctx.Encode(value)
-	constraint := ctx.CompileString("{}")
-	if kind == KindSource && instance.LookupPath(cue.ParsePath("spec.freshness")).Exists() {
-		// Freshness is the only contextual Source rule. Its structural fields
-		// come from the generated schema; this static constraint is applied only
-		// when the generated instance actually contains freshness.
-		constraint = ctx.CompileString(sourceFreshnessConstraint)
-	}
-	if err := constraint.Err(); err != nil {
-		return err
-	}
-	if err := imported.Unify(constraint).Unify(instance).Validate(cue.Final()); err != nil {
+	if err := imported.Unify(instance).Validate(cue.Final()); err != nil {
 		if filename != "" && root != nil {
 			return generatedCUEValidationDiagnostic(filename, root, err)
 		}
@@ -348,9 +366,6 @@ func generatedCUEValidationDiagnostic(filename string, root *yaml.Node, err erro
 		path := item.Path()
 		if len(path) == 0 {
 			continue
-		}
-		if len(path) >= 2 && path[0] == "spec" && path[1] == "freshness" {
-			path = []string{"spec", "freshness"}
 		}
 		node := yamlNodeAtPath(root, path)
 		if node == nil {

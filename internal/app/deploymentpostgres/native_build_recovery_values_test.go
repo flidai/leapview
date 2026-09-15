@@ -1,6 +1,7 @@
 package deploymentpostgres
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -16,7 +17,10 @@ func TestDeriveNativeBuildRecoveryArtifactValues(t *testing.T) {
 		Environment: "prod",
 	}
 	plan := nativeBuildPlan{
-		DeliveryPlan:   deploymentdomain.DeliveryPlan{Digest: recoveryValueDigest('a'), SourceDigest: recoveryValueDigest('b')},
+		DeliveryPlan: deploymentdomain.DeliveryPlan{
+			Digest: recoveryValueDigest('a'), SourceDigest: recoveryValueDigest('b'),
+			Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: recoveryValueDigest('e'), AuthorizationDigest: recoveryValueDigest('e')},
+		},
 		ArtifactDigest: recoveryValueDigest('c'),
 	}
 	prepared := NativeBuildRecoveryPreparationResult{
@@ -35,6 +39,9 @@ func TestDeriveNativeBuildRecoveryArtifactValues(t *testing.T) {
 		wantArtifactID := "artifact-" + strings.TrimPrefix(plan.ArtifactDigest, "sha256:")
 		if artifactRequest.CandidateID != prepared.CandidateID || artifactRequest.ServingIdentity.ProjectID != request.ProjectID || artifactRequest.ServingIdentity.Environment != request.Environment || artifactRequest.ServingIdentity.GenerationID != prepared.GenerationID || artifactRequest.SourceDigest != plan.SourceDigest {
 			t.Fatalf("artifact recovery request = %#v", artifactRequest)
+		}
+		if artifactRequest.AuthorizationPolicyRevision != 0 || artifactRequest.AuthorizationPolicyDigest != "" || artifactRequest.AuthorizationFingerprint != plan.Governance.AuthorizationDigest {
+			t.Fatalf("legacy authorization recovery evidence = %#v", artifactRequest)
 		}
 		if artifactRequest.Artifact.ServingArtifactID != wantArtifactID || artifactRequest.Artifact.ServingArtifactDigest != plan.ArtifactDigest || artifactRequest.Artifact.ServingStateID != prepared.GenerationID {
 			t.Fatalf("synthesized artifact identity = %#v", artifactRequest.Artifact)
@@ -67,6 +74,14 @@ func TestDeriveNativeBuildRecoveryArtifactValues(t *testing.T) {
 		}
 		if marker.LeaseEpoch != bound.DeliveryAttempt.FencingEpoch || marker.FencingToken != "17" {
 			t.Fatalf("existing-binding marker = %#v", marker)
+		}
+	})
+
+	t.Run("rejects mismatched pre-017 policy identity", func(t *testing.T) {
+		mismatched := plan
+		mismatched.Governance.PolicyDigest = recoveryValueDigest('9')
+		if _, _, _, err := deriveNativeBuildRecoveryArtifactValues(request, recoveryValueDigest('d'), mismatched, prepared, "pool-recovery"); !errors.Is(err, deploymentdomain.ErrDeliveryConflict) {
+			t.Fatalf("mismatched legacy policy recovery error = %v, want delivery conflict", err)
 		}
 	})
 }

@@ -1,18 +1,23 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
 ARG LEAPVIEW_IMAGE
-FROM ${LEAPVIEW_IMAGE}
+FROM ${LEAPVIEW_IMAGE} AS candidate
+
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 USER root
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends dbus-daemon gnome-keyring && \
+    apt-get install -y --no-install-recommends ca-certificates dbus-daemon gnome-keyring libstdc++6 tzdata && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=candidate /usr/local/bin/leapview /usr/local/bin/leapview
+COPY --from=candidate /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl
+COPY --from=candidate /app/evaluation /app/evaluation
 
 RUN groupadd --system author && \
     useradd --system --gid author --home-dir /home/author --create-home --shell /bin/bash author && \
     mkdir -p /qualification && \
-    cp -a /app/evaluation /qualification/evaluation && \
     chown -R author:author /home/author /qualification
 
 USER author

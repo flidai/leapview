@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -166,7 +167,7 @@ type HTTPConfig struct {
 	ResolveGroupIDs    func(context.Context, string) ([]string, error)
 }
 
-func Build(_ context.Context, config Config) (*Module, error) {
+func Build(ctx context.Context, config Config) (*Module, error) {
 	runExecution, err := loadRunExecutionContract()
 	if err != nil {
 		return nil, err
@@ -249,6 +250,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if service != nil && config.Persistence != nil {
 		service.SetPromptWorkflow(m.runWorkflow)
+	}
+	if service != nil {
+		if err := service.StartPendingConversationLifecycle(ctx); err != nil && !errors.Is(err, agent.ErrPendingConversationUnsupported) {
+			return nil, fmt.Errorf("start pending conversation lifecycle: %w", err)
+		}
 	}
 	searchReferences := config.HTTP.SearchReferences
 	if searchReferences == nil {

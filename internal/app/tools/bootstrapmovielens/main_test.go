@@ -6,17 +6,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/app/tools/internal/bootstrap"
 )
 
 func TestTargetDirRequiresExplicitOutput(t *testing.T) {
-	if _, err := targetDir(""); err == nil || !strings.Contains(err.Error(), "out is required") {
+	if _, err := bootstrap.TargetDir(""); err == nil || !strings.Contains(err.Error(), "out is required") {
 		t.Fatalf("targetDir empty output error = %v, want required error", err)
 	}
 }
 
 func TestTargetDirResolvesExplicitOutput(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "movielens")
-	got, err := targetDir(want)
+	got, err := bootstrap.TargetDir(want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,29 +44,17 @@ func TestMissingFiles(t *testing.T) {
 	}
 }
 
-func TestRefreshRequiredHonorsForce(t *testing.T) {
-	if !refreshRequired(nil, true) {
-		t.Fatal("refreshRequired(nil, true) = false, want true")
-	}
-	if refreshRequired(nil, false) {
-		t.Fatal("refreshRequired(nil, false) = true, want false")
-	}
-	if !refreshRequired([]string{"ratings.csv"}, false) {
-		t.Fatal("refreshRequired(missing, false) = false, want true")
-	}
-}
-
 func TestTruthiness(t *testing.T) {
 	truthyValues := []string{"1", "true", "TRUE", " yes "}
 	for _, value := range truthyValues {
-		if !truthy(value) {
+		if !bootstrap.Truthy(value) {
 			t.Fatalf("truthy(%q) = false, want true", value)
 		}
 	}
 
 	falseValues := []string{"", "0", "false", "no", "y"}
 	for _, value := range falseValues {
-		if truthy(value) {
+		if bootstrap.Truthy(value) {
 			t.Fatalf("truthy(%q) = true, want false", value)
 		}
 	}

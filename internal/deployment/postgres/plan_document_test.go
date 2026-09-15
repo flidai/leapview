@@ -26,7 +26,7 @@ func richPlanDocumentFixture(t *testing.T, id, target, project string) (deployme
 		},
 		Provenance: deployment.DeliveryProvenance{Builder: "test"},
 		Governance: deployment.DeliveryGovernance{
-			PolicyDigest: d('2'), AuthorizationDigest: d('d'), QualificationDigest: d('3'), ApprovalPolicyRevision: 1,
+			PolicyDigest: d('a'), PolicyRevision: 1, AuthorizationDigest: d('d'), QualificationDigest: d('3'), ApprovalPolicyRevision: 1,
 			ExpiresAt: created.Add(time.Hour), RequiresApproval: true,
 		},
 		Evidence: deployment.DeliveryPlanEvidence{

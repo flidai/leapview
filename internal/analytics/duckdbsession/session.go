@@ -58,14 +58,6 @@ func OpenPinned(ctx context.Context, connector driver.Connector) (*PinnedSession
 	return &PinnedSession{db: db, conn: conn}, nil
 }
 
-// NewPinned adopts an already-open database/sql handle and connection.  It is
-// intentionally narrow and exists for compatibility with tests and callers
-// which must supply a connector-created connection themselves.  Production
-// callers should use OpenPinned, which enforces the one-connection limits.
-func NewPinned(db *sql.DB, conn *sql.Conn) *PinnedSession {
-	return &PinnedSession{db: db, conn: conn}
-}
-
 func (s *PinnedSession) current() (*sql.Conn, error) {
 	if s == nil {
 		return nil, ErrClosed

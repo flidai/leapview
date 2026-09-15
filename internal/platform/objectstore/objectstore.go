@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 const (
@@ -339,7 +341,7 @@ func (s *MemoryStore) validateMetadata(metadata ObjectMetadata) error {
 	if s.securityDomain != "" && metadata.StorageSecurityDomain != s.securityDomain {
 		return fmt.Errorf("%w: got %q want %q", ErrDomainMismatch, metadata.StorageSecurityDomain, s.securityDomain)
 	}
-	if !isSHA256Identity(metadata.Digest) || !isSHA256Identity(metadata.MetadataDigest) {
+	if platformdigest.ValidateSHA256Identity(metadata.Digest) != nil || platformdigest.ValidateSHA256Identity(metadata.MetadataDigest) != nil {
 		return fmt.Errorf("%w: digest and metadata digest must be canonical sha256 identities", ErrInvalid)
 	}
 	if metadata.SizeBytes < 0 || metadata.SizeBytes > s.objectLimit() {
@@ -438,7 +440,7 @@ func verifyObject(stored memoryObject) error {
 	if stored.info.Digest != sha256Identity(stored.body) || stored.info.SizeBytes != int64(len(stored.body)) {
 		return fmt.Errorf("%w: key %q digest or size evidence mismatch", ErrCorrupt, stored.info.Key)
 	}
-	if err := validateSecurityDomain(stored.info.StorageSecurityDomain); err != nil || !isSHA256Identity(stored.info.MetadataDigest) {
+	if err := validateSecurityDomain(stored.info.StorageSecurityDomain); err != nil || platformdigest.ValidateSHA256Identity(stored.info.MetadataDigest) != nil {
 		return fmt.Errorf("%w: key %q metadata evidence mismatch", ErrCorrupt, stored.info.Key)
 	}
 	if len(stored.info.ContentType) > MaxContentTypeBytes || hasControl(stored.info.ContentType) || stored.info.CreatedAt.IsZero() {
@@ -457,18 +459,6 @@ func contextErr(ctx context.Context) error {
 func sha256Identity(value []byte) string {
 	sum := sha256.Sum256(value)
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func isSHA256Identity(value string) bool {
-	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
-		return false
-	}
-	for _, r := range value[len("sha256:"):] {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *MemoryStore) currentTime() time.Time {

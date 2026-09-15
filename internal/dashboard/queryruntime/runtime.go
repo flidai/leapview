@@ -44,6 +44,13 @@ type DefinitionVisualizationMetrics interface {
 	DefaultFiltersForDefinition(dashboarddefinition.Definition) dashboard.Filters
 }
 
+// SpatialTileStreamExpirer is the narrow lifecycle capability used to retire
+// tile revisions minted for a closed dashboard stream. It remains separate
+// from Metrics so non-spatial runtimes do not need to implement it.
+type SpatialTileStreamExpirer interface {
+	ExpireVisualizationTileStream(string)
+}
+
 type ProjectMetrics interface {
 	MetricsForProject(projectID projectgraph.ResourceID) (Metrics, bool)
 }

@@ -168,11 +168,11 @@ test('data explorer renders object browser and emits preview commands', async ()
       const commands: any[] = []
       element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
       document.body.append(element)
-      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('lv-data-preview-table'); index += 1) {
+      for (let index = 0; index < 20 && !(element.shadowRoot as ShadowRoot)?.querySelector('lv-data-preview-table'); index += 1) {
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const previewTable = root.querySelector('lv-data-preview-table') as any
       await previewTable.updateComplete
       const grid = previewTable.renderRoot.querySelector('lv-windowed-table') as any
@@ -186,19 +186,19 @@ test('data explorer renders object browser and emits preview commands', async ()
       await element.updateComplete
       await previewTable.updateComplete
       await grid.updateComplete
-      const firstHeader = grid.shadowRoot.querySelector('.header-cell button') as HTMLButtonElement
+      const firstHeader = (grid.shadowRoot as ShadowRoot).querySelector('.header-cell button') as HTMLButtonElement
       firstHeader.click()
-      const resizer = grid.shadowRoot.querySelector('.column-resizer') as HTMLElement
+      const resizer = (grid.shadowRoot as ShadowRoot).querySelector('.column-resizer') as HTMLElement
       resizer.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 160 }))
       document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 230 }))
       await new Promise((resolve) => requestAnimationFrame(resolve))
       document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: 230 }))
-      const scrollport = grid.shadowRoot.querySelector('.scrollport') as HTMLDivElement
+      const scrollport = (grid.shadowRoot as ShadowRoot).querySelector('.scrollport') as HTMLDivElement
       scrollport.scrollTop = 9000
       scrollport.dispatchEvent(new Event('scroll'))
       await new Promise((resolve) => setTimeout(resolve, 80))
-      const cellRect = grid.shadowRoot.querySelector('.cell')!.getBoundingClientRect()
-      const tableRect = grid.shadowRoot.querySelector('.plane')!.getBoundingClientRect()
+      const cellRect = ((grid.shadowRoot as ShadowRoot).querySelector('.cell') as HTMLElement).getBoundingClientRect()
+      const tableRect = ((grid.shadowRoot as ShadowRoot).querySelector('.plane') as HTMLElement).getBoundingClientRect()
       const selectedNodeExpandedByDefault = Boolean(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.hasAttribute('open'))
       const searchInput = root.querySelector<HTMLInputElement>('.search input')!
       searchInput.value = 'status'
@@ -251,10 +251,10 @@ test('data explorer renders object browser and emits preview commands', async ()
         hasWindowedTable: Boolean(grid),
         tableKey: grid.table?.tableKey,
         tableRowHeight: grid.table?.rowHeight,
-        tableFooterHeight: Math.round(grid.shadowRoot.querySelector('.footer')!.getBoundingClientRect().height),
-        tableFooterDisplay: getComputedStyle(grid.shadowRoot.querySelector('.footer')!).display,
-        tableFooterText: grid.shadowRoot.querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
-        tableToolbarHeight: Math.round(grid.shadowRoot.querySelector('.toolbar')!.getBoundingClientRect().height),
+        tableFooterHeight: Math.round(((grid.shadowRoot as ShadowRoot).querySelector('.footer') as HTMLElement).getBoundingClientRect().height),
+        tableFooterDisplay: getComputedStyle((grid.shadowRoot as ShadowRoot).querySelector('.footer') as HTMLElement).display,
+        tableFooterText: (grid.shadowRoot as ShadowRoot).querySelector('.footer')?.textContent?.replace(/\s+/g, ' ').trim(),
+        tableToolbarHeight: Math.round(((grid.shadowRoot as ShadowRoot).querySelector('.toolbar') as HTMLElement).getBoundingClientRect().height),
         sidebarCollapsed,
         widthBeforeKeyboardResize,
         widthAfterKeyboardResize,
@@ -263,7 +263,7 @@ test('data explorer renders object browser and emits preview commands', async ()
         togglePositionBeforeCollapse: { x: Math.round(togglePositionBeforeCollapse.x), y: Math.round(togglePositionBeforeCollapse.y) },
         togglePositionAfterCollapse: { x: Math.round(togglePositionAfterCollapse.x), y: Math.round(togglePositionAfterCollapse.y) },
         collapsedToggleLabel,
-        rowCount: grid.shadowRoot.querySelectorAll('.row[role="row"]').length,
+        rowCount: (grid.shadowRoot as ShadowRoot).querySelectorAll('.row[role="row"]').length,
         firstCellWidth: Math.round(cellRect.width),
         tableWidth: Math.round(tableRect.width),
         commands,
@@ -365,7 +365,7 @@ test('data explorer distinguishes same-title aliases with dataset subtitles', as
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      return Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>('.object-button') ?? []).map((button) => ({
+      return Array.from((element.shadowRoot as ShadowRoot)?.querySelectorAll<HTMLElement>('.object-button') ?? []).map((button) => ({
         title: button.querySelector('.object-label strong')?.textContent?.trim(),
         subtitle: button.querySelector('.object-label small')?.textContent?.trim(),
       }))
@@ -408,7 +408,7 @@ test('data explorer prompts for a selection when objects are available', async (
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      return element.shadowRoot?.querySelector('.main .empty')?.textContent?.trim()
+      return (element.shadowRoot as ShadowRoot)?.querySelector('.main .empty')?.textContent?.trim()
     })
 
     expect(message).toBe('Select a data object to begin.')
@@ -482,12 +482,12 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const commands: any[] = []
       element.addEventListener('lv-data-explorer-command', (event: CustomEvent) => commands.push(event.detail))
       document.body.append(element)
-      for (let index = 0; index < 20 && !element.shadowRoot?.querySelector('.field-button'); index += 1) {
+      for (let index = 0; index < 20 && !(element.shadowRoot as ShadowRoot)?.querySelector('.field-button'); index += 1) {
         await element.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
 
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const customersTable = Array.from(root.querySelectorAll<HTMLElement>('.object-button')).find((button) => button.textContent?.includes('customers'))!
       customersTable.click()
       await element.updateComplete
@@ -619,8 +619,8 @@ test('data preview and semantic query failures expose retry and reset actions', 
       preview.addEventListener('lv-data-preview-table-command', (event: CustomEvent) => previewCommands.push(event.detail))
       document.body.append(preview)
       await preview.updateComplete
-      const previewAlert = preview.shadowRoot!.querySelector('[role="alert"]')!.textContent!.replace(/\s+/g, ' ').trim()
-      const previewButtons = Array.from(preview.shadowRoot!.querySelectorAll<HTMLButtonElement>('.failure button'))
+      const previewAlert = ((preview.shadowRoot as ShadowRoot)!.querySelector('[role="alert"]') as HTMLElement).textContent!.replace(/\s+/g, ' ').trim()
+      const previewButtons = Array.from((preview.shadowRoot as ShadowRoot)!.querySelectorAll<HTMLButtonElement>('.failure button'))
       previewButtons[0].click()
       previewButtons[1].click()
 
@@ -653,13 +653,13 @@ test('data preview and semantic query failures expose retry and reset actions', 
       const exploreCommands: any[] = []
       explorer.addEventListener('lv-data-explorer-command', (event: CustomEvent) => exploreCommands.push(event.detail))
       document.body.append(explorer)
-      for (let index = 0; index < 20 && !explorer.shadowRoot?.querySelector('.result-failure'); index += 1) {
+      for (let index = 0; index < 20 && !(explorer.shadowRoot as ShadowRoot)?.querySelector('.result-failure'); index += 1) {
         await explorer.updateComplete
         await new Promise((resolve) => requestAnimationFrame(resolve))
       }
-      const failure = explorer.shadowRoot!.querySelector('.result-failure')!
+      const failure = (explorer.shadowRoot as ShadowRoot)!.querySelector('.result-failure') as any
       const exploreAlert = failure.textContent!.replace(/\s+/g, ' ').trim()
-      const exploreButtons = Array.from(failure.querySelectorAll<HTMLButtonElement>('button'))
+      const exploreButtons = Array.from(failure.querySelectorAll('button')) as HTMLButtonElement[]
       exploreButtons[0].click()
       exploreButtons[1].click()
       await explorer.updateComplete

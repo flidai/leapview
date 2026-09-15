@@ -1,6 +1,7 @@
 package manageddata
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,29 @@ func TestManifestEnforcesLimits(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want containing %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestManifestAdmissionBoundaryIncludesFormerCaptureLimit(t *testing.T) {
+	for _, count := range []int{4096, 4097, MaxManifestFiles, MaxManifestFiles + 1} {
+		files := make([]File, count)
+		for index := range files {
+			files[index] = File{
+				Path:   "file-" + strings.Repeat("x", 4) + "/" + strings.Repeat("n", 6) + strconv.Itoa(index),
+				Size:   0,
+				SHA256: strings.Repeat("a", 64),
+			}
+		}
+		// Keep this test focused on the hard file-count contract. The
+		// configured service limit may be lower, but the shared upper bound
+		// must admit the former 4,096/4,097 capture boundary.
+		err := (Manifest{Files: files}).Validate(Limits{MaxFiles: MaxManifestFiles})
+		if count <= MaxManifestFiles && err != nil {
+			t.Fatalf("file count %d rejected at shared admission bound: %v", count, err)
+		}
+		if count > MaxManifestFiles && err == nil {
+			t.Fatalf("file count %d accepted above shared admission bound", count)
+		}
 	}
 }
 

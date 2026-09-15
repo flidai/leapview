@@ -74,7 +74,7 @@ Validate that the reverse proxy overwrites forwarding headers, the application t
 Use the non-administrator test account to complete these checks:
 
 1. Sign in through the provider and confirm the expected issuer-subject principal is used.
-2. Verify only explicitly granted projects, resources, and actions are available.
+2. Verify only explicitly granted resources and actions in the server-bound Project are available.
 3. Sign out and confirm the browser session is no longer accepted.
 4. Remove or suspend access and verify the next authorization check denies it.
 5. Inspect audit and provider logs for the same event without raw tokens or secrets.

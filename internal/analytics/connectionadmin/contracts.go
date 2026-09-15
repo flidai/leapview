@@ -36,7 +36,10 @@ var (
 	ErrInvalidCredentialBundle = connectionbinding.ErrInvalidCredentialBundle
 )
 
-var ParseConnectionID = connectionbinding.ParseConnectionID
+var (
+	ParseConnectionID      = connectionbinding.ParseConnectionID
+	ValidateEndpointConfig = connectionbinding.ValidateEndpointConfig
+)
 
 const AuthenticationExternalBundle = connectionbinding.AuthenticationExternalBundle
 

@@ -9,31 +9,32 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	"github.com/jackc/pgx/v5"
 )
 
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ appearancepostgres.AuditPort = (*Adapter)(nil)
 
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // Matches proves this adapter is bound to the exact Access audit authority
 // allocated by application composition.
 func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
-	return a != nil && a.audit != nil && a.audit == audit
+	return a != nil && a.authority.Matches(audit)
 }
 
 // RecordAuditEvent translates the appearance projection into Access' canonical
 // audit intent through the exact caller transaction. Access validates and
 // reads back the complete immutable row at its canonical boundary.
 func (a *Adapter) RecordAuditEvent(ctx context.Context, tx appearancepostgres.Tx, input appearancepostgres.AuditInput) error {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return appearancepostgres.ErrAuditMissing
 	}
 	if tx == nil {
@@ -47,7 +48,7 @@ func (a *Adapter) RecordAuditEvent(ctx context.Context, tx appearancepostgres.Tx
 		AggregateKey:      "dashboard_appearance:" + input.ProjectID + ":" + input.DashboardID,
 		AggregateSequence: input.AggregateSequence, MetadataJSON: input.MetadataJSON,
 	}
-	_, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		if errors.Is(err, access.ErrAuditIntentConflict) || errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: dashboard appearance audit identity differs", appearancepostgres.ErrConflict)

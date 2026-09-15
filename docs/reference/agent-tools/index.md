@@ -13,8 +13,8 @@ Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Foc
 | [`add_dashboard_page`](/docs/agent-tools/add_dashboard_page) | `RESOURCE_EDIT` | `write` | Add one dashboard page to a private draft using an exact expected revision. |
 | [`add_dashboard_visual`](/docs/agent-tools/add_dashboard_visual) | `RESOURCE_EDIT` | `write` | Add a governed dashboard visual to a private draft using an exact expected revision. |
 | [`assign_dashboard_field`](/docs/agent-tools/assign_dashboard_field) | `RESOURCE_EDIT` | `write` | Assign one governed semantic field to a dashboard visual in a private draft using an exact expected revision. |
-| [`catalog_get`](/docs/agent-tools/catalog_get) | `RESOURCE_READ` | `read` | Resolve one exact authorized project resource ID and return its compact metadata. |
-| [`catalog_list`](/docs/agent-tools/catalog_list) | `RESOURCE_READ` | `read` | Browse authorized project resources. |
+| [`catalog_get`](/docs/agent-tools/catalog_get) | `RESOURCE_READ` | `read` | Resolve one exact authorized project resource ID and return compact metadata. |
+| [`catalog_list`](/docs/agent-tools/catalog_list) | `RESOURCE_READ` | `read` | Browse one authorized project-resource hierarchy level when a parent ref is known. |
 | [`catalog_search`](/docs/agent-tools/catalog_search) | `RESOURCE_READ` | `read` | Search authorized project resources by stable ID, name, description, or domain metadata. |
 | [`create_dashboard_draft`](/docs/agent-tools/create_dashboard_draft) | `RESOURCE_EDIT` | `write` | Create a private dashboard draft owned by the authenticated principal. |
 | [`docs_read`](/docs/agent-tools/docs_read) | `authenticated` | `read` | Read a bounded line window from one LeapView document returned by docs_search. |

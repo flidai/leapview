@@ -106,8 +106,6 @@ type TrustedClaimMappingInput struct {
 	Mutation        SemanticAttributeMutationContext
 }
 
-type SetTrustedClaimMappingInput = TrustedClaimMappingInput
-
 type TrustedClaimMappingFilter struct {
 	SourceKind        TrustedClaimSourceKind
 	Provider          string

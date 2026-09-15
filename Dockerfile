@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:26-bookworm@sha256:9f94d34c787165dca03b74e5bf9c3bf90e8de79b19aa3d87fe1fa1694bf75c89 AS node
+FROM node:26-bookworm@sha256:e7bc1a4cd2419953c91f9a6f7bb6efb3737773093fb4ded0b1c77a0a5831fac4 AS node
 
 # A caller may override this empty stage with a named build context containing
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
@@ -143,7 +143,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     go run ./internal/app/tools/extensionsupply --out /out/extension-supply
 
-FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
+FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc AS runtime
+
+USER root
+SHELL ["/busybox/sh", "-c"]
 
 ARG BUILD_VERSION=development
 ARG BUILD_REVISION=unknown
@@ -161,18 +164,17 @@ LABEL org.opencontainers.image.title="LeapView" \
       dev.leapview.build.dirty="$BUILD_DIRTY" \
       dev.leapview.build.release="$BUILD_RELEASE"
 
-# The pinned Go builder supplies the bootstrap CA bundle. APT then resolves
-# every direct and transitive runtime package from one immutable Debian
-# snapshot and verifies the signed repository metadata and package hashes.
-COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY deploy/container/debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system leapview && \
-    useradd --system --gid leapview --home-dir /var/lib/leapview --shell /usr/sbin/nologin leapview
+# The pinned distroless compatibility image supplies glibc, libstdc++, CA
+# certificates, tzdata, and the BusyBox utilities used by release
+# qualification without carrying a package manager or general-purpose Debian
+# runtime utilities.
+RUN printf '%s\n' 'leapview:x:999:' >> /etc/group && \
+    printf '%s\n' 'leapview:x:999:999::/var/lib/leapview:/sbin/nologin' >> /etc/passwd && \
+    test "$(id -u leapview)" = 999 && \
+    test "$(id -g leapview)" = 999 && \
+    for utility in sh env cat cp rm mkdir find du wc test stat readlink sha256sum tar gzip gunzip sync; do \
+      command -v "$utility" >/dev/null || exit 1; \
+    done
 
 WORKDIR /app
 
@@ -201,10 +203,10 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/README.md \
       /usr/local/share/leapview/deployment/QUALIFICATION.md \
       /usr/local/share/leapview/deployment/qualification/* && \
-    mkdir -p /var/lib/leapview && \
+    mkdir -p /var/lib/leapview/home && \
     chown -R leapview:leapview /var/lib/leapview /app
 
-USER leapview
+USER leapview:leapview
 
 ENV LEAPVIEW_ADDR=:8080 \
     LEAPVIEW_ENVIRONMENT=prod \

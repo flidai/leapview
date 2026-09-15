@@ -10,38 +10,39 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	authoring "github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	"github.com/jackc/pgx/v5"
 )
 
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ authoringpostgres.AuditPort = (*Adapter)(nil)
 
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // Matches proves this adapter is bound to the exact Access audit authority
 // allocated by application composition.
 func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
-	return a != nil && a.audit != nil && a.audit == audit
+	return a != nil && a.authority.Matches(audit)
 }
 
 // RecordAuditIntent persists an authoring intent through the exact caller
 // transaction. Access validates and reads back the complete immutable audit
 // projection at its canonical boundary.
 func (a *Adapter) RecordAuditIntent(ctx context.Context, tx authoringpostgres.Tx, intent access.AuditIntent) error {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return errors.New("dashboard authoring audit adapter is not configured")
 	}
 	if tx == nil {
 		return errors.New("dashboard authoring audit transaction is required")
 	}
-	_, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		if errors.Is(err, access.ErrAuditIntentConflict) || errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: dashboard authoring audit identity differs", authoring.ErrConflict)

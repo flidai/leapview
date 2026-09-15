@@ -2,6 +2,7 @@ package connectors
 
 import (
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	"slices"
 	"testing"
 )
 
@@ -234,15 +235,7 @@ func TestLookupConnectionResolvesPrivateAdapterKey(t *testing.T) {
 }
 
 func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func TestRegistryConnectionAuthPolicy(t *testing.T) {

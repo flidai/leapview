@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	successorS3Image     = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	successorS3Image     = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	successorS3Region    = "us-east-1"
 	successorS3ProfileID = "22222222-2222-4222-8222-222222222222"
 	successorS3Account   = "minio-successor-qualification"
@@ -47,7 +47,7 @@ func TestFAI520SuccessorS3ExactVersionQualification(t *testing.T) {
 	sentinelVersion := putSuccessorS3Object(t, provider, sentinelKey, sentinelBody)
 
 	pool, admin, reopenURL := successorDatabase(t)
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	reader := newSuccessorS3Reader(t, provider.client, provider.config)
 	repo := recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{
 		Reader: reader,
@@ -132,7 +132,7 @@ func TestFAI520SuccessorS3ExactVersionFailures(t *testing.T) {
 	configureSuccessorS3Input(t, provider, &input)
 
 	pool, admin, _ := successorDatabase(t)
-	provisionSuccessorGeneration(t, admin, trust.Generation)
+	provisionSuccessorGeneration(t, admin, trust)
 	reader := newSuccessorS3Reader(t, provider.client, provider.config)
 	baseRepo := func(r recoverypg.ExactVersionReader) *recoverypg.SuccessorRepository {
 		return recoverypg.NewSuccessorRepository(pool, recoverypg.SuccessorOptions{
@@ -332,7 +332,7 @@ func configureSuccessorS3Input(t *testing.T, provider successorS3Provider, input
 	t.Helper()
 	values := []*recoverypg.PayloadReference{
 		&input.Payloads.Set, &input.Payloads.Manifest, &input.Payloads.Anchor,
-		&input.Payloads.Profiles, &input.Payloads.Receipt, &input.Payloads.Authority,
+		&input.Payloads.Profiles, &input.Payloads.Core, &input.Payloads.Receipt, &input.Payloads.Authority,
 	}
 	for _, ref := range values {
 		if ref.Locator.Key == "" || len(ref.CanonicalBytes) == 0 {
@@ -395,7 +395,7 @@ func overwriteAndDeleteCurrent(t *testing.T, provider successorS3Provider, input
 	t.Helper()
 	refs := []*recoverypg.PayloadReference{
 		&input.Payloads.Set, &input.Payloads.Manifest, &input.Payloads.Anchor,
-		&input.Payloads.Profiles, &input.Payloads.Receipt, &input.Payloads.Authority,
+		&input.Payloads.Profiles, &input.Payloads.Core, &input.Payloads.Receipt, &input.Payloads.Authority,
 	}
 	for _, ref := range refs {
 		putSuccessorS3Object(t, provider, ref.Locator.Key, []byte("mutable current replacement"))

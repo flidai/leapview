@@ -13,7 +13,7 @@ test('visualSourceFromEvent returns the first focusable visual in the composed p
     const table = new TestHTMLElement('lv-visualization-host')
     const event = { composedPath: () => [button, chart, table] } as unknown as Event
 
-    expect(visualSourceFromEvent(event)).toBe(chart)
+    expect(visualSourceFromEvent(event)).toBe(chart as unknown as HTMLElement)
   } finally {
     globalThis.HTMLElement = originalHTMLElement
   }

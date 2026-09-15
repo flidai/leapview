@@ -6,12 +6,34 @@ metadata:
   displayName: Operations Semantic Model
 spec:
   datasets:
-    operations_orders:
+    - name: operations_orders
       model: operations_orders
-    operations_customers:
+      metrics:
+        - name: order_count
+          type: simple
+          empty: zero
+          label: Orders
+          agg: count_distinct
+          field: order_id
+        - name: review_score
+          type: simple
+          empty: 'null'
+          label: Review score
+          agg: avg
+        - name: delivery_days
+          type: simple
+          empty: 'null'
+          label: Delivery days
+          agg: avg
+      dimensions:
+        - name: status
+          datatype: String
+        - name: delivery_bucket
+          datatype: String
+    - name: operations_customers
       model: operations_customers
   relationships:
-    orders_customers:
+    - name: orders_customers
       from:
         dataset: operations_orders
         entity: customer
@@ -19,45 +41,10 @@ spec:
         dataset: operations_customers
         entity: customer
   dimensions:
-    state:
+    - name: state
       datatype: String
       bindings:
-        operations_orders:
+        - dataset: operations_orders
           field: operations_customers.state
           path:
-          - orders_customers
-    status:
-      datatype: String
-      bindings:
-        operations_orders:
-          field: operations_orders.status
-    delivery_bucket:
-      datatype: String
-      bindings:
-        operations_orders:
-          field: operations_orders.delivery_bucket
-  metrics:
-    order_count:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: count_distinct
-      input:
-        field: operations_orders.order_id
-      empty: zero
-      label: Orders
-    review_score:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: avg
-      input:
-        field: operations_orders.review_score
-      empty: 'null'
-      label: Review score
-    delivery_days:
-      type: aggregate
-      dataset: operations_orders
-      aggregation: avg
-      input:
-        field: operations_orders.delivery_days
-      empty: 'null'
-      label: Delivery days
+            - orders_customers

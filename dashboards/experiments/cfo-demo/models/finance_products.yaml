@@ -7,7 +7,7 @@ metadata:
   description: Conformed product dimension shared by the finance facts.
 spec:
   fields:
-    product: {datatype: String, label: Product}
+    - {name: product, datatype: String, label: Product}
   definition:
     type: sql
     sql: |
@@ -15,7 +15,7 @@ spec:
       FROM source."finance.financials"
       WHERE product IS NOT NULL AND trim(product) <> ''
   entities:
-    product:
+    - name: product
       type: primary
       fields: [product]
   grain:

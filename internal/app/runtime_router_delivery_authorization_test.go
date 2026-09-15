@@ -91,6 +91,17 @@ func TestNativeDeliveryAssemblyRequiresNativeReader(t *testing.T) {
 	}
 }
 
+func TestProductionNativeDeliveryRequiresSemanticActivationFence(t *testing.T) {
+	config := deploymentmodule.Config{NativeDeliveryReader: &nativeDeliveryAuthorizationReaderFake{}}
+	if err := validateDeliveryAssemblyInputs(config, true); err == nil || !strings.Contains(err.Error(), "semantic activation pre-commit fence") {
+		t.Fatalf("production native delivery validation error = %v, want missing semantic activation fence", err)
+	}
+	config.BeforeNativeActivationCommit = func(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error { return nil }
+	if err := validateDeliveryAssemblyInputs(config, true); err != nil {
+		t.Fatalf("complete production native delivery rejected: %v", err)
+	}
+}
+
 func nativeDeliveryAuthorizationPlanFixture(t *testing.T) deploymentpostgres.DeliveryPlan {
 	t.Helper()
 	projectID, err := projectgraph.NewResourceID("finance")

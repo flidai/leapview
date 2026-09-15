@@ -158,12 +158,12 @@ SELECT target_id,plan_id::text,status,artifact_digest FROM delivery.delivery_can
 SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: InsertSnapshotSeal :exec
-INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence)
-VALUES(sqlc.arg(seal_id)::uuid,sqlc.arg(attempt_id)::uuid,sqlc.arg(candidate_id)::uuid,sqlc.arg(physical_pool_id),sqlc.arg(tenant_domain),sqlc.arg(region),sqlc.arg(encryption_domain),sqlc.arg(object_namespace),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(catalog_version),sqlc.arg(ducklake_snapshot_id),sqlc.arg(relation_namespace),sqlc.arg(relation_manifest_digest),sqlc.arg(closure_digest),sqlc.arg(object_root),sqlc.arg(object_root_digest),sqlc.arg(artifact_root),sqlc.arg(artifact_root_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(compatibility_digest),sqlc.arg(serving_artifact_id),sqlc.arg(serving_artifact_digest),sqlc.arg(duckdb_version),sqlc.arg(runtime_version),sqlc.arg(ducklake_extension_version),sqlc.arg(ducklake_spec_version),sqlc.arg(catalog_schema_version),sqlc.arg(qualification_evidence)::jsonb)
+INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,authorization_policy_revision,authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence)
+VALUES(sqlc.arg(seal_id)::uuid,sqlc.arg(attempt_id)::uuid,sqlc.arg(candidate_id)::uuid,sqlc.arg(physical_pool_id),sqlc.arg(tenant_domain),sqlc.arg(region),sqlc.arg(encryption_domain),sqlc.arg(object_namespace),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(catalog_version),sqlc.arg(ducklake_snapshot_id),sqlc.arg(relation_namespace),sqlc.arg(relation_manifest_digest),sqlc.arg(closure_digest),sqlc.arg(object_root),sqlc.arg(object_root_digest),sqlc.arg(artifact_root),sqlc.arg(artifact_root_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(authorization_policy_revision),sqlc.arg(authorization_policy_digest),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(compatibility_digest),sqlc.arg(serving_artifact_id),sqlc.arg(serving_artifact_digest),sqlc.arg(duckdb_version),sqlc.arg(runtime_version),sqlc.arg(ducklake_extension_version),sqlc.arg(ducklake_spec_version),sqlc.arg(catalog_schema_version),sqlc.arg(qualification_evidence)::jsonb)
 ON CONFLICT(seal_id) DO NOTHING;
 
 -- name: GetSnapshotSeal :one
-SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at
+SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,COALESCE(authorization_policy_revision,0)::bigint AS authorization_policy_revision,COALESCE(authorization_policy_digest,'')::text AS authorization_policy_digest,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at
 FROM delivery.delivery_snapshot_seal WHERE seal_id=sqlc.arg(seal_id)::uuid;
 
 -- name: GetPlanTarget :one
@@ -298,19 +298,6 @@ SELECT attempt_id::text,request_digest,plan_digest,ducklake_snapshot_id FROM del
 
 -- name: GetPlanApprovalRequired :one
 SELECT approval_required FROM delivery.delivery_plan WHERE plan_id=(SELECT plan_id FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid);
-
--- name: UpdateTargetRevision :one
-UPDATE delivery.delivery_target SET target_revision=sqlc.arg(new_revision),updated_at=clock_timestamp()
-WHERE target_id=sqlc.arg(target_id) AND target_revision=sqlc.arg(expected_revision) RETURNING true;
-
--- name: UpsertActivePointer :exec
-INSERT INTO delivery.delivery_active_pointer(target_id,generation_id,publication_id)
-VALUES(sqlc.arg(target_id),sqlc.arg(generation_id)::uuid,sqlc.arg(publication_id)::uuid)
-ON CONFLICT(target_id) DO UPDATE SET generation_id=EXCLUDED.generation_id,publication_id=EXCLUDED.publication_id,changed_at=clock_timestamp();
-
--- name: CommitPublication :one
-UPDATE delivery.delivery_publication SET state='committed',result_target_revision=sqlc.arg(result_revision),committed_at=clock_timestamp()
-WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending' RETURNING true;
 
 -- name: CommitActivationTransition :one
 -- Runtime has no direct UPDATE privilege on the serving pointer, target

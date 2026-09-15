@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -108,6 +109,7 @@ type Repository struct {
 }
 
 var _ agent.Repository = (*Repository)(nil)
+var _ agent.ConversationManagementRepository = (*Repository)(nil)
 var _ agent.RunWorkflowUnitOfWork = (*Repository)(nil)
 var _ agent.RunWorkflowAuditUnitOfWork = (*Repository)(nil)
 var _ agent.RunTerminalWorkflow = (*Repository)(nil)
@@ -384,7 +386,7 @@ func (r *Repository) ListConversationsPage(ctx context.Context, principal string
 	for _, row := range rows {
 		out = append(out, mapConversation(row))
 	}
-	return pageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
 }
 
 func (r *Repository) GetConversation(ctx context.Context, principal, id string) (agent.Conversation, error) {
@@ -482,6 +484,9 @@ func (r *Repository) ArchiveConversation(ctx context.Context, principal, id stri
 	intent, hasIntent := agent.AuditIntentFromContext(ctx)
 	var out agent.Conversation
 	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		if err := q.AcquireAgentConversationMutationLock(ctx, agentdb.AcquireAgentConversationMutationLockParams{ConversationID: id, PrincipalID: principal}); err != nil {
+			return err
+		}
 		row, err := q.ArchiveAgentConversation(ctx, agentdb.ArchiveAgentConversationParams{ID: id, PrincipalID: principal})
 		if err != nil {
 			return err
@@ -497,6 +502,278 @@ func (r *Repository) ArchiveConversation(ctx context.Context, principal, id stri
 		return nil
 	})
 	return out, err
+}
+
+func (r *Repository) ListArchivedConversations(ctx context.Context, principal string) ([]agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	rows, err := agentdb.New(r.db).ListArchivedAgentConversations(ctx, principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	out := make([]agent.Conversation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapConversation(row))
+	}
+	return out, nil
+}
+
+func (r *Repository) ListArchivedConversationsPage(ctx context.Context, principal string, page agent.Page) ([]agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	rows, err := agentdb.New(r.db).ListArchivedAgentConversations(ctx, principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	out := make([]agent.Conversation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, mapConversation(row))
+	}
+	return agent.PageByID(out, page, func(v agent.Conversation) string { return v.ID }), nil
+}
+
+func (r *Repository) conversationMutation(ctx context.Context, principal, id, eventType string, mutate func(Tx, *agentdb.Queries) (agent.Conversation, error)) (agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return agent.Conversation{}, mapDBError(err)
+	}
+	if strings.TrimSpace(id) == "" {
+		return agent.Conversation{}, errors.New("conversation id is required")
+	}
+	var out agent.Conversation
+	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		if err := q.AcquireAgentConversationMutationLock(ctx, agentdb.AcquireAgentConversationMutationLockParams{ConversationID: id, PrincipalID: principal}); err != nil {
+			return err
+		}
+		busy, err := q.AgentConversationHasActiveRun(ctx, id)
+		if err != nil {
+			return err
+		}
+		if busy {
+			return agent.ErrConversationBusy
+		}
+		changed, err := mutate(tx, q)
+		if err != nil {
+			return err
+		}
+		out = changed
+		domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, eventType, []byte(fmt.Sprintf(`{"status":%q}`, changed.Status)))
+		if err != nil {
+			return err
+		}
+		if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+			return r.recordAudit(ctx, tx, &intent, id, id, domain)
+		}
+		return nil
+	})
+	return out, mapDBError(err)
+}
+
+func (r *Repository) RestoreConversation(ctx context.Context, principal, id string) (agent.Conversation, error) {
+	return r.conversationMutation(ctx, principal, id, "agent.conversation.restored", func(_ Tx, q *agentdb.Queries) (agent.Conversation, error) {
+		row, err := q.RestoreAgentConversation(ctx, agentdb.RestoreAgentConversationParams{ID: id, PrincipalID: principal})
+		return mapConversation(row), err
+	})
+}
+
+func (r *Repository) SetConversationPinned(ctx context.Context, principal, id string, pinned bool) (agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return agent.Conversation{}, mapDBError(err)
+	}
+	if strings.TrimSpace(id) == "" {
+		return agent.Conversation{}, errors.New("conversation id is required")
+	}
+	var out agent.Conversation
+	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		if err := q.AcquireAgentConversationMutationLock(ctx, agentdb.AcquireAgentConversationMutationLockParams{ConversationID: id, PrincipalID: principal}); err != nil {
+			return err
+		}
+		current, err := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
+		if err != nil {
+			return err
+		}
+		state, _ := agent.ParseConversationMetadata(current.MetadataJson)
+		if current.Status != agent.ConversationStatusActive || state.DeletedAt != "" {
+			if state.DeletedAt != "" {
+				return agent.ErrNotFound
+			}
+			return agent.ErrConversationArchived
+		}
+		state.Pinned = pinned
+		metadata, err := agent.UpdateConversationMetadata(current.MetadataJson, state)
+		if err != nil {
+			return err
+		}
+		row, err := q.UpdateAgentConversationMetadata(ctx, agentdb.UpdateAgentConversationMetadataParams{MetadataJson: []byte(metadata), ID: id, PrincipalID: principal})
+		if err != nil {
+			return err
+		}
+		out = mapConversation(row)
+		eventType := "agent.conversation.pinned"
+		if !pinned {
+			eventType = "agent.conversation.unpinned"
+		}
+		domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, eventType, []byte(fmt.Sprintf(`{"pinned":%t}`, pinned)))
+		if err != nil {
+			return err
+		}
+		if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+			return r.recordAudit(ctx, tx, &intent, id, id, domain)
+		}
+		return nil
+	})
+	return out, mapDBError(err)
+}
+
+func (r *Repository) DeleteConversation(ctx context.Context, principal, id string) (agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return agent.Conversation{}, mapDBError(err)
+	}
+	if strings.TrimSpace(id) == "" {
+		return agent.Conversation{}, errors.New("conversation id is required")
+	}
+	var out agent.Conversation
+	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		if err := q.AcquireAgentConversationMutationLock(ctx, agentdb.AcquireAgentConversationMutationLockParams{ConversationID: id, PrincipalID: principal}); err != nil {
+			return err
+		}
+		_, err := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
+		if err != nil {
+			return err
+		}
+		busy, err := q.AgentConversationHasActiveRun(ctx, id)
+		if err != nil {
+			return err
+		}
+		if busy {
+			return agent.ErrConversationBusy
+		}
+		row, err := q.DeleteAgentConversation(ctx, agentdb.DeleteAgentConversationParams{ID: id, PrincipalID: principal})
+		if err != nil {
+			return err
+		}
+		out = mapConversation(row)
+		out.Status = agent.ConversationStatusDeleted
+		out.DeletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, "agent.conversation.deleted", []byte(`{"status":"deleted"}`))
+		if err != nil {
+			return err
+		}
+		if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+			return r.recordAudit(ctx, tx, &intent, id, id, domain)
+		}
+		return nil
+	})
+	return out, mapDBError(err)
+}
+
+func (r *Repository) BulkArchiveConversations(ctx context.Context, principal string, ids []string) ([]agent.Conversation, error) {
+	return r.bulkConversationMutation(ctx, principal, ids, false)
+}
+
+func (r *Repository) BulkDeleteConversations(ctx context.Context, principal string, ids []string) ([]agent.Conversation, error) {
+	return r.bulkConversationMutation(ctx, principal, ids, true)
+}
+
+func (r *Repository) bulkConversationMutation(ctx context.Context, principal string, ids []string, deleting bool) ([]agent.Conversation, error) {
+	principal, err := principalID(principal)
+	if err != nil {
+		return nil, mapDBError(err)
+	}
+	ids, err = normalizeConversationIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []agent.Conversation{}, nil
+	}
+	out := make([]agent.Conversation, 0, len(ids))
+	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
+		for _, id := range ids {
+			if err := q.AcquireAgentConversationMutationLock(ctx, agentdb.AcquireAgentConversationMutationLockParams{ConversationID: id, PrincipalID: principal}); err != nil {
+				return err
+			}
+			current, err := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
+			if err != nil {
+				return err
+			}
+			if deleting {
+				busy, err := q.AgentConversationHasActiveRun(ctx, id)
+				if err != nil {
+					return err
+				}
+				if busy {
+					return agent.ErrConversationBusy
+				}
+			}
+			var changed agent.Conversation
+			var domainType string
+			if deleting {
+				row, err := q.DeleteAgentConversation(ctx, agentdb.DeleteAgentConversationParams{ID: id, PrincipalID: principal})
+				if err != nil {
+					return err
+				}
+				changed, domainType = mapConversation(row), "agent.conversation.deleted"
+				changed.Status = agent.ConversationStatusDeleted
+				changed.DeletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			} else if current.Status == agent.ConversationStatusActive {
+				row, err := q.ArchiveAgentConversation(ctx, agentdb.ArchiveAgentConversationParams{ID: id, PrincipalID: principal})
+				if err != nil {
+					return err
+				}
+				changed, domainType = mapConversation(row), "agent.conversation.archived"
+			} else {
+				out = append(out, mapConversation(current))
+				continue
+			}
+			out = append(out, changed)
+			domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, domainType, []byte(fmt.Sprintf(`{"status":%q}`, changed.Status)))
+			if err != nil {
+				return err
+			}
+			if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+				intent = conversationAuditIntent(intent, id)
+				if err := r.recordAudit(ctx, tx, &intent, id, id, domain); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	return out, mapDBError(err)
+}
+
+func conversationAuditIntent(intent access.AuditIntent, conversationID string) access.AuditIntent {
+	conversationID = strings.TrimSpace(conversationID)
+	if isCanonicalUUID(intent.EventID) {
+		intent.EventID = uuid.NewSHA1(uuid.Nil, []byte(intent.EventID+"\x00"+conversationID)).String()
+	}
+	intent.ResourceID = conversationID
+	return intent
+}
+
+func normalizeConversationIDs(ids []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, errors.New("conversation id is required")
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (r *Repository) UpdateDefaultConversationTitle(ctx context.Context, principal, id, title string) (agent.Conversation, error) {
@@ -528,10 +805,13 @@ func (r *Repository) UpdateDefaultConversationTitle(ctx context.Context, princip
 	return out, err
 }
 
-func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal, id, transcript string) (agent.Conversation, error) {
+func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal, id, transcript string, expectedRevision int64) (agent.Conversation, error) {
 	normalized, err := normalizedJSONArray(transcript)
 	if err != nil {
 		return agent.Conversation{}, err
+	}
+	if expectedRevision <= 0 {
+		return agent.Conversation{}, errors.New("transcript revision must be positive")
 	}
 	principal, err = principalID(principal)
 	if err != nil {
@@ -539,8 +819,14 @@ func (r *Repository) UpdateConversationTranscript(ctx context.Context, principal
 	}
 	var out agent.Conversation
 	err = r.withTx(ctx, func(tx Tx, q *agentdb.Queries) error {
-		row, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(normalized), ID: id, PrincipalID: principal})
+		row, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(normalized), ExpectedTranscriptRevision: expectedRevision, ID: id, PrincipalID: principal})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				current, getErr := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
+				if getErr == nil && current.Status == agent.ConversationStatusActive {
+					return agent.ErrTranscriptConflict
+				}
+			}
 			return err
 		}
 		domain, err := r.recordDomain(ctx, tx, principal, "agent_conversation", id, "agent.conversation.updated", []byte(`{"status":"active"}`))
@@ -601,7 +887,7 @@ func (r *Repository) ListMessagesPage(ctx context.Context, principal, conversati
 	for _, row := range rows {
 		out = append(out, mapMessageList(row))
 	}
-	return pageByID(out, page, func(v agent.Message) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Message) string { return v.ID }), nil
 }
 
 func (r *Repository) CreateRun(ctx context.Context, input agent.RunInput) (agent.Run, error) {
@@ -762,7 +1048,7 @@ func (r *Repository) FinishRunWorkflow(ctx context.Context, input agent.RunFinis
 	return out, transitioned, err
 }
 
-func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcript string, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
+func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFinish, messages []agent.MessageInput, transcript string, expectedTranscriptRevision int64, workflow jobs.WorkflowIntent) ([]agent.Message, bool, error) {
 	if r.workflow == nil {
 		return nil, false, errors.New("agent workflow recorder is required")
 	}
@@ -773,6 +1059,9 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 	transcript, err = normalizedJSONArray(transcript)
 	if err != nil {
 		return nil, false, err
+	}
+	if expectedTranscriptRevision <= 0 {
+		return nil, false, errors.New("transcript revision must be positive")
 	}
 	principal, err := principalID(input.PrincipalID)
 	if err != nil {
@@ -814,7 +1103,10 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 			}
 			out = append(out, mapMessage(row))
 		}
-		if _, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(transcript), ID: input.ConversationID, PrincipalID: principal}); err != nil {
+		if _, err := q.UpdateAgentConversationTranscript(ctx, agentdb.UpdateAgentConversationTranscriptParams{TranscriptJson: []byte(transcript), ExpectedTranscriptRevision: expectedTranscriptRevision, ID: input.ConversationID, PrincipalID: principal}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return agent.ErrTranscriptConflict
+			}
 			return err
 		}
 		if _, err := q.FinishAgentRun(ctx, agentdb.FinishAgentRunParams{Status: input.Status, StopReason: input.StopReason, InputTokens: input.InputTokens, OutputTokens: input.OutputTokens, TotalTokens: input.TotalTokens, Error: input.Error, MetadataJson: []byte(metadata), ID: input.RunID, ConversationID: input.ConversationID, PrincipalID: principal}); err != nil {
@@ -909,14 +1201,7 @@ func (r *Repository) VerifyRunLease(ctx context.Context, runID, jobID string, fe
 	if r.jobs == nil {
 		return nil
 	}
-	job, err := r.jobs.Get(ctx, jobID)
-	if err != nil {
-		return err
-	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
-		return errors.New("stale durable job claim")
-	}
-	return nil
+	return agent.VerifyRunLease(ctx, runID, jobID, fence, r.jobs.Get)
 }
 
 func (r *Repository) FinishRun(ctx context.Context, input agent.RunFinish) (agent.Run, error) {
@@ -973,7 +1258,7 @@ func (r *Repository) ListRunsPage(ctx context.Context, principal, conversation s
 	for _, row := range rows {
 		out = append(out, mapRun(row))
 	}
-	return pageByID(out, page, func(v agent.Run) string { return v.ID }), nil
+	return agent.PageByID(out, page, func(v agent.Run) string { return v.ID }), nil
 }
 func (r *Repository) GetRun(ctx context.Context, principal, conversation, runID string) (agent.Run, error) {
 	principal, err := principalID(principal)
@@ -1036,6 +1321,20 @@ func (r *Repository) AppendEvent(ctx context.Context, input agent.EventInput) (a
 func (r *Repository) ListEvents(ctx context.Context, principal, runID string) ([]agent.Event, error) {
 	return r.ListEventsPage(ctx, principal, runID, agent.Page{})
 }
+
+const maxAgentEventPageLimit int64 = 10000
+
+// boundedAgentEventPageLimit preserves the repository's default and clamp
+// semantics while keeping the narrowing conversion to the sqlc int32
+// parameter explicitly bounded.
+func boundedAgentEventPageLimit(limit int) int32 {
+	limit64 := int64(limit)
+	if limit64 < 1 || limit64 > maxAgentEventPageLimit {
+		return int32(maxAgentEventPageLimit)
+	}
+	return int32(limit64)
+}
+
 func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string, page agent.Page) ([]agent.Event, error) {
 	principal, err := principalID(principal)
 	if err != nil {
@@ -1048,10 +1347,7 @@ func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string
 	if !exists {
 		return nil, agent.ErrNotFound
 	}
-	limit := page.Limit
-	if limit <= 0 || limit > 10000 {
-		limit = 10000
-	}
+	limit := boundedAgentEventPageLimit(page.Limit)
 	after := int64(0)
 	if strings.TrimSpace(page.After) != "" {
 		after, err = strconv.ParseInt(strings.TrimSpace(page.After), 10, 64)
@@ -1059,7 +1355,7 @@ func (r *Repository) ListEventsPage(ctx context.Context, principal, runID string
 			return nil, errors.New("invalid event cursor")
 		}
 	}
-	rows, err := agentdb.New(r.db).ListAgentEvents(ctx, agentdb.ListAgentEventsParams{RunID: runID, AfterID: after, PageLimit: int32(limit)})
+	rows, err := agentdb.New(r.db).ListAgentEvents(ctx, agentdb.ListAgentEventsParams{RunID: runID, AfterID: after, PageLimit: limit})
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -1150,7 +1446,7 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 	if err != nil {
 		return err
 	}
-	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !leaseUnexpired(job.LeaseExpiresAt) {
+	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !agent.LeaseUnexpired(job.LeaseExpiresAt) {
 		return errors.New("stale durable job claim")
 	}
 	return nil
@@ -1161,22 +1457,39 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 func mapConversation(row any) agent.Conversation {
 	switch v := row.(type) {
 	case agentdb.CreateAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.GetAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.ListAgentConversationsRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+	case agentdb.ListArchivedAgentConversationsRow:
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.ArchiveAgentConversationRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+	case agentdb.DeleteAgentConversationRow:
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+	case agentdb.RestoreAgentConversationRow:
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
+	case agentdb.UpdateAgentConversationMetadataRow:
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTitleRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateAgentConversationTranscriptRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	case agentdb.UpdateDefaultAgentConversationTitleRow:
-		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+		return mapConversationFields(v.ID, v.PrincipalID, v.Title, v.Status, v.MetadataJson, v.TranscriptJson, v.TranscriptRevision, v.CreatedAt, v.UpdatedAt, v.ArchivedAt)
 	default:
 		return agent.Conversation{}
 	}
+}
+
+func mapConversationFields(id, principalID, title, status, metadata, transcript string, transcriptRevision int64, createdAt, updatedAt, archivedAt pgtype.Timestamptz) agent.Conversation {
+	management, _ := agent.ParseConversationMetadata(metadata)
+	out := agent.Conversation{ID: id, PrincipalID: principalID, Title: title, Status: status, Pinned: management.Pinned, DeletedAt: management.DeletedAt, MetadataJSON: metadata, TranscriptJSON: transcript, TranscriptRevision: transcriptRevision, CreatedAt: timestampString(createdAt), UpdatedAt: timestampString(updatedAt), ArchivedAt: timestampString(archivedAt)}
+	if out.DeletedAt != "" {
+		out.Status = agent.ConversationStatusDeleted
+	}
+	return out
 }
 
 func mapMessage(row agentdb.AppendAgentMessageRow) agent.Message {
@@ -1233,6 +1546,10 @@ func mapDBError(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return agent.ErrNotFound
 	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "55006" {
+		return agent.ErrConversationBusy
+	}
 	return err
 }
 func defaultSeverity(v string) string {
@@ -1282,42 +1599,6 @@ func jsonEquivalent(left, right string) bool {
 		return left == right
 	}
 	return reflect.DeepEqual(a, b)
-}
-func pageByID[T any](rows []T, page agent.Page, id func(T) string) []T {
-	limit := page.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 100
-	}
-	start := 0
-	if after := strings.TrimSpace(page.After); after != "" {
-		start = len(rows)
-		for i, row := range rows {
-			if id(row) == after {
-				start = i + 1
-				break
-			}
-		}
-	}
-	if start >= len(rows) {
-		return []T{}
-	}
-	end := start + limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return append([]T(nil), rows[start:end]...)
-}
-func leaseUnexpired(v string) bool {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return false
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, v); err == nil {
-			return parsed.After(time.Now())
-		}
-	}
-	return false
 }
 func newID(prefix string) string { return prefix + "_" + newSecret()[:24] }
 func newUUIDv7() (string, error) {

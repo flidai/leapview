@@ -298,11 +298,6 @@ func persistNativeMarkerQuarantine(ctx context.Context, input NativePhysicalReco
 	return err
 }
 
-// RecoverNativePhysical is a concise alias for command-style callers.
-func RecoverNativePhysical(ctx context.Context, input NativePhysicalRecoveryInput) (NativePhysicalBuildEvidence, error) {
-	return RecoverNativePhysicalBuild(ctx, input)
-}
-
 func validateNativePhysicalRecoveryInput(input NativePhysicalRecoveryInput) (NativePhysicalBuildInput, []byte, string, error) {
 	if input.Attempt.State != deploymentnative.AttemptIndeterminate {
 		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: recovery requires an indeterminate attempt", deploymentnative.ErrConflict)

@@ -551,7 +551,7 @@ async function verifyFilterShowcase(): Promise<void> {
     })
     const expectedMatrix = [
       'purchase_date:date:date_range',
-      'purchase_time:timestamp:relative_period',
+      'purchase_time:timestamp:date_range',
       'state:string:dropdown',
       'category_text:string:input',
       'order_status:string:list',
@@ -564,6 +564,23 @@ async function verifyFilterShowcase(): Promise<void> {
       .sort()
     if (JSON.stringify(actualMatrix) !== JSON.stringify([...expectedMatrix].sort())) {
       throw new Error(`${path}: filter matrix=${JSON.stringify(matrix)}, want ${JSON.stringify(expectedMatrix)}`)
+    }
+
+    const selectDateRange = async (label: string): Promise<void> => {
+      const control = page.getByRole('region', { name: label, exact: true })
+      const from = control.getByRole('button', { name: /Start date/ })
+      const to = control.getByRole('button', { name: /End date/ })
+      const now = new Date()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const year = String(now.getFullYear()).padStart(4, '0')
+      await from.click()
+      await page.getByRole('dialog', { name: 'Start date calendar', exact: true }).locator(`[data-date="${year}-${month}-01"]`).click()
+      await to.click()
+      await page.getByRole('dialog', { name: 'End date calendar', exact: true }).locator(`[data-date="${year}-${month}-02"]`).click()
+      await expect(from).toContainText(`${month}/01/${year}`)
+      await expect(to).toContainText(`${month}/02/${year}`)
+      // Enter is the filter control's deterministic compound-commit boundary.
+      await to.press('Enter')
     }
 
     const mutationCases: Array<{
@@ -618,20 +635,7 @@ async function verifyFilterShowcase(): Promise<void> {
       {
         label: 'date range',
         bindingID: 'purchase_date',
-        mutate: async () => {
-          const control = page.getByRole('region', { name: 'Purchase date', exact: true })
-          const from = control.getByRole('button', { name: /Start date/ })
-          const to = control.getByRole('button', { name: /End date/ })
-          const now = new Date()
-          const month = String(now.getMonth() + 1).padStart(2, '0')
-          const year = String(now.getFullYear()).padStart(4, '0')
-          await from.click()
-          await page.getByRole('dialog', { name: 'Start date calendar', exact: true }).locator(`[data-date="${year}-${month}-01"]`).click()
-          await to.click()
-          await page.getByRole('dialog', { name: 'End date calendar', exact: true }).locator(`[data-date="${year}-${month}-02"]`).click()
-          // Enter is the filter control's deterministic compound-commit boundary.
-          await to.press('Enter')
-        },
+        mutate: () => selectDateRange('Purchase date'),
         expressionKind: 'range',
       },
       {
@@ -663,16 +667,10 @@ async function verifyFilterShowcase(): Promise<void> {
         expressionKind: 'range',
       },
       {
-        label: 'relative period',
+        label: 'timestamp date range',
         bindingID: 'purchase_time',
-        mutate: async () => {
-          const control = page.getByRole('region', { name: 'Relative purchase period', exact: true })
-          await control.getByLabel('Period unit').selectOption('year')
-          const count = control.getByLabel('Period count')
-          await count.fill('10')
-          await count.press('Tab')
-        },
-        expressionKind: 'relative_period',
+        mutate: () => selectDateRange('Purchase period'),
+        expressionKind: 'range',
       },
     ]
 

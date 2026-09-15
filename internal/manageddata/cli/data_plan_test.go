@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,13 +142,5 @@ func (p *recordingDataPlanner) Plan(_ context.Context, request localplan.Request
 }
 
 func equalDataPlanFiles(got, want []manageddata.File) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(got, want)
 }

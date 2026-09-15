@@ -131,14 +131,6 @@ func (r *Repository) AuthorizeResourceUIDRestore(ctx context.Context, input Reso
 	return authorizeResourceUIDRestore(ctx, r.db, input)
 }
 
-// AuthorizeResourceUIDRestoreTx is the caller-owned transaction form.
-func (r *Repository) AuthorizeResourceUIDRestoreTx(ctx context.Context, tx Tx, input ResourceUIDRestoreInput) (project.ResourceUIDRestoreAuthorization, error) {
-	if tx == nil {
-		return project.ResourceUIDRestoreAuthorization{}, project.ErrInvalidResourceUID
-	}
-	return authorizeResourceUIDRestore(ctx, tx, input)
-}
-
 func authorizeResourceUIDRestore(ctx context.Context, db DBTX, input ResourceUIDRestoreInput) (project.ResourceUIDRestoreAuthorization, error) {
 	if db == nil || !validActivationScope(input.InstanceID, input.TargetID, input.ProjectID, input.Environment, input.GenerationID) ||
 		input.ResourceUID.Validate() != nil || !authoredResourceIDValid(input.AuthoredID) || !authoredKindValid(input.Kind) ||

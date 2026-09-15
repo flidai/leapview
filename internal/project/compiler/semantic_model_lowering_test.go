@@ -114,10 +114,10 @@ func TestSemanticModelLoweringRetainsEveryAccessPolicyBoundary(t *testing.T) {
 		Datasets: map[string]projectcontracts.SemanticDataset{"orders": {
 			RequiredAccessGrants: &required,
 			AccessFilters:        &[]projectcontracts.SemanticAccessFilter{{Field: "region", UserAttribute: "allowedRegions"}},
+			Metrics:              &map[string]projectcontracts.SimpleSemanticMetric{"revenue": {RequiredAccessGrants: &required}},
 		}},
 		Dimensions: &dimensions,
-		Metrics: map[string]projectcontracts.SemanticMetric{
-			"revenue":     {Value: &projectcontracts.SemanticMetricAggregateVariant{AggregateSemanticMetric: projectcontracts.AggregateSemanticMetric{RequiredAccessGrants: &required}}},
+		Metrics: &map[string]projectcontracts.SemanticMetric{
 			"margin":      {Value: &projectcontracts.SemanticMetricDerivedVariant{DerivedSemanticMetric: projectcontracts.DerivedSemanticMetric{RequiredAccessGrants: &required}}},
 			"margin_rate": {Value: &projectcontracts.SemanticMetricRatioVariant{RatioSemanticMetric: projectcontracts.RatioSemanticMetric{RequiredAccessGrants: &required}}},
 		},

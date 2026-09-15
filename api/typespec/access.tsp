@@ -101,6 +101,38 @@ model RoleListResponse {
   page: PageInfo;
 }
 
+model RoleBindingResponse {
+  id: string;
+  name: string;
+  subjectType: string;
+  subjectId: string;
+  role: string;
+  @doc("The immutable capability bundle derived from role by the target authority.")
+  capabilities: Capability[];
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model RoleBindingListResponse {
+  items: RoleBindingResponse[];
+  page: PageInfo;
+  targetId: string;
+  projectId: ResourceId;
+  environment: string;
+  policyRevision: int64;
+  policyDigest: string;
+}
+
+model RoleBindingCreateRequest {
+  id: string;
+  name?: string;
+  subjectType: string;
+  subjectId: string;
+  role: string;
+  @doc("Compare-and-swap fence. Use 0 when creating the first policy revision.")
+  expectedRevision: int64;
+}
+
 model GroupCreateRequest {
   name: string;
   displayName?: string;
@@ -266,14 +298,6 @@ model GroupNotMutableFailure {}
 })
 model GrantNotFoundFailure {}
 
-@apigen.failureDefinition(#{
-  kind: "not_found",
-  statusCode: 404,
-  code: "DATA_POLICY_NOT_FOUND",
-  publicDetail: "Data policy not found.",
-})
-model DataPolicyNotFoundFailure {}
-
 // Durable, typed payloads for Access command audit records.  Every field is
 // required so the generated encoder can reject incomplete audit events before
 // they reach the repository.
@@ -407,16 +431,6 @@ model GrantAuditPayload {
   surface: string;
 }
 
-@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
-model DataPolicyAuditPayload {
-  @apigen.auditInternal
-  resourceId: ResourceId;
-  @apigen.auditPublic
-  resourceKind: ResourceKind;
-  @apigen.auditPublic
-  policyType: string;
-}
-
 model GrantRequest {
   resourceKind: ResourceKind;
   resourceId: ResourceId;
@@ -444,30 +458,50 @@ model GrantListResponse {
   page: PageInfo;
 }
 
-model DataPolicyRequest {
-  resourceKind: ResourceKind;
-  resourceId: ResourceId;
-  subjectType?: string;
-  subjectId?: string;
-  policyType: string;
-  expression: JSONObject;
-}
+@apigen.failureDefinition(#{
+  kind: "invalid",
+  statusCode: 400,
+  code: "ROLE_BINDING_INVALID",
+  publicDetail: "The role binding request is invalid.",
+})
+model RoleBindingInvalidFailure {}
 
-model DataPolicyResponse {
-  id: string;
-  resourceId: ResourceId;
-  resourceKind: ResourceKind;
-  subjectType?: string;
-  subjectId?: string;
-  policyType: string;
-  expression: JSONObject;
-  createdAt: utcDateTime;
-  updatedAt: utcDateTime;
-}
+@apigen.failureDefinition(#{
+  kind: "not_found",
+  statusCode: 404,
+  code: "ROLE_BINDING_NOT_FOUND",
+  publicDetail: "The authorization policy was not found.",
+})
+model RoleBindingNotFoundFailure {}
 
-model DataPolicyListResponse {
-  items: DataPolicyResponse[];
-  page: PageInfo;
+@apigen.failureDefinition(#{
+  kind: "conflict",
+  statusCode: 409,
+  code: "ROLE_BINDING_CONFLICT",
+  publicDetail: "The authorization policy conflicts with current state.",
+})
+model RoleBindingConflictFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model RoleBindingAuditPayload {
+  @apigen.auditInternal
+  targetId: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditInternal
+  environment: string;
+  @apigen.auditInternal
+  bindingId: string;
+  @apigen.auditPublic
+  subjectType: string;
+  @apigen.auditPii
+  subjectId: string;
+  @apigen.auditPublic
+  role: string;
+  @apigen.auditInternal
+  policyRevision: int64;
+  @apigen.auditInternal
+  policyDigest: string;
 }
 
 model EffectiveCapabilityListResponse {
@@ -898,6 +932,34 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 @extension("x-leapview-object-scope", "project")
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
+alias ListProjectRoleBindingsOK = OkJson<RoleBindingListResponse>;
+
+model CreateProjectRoleBindingCreated {
+  ...Response<201>;
+  ...Body<RoleBindingResponse>;
+}
+
+@tag("Access")
+@summary("List target-owned project role bindings")
+@route("/projects/{project}/role-bindings")
+@get
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRoleBindingsOK | CommonErrors;
+
+@tag("Access")
+@summary("Create a target-owned project role binding")
+@route("/projects/{project}/role-bindings")
+@post
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@extension("x-leapview-object-scope", "project")
+@apigen.command(#{ auditAction: "role_binding.created", guarantee: "transactional" })
+@apigen.failsWith(RoleBindingInvalidFailure)
+@apigen.failsWith(RoleBindingConflictFailure)
+@apigen.failsWith(RoleBindingNotFoundFailure)
+@apigen.auditPayload(RoleBindingAuditPayload)
+op createProjectRoleBinding(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: RoleBindingCreateRequest): CreateProjectRoleBindingCreated | CommonErrors;
+
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 
 @tag("Access")
@@ -967,65 +1029,6 @@ interface Grants {
   @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
   deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
-}
-
-alias ListDataPoliciesOK = OkJson<DataPolicyListResponse>;
-alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
-
-@tag("Access")
-@route("/projects/{project}/data-policies")
-@apigen.commandDefaults(#{ guarantee: "transactional" })
-interface DataPolicies {
-  @summary("List data policies")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  listDataPolicies(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
-
-  @summary("Create a data policy")
-  @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "data_policy.created",
-    failures: #[
-      #{ kind: "invalid", statusCode: 400, code: "DATA_POLICY_INVALID", publicDetail: "The data policy request is invalid." },
-    ],
-  })
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  createDataPolicy(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
-
-  @summary("Get a data policy")
-  @route("/{policy}")
-  @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getDataPolicy(@path project: ResourceId, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
-
-  @summary("Update a data policy")
-  @route("/{policy}")
-  @patch
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{
-    auditAction: "data_policy.updated",
-    failures: #[
-      #{ kind: "invalid", statusCode: 422, code: "DATA_POLICY_INVALID", publicDetail: "The data policy is invalid." },
-    ],
-  })
-  @apigen.failsWith(DataPolicyNotFoundFailure)
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  updateDataPolicy(@path @apigen.target project: ResourceId, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
-
-  @summary("Delete a data policy")
-  @route("/{policy}")
-  @delete
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.command(#{ auditAction: "data_policy.deleted" })
-  @apigen.failsWith(DataPolicyNotFoundFailure)
-  @apigen.auditPayload(DataPolicyAuditPayload)
-  deleteDataPolicy(@path @apigen.target project: ResourceId, @path policy: string): EmptyResponse | CommonErrors;
 }
 
 @tag("Access")

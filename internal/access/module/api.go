@@ -93,6 +93,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.AddGroupMember(w, r)
 	case "removeGroupMember":
 		m.handler.RemoveGroupMember(w, r)
+	case "listProjectRoleBindings":
+		m.handler.ListProjectRoleBindings(w, r)
+	case "createProjectRoleBinding":
+		m.handler.CreateProjectRoleBinding(w, r)
 	case "listGroupSemanticAttributeAssignments":
 		m.handler.ListGroupSemanticAttributeAssignments(w, r)
 	case "removeGroupSemanticAttributeAssignment":
@@ -125,8 +129,10 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.PreviewSemanticAttributeImpact(w, r)
 	case "restoreSemanticAttribute":
 		m.handler.RestoreSemanticAttribute(w, r)
-	case "listAuditEvents", "listPlatformAuditEvents":
+	case "listAuditEvents":
 		m.handler.ListAuditEvents(w, r)
+	case "listPlatformAuditEvents":
+		m.handler.ListPlatformAuditEvents(w, r)
 	default:
 		return false
 	}

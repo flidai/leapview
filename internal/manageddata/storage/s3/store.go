@@ -158,10 +158,21 @@ func (s *Store) Stat(ctx context.Context, digest string) (storage.Blob, error) {
 }
 
 func (s *Store) Open(ctx context.Context, digest string) (io.ReadCloser, error) {
-	if _, err := s.Stat(ctx, digest); err != nil {
+	if err := storage.ValidateSHA256(digest); err != nil {
 		return nil, err
 	}
-	result, err := s.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: pointer(s.bucket), Key: pointer(s.blobKey(digest))})
+	key := s.blobKey(digest)
+	head, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)})
+	if err != nil {
+		return nil, sanitizeError(ctx, "head S3 blob", err)
+	}
+	if head == nil || head.ContentLength == nil {
+		return nil, fmt.Errorf("%w: S3 blob metadata is missing", storage.ErrIntegrity)
+	}
+	if metadataDigest := head.Metadata["sha256"]; metadataDigest != "" && metadataDigest != digest {
+		return nil, fmt.Errorf("%w: S3 blob metadata does not match", storage.ErrIntegrity)
+	}
+	result, err := s.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: pointer(s.bucket), Key: pointer(key)})
 	if err != nil {
 		return nil, sanitizeError(ctx, "open S3 blob", err)
 	}

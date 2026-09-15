@@ -1,0 +1,9 @@
+name: proof_consumer
+version: 1.0.0
+config-version: 2
+profile: proof_consumer
+model-paths: [models]
+models:
+  proof_consumer:
+    +materialized: external
+    +format: parquet

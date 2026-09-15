@@ -2,7 +2,6 @@ package securefs
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -52,67 +51,4 @@ func WritePrivateFileAtomic(path string, contents []byte) error {
 	}
 	defer directory.Close()
 	return directory.Sync()
-}
-
-func CopyPrivateTemporaryFile(in io.Reader, directory, pattern string) (string, error) {
-	if err := EnsurePrivateDir(directory); err != nil {
-		return "", err
-	}
-	file, err := os.CreateTemp(directory, pattern)
-	if err != nil {
-		return "", err
-	}
-	path := file.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(path)
-		}
-	}()
-	if err := file.Chmod(PrivateFileMode); err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	if _, err := io.Copy(file, in); err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	cleanup = false
-	return path, nil
-}
-
-func UnusedTemporaryPath(directory, pattern string) (string, error) {
-	if err := EnsurePrivateDir(directory); err != nil {
-		return "", err
-	}
-	file, err := os.CreateTemp(directory, pattern)
-	if err != nil {
-		return "", err
-	}
-	path := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", err
-	}
-	if err := os.Remove(path); err != nil {
-		return "", err
-	}
-	return path, nil
-}
-
-func CopyFile(out io.Writer, path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = io.Copy(out, file)
-	return err
 }

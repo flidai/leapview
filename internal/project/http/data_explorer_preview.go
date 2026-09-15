@@ -229,29 +229,44 @@ func dataExplorerSortForObjectColumns(sortSignal projectsignals.DataPreviewSortS
 func emptyDataExplorerBlocks(command projectsignals.DataExplorerCommand) map[string]projectsignals.DataPreviewBlockSignal {
 	blocks := make(map[string]projectsignals.DataPreviewBlockSignal, len(dataExplorerBlockIDs))
 	for index, id := range dataExplorerBlockIDs {
+		start := int64(index) * command.Count
+		seq := int64(0)
+		if projectsignals.ValueOrZero(command.Block) == "all" {
+			start += dataExplorerFirstBlockStart(command)
+			seq = command.RequestSeq
+		}
 		blocks[id] = projectsignals.DataPreviewBlockSignal{
-			Start: int64(index) * command.Count, ResetVersion: command.ResetVersion, Sort: command.Sort, Rows: []map[string]any{},
+			Start: start, RequestSeq: seq, ResetVersion: command.ResetVersion, Sort: command.Sort, Rows: []map[string]any{},
 		}
 	}
 	return blocks
 }
 
+// A full window uses the same preceding/current/following block contract as
+// lv-windowed-table. Empty trailing blocks still acknowledge the request.
+func dataExplorerFirstBlockStart(command projectsignals.DataExplorerCommand) int64 {
+	count := max(int64(1), command.Count)
+	current := max(int64(0), command.Start) / count * count
+	return max(int64(0), current-count)
+}
+
 func dataExplorerRequestedBlocks(command projectsignals.DataExplorerCommand) ([]int64, []string) {
 	block := projectsignals.ValueOrZero(command.Block)
 	if block == "all" {
-		return []int64{command.Start}, []string{"a"}
+		return []int64{dataExplorerFirstBlockStart(command)}, []string{"a"}
 	}
 	return []int64{command.Start}, []string{block}
 }
 
 func dataExplorerRemainingBlocks(command projectsignals.DataExplorerCommand, preview projectsignals.DataPreviewSignal, firstRows int64, totalKnown bool) ([]int64, []string) {
-	starts := []int64{command.Start}
+	firstStart := dataExplorerFirstBlockStart(command)
+	starts := []int64{firstStart}
 	blocks := []string{"a"}
 	if firstRows < command.Count {
 		return starts, blocks
 	}
 	for index := int64(1); index < int64(len(dataExplorerBlockIDs)); index++ {
-		start := command.Start + index*command.Count
+		start := firstStart + index*command.Count
 		if totalKnown && start >= preview.AvailableRows {
 			break
 		}

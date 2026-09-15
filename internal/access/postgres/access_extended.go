@@ -518,6 +518,16 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	return err
 }
 
+// RecordCanonicalAuditEventTx persists canonical audit evidence through the
+// caller-owned transaction. Activation uses this boundary so admission audit
+// evidence and the target pointer either commit or roll back together.
+func (r *Repository) RecordCanonicalAuditEventTx(ctx context.Context, tx Tx, event access.CanonicalAuditEvent) error {
+	if r == nil || tx == nil {
+		return errors.New("canonical audit transaction is required")
+	}
+	return (&Repository{db: tx, fingerprintKey: r.fingerprintKey}).RecordCanonicalAuditEvent(ctx, event)
+}
+
 func canonicalAuditDigest(event access.CanonicalAuditEvent, metadata string) string {
 	payload, _ := json.Marshal(struct {
 		ProjectID, Environment, GenerationID                              string

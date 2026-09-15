@@ -267,6 +267,16 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 		t.Fatalf("draft chat audits = %#v", audits)
 	}
 
+	// The browser only consumes signal patches. An HTML/script redirect
+	// leaves the draft page open even though the run was accepted.
+	body := draftResponse.Body.String()
+	if !strings.Contains(body, "event: datastar-patch-signals") || !strings.Contains(body, `"activeConversationId":"`+audits[1].TargetID+`"`) {
+		t.Fatalf("draft acceptance must navigate through its created conversation signal: %s", body)
+	}
+	if strings.Contains(body, "datastar-patch-elements") {
+		t.Fatalf("draft acceptance uses unsupported element redirect: %s", body)
+	}
+
 	conversation, err := service.CreateConversation(t.Context(), scope, "Existing")
 	if err != nil {
 		t.Fatal(err)

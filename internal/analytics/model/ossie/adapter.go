@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -627,21 +628,7 @@ func rejectUnsupportedMetricExtensions(metric Metric) error {
 }
 
 func sameFields(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// ImportYAML is an explicit spelling for callers handling authored YAML.
-// Import accepts both YAML and JSON because JSON is a YAML subset.
-func ImportYAML(data []byte, projectModels map[string]semanticmodel.Table) (*semanticmodel.Model, error) {
-	return Import(data, projectModels)
+	return slices.Equal(left, right)
 }
 
 func importRelationship(result *semanticmodel.Model, value Relationship) error {
@@ -1168,10 +1155,6 @@ func copyMetrics(values map[string]semanticmodel.Metric) map[string]semanticmode
 	}
 	return result
 }
-
-// ExportJSON is an explicit alias for callers that want to document the wire
-// encoding at the call site.
-func ExportJSON(value *semanticmodel.Model) ([]byte, error) { return Export(value) }
 
 // ExportYAML emits the same document in YAML while retaining official schema
 // validation.

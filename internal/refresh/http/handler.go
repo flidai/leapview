@@ -11,7 +11,9 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
+	httpplatform "github.com/flidai/leapview/internal/platform/http"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
+	"github.com/flidai/leapview/internal/platform/http/pagination"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -35,18 +37,6 @@ type Handler struct {
 }
 
 var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
-
-func firstHeader(r *nethttp.Request, names ...string) string {
-	if r == nil {
-		return ""
-	}
-	for _, name := range names {
-		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
-			return value
-		}
-	}
-	return ""
-}
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
@@ -176,9 +166,9 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 			// Non-generated direct callers may not have a typed idempotency
 			// header; retain their explicit request identity without rereading
 			// the generated Idempotency-Key header.
-			requestID = firstHeader(r, "X-Request-Id", "X-Request-ID")
+			requestID = httpplatform.FirstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
 		}
-		correlationID := firstHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+		correlationID := httpplatform.FirstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 		if correlationID == "" {
 			correlationID = requestID
 		}
@@ -404,20 +394,7 @@ func apiLimitForRequest(w nethttp.ResponseWriter, r *nethttp.Request) (int, bool
 }
 
 func parseAPILimit(value string) (int, error) {
-	if value == "" {
-		return defaultAPILimit, nil
-	}
-	var limit int
-	if _, err := fmt.Sscanf(value, "%d", &limit); err != nil {
-		return 0, fmt.Errorf("limit must be an integer")
-	}
-	if limit < 1 {
-		return 0, fmt.Errorf("limit must be at least 1")
-	}
-	if limit > maxAPILimit {
-		return maxAPILimit, nil
-	}
-	return limit, nil
+	return pagination.ParseLimit(value, pagination.LimitPolicy{Default: defaultAPILimit, Maximum: maxAPILimit})
 }
 
 func statusForNotFound(err error) int {

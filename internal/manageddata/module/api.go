@@ -19,7 +19,6 @@ import (
 
 type PageParams = apigenapi.PageParams
 type IdempotencyHeaders = apigenapi.IdempotencyHeaders
-type EventHeaders = apigenapi.GenListManagedDataUploadSessionEventsHeaders
 
 func (m *Module) beginFinalize(ctx context.Context, request control.UploadRequest) (control.UploadResult, error) {
 	principal := request.Actor

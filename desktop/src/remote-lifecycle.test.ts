@@ -97,7 +97,9 @@ describe("installRemoteLifecyclePolicy", () => {
         displayName: "Company Analytics",
       },
       () => undefined,
-      (route) => routes.push(route),
+      (route) => {
+        routes.push(route);
+      },
     );
 
     contents.emit(

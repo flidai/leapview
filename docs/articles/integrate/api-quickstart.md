@@ -1,16 +1,16 @@
 # API quickstart
 
-The headless API is served beneath `/api/v1`. This guide verifies authentication, discovers a project, and shows how to move from raw HTTP to generated operation metadata.
+The headless API is served beneath `/api/v1`. This guide verifies authentication and the server-bound Project context, then shows how to move from raw HTTP to generated operation metadata.
 
 ## Before you begin
 
-Choose a non-production or read-only project target, create a narrowly scoped credential, and install `curl` plus the LeapView CLI version compatible with the target. Keep a request-size limit and timeout policy ready for the client you will build.
+Choose a non-production or read-only target instance, obtain its bound Project UID from the target operator, create a narrowly scoped credential, and install `curl` plus the LeapView CLI version compatible with the target. Keep a request-size limit and timeout policy ready for the client you will build.
 
 Follow this discovery path:
 
 1. Store the target and token outside source code and shell history.
 2. Identify the authenticated principal.
-3. List authorized projects and dashboards with bounded pagination.
+3. Record the target's bound Project identity, then list dashboards with bounded pagination.
 4. Describe the generated operation before calling it from the CLI.
 5. Validate status and schema handling, then verify an end-to-end read.
 
@@ -37,23 +37,11 @@ curl --fail-with-body \
 
 A `200` response identifies the authenticated principal. `401` means the credential is absent, invalid, expired, or revoked. `403` on a later operation means authentication succeeded but effective privilege is insufficient.
 
-## List projects
+## Use the server-bound Project
 
-Request a bounded page:
-
-```sh
-curl --fail-with-body \
-  --silent --show-error \
-  --header "Authorization: Bearer $LEAPVIEW_API_TOKEN" \
-  --header "Accept: application/json" \
-  "$LEAPVIEW_TARGET/api/v1/projects?limit=50"
-```
-
-Use stable project IDs from the response in project-scoped path parameters. Titles are display metadata and are not safe identifiers. If the response provides a next-page token, pass it back as `pageToken` without inspecting or modifying it.
+LeapView does not expose a Project-listing endpoint and clients do not select or switch Projects. The target operator supplies the durable Project UID bound to that server. Use the operator-supplied UID for generated operations that require a `{project}` path parameter. That parameter asserts the expected identity; it does not switch context, and a different Project UID is rejected. Titles are display metadata and are not safe identifiers.
 
 ## Discover a dashboard
-
-With a project ID such as `project:commerce`:
 
 ```sh
 curl --fail-with-body \
@@ -89,11 +77,11 @@ Use the downloadable OpenAPI document as the source of request and response shap
 
 ## Verify an end-to-end read
 
-Select one dashboard from discovery, describe its generated operation, and request a bounded read for a known page or visual. Compare the returned project and dashboard IDs with the discovery response, verify the status and content type before decoding, and confirm a correlation identifier is retained for support. Revoke the temporary credential when the quickstart is complete.
+Select one dashboard from discovery, describe its generated operation, and request a bounded read for a known page or visual. Verify that any returned Project identity matches the operator-supplied Project UID, compare the dashboard ID with discovery, verify the status and content type before decoding, and retain a correlation identifier for support. Revoke the temporary credential when the quickstart is complete.
 
 ## Troubleshooting
 
-For `401`, check token source, expiry, revocation, and target origin. For `403`, inspect effective project privileges instead of replacing the token with an administrator credential. For `404`, use IDs from discovery rather than display titles. For `429`, honor server backoff and reduce concurrency. If decoding fails on a success response, compare the target's OpenAPI contract with the client version before changing parsing heuristics.
+For `401`, check token source, expiry, revocation, and target origin. For `403`, inspect effective Project privileges instead of replacing the token with an administrator credential. For `404` on a Project-qualified operation, verify the operator-supplied UID; for resource operations, use IDs from resource discovery rather than display titles. For `429`, honor server backoff and reduce concurrency. If decoding fails on a success response, compare the target's OpenAPI contract with the client version before changing parsing heuristics.
 
 ## Next steps
 

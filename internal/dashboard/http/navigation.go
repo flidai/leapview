@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	nethttp "net/http"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
@@ -17,6 +18,19 @@ import (
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
+
+const navigationDeliverySequenceKey = "dashboard-navigation"
+
+func navigationPatchEnvelope(patch pagestream.SignalPatch, sequence uint64) dashboardstream.Envelope {
+	return dashboardstream.Envelope{
+		Signals: patch,
+		Delivery: dashboardstream.DeliveryMetadata{
+			SequenceKey: navigationDeliverySequenceKey,
+			Sequence:    sequence,
+			Boundary:    true,
+		},
+	}
+}
 
 func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.metricsForRequest(r)
@@ -62,6 +76,11 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	streamInstanceID := signals.Runtime.StreamInstanceID
+	streamID := h.scopedStreamID(lddatastar.StreamID(clientID, dashboardID, sourcePageID, streamInstanceID))
+	if !h.privateStreamActive(streamID) {
+		nethttp.NotFound(w, r)
+		return
+	}
 	key, keyErr := h.dashboardSessionKey(r, definition, clientID, streamInstanceID)
 	if keyErr != nil {
 		nethttp.NotFound(w, r)
@@ -82,6 +101,16 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	record, err := h.SessionStore.Load(r.Context(), key)
 	if err != nil {
 		nethttp.Error(w, "dashboard session is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
+	// A selection or filter mutation can advance StreamGeneration after the
+	// navigation CAS without changing the destination page. Rebuild against
+	// the current record in that case. A later navigation is different: its
+	// mutation ID must remain the latest page mutation, even if it returned to
+	// the same destination, or this request would publish a superseded patch.
+	navigationGeneration, current := navigationRecordGeneration(record, targetPage.ID, signals.NavigationCommand.ClientMutationID)
+	if !current {
+		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": record.State.ActivePage, "stale": true})
 		return
 	}
 	filterState := dashboardfilter.CloneState(record.State.Filters.State)
@@ -126,17 +155,17 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		}
 	}
 	if status, ok := patch["status"].(uisignals.DashboardStatus); ok {
-		status.Generation = int64(result.StreamGeneration)
+		status.Generation = int64(navigationGeneration)
 		patch["status"] = status
 	}
 	if context, ok := patch["agentContext"].(uisignals.AgentContextSignal); ok {
-		context.Generation = int64(result.StreamGeneration)
+		context.Generation = int64(navigationGeneration)
 		patch["agentContext"] = context
 	}
 	if visuals, ok := patch["visuals"].(map[string]uisignals.DashboardVisualizationSignal); ok {
 		for id, visual := range visuals {
 			visual.ServingStateID = key.ServingStateID
-			visual.StreamGeneration = int64(result.StreamGeneration)
+			visual.StreamGeneration = int64(navigationGeneration)
 			visual.FilterRevision = int64(filterState.Revision)
 			visual.ConsumerIdentity = targetPage.ID + "/" + id
 			visuals[id] = visual
@@ -148,12 +177,10 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if broker == nil {
 		broker = dashboardstream.NewDeliveryBroker()
 	}
-	broker.PublishEnvelope(sourceStreamID, dashboardstream.Envelope{
-		Signals: patch,
-		Delivery: dashboardstream.DeliveryMetadata{
-			Generation: result.StreamGeneration, Boundary: true,
-		},
-	})
+	// Page identity is durable stream state, independent of analytical refresh
+	// generations. Window scrolling may advance the coordinator many times;
+	// keeping this patch unscoped prevents those reads from discarding navigation.
+	broker.PublishEnvelope(sourceStreamID, navigationPatchEnvelope(patch, navigationGeneration))
 	if result.Duplicate {
 		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": targetPage.ID, "duplicate": true})
 		return
@@ -165,10 +192,17 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	coordinator := registry.Ensure(sourceStreamID, h.analyticalStreamContext(context.WithoutCancel(r.Context()), sourceStreamID), func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(sourceStreamID, lddatastar.RefreshEventEnvelope(event))
 	})
+	if coordinator == nil {
+		nethttp.Error(w, "dashboard stream capacity is unavailable", nethttp.StatusServiceUnavailable)
+		return
+	}
 	h.observeRefreshes(coordinator, dashboardID, targetPage.ID)
 	_, err = coordinator.BeginPrepared(func(dashboard.Filters) (dashboardstream.RefreshPreparation, error) {
 		prepared, prepareErr := (command.Service{Metrics: metrics}).PrepareInitial(request, initialFilters)
-		return streamPreparation(prepared), prepareErr
+		preparation := streamPreparation(prepared)
+		preparation.SequenceKey = navigationDeliverySequenceKey
+		preparation.Sequence = int64(navigationGeneration)
+		return preparation, prepareErr
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
 		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
@@ -182,4 +216,18 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": targetPage.ID})
+}
+
+func navigationRecordGeneration(record dashboardsession.Record, targetPageID, mutationID string) (uint64, bool) {
+	if record.State.ActivePage != targetPageID || !navigationMutationIsCurrent(record.State, mutationID) {
+		return 0, false
+	}
+	return record.State.StreamGeneration, true
+}
+
+func navigationMutationIsCurrent(state dashboardsession.State, mutationID string) bool {
+	if strings.TrimSpace(mutationID) == "" || len(state.NavigationMutationIDs) == 0 {
+		return false
+	}
+	return state.NavigationMutationIDs[len(state.NavigationMutationIDs)-1] == mutationID
 }

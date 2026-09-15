@@ -221,6 +221,65 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 			}
 		}
 	}
+	for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, 'release.release_transition_policy', $2)`, role, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_maintenance"
+			if allowed != want {
+				t.Errorf("release policy privilege %s/%s = %t, want %t", role, privilege, allowed, want)
+			}
+		}
+	}
+	for _, table := range []string{"oci_artifact_admission", "oci_artifact_admission_revocation"} {
+		for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+			for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+				var allowed bool
+				if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, $2, $3)`, role, "release."+table, privilege).Scan(&allowed); err != nil {
+					t.Fatal(err)
+				}
+				want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_maintenance"
+				if allowed != want {
+					t.Errorf("OCI admission privilege %s/%s/%s = %t, want %t", role, table, privilege, allowed, want)
+				}
+			}
+		}
+	}
+	for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, 'release.migration_capability', $2)`, role, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_maintenance"
+			if allowed != want {
+				t.Errorf("migration capability privilege %s/%s = %t, want %t", role, privilege, allowed, want)
+			}
+		}
+	}
+	for _, role := range []string{"leapview_control_owner", "leapview_control_migrator", "leapview_control_maintenance", "leapview_control_runtime", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		var allowed bool
+		if err := db.QueryRow(ctx, `SELECT has_function_privilege($1, 'release.lock_oci_artifact_admission(text)', 'EXECUTE')`, role).Scan(&allowed); err != nil {
+			t.Fatal(err)
+		}
+		want := role == "leapview_control_owner" || role == "leapview_control_migrator" || role == "leapview_control_maintenance"
+		if allowed != want {
+			t.Errorf("OCI admission lock capability execute/%s = %t, want %t", role, allowed, want)
+		}
+	}
+	var lockOwner string
+	var lockSecurityDefiner bool
+	if err := db.QueryRow(ctx, `
+		SELECT pg_get_userbyid(p.proowner), p.prosecdef
+		FROM pg_proc p
+		WHERE p.oid = 'release.lock_oci_artifact_admission(text)'::regprocedure`).Scan(&lockOwner, &lockSecurityDefiner); err != nil {
+		t.Fatal(err)
+	}
+	if lockOwner != owner.Name || !lockSecurityDefiner {
+		t.Fatalf("OCI admission lock capability owner/security-definer = %q/%t, want %q/true", lockOwner, lockSecurityDefiner, owner.Name)
+	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
 	if err := db.QueryRow(ctx,
@@ -366,8 +425,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeCatalogIdentitySelect || !runtimeDeliveryAttemptSelect || !runtimeDeliverySealSelect || !runtimeServingBundleSelect {
 		t.Fatalf("native delivery identity reads missing: catalog_identity=%t delivery_attempt=%t delivery_seal=%t serving_bundle=%t", runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect)
 	}
-	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain bool
-	var maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain bool
+	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, runtimeManagedRootSync bool
+	var maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, maintenanceManagedRootSync bool
 	var readonlyPhysicalRootLock, backupPhysicalRootLock bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'SELECT'),
@@ -379,18 +438,20 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		       has_function_privilege('leapview_control_runtime', 'delivery.retire_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.sync_managed_data_generation_root(uuid,text)', 'EXECUTE'),
 		       has_table_privilege('leapview_control_maintenance', 'delivery.delivery_retention_root', 'SELECT'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.sync_managed_data_generation_root(uuid,text)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_readonly', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_backup', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE')`).
-		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimePhysicalRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootLock, &maintenancePhysicalRootLock, &maintenanceRootExpire, &maintenanceRootMaintain, &readonlyPhysicalRootLock, &backupPhysicalRootLock); err != nil {
+		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimePhysicalRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &runtimeManagedRootSync, &maintenanceRootSelect, &maintenanceRootLock, &maintenancePhysicalRootLock, &maintenanceRootExpire, &maintenanceRootMaintain, &maintenanceManagedRootSync, &readonlyPhysicalRootLock, &backupPhysicalRootLock); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimePhysicalRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootLock || !maintenancePhysicalRootLock || !maintenanceRootExpire || !maintenanceRootMaintain || readonlyPhysicalRootLock || backupPhysicalRootLock {
-		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock/physical-lock=%t/%t/%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/lock/physical-lock/expire/maintain=%t/%t/%t/%t/%t readonly/backup physical-lock=%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, readonlyPhysicalRootLock, backupPhysicalRootLock)
+	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimePhysicalRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || runtimeManagedRootSync || !maintenanceRootSelect || !maintenanceRootLock || !maintenancePhysicalRootLock || !maintenanceRootExpire || !maintenanceRootMaintain || maintenanceManagedRootSync || readonlyPhysicalRootLock || backupPhysicalRootLock {
+		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock/physical-lock=%t/%t/%t/%t/%t/%t retire/expire/maintain/sync=%t/%t/%t/%t maintenance select/lock/physical-lock/expire/maintain/sync=%t/%t/%t/%t/%t/%t readonly/backup physical-lock=%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, runtimeManagedRootSync, maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, maintenanceManagedRootSync, readonlyPhysicalRootLock, backupPhysicalRootLock)
 	}
 	var runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute bool
 	var readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute bool
@@ -692,8 +753,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 
 func assertContractPublicationMigrationChecks(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 	t.Helper()
-	fields := `"id":{"datatype":"Integer"}`
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	fields := `{"name":"id","datatype":"Integer"}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[` + fields + `]}}`
 	var source projectcontracts.Source
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)

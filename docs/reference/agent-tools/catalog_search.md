@@ -2,7 +2,7 @@
 
 # catalog_search
 
-Search authorized project resources by stable ID, name, description, or domain metadata.
+Search authorized project resources by stable ID, name, description, or domain metadata. Use an exact ref from a unique result; do not repeat broad searches when hasMore is false.
 
 Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_search.json) · [complete manifest](/docs/agent-tools/manifest.json)
 

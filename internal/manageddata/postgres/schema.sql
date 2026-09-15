@@ -333,6 +333,11 @@ CREATE TABLE IF NOT EXISTS managed_data.retention_root (
     CHECK (octet_length(revision_id) BETWEEN 1 AND 255),
     CHECK (jsonb_typeof(evidence) = 'object' AND evidence <> '{}'::jsonb AND octet_length(evidence::text) <= 65536)
 );
+CREATE INDEX IF NOT EXISTS retention_root_revision_state_idx
+    ON managed_data.retention_root (revision_id, state);
+CREATE INDEX IF NOT EXISTS retention_root_generation_state_idx
+    ON managed_data.retention_root ((evidence->>'generation_id'), state)
+    WHERE evidence ? 'generation_id';
 
 CREATE OR REPLACE FUNCTION managed_data.guard_lease_insert() RETURNS trigger
 LANGUAGE plpgsql
@@ -428,6 +433,9 @@ SET search_path = pg_catalog, managed_data
 AS $$
 DECLARE revision_project text;
 BEGIN
+  IF NEW.state <> 'live' THEN
+    RAISE EXCEPTION 'retention root must begin in live state';
+  END IF;
   IF NEW.revision_id IS NOT NULL THEN
     SELECT c.project_id INTO revision_project
       FROM managed_data.revision r JOIN managed_data.collection c ON c.collection_id=r.collection_id
@@ -656,6 +664,12 @@ CREATE TRIGGER upload_reachability_epoch
 AFTER INSERT OR UPDATE OF status, manifest, expected_file_count, expected_size_bytes,
     revision_id
 ON managed_data.upload_session FOR EACH ROW
+EXECUTE FUNCTION managed_data.bump_reachability_epoch();
+
+DROP TRIGGER IF EXISTS retention_root_reachability_epoch ON managed_data.retention_root;
+CREATE TRIGGER retention_root_reachability_epoch
+AFTER INSERT OR DELETE OR UPDATE OF state, revision_id
+ON managed_data.retention_root FOR EACH ROW
 EXECUTE FUNCTION managed_data.bump_reachability_epoch();
 
 CREATE OR REPLACE FUNCTION managed_data.guard_revision_file() RETURNS trigger
@@ -915,7 +929,8 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.revision_file TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON managed_data.binding_set, managed_data.binding TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.revision TO leapview_control_runtime';
-        EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.lease, managed_data.retention_root TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON managed_data.retention_root TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE ON managed_data.lease TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.reconciliation_evidence TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON managed_data.provider_observation_profile, managed_data.provider_version_observation TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON managed_data.reachability_epoch TO leapview_control_runtime';

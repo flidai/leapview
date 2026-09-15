@@ -1,0 +1,20 @@
+apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:warehouse.dim_customers
+  name: warehouse.dim_customers
+  displayName: Published customer mart
+spec:
+  connection: directory
+  location:
+    type: path
+    path: dim_customers.parquet
+    format: parquet
+  schema:
+    mode: strict
+  fields:
+    - {name: customer_id, datatype: String}
+    - {name: customer_name, datatype: String}
+    - {name: region, datatype: String}
+    - {name: order_count, datatype: Integer}
+    - {name: lifetime_value, datatype: Float}

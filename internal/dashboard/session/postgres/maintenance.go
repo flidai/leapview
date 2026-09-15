@@ -20,12 +20,6 @@ func (m *Maintenance) DeleteExpiredBatch(ctx context.Context, batchSize int) (in
 	return m.deleteExpiredBatch(ctx, mDB(m), batchSize)
 }
 
-// DeleteExpiredBatchTx executes one bounded cleanup batch on a caller-owned
-// transaction and does not commit or roll back it.
-func (m *Maintenance) DeleteExpiredBatchTx(ctx context.Context, tx Tx, batchSize int) (int64, error) {
-	return m.deleteExpiredBatch(ctx, tx, batchSize)
-}
-
 func (m *Maintenance) deleteExpiredBatch(ctx context.Context, db MaintenanceDBTX, batchSize int) (int64, error) {
 	if m == nil || db == nil {
 		return 0, ErrUnavailable

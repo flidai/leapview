@@ -60,7 +60,7 @@ func localPasswordAuthFixture(t *testing.T) (*accesssqlite.Repository, *Auth, ac
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	auth := NewAuth(repository, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("k", 32)})
+	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true, CSRFKey: strings.Repeat("k", 32)})
 	return repository, auth, created, session
 }
 

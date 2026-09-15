@@ -443,12 +443,14 @@ metadata:
   id: semantic-model:sales
   name: sales
 spec:
-  metrics:
-    revenue:
-      type: aggregate
-      dataset: orders
-      aggregation: sum
-      input: {field: orders.revenue}`
+  datasets:
+    orders:
+      model: orders
+      metrics:
+        revenue:
+          type: simple
+          agg: sum
+          field: revenue`
 
 	return h.Article(h.Class("site-workflow-artifact"),
 		h.Div(h.Class("site-workflow-artifact-header"),

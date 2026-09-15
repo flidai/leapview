@@ -170,13 +170,6 @@ func materializationIdentity(artifacts release.CandidateArtifactSet) (string, er
 	return planDigest(string(encoded)), nil
 }
 
-// MaterializationIdentity exposes the canonical physical-projection identity
-// to the local candidate runner without exposing that runner's persistence
-// adapters through this package.
-func MaterializationIdentity(artifacts release.CandidateArtifactSet) (string, error) {
-	return materializationIdentity(artifacts)
-}
-
 // CandidateDeliveryPolicy is resolved by the target owner at composition
 // time. Planning must not invent approval, rollback, or retention claims.
 type CandidateDeliveryPolicy struct {
@@ -212,10 +205,6 @@ func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
 // not inspect a worktree, credentials, or physical storage.
 func CandidatePlanRequest(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, now time.Time) (deployment.DeliveryPlanRequest, error) {
 	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, now, nil)
-}
-
-func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time) (deployment.DeliveryPlanRequest, error) {
-	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, policy, now, nil)
 }
 
 // CandidatePlanRequestWithPolicyAndReuse computes the canonical plan and, when
@@ -335,12 +324,20 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject", Description: "target revision or active base changes reject before physical work"},
 		Rollback:      deployment.DeliveryRollbackEvidence{Class: policy.RollbackClass, RetentionWindow: policy.RetentionWindow, Description: "sealed catalog remains immutable; rollback class and retention are target policy"},
 	}
+	targetPolicyDigest := artifacts.AuthorizationPolicyDigest
+	if targetPolicyDigest == "" {
+		// Compatibility-only artifact providers predate the separately versioned
+		// target policy identity. Native PostgreSQL planning rejects this shape;
+		// retaining it here keeps the generic plan constructor able to decode and
+		// validate historical test/profile evidence.
+		targetPolicyDigest = artifacts.AuthorizationFingerprint
+	}
 	request := deployment.DeliveryPlanRequest{
 		ID: "plan-" + input.Candidate.ID, ActorID: input.OwnerID, TargetID: input.Candidate.TargetID, ProjectID: input.ProjectID.String(), Environment: input.Candidate.Scope.Environment,
 		Operation: operation, SourceDigest: input.ArtifactDigest,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: input.ArtifactDigest, MaterializationDigest: materializationDigest, CompilerDigest: compilerDigest, ExecutableDigest: planDigest("leapview-executable:" + runtimeVersion), DependencyDigest: planDigest("leapview-dependencies:" + runtimeVersion), ConfigDigest: configDigest, BindingDigest: bindingDigest, RuntimeDigest: runtimeDigest, CapabilityDigest: bindingDigest, DataInputs: dataInputs},
 		Provenance: deployment.DeliveryProvenance{Repository: sourceRepository(input), SourceRevision: sourceRevision(input), Builder: "leapview", BuildDefinition: artifacts.Artifact.CompilerVersion, AttestationDigest: input.Source.SourceAttestationDigest},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: artifacts.AuthorizationFingerprint, AuthorizationDigest: artifacts.AuthorizationFingerprint, QualificationDigest: qualificationDigest, ExpiresAt: func() time.Time {
+		Governance: deployment.DeliveryGovernance{PolicyDigest: targetPolicyDigest, PolicyRevision: artifacts.AuthorizationPolicyRevision, AuthorizationDigest: artifacts.AuthorizationFingerprint, QualificationDigest: qualificationDigest, ExpiresAt: func() time.Time {
 			if input.Plan != nil && !input.Plan.Governance.ExpiresAt.IsZero() {
 				return input.Plan.Governance.ExpiresAt
 			}

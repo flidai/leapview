@@ -29,6 +29,12 @@ func (a *Adapter) EnqueueApprovalActivation(ctx context.Context, tx depauth.Tx, 
 	if decision.RequestID != request.RequestID || decision.Decision != depauth.ApprovalActionApprove || decision.DecisionID == "" || decision.Revision <= 0 || decision.DecidedBy.PrincipalID == "" {
 		return fmt.Errorf("%w: approval activation decision identity is invalid", depauth.ErrApprovalInvalid)
 	}
+	var requestMetadata struct {
+		Rollback bool `json:"rollback"`
+	}
+	if err := json.Unmarshal(request.Evidence.Metadata, &requestMetadata); err != nil {
+		return fmt.Errorf("%w: approval request evidence is invalid", depauth.ErrApprovalInvalid)
+	}
 	payload := map[string]any{
 		"request_id": request.RequestID, "publication_id": request.PublicationID,
 		"target_id": request.TargetID, "generation_id": request.GenerationID,
@@ -40,6 +46,7 @@ func (a *Adapter) EnqueueApprovalActivation(ctx context.Context, tx depauth.Tx, 
 		// resolves and rechecks the latter from the immutable publication row.
 		"publication_actor_id": publication.ActorID, "requested_by": request.RequestedBy.PrincipalID,
 		"decided_by": decision.DecidedBy.PrincipalID, "idempotency_key": decision.DecisionID,
+		"rollback": requestMetadata.Rollback,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

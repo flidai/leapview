@@ -19,10 +19,14 @@ type PromptInput struct {
 	Scope          Scope
 	ConversationID string
 	Input          string
-	Context        *TurnContext
-	CorrelationID  string
-	RequestID      string
-	OnEvent        func(EventEnvelope)
+	// EditMessageID identifies an existing user turn in the active transcript.
+	// Immutable message/run rows remain audit history; execution starts from
+	// the active transcript prefix before this turn.
+	EditMessageID string
+	Context       *TurnContext
+	CorrelationID string
+	RequestID     string
+	OnEvent       func(EventEnvelope)
 }
 
 // PromptDispatch describes delivery metadata persisted with a durable prompt.
@@ -42,8 +46,13 @@ type StartedPrompt struct {
 	ConversationID string
 	RunID          string
 	Input          string
+	EditMessageID  string
 	CorrelationID  string
 	RequestID      string
+	// transcriptRevision fences the persisted snapshot used to start this
+	// prompt. Completion must compare-and-swap against it so a stale worker
+	// cannot overwrite a newer turn from another replica.
+	transcriptRevision int64
 
 	service       *Service
 	systemPrompt  string
@@ -63,9 +72,10 @@ func promptDigest(input PromptInput) string {
 	// an existing run rather than silently reusing it.
 	payload, _ := json.Marshal(struct {
 		Input         string       `json:"input"`
+		EditMessageID string       `json:"editMessageId,omitempty"`
 		Context       *TurnContext `json:"context,omitempty"`
 		CorrelationID string       `json:"correlationId,omitempty"`
-	}{input.Input, input.Context, input.CorrelationID})
+	}{input.Input, strings.TrimSpace(input.EditMessageID), input.Context, input.CorrelationID})
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:])
 }
@@ -107,6 +117,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if strings.TrimSpace(input.Input) == "" {
 		return nil, fmt.Errorf("prompt input is required")
 	}
+	input.EditMessageID = strings.TrimSpace(input.EditMessageID)
 	toolScope := input.Scope
 	toolScope.ConversationID = input.ConversationID
 	if err := s.acquire(input.ConversationID); err != nil {
@@ -123,7 +134,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err != nil {
 		return nil, err
 	}
-	if conversation.Status == ConversationStatusArchived {
+	if conversation.Status != ConversationStatusActive {
 		return nil, ErrConversationArchived
 	}
 	initial, err := decodeTranscript(conversation.TranscriptJSON)
@@ -149,7 +160,7 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 		ConversationID: input.ConversationID,
 		RunID:          runID,
 		Model:          s.config.Model,
-		MetadataJSON:   metadataJSON(map[string]any{"base_url": s.config.NormalizedBaseURL(), "model": s.config.Model, "request_id": input.RequestID, "request_digest": promptDigest(input)}),
+		MetadataJSON:   metadataJSON(map[string]any{"base_url": s.config.NormalizedBaseURL(), "model": s.config.Model, "request_id": input.RequestID, "request_digest": promptDigest(input), "edit_message_id": input.EditMessageID}),
 		Status:         runStatus,
 	})
 	if err != nil {
@@ -165,17 +176,36 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 					return nil, ErrRequestConflict
 				}
 				// Repair any missing prepare steps idempotently before activating.
-				stored, _ := s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
-				messagePersisted := false
-				for _, message := range stored {
-					if message.RunID == runID && message.Role == MessageRoleUser && message.ContentText == input.Input {
-						messagePersisted = true
-						break
-					}
+				latestConversation, conversationErr := s.repo.GetConversation(ctx, input.Scope.PrincipalID, input.ConversationID)
+				if conversationErr != nil {
+					return nil, conversationErr
 				}
-				transcript, transcriptErr := decodeTranscript(conversation.TranscriptJSON)
+				if latestConversation.Status != ConversationStatusActive {
+					return nil, ErrConversationArchived
+				}
+				stored, listErr := s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
+				if listErr != nil {
+					return nil, listErr
+				}
+				persistedPrompt, messagePersisted := storedPromptForRun(stored, runID, input.Input)
+				transcript, transcriptErr := decodeTranscript(latestConversation.TranscriptJSON)
 				if transcriptErr != nil {
 					return nil, transcriptErr
+				}
+				promptCoreID := storedMessageCoreID(persistedPrompt.ContentJSON)
+				promptInSnapshot := messagePersisted && transcriptContainsMessageID(transcript, promptCoreID)
+				if input.EditMessageID != "" && !promptInSnapshot {
+					trimStored := stored
+					if messagePersisted {
+						// The replacement row may already be durable while the
+						// old transcript snapshot is still active. Exclude it so
+						// activeMessageProjection can resolve the edit target.
+						trimStored = withoutStoredPrompt(stored, runID, input.Input)
+					}
+					transcript, transcriptErr = prepareEditedTranscript(transcript, trimStored, input.EditMessageID)
+					if transcriptErr != nil {
+						return nil, transcriptErr
+					}
 				}
 				systemPrompt, promptErr := s.systemPrompt(ctx)
 				if promptErr != nil {
@@ -189,12 +219,15 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				// A previous run may have submitted identical text. Only a
 				// message already bound to this run proves that prompt
 				// preparation committed; otherwise prepare a fresh message.
-				if !messagePersisted || !hasPrompt || lastUser.Content != input.Input {
+				if !promptInSnapshot || !hasPrompt || lastUser.Content != input.Input {
 					if prepErr = prepared.PreparePrompt(agentcore.PromptRequest{Input: input.Input, Context: turnContextItems(input.Context)}); prepErr != nil {
 						return nil, prepErr
 					}
 				}
 				transcript = prepared.Transcript()
+				if !promptInSnapshot && messagePersisted && promptCoreID != "" && !preservePromptMessageID(transcript, promptCoreID) {
+					return nil, fmt.Errorf("persisted prompt has no user message to repair")
+				}
 				if !messagePersisted {
 					if userMessage, ok := lastVisibleUserMessage(transcript); ok {
 						if appendErr := s.appendMessage(ctx, input, runID, userMessage); appendErr != nil {
@@ -202,8 +235,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 						}
 					}
 				}
-				if persistErr := s.persistTranscript(ctx, input, transcript); persistErr != nil {
-					return nil, persistErr
+				transcriptRevision := conversation.TranscriptRevision
+				// A running run is durable evidence that preparation, including
+				// its transcript CAS, already committed. Rewriting the identical
+				// snapshot here would advance the revision and invalidate an
+				// active worker's completion CAS. Preparing runs still need the
+				// repair write before they can be activated.
+				if existing.Status == RunStatusPreparing {
+					var persistErr error
+					transcriptRevision, persistErr = s.persistTranscript(ctx, input, transcript, conversation.TranscriptRevision)
+					if persistErr != nil {
+						return nil, persistErr
+					}
 				}
 				if existing.Status == RunStatusPreparing {
 					unit, ok := s.repo.(RunWorkflowUnitOfWork)
@@ -228,10 +271,31 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 				runContext, cancel := context.WithCancel(context.Background())
 				s.attachRun(input.ConversationID, runID, cancel)
 				release = false
-				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, CorrelationID: input.CorrelationID, RequestID: input.RequestID, service: s, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+				return &StartedPrompt{Scope: input.Scope, ConversationID: input.ConversationID, RunID: runID, Input: input.Input, EditMessageID: input.EditMessageID, CorrelationID: input.CorrelationID, RequestID: input.RequestID, transcriptRevision: transcriptRevision, service: s, systemPrompt: systemPrompt, initial: transcript, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 			}
 		}
 		return nil, err
+	}
+	if input.EditMessageID != "" {
+		latestConversation, conversationErr := s.repo.GetConversation(ctx, input.Scope.PrincipalID, input.ConversationID)
+		if conversationErr != nil {
+			return s.startFailure(ctx, input, run.ID, conversationErr)
+		}
+		if latestConversation.Status != ConversationStatusActive {
+			return s.startFailure(ctx, input, run.ID, ErrConversationArchived)
+		}
+		initial, err = decodeTranscript(latestConversation.TranscriptJSON)
+		if err != nil {
+			return s.startFailure(ctx, input, run.ID, err)
+		}
+		stored, listErr := s.repo.ListMessages(ctx, input.Scope.PrincipalID, input.ConversationID)
+		if listErr != nil {
+			return s.startFailure(ctx, input, run.ID, listErr)
+		}
+		initial, err = prepareEditedTranscript(initial, stored, input.EditMessageID)
+		if err != nil {
+			return s.startFailure(ctx, input, run.ID, err)
+		}
 	}
 	prepared, err := agentcore.New(agentcore.Definition{
 		Name:              "leapview-governed",
@@ -259,11 +323,13 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	if err := s.appendMessage(ctx, PromptInput{
 		Scope:          input.Scope,
 		ConversationID: input.ConversationID,
+		EditMessageID:  input.EditMessageID,
 		Context:        input.Context,
 	}, run.ID, userMessage); err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
-	if err := s.persistTranscript(ctx, input, initial); err != nil {
+	transcriptRevision, err := s.persistTranscript(ctx, input, initial, conversation.TranscriptRevision)
+	if err != nil {
 		return s.startFailure(ctx, input, run.ID, err)
 	}
 	durablyQueued := false
@@ -292,18 +358,20 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 	s.attachRun(input.ConversationID, run.ID, cancel)
 	release = false
 	return &StartedPrompt{
-		Scope:          input.Scope,
-		ConversationID: input.ConversationID,
-		RunID:          run.ID,
-		Input:          input.Input,
-		CorrelationID:  input.CorrelationID,
-		RequestID:      input.RequestID,
-		service:        s,
-		systemPrompt:   systemPrompt,
-		initial:        initial,
-		runContext:     runContext,
-		cancel:         cancel,
-		durablyQueued:  durablyQueued,
+		Scope:              input.Scope,
+		ConversationID:     input.ConversationID,
+		RunID:              run.ID,
+		Input:              input.Input,
+		EditMessageID:      input.EditMessageID,
+		CorrelationID:      input.CorrelationID,
+		RequestID:          input.RequestID,
+		transcriptRevision: transcriptRevision,
+		service:            s,
+		systemPrompt:       systemPrompt,
+		initial:            initial,
+		runContext:         runContext,
+		cancel:             cancel,
+		durablyQueued:      durablyQueued,
 	}, nil
 }
 
@@ -356,6 +424,12 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	if input == "" {
 		return nil, fmt.Errorf("persisted run has no user prompt")
 	}
+	editMessageID := ""
+	var runMetadata map[string]any
+	if json.Unmarshal([]byte(run.MetadataJSON), &runMetadata) == nil {
+		editMessageID, _ = runMetadata["edit_message_id"].(string)
+		editMessageID = strings.TrimSpace(editMessageID)
+	}
 	systemPrompt, err := s.systemPrompt(ctx)
 	if err != nil {
 		return nil, err
@@ -363,7 +437,7 @@ func (s *Service) ResumePrompt(ctx context.Context, scope Scope, conversationID,
 	runContext, cancel := context.WithCancel(ctx)
 	s.attachRun(conversationID, runID, cancel)
 	release = false
-	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, CorrelationID: correlationID, service: s, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
+	return &StartedPrompt{Scope: scope, ConversationID: conversationID, RunID: runID, Input: input, EditMessageID: editMessageID, CorrelationID: correlationID, transcriptRevision: conversation.TranscriptRevision, service: s, systemPrompt: systemPrompt, initial: initial, runContext: runContext, cancel: cancel, durablyQueued: true}, nil
 }
 
 func (s *Service) acquireForResume(conversationID, runID string) error {
@@ -410,6 +484,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 		Scope:          p.Scope,
 		ConversationID: p.ConversationID,
 		Input:          p.Input,
+		EditMessageID:  p.EditMessageID,
 		CorrelationID:  p.CorrelationID,
 		OnEvent:        onEvent,
 	}
@@ -495,7 +570,7 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 			}
 			encodedEventData, _ := json.Marshal(eventData)
 			finishInput := RunFinish{PrincipalID: input.Scope.PrincipalID, ConversationID: input.ConversationID, RunID: p.RunID, Status: status, StopReason: string(result.StopReason), InputTokens: int64(sink.usage.InputTokens), OutputTokens: int64(sink.usage.OutputTokens), TotalTokens: int64(sink.usage.TotalTokens), MetadataJSON: metadataJSON(meta), Error: errorText(promptErr), JobID: p.claimID, JobFence: p.claimFence, Cause: cause}
-			rows, changed, err := completion.CompleteRunWorkflow(context.WithoutCancel(executionContext), finishInput, messages, string(raw), jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run." + status + ":" + p.RunID, ResourceKind: "agent_run", ResourceID: p.RunID, EventType: "agent_run." + status, Data: encodedEventData}})
+			rows, changed, err := completion.CompleteRunWorkflow(context.WithoutCancel(executionContext), finishInput, messages, string(raw), p.transcriptRevision, jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run." + status + ":" + p.RunID, ResourceKind: "agent_run", ResourceID: p.RunID, EventType: "agent_run." + status, Data: encodedEventData}})
 			if err != nil {
 				if promptErr == nil {
 					promptErr = err
@@ -511,16 +586,24 @@ func (p *StartedPrompt) Complete(ctx context.Context, onEvent func(EventEnvelope
 			if err := s.persistNewMessages(ctx, input, p.RunID, p.initial, transcript); err != nil && promptErr == nil {
 				promptErr = err
 			}
-			if err := s.persistTranscript(ctx, input, transcript); err != nil && promptErr == nil {
-				promptErr = err
+			if nextRevision, err := s.persistTranscript(ctx, input, transcript, p.transcriptRevision); err != nil {
+				if promptErr == nil {
+					promptErr = err
+				}
+			} else {
+				p.transcriptRevision = nextRevision
 			}
 		}
 	} else {
 		if err := s.persistNewMessages(ctx, input, p.RunID, p.initial, transcript); err != nil && promptErr == nil {
 			promptErr = err
 		}
-		if err := s.persistTranscript(ctx, input, transcript); err != nil && promptErr == nil {
-			promptErr = err
+		if nextRevision, err := s.persistTranscript(ctx, input, transcript, p.transcriptRevision); err != nil {
+			if promptErr == nil {
+				promptErr = err
+			}
+		} else {
+			p.transcriptRevision = nextRevision
 		}
 	}
 	if !atomicCompletion {
@@ -566,6 +649,7 @@ func (p *StartedPrompt) Abort(ctx context.Context, runErr error) error {
 		Scope:          p.Scope,
 		ConversationID: p.ConversationID,
 		Input:          p.Input,
+		EditMessageID:  p.EditMessageID,
 		CorrelationID:  p.CorrelationID,
 	}
 	if p.claimID != "" {
@@ -662,7 +746,7 @@ func newMessageInputs(input PromptInput, runID string, initial, transcript []age
 				text = visible
 			}
 		}
-		content := messageContentJSON(m, input.Context)
+		content := messageContentJSONWithEdit(m, input.Context, input.EditMessageID)
 		out = append(out, MessageInput{PrincipalID: input.Scope.PrincipalID, ConversationID: input.ConversationID, RunID: runID, Role: platformRole(m.Role), ContentText: text, ContentJSON: content, ToolCallID: m.ToolCallID, ToolName: m.ToolName, IsError: m.IsError})
 	}
 	return out
@@ -695,7 +779,7 @@ func (s *Service) appendMessage(ctx context.Context, input PromptInput, runID st
 		RunID:          runID,
 		Role:           platformRole(message.Role),
 		ContentText:    contentText,
-		ContentJSON:    messageContentJSON(message, input.Context),
+		ContentJSON:    messageContentJSONWithEdit(message, input.Context, input.EditMessageID),
 		ToolCallID:     message.ToolCallID,
 		ToolName:       message.ToolName,
 		IsError:        message.IsError,
@@ -715,13 +799,16 @@ func lastVisibleUserMessage(messages []agentcore.Message) (agentcore.Message, bo
 	return agentcore.Message{}, false
 }
 
-func (s *Service) persistTranscript(ctx context.Context, input PromptInput, transcript []agentcore.Message) error {
+func (s *Service) persistTranscript(ctx context.Context, input PromptInput, transcript []agentcore.Message, expectedRevision int64) (int64, error) {
 	bytes, err := json.Marshal(compactTranscriptForStorage(transcript))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = s.repo.UpdateConversationTranscript(ctx, input.Scope.PrincipalID, input.ConversationID, string(bytes))
-	return err
+	conversation, err := s.repo.UpdateConversationTranscript(ctx, input.Scope.PrincipalID, input.ConversationID, string(bytes), expectedRevision)
+	if err != nil {
+		return 0, err
+	}
+	return conversation.TranscriptRevision, nil
 }
 
 func compactTranscriptForStorage(transcript []agentcore.Message) []agentcore.Message {

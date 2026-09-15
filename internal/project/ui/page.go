@@ -36,20 +36,8 @@ func CatalogPage(catalog catalog.Catalog, providers ...webpage.Provider) g.Node 
 	return CatalogPageForQuery(catalog, "", providers...)
 }
 
-func CatalogPageForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Provider) g.Node {
-	return CatalogPageForCatalogsQuery(catalogs, "", providers...)
-}
-
 func CatalogPageForQuery(catalog catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
 	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", CatalogListOptions{}, providers...)
-}
-
-func CatalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
-	return CatalogPageForCatalogsQueryWithCSRF(catalogs, query, "", providers...)
-}
-
-func CatalogPageForCatalogsQueryWithCSRF(catalogs []catalog.Catalog, query, csrfToken string, providers ...webpage.Provider) g.Node {
-	return CatalogPageForCatalogsWithOptions(catalogs, CatalogListOptions{Query: query}, csrfToken, providers...)
 }
 
 type CatalogDashboardMetadata struct {
@@ -122,17 +110,9 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 	})
 }
 
-func CatalogListPatchForCatalogsQuery(catalogs []catalog.Catalog, query string) map[string]any {
-	return CatalogListPatchForCatalogs(catalogs, CatalogListOptions{Query: query})
-}
-
 func CatalogListPatchForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) map[string]any {
 	page := catalogPageForCatalogs(catalogs, options)
 	return map[string]any{"page": map[string]any{"dashboards": page.Dashboards}}
-}
-
-func catalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string) uisignals.CatalogPageSignal {
-	return catalogPageForCatalogs(catalogs, CatalogListOptions{Query: query})
 }
 
 func catalogPageForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) uisignals.CatalogPageSignal {
@@ -161,18 +141,6 @@ func catalogPageForCatalogs(catalogs []catalog.Catalog, options CatalogListOptio
 	page := catalogPageBase(options.Query)
 	page.Dashboards = filterCatalogDashboards(dashboards, options.Query)
 	return page
-}
-
-func CatalogBootstrapSignals(catalog catalog.Catalog, providers ...webpage.Provider) map[string]any {
-	return CatalogBootstrapSignalsForPage(catalog, catalogPageSignal(catalog, ""), providers...)
-}
-
-func CatalogBootstrapSignalsForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Provider) map[string]any {
-	return CatalogBootstrapSignalsForCatalogsQuery(catalogs, "", providers...)
-}
-
-func CatalogBootstrapSignalsForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) map[string]any {
-	return CatalogBootstrapSignalsForCatalogsWithOptions(catalogs, CatalogListOptions{Query: query}, providers...)
 }
 
 func CatalogBootstrapSignalsForCatalogsWithOptions(catalogs []catalog.Catalog, options CatalogListOptions, providers ...webpage.Provider) map[string]any {

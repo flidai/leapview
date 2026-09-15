@@ -186,27 +186,6 @@ func FormatValue(v interface{}) string {
 	}
 }
 
-// ExtractRows extracts table rows from a paginated response.
-func ExtractRows(data map[string]interface{}, columns []string) [][]string {
-	items, ok := data["data"].([]interface{})
-	if !ok {
-		return nil
-	}
-	rows := make([][]string, 0, len(items))
-	for _, item := range items {
-		m, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		row := make([]string, len(columns))
-		for i, col := range columns {
-			row[i] = ExtractField(m, col)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
 func sortStrings(s []string) {
 	for i := 1; i < len(s); i++ {
 		for j := i; j > 0 && s[j] < s[j-1]; j-- {

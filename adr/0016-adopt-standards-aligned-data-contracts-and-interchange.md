@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: pending
+Implementation: complete for the qualified profiles; capability-gated profiles deferred
 
 Deciders: LeapView maintainers
 
@@ -26,6 +26,7 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md);
 [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md);
 [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md);
+[generated standards conformance matrix](specifications/standards-conformance-matrix.md);
 [OpenLineage projection conformance](specifications/openlineage-conformance.md);
 [Open Data Contract Standard 3.1.0](https://github.com/bitol-io/open-data-contract-standard/tree/v3.1.0);
 [Bitol Open Data Product Standard 1.0.0](https://github.com/bitol-io/open-data-product-standard/tree/v1.0.0);
@@ -40,6 +41,29 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [Looker access control](https://docs.cloud.google.com/looker/docs/access-control-and-permission-management);
 [Lightdash user attributes](https://docs.lightdash.com/workspace-admin/user-attributes);
 [Rill data access control](https://docs.rilldata.com/developers/build/metrics-view/security)
+
+## Implementation status
+
+ADR-0016 is implemented and qualified for its accepted bounded profiles:
+
+- generated Source, Model, and SemanticModel contract authority and the sealed
+  `leapview.contract/v1` projections;
+- deterministic compatibility/security classification, immutable publication,
+  the qualified dashboard-consumer impact profile, and the bounded protected
+  SemanticModel activation profile;
+- Bitol ODCS 3.1.0 Source/Model export at document level; and
+- OpenLineage 2.0.2 export-only projection at document level.
+
+The following profiles remain capability-gated and **Deferred**, with no
+adapter or conformance claim: ODCS import/round-trip, Bitol ODPS 1.0.0 export,
+and W3C DCAT 3 export.
+
+The qualified profiles do **not support or claim** ODCS execution or runtime
+transport, OpenLineage collection/transport/import/round-trip/end-to-end
+emission, a generic all-resource consumer closure, or semantic consumers and
+plan shapes outside the ADR-0017 admitted profile. Project namespace,
+ResourceUID/tombstone lifecycle, dbt, and recovery qualification are owned by
+other decisions and are not evidence for ADR-0016 completion.
 
 ## Context and problem statement
 
@@ -554,20 +578,26 @@ not described as LeapView-executable guarantees.
 
 ### ODCS is the data-contract interchange standard
 
-The initial ODCS profile pins version 3.1.0 and provides validation, import, and
+The active initial ODCS profile pins version 3.1.0 and provides validation and
 export. The adapter maps stable resource identity, schema, field semantics,
 quality checks, freshness, ownership metadata, and authoritative definitions
 where the mapping is lossless. LeapView-only execution semantics use a
 versioned namespaced ODCS extension only when the standard permits one.
 
+ODCS import and round-trip remain selected compatibility directions but are
+capability-gated. They carry no implementation or conformance claim until a
+demonstrated import requirement owns an adapter and qualification profile.
+
 Portable export omits target endpoints and secrets. A separately authorized
 target-specific test projection may include non-secret connection coordinates
 when the caller can inspect that binding, but credentials are always supplied
-out of band and never serialized. Imported server blocks resolve only through
+out of band and never serialized. If an import profile is later activated,
+imported server blocks resolve only through
 an explicit existing Connection and target-binding workflow; they do not create
 credentials, widen network authority, or bypass connector admission.
 
-Imported arbitrary SQL quality rules are never executed. The adapter either
+Such a future import profile must never execute arbitrary SQL quality rules.
+Its adapter either
 maps a rule to the closed native check vocabulary, preserves it as explicitly
 non-executable standard metadata, or rejects the import with a precise
 diagnostic. It never reports successful import after dropping the rule.
@@ -580,7 +610,7 @@ acronym `ODPS` without the publisher and version in public conformance claims,
 because another unrelated Open Data Product Specification uses the same
 acronym.
 
-The initial projection treats one deployed source bundle and its active
+The capability-gated projection would treat one deployed source bundle and its active
 generation as one data-product envelope. Sources selected as promised
 dependencies become input ports. Only outputs explicitly selected by the
 authorized export request or publication state become output ports; internal
@@ -596,11 +626,11 @@ rather than an implicit grouping convention or the return of Project.
 
 ### DCAT 3 is the catalog export target
 
-The initial DCAT 3 boundary is authorization-filtered export, not import. A
-LeapView catalog maps to `dcat:Catalog`; eligible Sources and published outputs
-map to `dcat:Dataset`; authorized files or representations map to
-`dcat:Distribution`; and headless or public data endpoints map to
-`dcat:DataService`. The initial serialization is deterministic JSON-LD.
+The selected, capability-gated DCAT 3 boundary is authorization-filtered export,
+not import. A future adapter would map a LeapView catalog to `dcat:Catalog`;
+eligible Sources and published outputs to `dcat:Dataset`; authorized files or
+representations to `dcat:Distribution`; and headless or public data endpoints
+to `dcat:DataService`. Its serialization must be deterministic JSON-LD.
 
 DCAT output includes only metadata and access coordinates visible to the
 caller. It does not expose target credentials, private object keys, internal
@@ -640,7 +670,8 @@ second quality vocabulary today.
 
 ### Conformance claims are explicit and machine-readable
 
-LeapView publishes a generated conformance matrix for every external profile.
+LeapView publishes a [generated conformance matrix](specifications/standards-conformance-matrix.md)
+for every implemented or selected external profile.
 Each entry identifies the publisher, standard, exact version, schema digest,
 supported directions, extension version, and one or more proven levels:
 
@@ -740,10 +771,9 @@ receive production credentials by default.
   directories, and produces one atomic graph without `leapview.yaml`, a public
   Project ID, or include-glob behavior. Public routes, API schemas, grants, and
   audit subjects contain no Project resource.
-- Identity fixtures prove candidate-wide cross-kind ID uniqueness, stable UIDs
-  across source-root and file moves, kind-change rejection, tombstone
-  non-reuse, explicit restore behavior, rollback identity, and durable
-  control-plane references that cannot silently rebind.
+- ResourceUID, tombstone, restore, rollback-identity, and recovery evidence is
+  maintained by ADR-0018 and is intentionally excluded from this ADR's final
+  implementation claim.
 - TypeSpec owns the six authored structures, including the shared envelope,
   metadata, contract evolution, quality identity, field governance,
   deprecation, and the ADR-0017 SemanticModel access contract. It generates Go
@@ -770,35 +800,54 @@ receive production credentials by default.
   deployment callback from reacquiring transaction or mutation capabilities.
 - Schema and compiler tests reject duplicate check IDs, invalid semantic
   versions, unknown compatibility policies, malformed authoritative links,
-  contradictory deprecation replacements, and generic extension bags.
+  structurally invalid deprecation guidance, and generic extension bags.
+  `TestSourceDeprecationContext`,
+  `TestModelDeprecationUsesContextualValidation` additionally reject missing or
+  self replacements, two- and multi-field replacement cycles, and
+  `deprecation.since` later than the containing contract version when creating
+  new projections. Historical `leapview.contract/v1` publication replay retains
+  its original structural semantics and exact digest so this stricter authoring
+  validation cannot invalidate immutable evidence.
 - Compatibility fixtures classify additive, behavioral, breaking, and
   indeterminate changes across Source, Model, and published SemanticModel
-  contracts. Candidate evidence binds the exact active baseline, affected graph,
-  classification, and policy result.
+  contracts. Candidate evidence binds the exact active baseline, direct
+  affected-resource seed, classification, and policy result.
+  `TestDirectAffectedResourceSeedQualifiesTransitiveDashboardConsumers` proves
+  that the Project-owned graph expands that seed to directly and transitively
+  dependent dashboards, excludes unrelated dashboards, produces deterministic
+  output for duplicate change inputs, and rejects duplicate-edge or cyclic
+  graphs. No generic all-resource consumer closure is claimed.
+- `TestContractPublicationMigrationUpgradesRevisionSixWithRetainedData` applies
+  the immutable PostgreSQL migrations through revision 006, writes retained
+  Source delivery data through the runtime role, upgrades through
+  `007_contract_publication_evidence.sql`, proves the retained row is unchanged,
+  and appends and exactly replays canonical contract publication evidence.
+  This qualifies the exact 006-to-007 PostgreSQL 18 path, not arbitrary
+  historical upgrade origins.
 - Canonicalization fixtures classify every public DTO field, prove the exact
   `leapview.contract/v1` projection and defaults, produce byte-identical RFC
   8785 and SHA-256 results in Go and an independent implementation, and reject
   reuse of a published version with different bytes.
 - Pinned ODCS 3.1.0 fixtures pass the upstream schema and an independent CLI
-  linter. Import/export golden tests cover supported types, nested-field
+  linter. Export golden tests cover supported types, nested-field
   diagnostics, identities, relationships, checks, freshness, metadata,
   extensions, unknown fields, and loss reports.
-- Security tests prove ODCS import/export never serializes credentials, never
-  creates a target binding or Access grant, never executes imported arbitrary
-  SQL, and cannot widen connector, filesystem, object-store, or network scope.
-- Bitol ODPS 1.0.0 fixtures prove that only selected Source dependencies and
-  explicit publications become ports, every port refers to a stable ODCS
-  contract ID and version, and internal resources remain absent.
-- DCAT 3 JSON-LD fixtures normalize to deterministic RDF graphs and contain
-  only authorization-visible catalogs, datasets, distributions, and services.
+- Security tests prove ODCS export never serializes credentials, target
+  bindings, connection details, executable SQL, or unsupported quality
+  semantics. ODCS import and round-trip have no active conformance claim.
+- Bitol ODPS 1.0.0 and W3C DCAT 3 are recorded as capability-gated directions
+  in the generated matrix. No adapter, fixture, or conformance claim exists
+  until a demonstrated product-exchange or federated-catalog requirement owns
+  that work.
 - OpenLineage contract tests validate standard schema, version, quality,
   statistics, parent, and lineage facets plus immutable canonical schema URLs
   for every LeapView extension facet. The export-only projection and its
   evidence boundaries are recorded in the [OpenLineage conformance
   specification](specifications/openlineage-conformance.md).
-- The generated conformance matrix is checked against registered adapters,
-  pinned schemas, documentation, CLI commands, and test fixtures. No adapter or
-  public compliance claim can exist without a matching matrix entry.
+- The generated conformance matrix checks every registered implemented profile
+  for an adapter, specification, pinned schema bytes and validation command;
+  computes schema digests from those exact bytes; and prevents deferred
+  profiles from claiming an adapter, conformance level, or validation command.
 - Architecture tests keep standards-version DTOs inside interchange or
   telemetry adapters and prevent core compiled-graph, analytics, deployment,
   release, and runtime packages from importing them.

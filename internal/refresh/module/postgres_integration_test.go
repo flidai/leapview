@@ -585,7 +585,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, servingArtifactDigest 
 	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-concrete", FencingEpoch: 1, SnapshotID: 777, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: servingArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, AuthorizationPolicyRevision: 1, AuthorizationPolicyDigest: digest('a'), RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: servingArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(t.Context(), `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ($1,$2,$3,'live')`, poolID, "catalog-concrete", int64(777)); err != nil {
@@ -854,14 +854,14 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	if replay.ID != first.ID || len(replayChildren) != len(firstChildren) || replayChildren[0].ID != firstChildren[0].ID {
 		t.Fatalf("replay tree = %q/%v, want root/child %q/%q", replay.ID, replayChildren, first.ID, firstChildren[0].ID)
 	}
-	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), identity.GenerationID, first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
 
 	conflict := tree
 	conflict.RequestDigest = digest('d')
 	if _, _, err := persistence.Runs.CreateRunTree(t.Context(), conflict); !errors.Is(err, refreshpostgres.ErrConflict) {
 		t.Fatalf("same key with changed digest error = %v, want conflict", err)
 	}
-	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), identity.GenerationID, first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
 
 	rollbackIdentity := projectgraph.ServingIdentity{ProjectID: "project-keyed-rollback", Environment: "prod", GenerationID: "generation-keyed-rollback"}
 	rollbackPlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
@@ -884,7 +884,7 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	if _, _, err := persistence.Runs.CreateRunTree(t.Context(), rollbackTree); err == nil {
 		t.Fatal("audit callback failure unexpectedly committed keyed admission")
 	}
-	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackRoot.RunID, rollbackTree.IdempotencyKey, 0, 0, 0, 0, 0)
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackIdentity.GenerationID, rollbackRoot.RunID, rollbackTree.IdempotencyKey, 0, 0, 0, 0, 0)
 	retryAudit := *audit
 	retryAudit.EventID = digest('2')
 	retryAudit.ResourceID = rollbackIdentity.ProjectID.String()
@@ -895,7 +895,7 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	if err != nil || retried.ID != rollbackRoot.RunID {
 		t.Fatalf("retry after callback rollback root=%#v err=%v", retried, err)
 	}
-	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackRoot.RunID, rollbackTree.IdempotencyKey, 1, 1, 1, 1, 1)
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackIdentity.GenerationID, rollbackRoot.RunID, rollbackTree.IdempotencyKey, 1, 1, 1, 1, 1)
 }
 
 func TestPostgresKeyedRefreshCancellationReplayConflictsAndRollback(t *testing.T) {
@@ -974,11 +974,47 @@ func TestPostgresKeyedRefreshCancellationReplayConflictsAndRollback(t *testing.T
 		t.Fatalf("changed digest error=%v, want conflict", err)
 	}
 
+	legacyRun, legacyRuns := create("run-cancel-keyed-legacy", auditWriter)
+	if _, err := legacyRuns.CancelRun(t.Context(), identity, legacyRun.ID); err != nil {
+		t.Fatalf("seed legacy cancelled run: %v", err)
+	}
+	legacyKey := "cancel-keyed-legacy"
+	legacyDigest, err := refreshrun.CancelRequestDigest(identity, "operator:cancel-keyed", legacyRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyOperation, err := platformOperations.Acquire(t.Context(), operationpostgres.AcquireInput{
+		Scope: legacyRefreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "refresh_pipeline_cancel",
+		IdempotencyKey: legacyKey, RequestDigest: legacyDigest, OwnerID: "operator:cancel-keyed", Lease: time.Minute, Retention: 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyOutcome, err := json.Marshal(struct {
+		RunID  string `json:"runId"`
+		Status string `json:"status"`
+	}{legacyRun.ID, refreshrun.RunStatusCancelled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := platformOperations.Complete(t.Context(), legacyOperation.Lease, legacyOutcome); err != nil {
+		t.Fatal(err)
+	}
+	legacyReplay, replayed, err := legacyRuns.CancelRunWithAuditKeyed(t.Context(), identity, legacyRun.ID, "operator:cancel-keyed", legacyKey, legacyDigest, nil)
+	if err != nil || !replayed || legacyReplay.ID != legacyRun.ID || legacyReplay.Status != refreshrun.RunStatusCancelled {
+		t.Fatalf("legacy cancellation replay=%#v replayed=%t err=%v", legacyReplay, replayed, err)
+	}
+	foreignGeneration := identity
+	foreignGeneration.GenerationID = "generation-cancel-keyed-other"
+	if _, _, err := legacyRuns.CancelRunWithAuditKeyed(t.Context(), foreignGeneration, legacyRun.ID, "operator:cancel-keyed", legacyKey, legacyDigest, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("legacy cancellation foreign generation error=%v, want conflict", err)
+	}
+
 	// A different operation type occupying the same scope/key is a durable
 	// conflict and must not reach the run/job mutation.
 	typeConflictKey := "cancel-type-conflict"
 	typeConflictDigest := digest
-	if _, err := platformOperations.Acquire(t.Context(), operationpostgres.AcquireInput{Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "other_operation", IdempotencyKey: typeConflictKey, RequestDigest: typeConflictDigest, OwnerID: "operator:cancel-keyed", Lease: time.Minute, Retention: 24 * time.Hour}); err != nil {
+	if _, err := platformOperations.Acquire(t.Context(), operationpostgres.AcquireInput{Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), OperationType: "other_operation", IdempotencyKey: typeConflictKey, RequestDigest: typeConflictDigest, OwnerID: "operator:cancel-keyed", Lease: time.Minute, Retention: 24 * time.Hour}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := keyed.CancelRunWithAuditKeyed(t.Context(), identity, run.ID, "operator:cancel-keyed", typeConflictKey, typeConflictDigest, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
@@ -1014,7 +1050,7 @@ func TestPostgresKeyedRefreshCancellationReplayConflictsAndRollback(t *testing.T
 		t.Fatalf("rollback job status=%q, want queued", rollbackJob.Status)
 	}
 	var operationCount int
-	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(identity.ProjectID.String(), identity.Environment), rollbackKey).Scan(&operationCount); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(identity.ProjectID.String(), identity.Environment, identity.GenerationID), rollbackKey).Scan(&operationCount); err != nil {
 		t.Fatal(err)
 	}
 	if operationCount != 0 {
@@ -1022,7 +1058,7 @@ func TestPostgresKeyedRefreshCancellationReplayConflictsAndRollback(t *testing.T
 	}
 }
 
-func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo *jobspostgres.Repository, projectID, runID, operationKey string, wantRuns, wantJobs, wantAudit, wantEvents, wantOperations int) {
+func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo *jobspostgres.Repository, projectID, generationID, runID, operationKey string, wantRuns, wantJobs, wantAudit, wantEvents, wantOperations int) {
 	t.Helper()
 	var runs, jobs, audits, operations int
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.run WHERE project_id=$1 AND environment='prod'`, projectID).Scan(&runs); err != nil {
@@ -1034,7 +1070,7 @@ func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo 
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE resource_id=$1 AND operation='create_refresh_run'`, projectID).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(projectID, "prod"), operationKey).Scan(&operations); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(projectID, "prod", generationID), operationKey).Scan(&operations); err != nil {
 		t.Fatal(err)
 	}
 	events, err := jobsRepo.ListEvents(t.Context(), "refresh", runID, 0, 100)

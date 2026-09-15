@@ -37,6 +37,7 @@ type DashboardBuilderActionBindings struct {
 	// writes the authored document.
 	FilterCommandPath string
 	FilterOptionPath  string
+	VisualWindowPath  string
 	AgentCommands     AgentCommandBindings
 }
 
@@ -63,11 +64,13 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		builderCommandAction(actions),
 		builderFilterCommandAction(actions),
 		builderFilterOptionsAction(actions),
+		builderVisualWindowAction(actions),
 	}
 	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
 	if agentEnabled {
 		attrs = append(attrs,
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(actions.AgentCommands.CancelRun, "/chats/stop", "agent", "agentContext")),
 			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
 			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
 		)
@@ -98,13 +101,6 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		ContentAttrs: contentAttrs,
 		Content:      g.El("lv-dashboard-builder", attrs...),
 	})
-}
-
-// DashboardDraftForkPage is a small, server-rendered entry point for the
-// existing headless copy operation. Dashboard creation lives in the catalog
-// modal so users keep their place while choosing the required data model.
-func DashboardDraftForkPage(dashboardID, csrfToken, action string, providers ...webpage.Provider) g.Node {
-	return DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, "", providers...)
 }
 
 func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
@@ -244,4 +240,12 @@ func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
 		value += " " + uiactions.EventPost(actions.FilterOptionPath, "builder", "runtime", "builderFilterOptionRequest")
 	}
 	return g.Attr("data-on:lv-builder-filter-options-request", value)
+}
+
+func builderVisualWindowAction(actions DashboardBuilderActionBindings) g.Node {
+	value := "$visualWindowCommand = evt.detail;"
+	if strings.TrimSpace(actions.VisualWindowPath) != "" {
+		value += " " + uiactions.ConcurrentEventPost(actions.VisualWindowPath, "builder", "runtime", "builderFilterState", "visualWindowCommand")
+	}
+	return g.Attr("data-on:lv-visualization-window-request", value)
 }

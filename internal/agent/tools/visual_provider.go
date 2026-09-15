@@ -225,6 +225,12 @@ func (p VisualProvider) Run(ctx context.Context, scope Scope, call agentcore.Too
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())
 	}
+	if envelope, ok := result.Patch["visuals"][result.ID]; ok {
+		if limit := agentDefinitionLimit(definition); limit > 0 && agentVisualReturnedRows(envelope) >= limit {
+			envelope.Diagnostics = append(envelope.Diagnostics, visualizationir.VisualizationDiagnostic{Code: "agent_row_limit_reached", Severity: visualizationir.VisualizationDiagnosticSeverityWarning, Message: fmt.Sprintf("Showing up to %d rows. More data may exist.", limit)})
+			result.Patch["visuals"][result.ID] = envelope
+		}
+	}
 	compact, err := compactAgentVisualResult(runScope.ProjectID, call.ID, queryMetadata, model, input, dashboardDefinition, definition, result)
 	if err != nil {
 		return apigenAgentToolError("query_visual_failed", err.Error())

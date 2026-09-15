@@ -68,9 +68,9 @@ test('code editor initializes Monaco, syncs values, emits changes, and disposes'
       document.body.append(element)
       await element.updateComplete
       await waitFor(() => Boolean(element.editor))
-      await waitFor(() => Boolean(element.shadowRoot.querySelector('.view-line')))
+      await waitFor(() => Boolean((element.shadowRoot as ShadowRoot).querySelector('.view-line')))
 
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const stylesheetLoaded = Boolean(root.querySelector<HTMLLinkElement>('link[data-monaco-styles]')?.sheet)
       const monacoSurface = root.querySelector('.monaco-editor')
       const monacoBackground = getComputedStyle(monacoSurface!).backgroundColor
@@ -169,7 +169,7 @@ test('code editor initializes Monaco from value attribute', async () => {
       element.language = 'markdown'
       document.body.append(element)
       await element.updateComplete
-      const hasLoadingTextarea = Boolean(element.shadowRoot.querySelector('textarea.loading-editor'))
+      const hasLoadingTextarea = Boolean((element.shadowRoot as ShadowRoot).querySelector('textarea.loading-editor'))
       await waitFor(() => Boolean(element.editor))
       const initialModelValue = element.editor.getValue()
       element.editor.setValue('')

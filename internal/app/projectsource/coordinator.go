@@ -22,7 +22,6 @@ import (
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -149,28 +148,6 @@ func New(begin BeginFunc, sources SourceRepository, objects objectstore.Immutabl
 	}
 	c := &Coordinator{begin: begin, sources: sources, objects: objects, compiler: compiler, blobBatch: defaultBlobBatch, now: func() time.Time { return time.Now().UTC() }}
 	return c, nil
-}
-
-// NewWithDatabase adapts a *pgxpool.Pool, *pgx.Conn, or test object exposing
-// Begin(context.Context) (pgx.Tx, error) to New.
-func NewWithDatabase(db interface {
-	Begin(context.Context) (pgx.Tx, error)
-}, sources SourceRepository, objects objectstore.ImmutableStore, compiler CompilerPort) (*Coordinator, error) {
-	if db == nil {
-		return nil, ErrInvalid
-	}
-	return New(func(ctx context.Context) (Tx, error) { return db.Begin(ctx) }, sources, objects, compiler)
-}
-
-// SetBlobBatchSize changes only the number of blob references admitted per
-// short transaction. It is intended for bounded integration tests and
-// deployment configuration, not for transaction lifetime extension.
-func (c *Coordinator) SetBlobBatchSize(size int) error {
-	if c == nil || size < 1 || size > 1000 {
-		return ErrInvalid
-	}
-	c.blobBatch = size
-	return nil
 }
 
 // Admit executes the complete source admission protocol. Object-store puts,

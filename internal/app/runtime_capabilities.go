@@ -100,6 +100,7 @@ type accessCapabilityConfig struct {
 	AvatarBlobs      accessmodule.AvatarBlobStore
 	PublicURL        string
 	InstanceID       string
+	Environment      string
 	MCPIssuerURL     string
 	CurrentProject   func(context.Context) (projectgraph.ResourceID, error)
 	AuthoringProject func(context.Context) (projectgraph.ResourceID, error)
@@ -116,7 +117,8 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
 		Auth:        cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
-		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
+		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, AuthorizationPolicyTargetID: cfg.InstanceID,
+		AuthorizationPolicyEnvironment: cfg.Environment, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID:   cfg.CurrentProject,
 		AuthoringProjectID: cfg.AuthoringProject,
 		Presentation:       page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
@@ -136,12 +138,13 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 }
 
 type workloadCapabilityConfig struct {
-	Persistence  *jobsmodule.Persistence
-	Workload     workloadmodule.Config
-	Production   bool
-	LeaseTimeout time.Duration
-	Logger       *slog.Logger
-	NodeID       string
+	Persistence     *jobsmodule.Persistence
+	Workload        workloadmodule.Config
+	Production      bool
+	LeaseTimeout    time.Duration
+	RiverJobTimeout time.Duration
+	Logger          *slog.Logger
+	NodeID          string
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
@@ -158,7 +161,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
-		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
+		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, RiverJobTimeout: cfg.RiverJobTimeout, Logger: cfg.Logger,
 		OwnerID: cfg.NodeID,
 	})
 	if err != nil {

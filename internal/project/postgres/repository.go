@@ -151,14 +151,6 @@ func (r *Repository) EnsureIdentity(ctx context.Context, id projectgraph.Resourc
 	return ensureIdentity(ctx, r.db, id)
 }
 
-// EnsureIdentityTx is the transaction form of EnsureIdentity.
-func (r *Repository) EnsureIdentityTx(ctx context.Context, tx Tx, id projectgraph.ResourceID) error {
-	if tx == nil {
-		return ErrInvalid
-	}
-	return ensureIdentity(ctx, tx, id)
-}
-
 // ByID loads one identity by canonical ID.
 func (r *Repository) ByID(ctx context.Context, id projectgraph.ResourceID) (Record, error) {
 	if r == nil || r.db == nil {

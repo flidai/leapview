@@ -3,13 +3,16 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { DesktopDiscoveryError } from "./discovery.js";
+import {
+  DesktopDiscoveryError,
+  type DiscoveryDocument,
+} from "./discovery.js";
 import {
   profilePartitionName,
   ProfileStore,
 } from "./profiles.js";
 
-const discovery = {
+const discovery: DiscoveryDocument = {
   schemaVersion: 1,
   canonicalOrigin: "https://analytics.company.com",
   instanceId: "instance_0123456789abcdef0123456789abcdef",

@@ -12,11 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
 	operationdb "github.com/flidai/leapview/internal/platform/operation/postgres/internal/db"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -349,10 +349,6 @@ func NewWithConfig(db DBTX, lease, retention time.Duration) *Repository {
 // facade is deliberately separate from Repository so request-serving code has
 // no destructive prune method to call accidentally.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
-
-// NewMaintenanceRepository is a descriptive alias for callers that name all
-// capability adapters as repositories.
-func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
 
 // RequestDigest computes canonical SHA-256 for JSON requests. Whitespace and
 // object-key ordering therefore cannot produce a second logical operation.
@@ -1573,16 +1569,7 @@ func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 }
 
 func operationDBConfigured(db any) bool {
-	if db == nil {
-		return false
-	}
-	value := reflect.ValueOf(db)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return !platformtypednil.IsNil(db)
 }
 
 func (r *Repository) transitionError(ctx context.Context, tx Tx, lease Lease) error {

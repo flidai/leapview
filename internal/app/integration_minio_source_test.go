@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -28,9 +29,10 @@ import (
 )
 
 const (
-	minIOIntegrationImage  = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+	minIOIntegrationImage  = "quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	minIOIntegrationUser   = "leapview"
 	minIOIntegrationSecret = "leapview-integration-secret"
+	minIOStartAttempts     = 3
 )
 
 func TestMinIOParquetSourceRefreshContract(t *testing.T) {
@@ -135,18 +137,58 @@ func startMinIO(t *testing.T, ctx context.Context) string {
 	if os.Getenv("CI") == "" {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	minioContainer, err := tcminio.Run(
-		ctx,
-		minIOIntegrationImage,
-		tcminio.WithUsername(minIOIntegrationUser),
-		tcminio.WithPassword(minIOIntegrationSecret),
-		testcontainers.WithLogger(log.TestLogger(t)),
-	)
+	var minioContainer *tcminio.MinioContainer
+	var err error
+	for attempt := 1; attempt <= minIOStartAttempts; attempt++ {
+		minioContainer, err = tcminio.Run(
+			ctx,
+			minIOIntegrationImage,
+			tcminio.WithUsername(minIOIntegrationUser),
+			tcminio.WithPassword(minIOIntegrationSecret),
+			testcontainers.WithLogger(log.TestLogger(t)),
+		)
+		if err == nil || !isTransientMinIORegistryFailure(err) || attempt == minIOStartAttempts {
+			break
+		}
+		delay := time.Duration(attempt*2) * time.Second
+		t.Logf("MinIO registry service-key lookup failed; retrying in %s (attempt %d/%d)", delay, attempt+1, minIOStartAttempts)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			err = ctx.Err()
+			attempt = minIOStartAttempts
+		case <-timer.C:
+		}
+	}
 	testcontainers.CleanupContainer(t, minioContainer)
 	require.NoError(t, err)
 	endpoint, err := minioContainer.ConnectionString(ctx)
 	require.NoError(t, err)
 	return "http://" + strings.TrimRight(endpoint, "/")
+}
+
+func isTransientMinIORegistryFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "unauthorized:") && strings.Contains(message, `"error": "Unknown service key"`)
+}
+
+func TestTransientMinIORegistryFailureClassification(t *testing.T) {
+	if !isTransientMinIORegistryFailure(fmt.Errorf(`create container: unauthorized: {"error": "Unknown service key"}`)) {
+		t.Fatal("Quay service-key failure was not classified as retryable")
+	}
+	for _, err := range []error{
+		nil,
+		fmt.Errorf("create container: unauthorized: invalid credentials"),
+		fmt.Errorf("container did not become ready"),
+	} {
+		if isTransientMinIORegistryFailure(err) {
+			t.Fatalf("classified deterministic MinIO failure %v as retryable", err)
+		}
+	}
 }
 
 func minIOClient(t *testing.T, ctx context.Context, endpoint, region, user, secret string) *awss3.Client {

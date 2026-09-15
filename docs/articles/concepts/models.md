@@ -26,24 +26,31 @@ spec:
       FROM source."olist.orders"
       WHERE order_id IS NOT NULL
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
   grain:
     entity: order
   fields:
-    order_id: {datatype: String, label: Order ID}
-    purchase_date: {datatype: Date, label: Purchase date}
-    revenue: {datatype: Decimal, label: Revenue}
+    - {name: order_id, datatype: String, label: Order ID}
+    - {name: purchase_date, datatype: Date, label: Purchase date}
+    - {name: revenue, datatype: Decimal, label: Revenue}
+  schema:
+    mode: compatible
+  checks:
+    - id: has_orders
+      type: row_count
+      minimum: 1
+      severity: error
 ```
 
-The generated [Model configuration](/docs/config/model) is the exact syntax reference. The definition determines the output; optional `fields` annotate named output fields and assert explicitly declared logical datatypes. Omitted fields and types are discovered. Semantic references and dashboard query bindings are validated before discovery without guessing physical types; executable query planning remains strict and uses the resolved snapshot schema. A field declaration never projects or casts data, and additional definition output remains available. Use SQL when the Model must select, rename, or cast columns. Governed source/model relations can feed a transformation, and the compiler derives the resulting lineage so downstream semantic models see every exposed field.
+The generated [Model configuration](/docs/config/model) is the exact syntax reference. The definition determines the output; optional `fields` assert its shape and explicitly declared logical datatypes. Omitted fields and types are discovered. `schema.mode: compatible` allows extra output columns; `strict` requires exactly the declared field set. `checks` apply rules to the transformed output. Semantic references and dashboard query bindings are validated against the resolved snapshot schema. A field declaration never projects or casts data. Use SQL when the Model must select, rename, or cast columns. Governed source/model relations can feed a transformation, and the compiler derives the resulting lineage so downstream semantic models see every exposed field.
 
 ### Authored contract metadata
 
 Source and Model resources may declare `metadata.contract` with a semantic
-`version` and `compatibility: backward`. Source schema fields and Model fields
-support `nullable`, `tags`, `criticalDataElement`, `classification`,
+`version` and `compatibility: backward`. Source and Model fields
+support `tags`, `criticalDataElement`, `classification`,
 `authoritativeDefinitions`, and `deprecation`. These are authored contract and
 governance inputs, not authorization grants or a change to runtime nullability
 inference. An authoritative definition records a type (`businessDefinition` or
@@ -52,10 +59,12 @@ semantic `since` version, a reason, and an optional replacement field identifier
 The current generated schema checks the URI's scheme/non-whitespace shape,
 not full URI syntax or whether the referenced definition exists.
 
-Every authored Model check requires an `id`, unique within that Model, in
+Every authored Source or Model check requires an `id`, unique within that resource, in
 addition to its existing type-specific fields. Checks may also carry descriptive
 `description` and `tags` metadata. Keep the ID stable when editing a check;
-changing its list position does not change its authored identity.
+changing its list position does not change its authored identity. Use a `non_null`
+check to require values to be present; physical schema nullability is recorded
+as discovery evidence, not authored as a field rule.
 
 Accepting this metadata does not calculate a canonical contract digest, enforce
 publication compatibility, or authorize deployment. Those remain separate
@@ -67,10 +76,10 @@ The grain states what one row represents through `grain.entity`; identity entiti
 
 ```yaml
 entities:
-  order:
+  - name: order
     type: primary
     fields: [order_id]
-  order_line:
+  - name: order_line
     type: unique
     fields: [order_id, product_id]
 grain:

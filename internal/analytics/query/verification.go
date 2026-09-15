@@ -278,13 +278,6 @@ func (p *Planner) semanticFilterReachable(spec semanticmodel.SemanticFilterSpec,
 	return err == nil
 }
 
-// VerifyRepresentativePlans performs preparation and discards the SQL. It is
-// the deployment-facing convenience API when callers only need validation.
-func VerifyRepresentativePlans(model *semanticmodel.Model, relation TableRelation) error {
-	_, err := PrepareRepresentativePlans(model, relation)
-	return err
-}
-
 func sortedMetricNames(model *semanticmodel.Model) []string {
 	names := make([]string, 0, len(model.Metrics))
 	for name := range model.Metrics {

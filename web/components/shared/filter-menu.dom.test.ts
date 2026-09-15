@@ -70,7 +70,7 @@ test('filter menu renders backend-owned options and emits search/toggle/clear co
       const commands: unknown[] = []
       element.addEventListener('lv-filter-menu-command', (event: CustomEvent) => commands.push(event.detail))
       await element.updateComplete
-      const root = element.shadowRoot
+      const root = (element.shadowRoot as ShadowRoot)
       const trigger = root.querySelector<HTMLButtonElement>('.trigger')!
       const initialTriggerText = trigger.textContent ?? ''
       trigger.click()

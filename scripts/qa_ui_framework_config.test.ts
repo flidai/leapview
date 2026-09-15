@@ -116,6 +116,51 @@ test('managed development keeps bypass HTTP loopback-only and preserves caller o
   expect(capture).toContain('LEAPVIEW_ADDR: `127.0.0.1:${port}`')
 })
 
+test('managed development keeps an explicit PORT outside worktree allocation', async () => {
+  const source = await readFile('scripts/dev-server.sh', 'utf8')
+  const ensurePort = source.indexOf('ensure_port()')
+  const explicitPort = source.indexOf('if [[ -n "${PORT:-}" ]]', ensurePort)
+  const managedRange = source.indexOf('local end=$((PORT_START + PORT_COUNT - 1))', explicitPort)
+
+  expect(explicitPort).toBeGreaterThanOrEqual(0)
+  expect(source.slice(explicitPort, managedRange)).toContain('echo "$candidate"')
+  expect(source.slice(explicitPort, managedRange)).toContain('Explicit PORT')
+  expect(source.slice(explicitPort, managedRange)).not.toContain('PORT_START')
+})
+
+test('frontend and desktop test typechecks retain semantic checking', async () => {
+  const [rootConfig, desktopConfig] = await Promise.all([
+    readFile('tsconfig.test.json', 'utf8'),
+    readFile('desktop/tsconfig.test.json', 'utf8'),
+  ])
+
+  for (const [name, contents] of [['root', rootConfig], ['desktop', desktopConfig]] as const) {
+    const config = JSON.parse(contents) as {
+      compilerOptions?: { noCheck?: boolean }
+      include?: string[]
+    }
+    expect(config.compilerOptions?.noCheck, `${name} test config must typecheck`).toBeUndefined()
+    if (name === 'root') {
+      expect(config.include).toContain('site/**/*.ts')
+      expect(config.include).toContain('scripts/**/*.ts')
+      expect(config.include).toContain('web/**/*.test.ts')
+      expect(config.include).toContain('web/**/*.dom.test.ts')
+    } else {
+      expect(config.include).toContain('src/**/*.test.ts')
+      expect(config.include).toContain('scripts/**/*.mjs')
+    }
+  }
+})
+
+test('test-only ambient declarations stay scoped to the external modules they model', async () => {
+  const source = await readFile('web/types/vendor-modules.d.ts', 'utf8')
+
+  expect(source).not.toContain("declare module '*' {")
+  expect(source).not.toContain("declare module '*?v=dev'")
+  expect(source).toContain("declare module '*/static/vendor/datastar-1.0.2.js?v=dev'")
+  expect(source).toContain("declare module '*settings-surfaces.js'")
+})
+
 test('browser QA uses canonical project resource IDs', async () => {
   const source = await readFile('scripts/datastar_lit_route_qa.ts', 'utf8')
 

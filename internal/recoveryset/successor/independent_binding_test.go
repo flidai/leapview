@@ -190,6 +190,7 @@ func TestIndependentSuccessorVersionMatrixAndMalformedEncoding(t *testing.T) {
 		"manifest":  {e.Manifest.CanonicalJSON, func(b []byte) error { _, err := ParseManagedManifest2(b); return err }, `"manifest_version":2`},
 		"anchor":    {e.Anchor.CanonicalJSON, func(b []byte) error { _, err := ParseSourceAnchor(b); return err }, `"anchor_version":2`},
 		"profiles":  {e.Profiles.CanonicalJSON, func(b []byte) error { _, err := ParseProviderProfileSet(b); return err }, `"profile_version":2`},
+		"core":      {e.Receipt.Core.CanonicalJSON, func(b []byte) error { _, err := ParseReceiptCore(b); return err }, `"core_version":2`},
 		"receipt":   {e.Receipt.CanonicalJSON, func(b []byte) error { _, err := ParseReceipt(b); return err }, `"receipt_version":2`},
 		"authority": {e.Authorities.CanonicalJSON, func(b []byte) error { _, err := ParseAuthorityRegistry(b); return err }, `"registry_version":2`},
 	} {

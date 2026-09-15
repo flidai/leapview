@@ -66,6 +66,10 @@ test('topology background renders and animates without external requests', async
     })
 
     const firstFrame = await canvasDataURL(page)
+    await page.waitForTimeout(300)
+    const animatedFrame = await canvasDataURL(page)
+    expect(animatedFrame).not.toBe(firstFrame)
+
     await page.setViewportSize({ width: 900, height: 600 })
     await page.waitForTimeout(150)
     const secondFrame = await canvasDataURL(page)

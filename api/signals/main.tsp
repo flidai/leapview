@@ -413,7 +413,6 @@ model AdminPublicationSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationCommand {
-  `projectId`: string;
   `publication`: string;
   `action`: string;
   `expectedRevision`: int64;
@@ -445,6 +444,33 @@ model AdminDirectoryListSignal {
 @apigen.contract(#{ kind: "ui-envelope", tags: #["admin", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "admin" })
 model AdminPageEnvelope {
+  // These optional roots are populated only by the active admin surface.
+  // Their declarations keep the stream contract complete without requiring
+  // inactive branches to manufacture placeholder payloads.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAccess", `x-leapview-signal-owner`: "server" })
+  `adminAccess`?: AccessAdministrationSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAgentCommand", `x-leapview-signal-owner`: "server" })
+  `adminAgentCommand`?: AdminAgentCommandSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminAuditLog", `x-leapview-signal-owner`: "server" })
+  `adminAuditLog`?: AuditLogSignal;
+  // The settings surface retains this consumer-only root for contract
+  // compatibility; there is no producer anywhere in the canonical app.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminProjects", `x-leapview-signal-owner`: "consumer-only" })
+  `adminProjects`?: ProjectRegistrySignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryDetail", `x-leapview-signal-owner`: "server" })
+  `adminQueryDetail`?: AdminQueryDetailSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminQueryHistory", `x-leapview-signal-owner`: "server" })
+  `adminQueryHistory`?: AdminQueryHistorySignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "adminServiceAccounts", `x-leapview-signal-owner`: "server" })
+  `adminServiceAccounts`?: ServiceAccountsSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "personalSettings", `x-leapview-signal-owner`: "server" })
+  `personalSettings`?: PersonalSettingsSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "productSettings", `x-leapview-signal-owner`: "server" })
+  `productSettings`?: ProductSettingsSignal;
+  // Datastar owns this indicator in the browser; the server never publishes
+  // it as a signal patch.
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentTurnPending", `x-leapview-signal-owner`: "browser" })
+  `agentTurnPending`?: boolean;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chrome" })
   `chrome`: ChromeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
@@ -453,6 +479,12 @@ model AdminPageEnvelope {
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
+model AdminAgentCommandSignal {
+  `systemPrompt`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
@@ -822,6 +854,7 @@ model AgentContextSignal {
 }
 
 model ChatConversationSummary {
+  `pinned`?: boolean;
   `archivedAt`?: string;
   `createdAt`: string;
   `id`: string;
@@ -837,6 +870,8 @@ model ChatConversationSummary {
 @apigen.contract(#{ kind: "ui-envelope", tags: #["chat", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "chat" })
 model ChatEnvelope {
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "chatManagement" })
+  `chatManagement`?: ChatManagementSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agent" })
   `agent`: ChatSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "agentContext" })
@@ -872,13 +907,29 @@ model ChatSignal {
   `transcript`: ChatTranscriptItemSignal[];
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["chat", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "chat" })
+model ChatManagementSignal {
+  `completedRequestId`?: string;
+  `undoDeadline`?: string;
+  `action`: string;
+  `conversationId`: string;
+  `archivedConversations`: ChatConversationSummary[];
+  `error`?: string;
+  `message`?: string;
+  `requestId`?: string;
+}
+
 model ChatStatus {
+  `canContinue`?: boolean;
+  `runId`?: string;
   `enabled`: boolean;
   `error`?: string;
   `running`: boolean;
 }
 
 model ChatTranscriptItemSignal {
+  `edited`?: boolean;
   `argumentsJson`?: string;
   `artifact`?: ChatArtifactSignal;
   `conversationId`?: string;
@@ -911,6 +962,7 @@ model ChromeSignal {
 }
 
 model ComposerSignal {
+  `editMessageId`?: string;
   `disabled`: boolean;
   `placeholder`: string;
   `value`: string;
@@ -2037,6 +2089,7 @@ model SidebarGroupSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["shared", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "shared" })
 model SidebarHistoryItemSignal {
+  `pinned`?: boolean;
   `active`: boolean;
   `href`: string;
   `id`: string;

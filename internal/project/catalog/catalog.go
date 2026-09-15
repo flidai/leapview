@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -595,15 +596,7 @@ func paginate(items []Result, cursor string, input cursorInput) (Page, error) {
 }
 
 func sameKinds(left, right []projectgraph.Kind) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func snapshotDigest(snapshot accesssnapshot.AuthorizationSnapshot) (string, error) {

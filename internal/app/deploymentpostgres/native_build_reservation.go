@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 )
 
 const nativeBuildReservationMaxLease = 24 * time.Hour
@@ -140,16 +140,7 @@ func normalizeNativeBuildReservationInput(input NativeBuildOperationReservationI
 }
 
 func nativeBuildOperationAuthorityIsNil(authority deploymentmodule.NativeBuildOperationAuthority) bool {
-	if authority == nil {
-		return true
-	}
-	value := reflect.ValueOf(authority)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return value.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(authority)
 }
 
 func validateNativeBuildReservationAcquisition(acquired deploymentmodule.NativeOperationAcquireResult, input deploymentmodule.NativeOperationAcquireInput) (NativeBuildOperationReservationResult, error) {

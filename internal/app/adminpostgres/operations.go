@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"strings"
 	"time"
 
@@ -22,6 +21,7 @@ import (
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -221,7 +221,7 @@ func (o Operations) Maintenance(ctx context.Context, request admincli.Maintenanc
 	if err != nil {
 		return fmt.Errorf("construct PostgreSQL native maintenance: %w", err)
 	}
-	if native == nil || (reflect.ValueOf(native).Kind() == reflect.Pointer && reflect.ValueOf(native).IsNil()) {
+	if platformtypednil.IsNil(native) {
 		return errors.New("construct PostgreSQL native maintenance returned nil runner")
 	}
 	mode := "preview"
@@ -239,16 +239,7 @@ func (o Operations) Maintenance(ctx context.Context, request admincli.Maintenanc
 }
 
 func nilMaintenancePool(pool MaintenancePool) bool {
-	if pool == nil {
-		return true
-	}
-	rv := reflect.ValueOf(pool)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return rv.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(pool)
 }
 
 // MapMaintenanceRequest translates CLI retention flags to every native

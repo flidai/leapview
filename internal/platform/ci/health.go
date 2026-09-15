@@ -156,11 +156,14 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	run.UnknownJobs = nil
 	run.Problems = nil
 	supported := validHealthPlan(run.Plan) && run.PlanIssue == "" && len(expectedPlanJobs(run.Plan)) > 0
+	exhaustive := false
 	if run.Workflow == "merge-validation.yml" && run.Event == "merge_group" {
 		run.Category = "merge"
+		exhaustive = true
 	}
 	if run.Workflow == "nightly.yml" && (run.Event == "schedule" || run.Event == "workflow_dispatch") {
 		run.Category = "nightly"
+		exhaustive = true
 	}
 	if run.Workflow == "ci.yml" && run.Event == "pull_request" && supported {
 		run.Category = "selective"
@@ -168,12 +171,19 @@ func classifyHealthRun(run HealthRun) HealthRun {
 			run.Category = "full_pr"
 		}
 	}
+	if run.Workflow == "ci.yml" && run.Event == "workflow_dispatch" && supported {
+		if reflect.DeepEqual(run.Plan.Effective, FullJobs()) || (run.Plan.PR != nil && reflect.DeepEqual(run.Plan.PR.Effective, FullPRJobs())) {
+			run.Category = "full_pr"
+		}
+	}
 	if supported {
 		run.ExpectedSource = "plan"
-		run.PlannedJobs = expectedPlanJobs(run.Plan)
-		run.ExpectedJobs = run.PlannedJobs
+		run.ExpectedJobs = expectedPlanJobs(run.Plan)
+		if run.Workflow == "ci.yml" && run.Event == "pull_request" {
+			run.PlannedJobs = append([]string(nil), run.ExpectedJobs...)
+		}
 		run.SelectionConfidence = "verified"
-	} else {
+	} else if !exhaustive {
 		if run.PlanIssue == "" {
 			run.PlanIssue = "missing, empty or unsupported plan"
 		}
@@ -182,11 +192,16 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	// Exhaustive workflows have an independent required inventory. A partial or
 	// historical plan must not redefine their current validation obligations.
 	if run.Category == "merge" || run.Category == "nightly" {
+		run.PlanIssue = ""
 		run.ExpectedSource = "workflow_registry"
 		run.ExpectedJobs = ExpectedHealthJobs(run.Workflow)
+		run.SelectionConfidence = "verified"
 	}
 	if run.Category == "unknown" {
 		run.Problems = append(run.Problems, "execution category unknown")
+		if supported {
+			run.SelectionConfidence = "incomplete"
+		}
 	}
 	for name, result := range run.Results {
 		if strings.HasPrefix(name, "unknown/") || !knownConclusion(result) {
@@ -199,10 +214,14 @@ func classifyHealthRun(run HealthRun) HealthRun {
 			run.ExecutedJobs = append(run.ExecutedJobs, name)
 		}
 	}
+	selectionMismatch := false
 	for _, name := range run.ExpectedJobs {
 		result, present := run.Results[name]
 		if !present {
 			run.UnknownJobs = append(run.UnknownJobs, name)
+		}
+		if result == "skipped" {
+			selectionMismatch = true
 		}
 		if result != "success" {
 			run.Problems = append(run.Problems, fmt.Sprintf("expected %s: %s", name, result))
@@ -216,11 +235,15 @@ func classifyHealthRun(run HealthRun) HealthRun {
 		for name, result := range run.Results {
 			if name != "ci-gate" && !expected[name] && result != "skipped" {
 				run.Problems = append(run.Problems, "unplanned execution: "+name)
+				selectionMismatch = true
 			}
 		}
-		if len(run.Problems) > 0 || len(run.UnknownJobs) > 0 {
+		if selectionMismatch || len(run.UnknownJobs) > 0 {
 			run.SelectionConfidence = "incomplete"
 		}
+	}
+	if exhaustive && len(run.UnknownJobs) > 0 {
+		run.SelectionConfidence = "incomplete"
 	}
 	if len(run.UnknownJobs) > 0 {
 		run.Problems = append(run.Problems, "unknown or missing job evidence")
@@ -239,6 +262,15 @@ func classifyHealthRun(run HealthRun) HealthRun {
 	sort.Strings(run.UnknownJobs)
 	sort.Strings(run.Problems)
 	return run
+}
+
+func incompleteHealthEvidence(run HealthRun) bool {
+	return run.Category == "unknown" ||
+		run.SelectionConfidence == "unknown" ||
+		run.SelectionConfidence == "incomplete" ||
+		len(run.UnknownJobs) > 0 ||
+		run.DurationSeconds < 0 ||
+		!knownConclusion(run.Conclusion)
 }
 
 func AnalyzeHealth(runs []HealthRun) HealthReport {
@@ -260,7 +292,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 		default:
 			report.UnknownConclusions++
 		}
-		if len(run.Problems) > 0 {
+		if incompleteHealthEvidence(run) {
 			report.Incomplete++
 		}
 		if len(run.PlannedJobs) > 0 {
@@ -290,7 +322,7 @@ func AnalyzeHealth(runs []HealthRun) HealthReport {
 					}
 				}
 			}
-		} else {
+		} else if run.Workflow == "ci.yml" && run.Event == "pull_request" {
 			report.UnknownSelection++
 		}
 		for _, job := range run.ExpectedJobs {

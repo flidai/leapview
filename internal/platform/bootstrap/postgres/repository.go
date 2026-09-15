@@ -6,6 +6,7 @@ package postgres
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	_ "embed"
 	"encoding/base64"
 	"errors"
@@ -115,7 +116,11 @@ func (r *Repository) GetSetting(ctx context.Context, key string) (string, error)
 	}
 	value, err := bootstrapdb.New(r.db).GetSetting(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		// Settings implement the application-wide Settings boundary, whose
+		// missing-value contract is database/sql.ErrNoRows. Keep ErrNotFound
+		// for bootstrap identity and claim authorities, where it carries
+		// domain meaning to their callers.
+		return "", sql.ErrNoRows
 	}
 	return value, err
 }
@@ -132,11 +137,6 @@ func (r *Repository) UpsertSetting(ctx context.Context, key, value string) error
 		return err
 	}
 	return bootstrapdb.New(r.db).UpsertSetting(ctx, bootstrapdb.UpsertSettingParams{Key: key, Value: value})
-}
-
-// SetSetting is an alias retained for callers using setter vocabulary.
-func (r *Repository) SetSetting(ctx context.Context, key, value string) error {
-	return r.UpsertSetting(ctx, key, value)
 }
 
 // InsertSettingIfMissing installs a setting only when absent and reports
@@ -171,22 +171,6 @@ func (r *Repository) EnsureInstanceID(ctx context.Context, id string) error {
 		return ErrInvalid
 	}
 	return ensureInstanceID(ctx, r.db, id)
-}
-
-// InstanceIDTx is the caller-owned transaction form of InstanceID. The
-// generated identity is persisted in tx and becomes visible only on commit.
-func (r *Repository) InstanceIDTx(ctx context.Context, tx Tx) (string, error) {
-	if tx == nil {
-		return "", ErrInvalid
-	}
-	return instanceID(ctx, tx)
-}
-
-func (r *Repository) EnsureInstanceIDTx(ctx context.Context, tx Tx, id string) error {
-	if tx == nil {
-		return ErrInvalid
-	}
-	return ensureInstanceID(ctx, tx, id)
 }
 
 // InstanceEnvironment reads the permanent environment binding.

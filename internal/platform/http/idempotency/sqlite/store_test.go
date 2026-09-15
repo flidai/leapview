@@ -8,7 +8,19 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 )
+
+func TestLoadMissingRecordReturnsCapabilityNotFound(t *testing.T) {
+	db, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "idempotency.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := NewStore(db.SQLDB()).Load(t.Context(), "missing-scope"); !errors.Is(err, idempotency.ErrNotFound) {
+		t.Fatalf("missing load error=%v, want capability not found", err)
+	}
+}
 
 func TestAdversarialExpiredLeaseIsQuarantinedInsteadOfReexecuted(t *testing.T) {
 	ctx := context.Background()
@@ -42,5 +54,23 @@ func TestAdversarialExpiredLeaseIsQuarantinedInsteadOfReexecuted(t *testing.T) {
 	}
 	if err := store.Abandon(ctx, "scope", "digest", "worker-1", first.LeaseGeneration); !errors.Is(err, ErrLeaseLost) {
 		t.Fatalf("stale abandon error = %v", err)
+	}
+}
+
+func TestLiveLeaseHeldByAnotherSessionRemainsPending(t *testing.T) {
+	ctx := context.Background()
+	db, err := platform.Open(ctx, filepath.Join(t.TempDir(), "idempotency.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	first := NewStoreWithSession(db.SQLDB(), "server-1")
+	if _, execute, err := first.Claim(ctx, "scope", "digest", "worker-1", time.Minute, time.Hour); err != nil || !execute {
+		t.Fatalf("first claim execute=%v err=%v", execute, err)
+	}
+	second := NewStoreWithSession(db.SQLDB(), "server-2")
+	retry, execute, err := second.Claim(ctx, "scope", "digest", "worker-2", time.Minute, time.Hour)
+	if err != nil || execute || retry.State != "pending" {
+		t.Fatalf("live lease claim = %#v execute=%v err=%v", retry, execute, err)
 	}
 }

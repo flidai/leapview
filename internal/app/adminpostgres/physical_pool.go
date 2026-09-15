@@ -213,12 +213,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 			return result, fmt.Errorf("create local physical-pool namespace: %w", err)
 		}
 	}
-	s3Config := gcadapter.S3Config{
-		Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
-		SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-		Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
-		ExtensionAdmission: extensionSupply,
-	}
+	s3Config := physicalPoolS3Config(cfg, extensionSupply)
 	store, err := gcadapter.NewPoolStore(ctx, contract, s3Config)
 	if err != nil {
 		return result, fmt.Errorf("physical-pool ownership marker store: %w", err)

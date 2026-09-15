@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/jackc/pgx/v5"
@@ -22,7 +23,7 @@ import (
 // activation-audit port. The Access repository is stateless; the adapter is
 // likewise safe to share between requests.
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ deploymentpostgres.ActivationAuditPort = (*Adapter)(nil)
@@ -32,21 +33,21 @@ var _ deploymentpostgres.ActivationAuditPort = (*Adapter)(nil)
 // boundary. The audit repository is stateless, so the same adapter can be
 // shared by activation and delivery-mutation audit projections.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // AppendActivationAudit appends the canonical Access audit intent in the
 // caller-owned transaction. Access validates and reads back the complete
 // immutable row at its canonical boundary.
 func (a *Adapter) AppendActivationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentpostgres.ActivationAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: activation audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	intent, err := activationIntent(input)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, err
 	}
-	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	stored, err := a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "append")
 	}
@@ -59,14 +60,14 @@ func (a *Adapter) AppendActivationAudit(ctx context.Context, tx deploymentpostgr
 // immutable intent fields, and the payload digest are checked before the
 // deployment projection is returned.
 func (a *Adapter) GetActivationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentpostgres.ActivationAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: activation audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	intent, err := activationIntent(input)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, err
 	}
-	stored, err := a.audit.GetAuditEvent(ctx, tx, input.EventID)
+	stored, err := a.authority.Get(ctx, tx, input.EventID)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "read")
 	}
@@ -81,14 +82,14 @@ func (a *Adapter) GetActivationAudit(ctx context.Context, tx deploymentpostgres.
 // module's capability-neutral projection and forwards the caller-owned
 // transaction without beginning, committing, or rolling it back.
 func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: delivery mutation audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	intent, err := mutationIntent(input)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, err
 	}
-	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	stored, err := a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "append delivery mutation")
 	}
@@ -96,10 +97,10 @@ func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres
 }
 
 func (a *Adapter) AppendProjectClaimAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: project claim audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
-	stored, err := a.audit.RecordAuditEvent(ctx, tx, projectClaimIntent(input))
+	stored, err := a.authority.Record(ctx, tx, projectClaimIntent(input))
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "append project claim")
 	}
@@ -107,11 +108,11 @@ func (a *Adapter) AppendProjectClaimAudit(ctx context.Context, tx deploymentpost
 }
 
 func (a *Adapter) GetProjectClaimAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.ProjectClaimAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: project claim audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	intent := projectClaimIntent(input)
-	stored, err := a.audit.GetAuditEvent(ctx, tx, input.AuditID)
+	stored, err := a.authority.Get(ctx, tx, input.AuditID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return deploymentpostgres.AuditEvent{}, deploymentmodule.ErrProjectClaimAuditNotFound
@@ -137,14 +138,14 @@ func projectClaimIntent(input deploymentmodule.ProjectClaimAuditInput) access.Au
 // against the complete expected intent. It is used after commit by generated
 // command completion guards; it never begins or ends a transaction.
 func (a *Adapter) GetMutationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: delivery mutation audit adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	intent, err := mutationIntent(input)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, err
 	}
-	stored, err := a.audit.GetAuditEvent(ctx, tx, input.AuditID)
+	stored, err := a.authority.Get(ctx, tx, input.AuditID)
 	if err != nil {
 		return deploymentpostgres.AuditEvent{}, normalize(err, "read delivery mutation")
 	}

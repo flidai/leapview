@@ -122,10 +122,6 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	return plan, plan.Validate()
 }
 
-// NewPlan is retained as a concise constructor for callers implementing the
-// canonical plan -> build -> publish workflow.
-func NewPlan(plan DeliveryPlan) (DeliveryPlan, error) { return NewDeliveryPlan(plan) }
-
 type deliveryPlanCanonical struct {
 	ID                    string                `json:"id"`
 	SourceOwnerID         string                `json:"sourceOwnerId,omitempty"`
@@ -276,33 +272,6 @@ func (plan DeliveryPlan) Validate() error {
 	return nil
 }
 
-// SameCanonicalIntent reports whether two plans carry the same stable
-// idempotency intent. Planner wall-clock fields are deliberately excluded:
-// retries can cross a second and derive different CreatedAt/ExpiresAt values,
-// but must still converge on the first durable plan for one idempotency key.
-func (plan DeliveryPlan) SameCanonicalIntent(other DeliveryPlan) bool {
-	if plan.ID != other.ID || plan.SourceOwnerID != other.SourceOwnerID || plan.TargetID != other.TargetID || plan.ProjectID != other.ProjectID ||
-		plan.Environment != other.Environment || plan.Operation != other.Operation ||
-		plan.SourceDigest != other.SourceDigest || plan.ServingArtifactDigest != other.ServingArtifactDigest || plan.BaseGenerationID != other.BaseGenerationID ||
-		plan.BaseTargetRevision != other.BaseTargetRevision {
-		return false
-	}
-	if plan.ExecutionDigest != other.ExecutionDigest || plan.ProvenanceDigest != other.ProvenanceDigest ||
-		plan.EvidenceDigest != other.EvidenceDigest {
-		return false
-	}
-	// Governance expiry is planner wall-clock evidence, rather than stable
-	// idempotency intent. Compare the remaining governance policy canonically.
-	leftGovernance, rightGovernance := plan.Governance, other.Governance
-	leftGovernance.ExpiresAt, rightGovernance.ExpiresAt = time.Time{}, time.Time{}
-	leftGovernanceDigest, leftErr := canonicalJSONDigest(leftGovernance)
-	rightGovernanceDigest, rightErr := canonicalJSONDigest(rightGovernance)
-	if leftErr != nil || rightErr != nil || leftGovernanceDigest != rightGovernanceDigest {
-		return false
-	}
-	return true
-}
-
 // Expired reports the derived expiry condition at now. It does not mutate the
 // plan and is therefore safe to call from publication checks.
 func (plan DeliveryPlan) Expired(now time.Time) bool {
@@ -326,41 +295,4 @@ func (plan DeliveryPlan) Expire(now time.Time) (DeliveryPlan, error) {
 // digests are explanatory evidence, never a second CAS authority.
 func (plan DeliveryPlan) Stale(activeGenerationID string, targetRevision int64) bool {
 	return activeGenerationID != plan.BaseGenerationID || targetRevision != plan.BaseTargetRevision
-}
-
-// ValidateRetainedBaseRequest is the allow-retained-base half of stale
-// qualification. A stale plan may proceed only when policy explicitly opts
-// in and the build has supplied both exact sealed-base identities. Input
-// declarations remain those persisted on the plan; callers cannot substitute
-// a new base or silently widen the planned inputs during qualification.
-func (plan DeliveryPlan) ValidateRetainedBaseRequest(baseClosureDigest, basePhysicalPoolID string) error {
-	if plan.Evidence.StalePolicy.Mode != "allow_retained_base" || !plan.Evidence.StalePolicy.AllowRetainedBase {
-		return fmt.Errorf("%w: stale policy does not permit retained base", ErrDeliveryStale)
-	}
-	if plan.BaseGenerationID == "" {
-		return fmt.Errorf("%w: retained base requires a planned base generation", ErrDeliveryStale)
-	}
-	if err := ValidateDeliveryDigest(baseClosureDigest); err != nil {
-		return fmt.Errorf("%w: retained base closure is required: %v", ErrDeliveryStale, err)
-	}
-	if err := ValidateDeliveryID(basePhysicalPoolID); err != nil {
-		return fmt.Errorf("%w: retained base physical pool is required: %v", ErrDeliveryStale, err)
-	}
-	return nil
-}
-
-// PublicationEligible is the fail-closed plan-side half of publication.
-func (plan DeliveryPlan) PublicationEligible(activeGenerationID string, targetRevision int64, now time.Time) error {
-	if err := plan.Validate(); err != nil {
-		return err
-	}
-	if plan.Status != DeliveryPlanPlanned || plan.Expired(now) {
-		return fmt.Errorf("%w: plan is expired", ErrDeliveryPlanExpired)
-	}
-	if plan.Stale(activeGenerationID, targetRevision) {
-		if plan.Evidence.StalePolicy.Mode != "allow_retained_base" || !plan.Evidence.StalePolicy.AllowRetainedBase {
-			return fmt.Errorf("%w: base generation or target revision changed", ErrDeliveryStale)
-		}
-	}
-	return nil
 }

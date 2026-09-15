@@ -42,9 +42,12 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create journey API token: %v", err)
 	}
-	auth := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
+	auth, err := accessmodule.NewAuth(fixture.AccessPersistence.Repository, accessmodule.AuthConfig{
 		APITokenOnly: true, CSRFKey: strings.Repeat("journey-auth", 4),
 	})
+	if err != nil {
+		t.Fatalf("construct auth: %v", err)
+	}
 	accessSurface, err := accessmodule.Build(t.Context(), accessmodule.Config{
 		ExistingAuth: auth,
 		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {

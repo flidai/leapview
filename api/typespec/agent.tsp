@@ -54,11 +54,32 @@ model AgentConversationPatchRequest {
   title?: string;
 }
 
+enum AgentConversationManagementAction {
+  pin,
+  unpin,
+  archive,
+  restore,
+  deleteConversation: "delete",
+  archiveAll: "archive_all",
+  deleteAll: "delete_all",
+}
+
+model AgentConversationManagementRequest {
+  action: AgentConversationManagementAction;
+  conversationId?: string;
+}
+
+model AgentConversationManagementResponse {
+  action: AgentConversationManagementAction;
+  conversationId?: string;
+}
+
 model AgentConversationResponse {
   id: string;
   principalId: string;
   title: string;
   status: string;
+  pinned?: boolean;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
   archivedAt?: utcDateTime;
@@ -125,6 +146,7 @@ alias ListAgentConversationsOK = OkJson<AgentConversationListResponse>;
 alias CreateAgentConversationCreated = CreatedJson<AgentConversationResponse>;
 alias GetAgentConversationOK = OkJson<AgentConversationResponse>;
 alias UpdateAgentConversationOK = OkJson<AgentConversationResponse>;
+alias ManageAgentConversationsOK = OkJson<AgentConversationManagementResponse>;
 alias ListAgentMessagesOK = OkJson<AgentMessageListResponse>;
 alias ListAgentRunsOK = OkJson<AgentRunListResponse>;
 alias GetAgentRunOK = OkJson<AgentRunResponse>;
@@ -172,6 +194,22 @@ interface AgentConversations {
   @apigen.failsWith(AgentServiceUnavailableFailure)
   @apigen.command(#{ auditAction: "agent.conversation.created" })
   createAgentConversation(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentConversationCreateRequest): CreateAgentConversationCreated | CommonErrors;
+
+  @summary("Manage an owned agent conversation")
+  @route("/manage")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.ui("agent.conversations.manage")
+  @apigen.failsWith(InvalidAgentConversationFailure)
+  @apigen.failsWith(AgentConversationNotFoundFailure)
+  @apigen.command(#{ auditAction: "agent.conversation.managed", guarantee: "transactional" })
+  manageAgentConversations(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: AgentConversationManagementRequest): ManageAgentConversationsOK | CommonErrors;
+
+  @summary("List archived agent conversations")
+  @route("/archived")
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  listArchivedAgentConversations(@query limit?: ListLimit, @query pageToken?: PageToken): ListAgentConversationsOK | CommonErrors;
 
   @summary("Archive an agent conversation")
   @route("/{conversation}")
@@ -248,6 +286,7 @@ interface AgentConversations {
   @apigen.failsWith(AgentRunNotFoundFailure)
   @apigen.failsWith(AgentRunNotCancellableFailure)
   @apigen.failsWith(AgentServiceUnavailableFailure)
+  @apigen.ui("agent.run.cancel")
   @apigen.command(#{ auditAction: "agent.run.cancelled" })
   cancelAgentRun(@path @apigen.target conversation: string, @path run: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey): AcceptedJson<AgentRunResponse> | CommonErrors;
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -104,6 +105,8 @@ type spatialTileRuntime interface {
 	QueryVisualizationTile(ctx context.Context, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
 	QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error)
 }
+
+var _ queryruntime.SpatialTileStreamExpirer = runtimeMetrics{}
 
 type semanticQueryRuntime interface {
 	ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error)
@@ -220,16 +223,6 @@ func (m runtimeMetrics) identityForLease(lease runtimehost.Lease) (projectgraph.
 		return projectgraph.ServingIdentity{}, fmt.Errorf("active runtime project %q does not match configured project %q", identity.ProjectID, configured)
 	}
 	return identity, nil
-}
-
-type DynamicRuntimeMetricsOptions struct {
-	Provider                   runtimehost.Provider
-	ProjectID                  projectgraph.ResourceID
-	PublishedCompilationReader dashboardresolver.PublishedCompilationReader
-}
-
-func NewDynamicRuntimeMetrics(options DynamicRuntimeMetricsOptions) Metrics {
-	return NewRuntimeMetrics(RuntimeMetricsOptions{Provider: options.Provider, ProjectID: options.ProjectID, PublishedCompilationReader: options.PublishedCompilationReader})
 }
 
 func (m runtimeMetrics) Catalog() dashboard.Catalog {
@@ -522,7 +515,7 @@ func (m runtimeMetrics) ExpireVisualizationTileStream(streamID string) {
 		return
 	}
 	defer release()
-	if expirer, ok := runtime.(interface{ ExpireVisualizationTileStream(string) }); ok {
+	if expirer, ok := runtime.(queryruntime.SpatialTileStreamExpirer); ok {
 		expirer.ExpireVisualizationTileStream(streamID)
 	}
 }
@@ -637,15 +630,6 @@ func (m runtimeMetrics) PreviewSemantic(ctx context.Context, modelID string, req
 		return nil, fmt.Errorf("active runtime does not provide semantic query data")
 	}
 	return port.PreviewSemantic(ctx, modelID, request)
-}
-
-func (m runtimeMetrics) ExplainSemanticQuery(modelID string, request reportdef.AggregateQuery) (semanticquery.Plan, error) {
-	value, ok := m.Planner(modelID)
-	planner, concrete := concretePlanner(value)
-	if !ok || !concrete {
-		return semanticquery.Plan{}, fmt.Errorf("compiled semantic planner for model %q is unavailable", modelID)
-	}
-	return planner.Plan(reportdef.SemanticAggregateRequest(request))
 }
 
 func (m runtimeMetrics) ExplainSemanticPreview(modelID string, request reportdef.RowQuery) (semanticquery.Plan, error) {

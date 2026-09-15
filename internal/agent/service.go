@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +18,6 @@ import (
 
 var (
 	ErrDisabled          = apigenfailure.New("unavailable", "agent is not configured")
-	ErrBusy              = apigenfailure.New("conflict", "agent conversation already has a running turn")
 	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "agent run is not cancellable")
 )
 
@@ -52,9 +50,10 @@ type ToolProvider func(scope Scope) []agentcore.ToolDefinition
 type SystemPromptProvider func(ctx context.Context) (string, error)
 
 type Service struct {
-	repo   Repository
-	config Config
-	model  agentcore.Model
+	repo    Repository
+	config  Config
+	model   agentcore.Model
+	pending *pendingConversationLifecycle
 
 	toolProviders        []ToolProvider
 	systemPromptProvider SystemPromptProvider
@@ -137,14 +136,58 @@ func NewService(repo Repository, config Config, options ...ServiceOption) *Servi
 		config:  config,
 		running: map[string]runningPrompt{},
 	}
+	if pending, ok := repo.(PendingConversationRepository); ok {
+		s.pending = newPendingConversationLifecycle(pending)
+	}
 	for _, option := range options {
 		option(s)
 	}
 	return s
 }
 
-func (s *Service) SetModel(model agentcore.Model) {
-	s.model = model
+// StartPendingConversationLifecycle rehydrates persisted undo windows and
+// starts their server-owned finalization timers. It is safe to call more than
+// once and returns the unsupported error for lightweight repositories that do
+// not implement destructive conversation management.
+func (s *Service) StartPendingConversationLifecycle(ctx context.Context) error {
+	if s == nil || s.pending == nil {
+		return ErrPendingConversationUnsupported
+	}
+	return s.pending.start(ctx)
+}
+
+// BeginPendingConversationAction persists the operation before returning to
+// the browser. The browser is therefore only a presentation surface for the
+// undo window, never the owner of its deadline.
+func (s *Service) BeginPendingConversationAction(ctx context.Context, scope Scope, conversationID, action, requestID string) (PendingConversationAction, error) {
+	if s == nil || s.pending == nil {
+		return PendingConversationAction{}, ErrPendingConversationUnsupported
+	}
+	action = strings.TrimSpace(action)
+	requestID = strings.TrimSpace(requestID)
+	if action != PendingConversationArchive && action != PendingConversationDelete {
+		return PendingConversationAction{}, fmt.Errorf("unsupported pending conversation action %q", action)
+	}
+	if requestID == "" {
+		return PendingConversationAction{}, fmt.Errorf("pending conversation request ID is required")
+	}
+	pending := PendingConversationAction{
+		RequestID: requestID, PrincipalID: strings.TrimSpace(scope.PrincipalID), ConversationID: strings.TrimSpace(conversationID),
+		Action: action, Deadline: time.Now().UTC().Add(PendingConversationWindow),
+	}
+	if err := ValidatePendingConversationAction(pending); err != nil {
+		return PendingConversationAction{}, err
+	}
+	return s.pending.begin(ctx, pending)
+}
+
+// CancelPendingConversationAction is principal-scoped and request-bound. A
+// request ID copied from another browser cannot cancel that user's action.
+func (s *Service) CancelPendingConversationAction(ctx context.Context, scope Scope, conversationID, requestID string) error {
+	if s == nil || s.pending == nil {
+		return ErrPendingConversationUnsupported
+	}
+	return s.pending.cancelAction(ctx, scope.PrincipalID, conversationID, requestID)
 }
 
 func (s *Service) ConfigureDefaultModel(factory func(Config) agentcore.Model) {
@@ -229,6 +272,172 @@ func (s *Service) ArchiveConversation(ctx context.Context, scope Scope, conversa
 	return s.repo.ArchiveConversation(ctx, scope.PrincipalID, conversationID)
 }
 
+func (s *Service) conversationManagementRepository() (ConversationManagementRepository, error) {
+	if s == nil || s.repo == nil {
+		return nil, fmt.Errorf("agent store is required")
+	}
+	management, ok := s.repo.(ConversationManagementRepository)
+	if !ok {
+		return nil, fmt.Errorf("agent conversation management is unavailable")
+	}
+	return management, nil
+}
+
+func (s *Service) rejectRunningConversation(conversationID string) error {
+	if s != nil && s.ConversationRunning(conversationID) {
+		return ErrConversationBusy
+	}
+	return nil
+}
+
+func (s *Service) ListArchivedConversations(ctx context.Context, scope Scope) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.ListArchivedConversations(ctx, scope.PrincipalID)
+}
+
+func (s *Service) ListArchivedConversationsPage(ctx context.Context, scope Scope, page Page) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.ListArchivedConversationsPage(ctx, scope.PrincipalID, normalizePage(page))
+}
+
+func (s *Service) RestoreConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	if err := s.rejectRunningConversation(conversationID); err != nil {
+		return Conversation{}, err
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.RestoreConversation(ctx, scope.PrincipalID, conversationID)
+}
+
+func (s *Service) SetConversationPinned(ctx context.Context, scope Scope, conversationID string, pinned bool) (Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.SetConversationPinned(ctx, scope.PrincipalID, conversationID, pinned)
+}
+
+func (s *Service) PinConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	return s.SetConversationPinned(ctx, scope, conversationID, true)
+}
+
+func (s *Service) UnpinConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	return s.SetConversationPinned(ctx, scope, conversationID, false)
+}
+
+func (s *Service) DeleteConversation(ctx context.Context, scope Scope, conversationID string) (Conversation, error) {
+	if err := s.rejectRunningConversation(conversationID); err != nil {
+		return Conversation{}, err
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return Conversation{}, err
+	}
+	return management.DeleteConversation(ctx, scope.PrincipalID, conversationID)
+}
+
+func (s *Service) BulkArchiveConversations(ctx context.Context, scope Scope, conversationIDs []string) ([]Conversation, error) {
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.BulkArchiveConversations(ctx, scope.PrincipalID, conversationIDs)
+}
+
+func (s *Service) BulkDeleteConversations(ctx context.Context, scope Scope, conversationIDs []string) ([]Conversation, error) {
+	for _, conversationID := range conversationIDs {
+		if err := s.rejectRunningConversation(conversationID); err != nil {
+			return nil, err
+		}
+	}
+	management, err := s.conversationManagementRepository()
+	if err != nil {
+		return nil, err
+	}
+	return management.BulkDeleteConversations(ctx, scope.PrincipalID, conversationIDs)
+}
+
+// ManageConversation is the compact action surface used by HTTP and Datastar
+// adapters. Bulk actions intentionally derive their IDs from the principal's
+// own active/archived read models so a caller can never supply another user's
+// conversation as an implicit bulk target.
+func (s *Service) ManageConversation(ctx context.Context, scope Scope, action, conversationID string) error {
+	action = strings.TrimSpace(action)
+	conversationID = strings.TrimSpace(conversationID)
+	switch action {
+	case "pin":
+		_, err := s.PinConversation(ctx, scope, conversationID)
+		return err
+	case "unpin":
+		_, err := s.UnpinConversation(ctx, scope, conversationID)
+		return err
+	case "archive":
+		_, err := s.ArchiveConversation(ctx, scope, conversationID)
+		return err
+	case "restore":
+		_, err := s.RestoreConversation(ctx, scope, conversationID)
+		return err
+	case "delete":
+		_, err := s.DeleteConversation(ctx, scope, conversationID)
+		return err
+	case "archive_all", "delete_all":
+		active, err := s.listAllConversations(ctx, scope, false)
+		if err != nil {
+			return err
+		}
+		ids := make([]string, 0, len(active))
+		for _, conversation := range active {
+			ids = append(ids, conversation.ID)
+		}
+		if action == "archive_all" {
+			_, err = s.BulkArchiveConversations(ctx, scope, ids)
+			return err
+		}
+		archived, err := s.listAllConversations(ctx, scope, true)
+		if err != nil {
+			return err
+		}
+		for _, conversation := range archived {
+			ids = append(ids, conversation.ID)
+		}
+		_, err = s.BulkDeleteConversations(ctx, scope, ids)
+		return err
+	default:
+		return fmt.Errorf("unsupported conversation management action %q", action)
+	}
+}
+
+func (s *Service) listAllConversations(ctx context.Context, scope Scope, archived bool) ([]Conversation, error) {
+	all := make([]Conversation, 0)
+	after := ""
+	for {
+		page := Page{Limit: 100, After: after}
+		var rows []Conversation
+		var err error
+		if archived {
+			rows, err = s.ListArchivedConversationsPage(ctx, scope, page)
+		} else {
+			rows, err = s.ListConversationsPage(ctx, scope, page)
+		}
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		if len(rows) < page.Limit {
+			return all, nil
+		}
+		after = rows[len(rows)-1].ID
+	}
+}
+
 func (s *Service) ListMessages(ctx context.Context, scope Scope, conversationID string) ([]Message, error) {
 	return s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
 }
@@ -265,18 +474,6 @@ func (s *Service) CancelRun(ctx context.Context, scope Scope, conversationID, ru
 	return nil
 }
 
-func (s *Service) CancelPersistedRun(ctx context.Context, scope Scope, conversationID, runID string) error {
-	run, err := s.GetRun(ctx, scope, conversationID, runID)
-	if err != nil {
-		return err
-	}
-	if run.Status != RunStatusRunning {
-		return ErrRunNotCancellable
-	}
-	s.release(conversationID)
-	return s.finishRun(ctx, PromptInput{Scope: scope, ConversationID: conversationID}, runID, RunStatusCanceled, "", agentcore.Usage{}, context.Canceled)
-}
-
 // CancelPersistedRunWithWorkflow atomically records an explicit cancellation
 // and its terminal event when the repository supports transactional workflow
 // intents. Queued jobs have no worker lease to fence, but cancellation still
@@ -291,43 +488,41 @@ func (s *Service) CancelPersistedRunWithWorkflow(ctx context.Context, scope Scop
 	}
 	finish := RunFinish{PrincipalID: scope.PrincipalID, ConversationID: conversationID, RunID: runID, Status: RunStatusCanceled, Error: context.Canceled.Error(), MetadataJSON: metadataJSON(map[string]any{"model": s.config.Model, "terminationCause": RunCauseUserCanceled}), Cause: RunCauseUserCanceled}
 	if cancellation, ok := s.repo.(RunCancellationWorkflow); ok && s.runWorkflowAvailable() {
-		return cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
+		changed, err := cancellation.CancelRunWorkflow(context.WithoutCancel(ctx), finish, "agent:"+runID+":run", workflow)
+		if err == nil {
+			// A durable start installs a local placeholder before its worker
+			// claims the queue item. Release only that exact run after the
+			// transactional cancellation wins; an unconditional release could
+			// cancel a newer worker that acquired the conversation concurrently.
+			s.releaseRun(conversationID, runID)
+		}
+		return changed, err
 	}
 	if terminalizer, ok := s.repo.(RunTerminalWorkflow); ok && s.runWorkflowAvailable() && workflow.Event.Key != "" {
 		_, _, err := terminalizer.FinishRunWorkflow(context.WithoutCancel(ctx), finish, workflow)
+		if err == nil {
+			s.releaseRun(conversationID, runID)
+		}
 		return true, err
 	}
 	return false, fmt.Errorf("transactional run cancellation workflow is unavailable")
 }
 
-// SupportsCancellationWorkflow reports whether queued cancellation can be
-// committed atomically with its domain run and event.
-func (s *Service) SupportsCancellationWorkflow() bool {
-	if s == nil || s.repo == nil {
-		return false
+// releaseRun releases a local prompt placeholder only when it still belongs
+// to the run that was terminalized transactionally. A worker may replace the
+// placeholder between queue cancellation and this cleanup, so an
+// unconditional conversation release could cancel unrelated work.
+func (s *Service) releaseRun(conversationID, runID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	active, ok := s.running[conversationID]
+	if !ok || active.runID != runID {
+		return
 	}
-	_, ok := s.repo.(RunCancellationWorkflow)
-	return ok && s.runWorkflowAvailable()
-}
-
-// FailPersistedRun is the capability-owned recovery path for durable jobs
-// that cannot reconstruct a StartedPrompt. It is deliberately idempotent:
-// terminal runs are left untouched, while running/preparing runs transition
-// exactly once using a bounded context independent of the worker lease.
-func (s *Service) FailPersistedRun(ctx context.Context, scope Scope, conversationID, runID string, runErr error) error {
-	_, err := s.FinalizePersistedRunFailure(ctx, scope, conversationID, runID, runErr)
-	return err
-}
-
-// FinalizePersistedRunFailure reports whether this call performed the
-// terminal transition. The boolean lets durable event publishers suppress
-// duplicate notifications on redelivery.
-func (s *Service) FinalizePersistedRunFailure(ctx context.Context, scope Scope, conversationID, runID string, runErr error) (bool, error) {
-	return s.FinalizePersistedRunFailureWithWorkflow(ctx, scope, conversationID, runID, runErr, jobs.WorkflowIntent{})
-}
-
-func (s *Service) FinalizePersistedRunFailureWithWorkflow(ctx context.Context, scope Scope, conversationID, runID string, runErr error, workflow jobs.WorkflowIntent) (bool, error) {
-	return s.finalizePersistedRunFailure(ctx, scope, conversationID, runID, runErr, workflow, "", jobs.Fence{})
+	if active.cancel != nil {
+		active.cancel()
+	}
+	delete(s.running, conversationID)
 }
 
 func (s *Service) FinalizePersistedRunFailureWithClaim(ctx context.Context, scope Scope, conversationID, runID string, runErr error, workflow jobs.WorkflowIntent, jobID string, fence jobs.Fence) (bool, error) {
@@ -371,40 +566,6 @@ func (s *Service) ListRunEventsPage(ctx context.Context, scope Scope, conversati
 	return s.repo.ListEventsPage(ctx, scope.PrincipalID, runID, normalizePage(page))
 }
 
-func (s *Service) ConversationEvents(ctx context.Context, scope Scope, conversationID string) ([]EventEnvelope, error) {
-	if _, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID); err != nil {
-		return nil, err
-	}
-	messages, err := s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	events := make([]EventEnvelope, 0, len(messages))
-	for _, message := range messages {
-		events = append(events, messageEnvelope(conversationID, message))
-	}
-	runs, err := s.repo.ListRuns(ctx, scope.PrincipalID, conversationID)
-	if err != nil {
-		return nil, err
-	}
-	for _, run := range runs {
-		runEvents, err := s.repo.ListEvents(ctx, scope.PrincipalID, run.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range runEvents {
-			events = append(events, eventEnvelope(conversationID, event))
-		}
-	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].CreatedAt == events[j].CreatedAt {
-			return events[i].ID < events[j].ID
-		}
-		return events[i].CreatedAt < events[j].CreatedAt
-	})
-	return events, nil
-}
-
 func normalizePage(page Page) Page {
 	if page.Limit <= 0 || page.Limit > 100 {
 		page.Limit = 100
@@ -421,14 +582,19 @@ func (s *Service) ConversationTranscript(ctx context.Context, scope Scope, conve
 }
 
 func (s *Service) ConversationTranscriptState(ctx context.Context, scope Scope, conversationID string) (ChatTranscriptState, error) {
-	if _, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID); err != nil {
+	_, err := s.repo.GetConversation(ctx, scope.PrincipalID, conversationID)
+	if err != nil {
 		return ChatTranscriptState{}, err
 	}
 	messages, err := s.repo.ListMessages(ctx, scope.PrincipalID, conversationID)
 	if err != nil {
 		return ChatTranscriptState{}, err
 	}
-	return transcriptStateFromMessages(conversationID, messages), nil
+	// TranscriptJSON drives model context and edit validation. Message rows are
+	// retained as immutable history; successful edit user rows carry a target
+	// marker so the active UI projection can retain complete multipart/tool
+	// output rows while excluding the replaced branch.
+	return transcriptStateFromMessages(conversationID, activeMessageProjection(messages)), nil
 }
 
 func (s *Service) systemPrompt(ctx context.Context) (string, error) {

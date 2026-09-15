@@ -204,32 +204,6 @@ func (r *Repository) Create(ctx context.Context, input servingstate.CreateInput)
 	return r.ByID(ctx, id)
 }
 
-// CreateWithID is the idempotent serving-state reservation used by canonical
-// delivery attempts. The caller derives the ID from the durable attempt, so a
-// restart cannot allocate a second serving row after a crash during upload.
-func (r *Repository) CreateWithID(ctx context.Context, id servingstate.ID, input servingstate.CreateInput) (servingstate.State, error) {
-	if id == "" || string(id) != strings.TrimSpace(string(id)) {
-		return servingstate.State{}, fmt.Errorf("serving state id is required")
-	}
-	projectID, err := projectgraph.NewResourceID(input.ProjectID.String())
-	if err != nil {
-		return servingstate.State{}, err
-	}
-	if err := servingstate.ValidateEnvironment(input.Environment); err != nil {
-		return servingstate.State{}, err
-	}
-	if _, err := projectgraph.NewServingIdentity(projectID, string(input.Environment), string(id)); err != nil {
-		return servingstate.State{}, err
-	}
-	if err := r.q.CreateServingState(ctx, platformdb.CreateServingStateParams{ID: string(id), ProjectID: projectID.String(), Environment: string(input.Environment), Status: string(servingstate.StatusPending), Source: string(servingstate.NormalizeSource(input.Source)), CreatedBy: input.CreatedBy}); err != nil {
-		if existing, readErr := r.ByID(ctx, id); readErr == nil && existing.ProjectID == projectID && existing.Environment == input.Environment && existing.CreatedBy == input.CreatedBy && existing.Source == servingstate.NormalizeSource(input.Source) {
-			return existing, nil
-		}
-		return servingstate.State{}, err
-	}
-	return r.ByID(ctx, id)
-}
-
 func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {
 	if id == "" || string(id) != strings.TrimSpace(string(id)) {
 		return servingstate.State{}, servingstate.ErrNotFound
@@ -276,14 +250,6 @@ func (r *Repository) ReferencedDuckLakeSnapshots(ctx context.Context, environmen
 		return nil, err
 	}
 	return r.q.ListReferencedDuckLakeSnapshots(ctx, environment)
-}
-
-func (r *Repository) ActiveDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {
-	environment, err := requiredEnvironment(environment)
-	if err != nil {
-		return nil, err
-	}
-	return r.q.ListActiveDuckLakeSnapshots(ctx, environment)
 }
 
 func (r *Repository) LeasedDuckLakeSnapshots(ctx context.Context, environment string) ([]int64, error) {

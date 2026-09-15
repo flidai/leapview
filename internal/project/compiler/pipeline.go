@@ -14,13 +14,6 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
-// LoadRefreshPipeline is the canonical authored Pipeline boundary. The
-// generated TypeSpec DTO owns the public shape; this function explicitly
-// lowers it into the runtime scheduler definition.
-func LoadRefreshPipeline(path string) (refreshschedule.Definition, error) {
-	return LoadRefreshPipelineWithReader(osSourceReader{}, path)
-}
-
 func LoadRefreshPipelineWithReader(reader sourceFileReader, path string) (refreshschedule.Definition, error) {
 	if strings.TrimSpace(path) == "" {
 		return refreshschedule.Definition{}, fmt.Errorf("pipeline path is required")

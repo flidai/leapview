@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "985a2359767529791c5d14255ffde58bd3634ae371d7ca77196ed7ecab662bf1"
+	const expectedRouteContractDigest = "128aa4dd4f1c560d0332e54bedfc91760dfdb244c6abe8ec5a24f0364eb0188e"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -158,7 +158,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "PROJECT_ADMIN"
-	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command":
+	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command" || path == "/dashboards/{dashboard}/draft/visual-window":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{dashboard}/archive":
@@ -277,6 +277,7 @@ GET /auth/desktop/authorize
 GET /auth/desktop/session
 GET /chats
 GET /chats/new
+GET /chats/management
 GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
@@ -352,7 +353,9 @@ POST /auth/desktop/redeem
 POST /auth/local/login
 POST /auth/local/password
 POST /auth/logout
+POST /chats/stop
 POST /chats/turns
+POST /chats/manage
 POST /candidates/{candidate}/dashboards/{dashboard}/commands/{command}
 GET /catalog/search
 GET /connections/search
@@ -369,6 +372,7 @@ POST /dashboards/{dashboard}/commands/visual-window
 POST /dashboards/{dashboard}/draft/command
 POST /dashboards/{dashboard}/draft/filter
 POST /dashboards/{dashboard}/draft/filter-options
+POST /dashboards/{dashboard}/draft/visual-window
 POST /dashboards/new
 POST /dashboards/{dashboard}/fork
 GET /sources/search

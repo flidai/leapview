@@ -97,12 +97,15 @@ func TestAuthoringAuthSQLiteDeviceExchangeIsAtomicAndRefreshReplayRevokesFamily(
 	if _, err := service.Authenticate(ctx, rotated.AccessToken, "instance-prod", "finance", access.CapabilityResourcePublish); !errors.Is(err, access.ErrInvalidAuthoringCredential) {
 		t.Fatalf("authenticate replay-revoked family error = %v", err)
 	}
-	events, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{})
+	events, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{ProjectID: "finance"})
 	if err != nil {
 		t.Fatalf("list authoring audit events: %v", err)
 	}
 	actions := map[string]bool{}
 	for _, event := range events {
+		if event.ProjectID != "finance" {
+			t.Fatalf("authoring audit Project = %q, want finance: %#v", event.ProjectID, event)
+		}
 		actions[event.Action] = true
 	}
 	for _, action := range []string{

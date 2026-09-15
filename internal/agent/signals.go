@@ -1,6 +1,7 @@
 package agent
 
 type ChatTranscriptItem struct {
+	Edited          bool            `json:"edited,omitempty"`
 	ID              string          `json:"id"`
 	Kind            string          `json:"kind"`
 	OutputOrdinal   int64           `json:"outputOrdinal,omitempty"`

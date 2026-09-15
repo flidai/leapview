@@ -40,6 +40,15 @@ func TestPipelineRunResponseForExposesOnlyPipelineContract(t *testing.T) {
 	}
 }
 
+func TestParseAPILimitRejectsOverLimit(t *testing.T) {
+	if got, err := parseAPILimit("100"); err != nil || got != 100 {
+		t.Fatalf("maximum limit = %d, %v", got, err)
+	}
+	if _, err := parseAPILimit("101"); err == nil {
+		t.Fatal("over-limit request was accepted")
+	}
+}
+
 func TestPipelineRunResponseForRejectsDependencyRun(t *testing.T) {
 	_, ok := PipelineRunResponseFor(refreshrun.RunRecord{
 		ID: "task_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: refreshrun.TargetModel,

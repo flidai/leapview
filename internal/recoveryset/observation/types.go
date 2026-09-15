@@ -27,11 +27,15 @@ const (
 	ProtocolVersion int32 = 1
 	SchemaVersion   int32 = 1
 	// Keep the document bounded while allowing the declared inventory/object
-	// limits to be represented without truncation.
-	MaxManifestBytes      = 8 << 20
+	// limits to be represented without truncation. The managed-data ingress
+	// contract admits up to 10,000 files in one revision, so the observation
+	// document budget must cover that revision rather than the old 4,096-file
+	// capture bound. The aggregate object count follows the declared maximum
+	// revision/file product; the byte budget remains the primary aggregate cap.
+	MaxManifestBytes      = 256 << 20
 	MaxInventoryRevisions = 4096
-	MaxRevisionFiles      = 4096
-	MaxManifestObjects    = 16384
+	MaxRevisionFiles      = manageddata.MaxManifestFiles
+	MaxManifestObjects    = MaxInventoryRevisions * MaxRevisionFiles
 )
 
 var (

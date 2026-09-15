@@ -17,8 +17,6 @@ var (
 	mappingErr  error
 )
 
-func MappingSpecification() []byte { return append([]byte(nil), mappingSpecification...) }
-
 func mappingEntries(selected map[string]struct{}) ([]MappingEntry, error) {
 	mappingOnce.Do(func() {
 		var manifest MappingReport

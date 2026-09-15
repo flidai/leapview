@@ -52,6 +52,17 @@ The non-interactive CI equivalent is:
 task dbt:warehouse:qualify
 ```
 
+For the separate two-producer Project-closure proof, run
+`task dbt:warehouse:proof`. It reuses the example's thin Models and SemanticModel
+with two target-bound Connections, a consumer-owned mart built from a local dbt
+package, and an independent CRM publication. The
+[proof fixture](https://github.com/flidai/leapview/tree/main/examples/dbt-warehouse-boundary/multi-source)
+documents the assertions and distinguishes local physical qualification from
+PostgreSQL registry and full headless lifecycle validation. The proof also
+binds the compiled cross-source mapping to the existing request-scoped semantic
+access consumer: execution without that capability fails, both dataset scans
+carry authorization barriers, and denied target-owned attributes fail closed.
+
 dbt staging and mart SQL owns normalization, joins, and aggregation. The
 LeapView Models only select fields, assign the stable `snake_case` BI field
 IDs, perform safe casts, and enforce the consumer-side contract. The

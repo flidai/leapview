@@ -27,7 +27,7 @@ import (
 const (
 	defaultPageLimit  = 50
 	maxPageLimit      = 200
-	maxManifestFiles  = 10_000
+	maxManifestFiles  = manageddata.MaxManifestFiles
 	maxCompletedParts = 10_000
 )
 

@@ -502,12 +502,6 @@ func (m ManagedManifest2) validateObservations() error {
 	return nil
 }
 
-// ProviderObservationDigest is an explicit alias for the complete projection
-// identity used by capture receipts.
-func (m ManagedManifest2) ProviderObservationDigest() (string, error) {
-	return m.ObservationProjectionDigest()
-}
-
 // RevisionFileDigest is useful to callers constructing independent closure
 // expectations without exposing a second owner of managed-data hashes.
 func RevisionFileDigest(files []File) string {

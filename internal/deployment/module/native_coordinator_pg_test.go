@@ -265,7 +265,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.CommitBuildAttempt(ctx, deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), AuthorizationPolicyRevision: 1, AuthorizationPolicyDigest: digest('a'), RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema) VALUES ($1,$2,$3,$4,$5)`, "pool", "ducklake", "catalog", uuid.New().String(), "metadata"); err != nil {
@@ -633,6 +633,10 @@ func TestNativeCoordinatorPostgresActivationReplayAndCancelCommittedConflict(t *
 	if err != nil || active.Status != apiadapter.StatusActive {
 		t.Fatalf("activate = %#v, %v", active, err)
 	}
+	f.coordinator.beforeActivationCommit = func(context.Context, deploymentpostgres.Tx, deploymentpostgres.DeliveryPublication) error {
+		t.Fatal("committed activation replay re-ran mutable pre-commit admission")
+		return errors.New("unreachable")
+	}
 	activeReplay, err := f.coordinator.Activate(t.Context(), apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: created.ID}, Actor: "operator", IdempotencyKey: "activate-1"})
 	if err != nil || activeReplay.ID != active.ID || activeReplay.Status != apiadapter.StatusActive {
 		t.Fatalf("activate replay = %#v, %v", activeReplay, err)
@@ -650,8 +654,11 @@ func TestNativeCoordinatorPostgresActivationPreCommitHookRollsBack(t *testing.T)
 	}
 	interrupted := errors.New("qualification activation interrupted")
 	hookCalls := 0
-	f.coordinator.beforeActivationCommit = func(_ context.Context, publication deploymentpostgres.DeliveryPublication) error {
+	f.coordinator.beforeActivationCommit = func(_ context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
 		hookCalls++
+		if tx == nil {
+			t.Fatal("pre-commit hook did not receive the activation transaction")
+		}
 		if publication.PublicationID != created.ID || publication.State != "pending" {
 			t.Fatalf("pre-commit publication = %#v", publication)
 		}
@@ -690,14 +697,17 @@ func TestActivationPreCommitHookAdapterPreservesContextAndFailure(t *testing.T) 
 	wantErr := errors.New("qualification interrupted")
 	ctx := t.Context()
 	calls := 0
-	hook := adaptActivationPreCommitHook(func(got context.Context) error {
+	hook := adaptActivationPreCommitHook(func(got context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
 		calls++
 		if got != ctx {
 			t.Fatal("activation hook context changed at the module boundary")
 		}
+		if tx != nil || publication.PublicationID != "publication-private" {
+			t.Fatalf("activation hook inputs = tx:%v publication:%#v", tx, publication)
+		}
 		return wantErr
 	})
-	if err := hook(ctx, deploymentpostgres.DeliveryPublication{PublicationID: "publication-private"}); !errors.Is(err, wantErr) {
+	if err := hook(ctx, nil, deploymentpostgres.DeliveryPublication{PublicationID: "publication-private"}); !errors.Is(err, wantErr) {
 		t.Fatalf("adapted activation hook error = %v, want %v", err, wantErr)
 	}
 	if calls != 1 {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import type { ForgeArch } from "@electron-forge/shared-types";
 
 import forgeConfig, {
   createFuseConfig,
@@ -57,10 +58,13 @@ test("packaged applications declare the isolated desktop deep-link scheme", () =
 
 test("production makers match the consumer installer and updater matrix", () => {
   expect(
-    forgeConfig.makers?.map((maker) => ({
-      name: maker.name,
-      platforms: maker.platforms,
-    })),
+    forgeConfig.makers?.flatMap((maker) => {
+      if (!("name" in maker)) {
+        return [];
+      }
+      const namedMaker = maker as { name: string; platforms?: readonly string[] };
+      return [{ name: namedMaker.name, platforms: namedMaker.platforms }];
+    }),
   ).toEqual([
     {
       name: "squirrel",
@@ -83,16 +87,19 @@ test("production makers match the consumer installer and updater matrix", () => 
 
 test("Debian packaging maps the packaged binary to the stable command name", async () => {
   const maker = forgeConfig.makers?.find(
-    (candidate) => candidate.name === "deb",
+    (candidate) => "name" in candidate && candidate.name === "deb",
   );
   expect(maker).toBeDefined();
-  await maker?.prepareConfig("x64");
+  if (maker === undefined || !("name" in maker)) {
+    throw new Error("Debian maker is missing from Forge configuration");
+  }
+  const debMaker = maker as unknown as {
+    prepareConfig(targetArch: ForgeArch): Promise<void>;
+    config: { options?: { bin?: string; name?: string } };
+  };
+  await debMaker.prepareConfig("x64");
   expect(
-    (
-      maker as typeof maker & {
-        config: { options?: { bin?: string; name?: string } };
-      }
-    ).config.options,
+    debMaker.config.options,
   ).toMatchObject({
     bin: "LeapView",
     name: "leapview-desktop",

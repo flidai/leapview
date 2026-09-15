@@ -17,8 +17,6 @@ const (
 	SharedLinkCodecRetired    SharedLinkCodecStatus = "retired"
 )
 
-const SharedLinkProtocolVersion = 1
-
 type SharedLinkCodec struct {
 	Encoding URLEncoding
 	Status   SharedLinkCodecStatus
@@ -156,11 +154,3 @@ func (registry *SharedLinkRegistry) codec(encoding URLEncoding, decode bool) (Sh
 var defaultSharedLinkRegistry = NewSharedLinkRegistry()
 
 func DefaultSharedLinkRegistry() *SharedLinkRegistry { return defaultSharedLinkRegistry }
-
-func EncodeSharedLink(expression Expression, kind ValueKind) (string, error) {
-	return defaultSharedLinkRegistry.Encode(URLEncodingTypedV1, expression, kind)
-}
-
-func DecodeSharedLink(encoded string, kind ValueKind) (Expression, error) {
-	return defaultSharedLinkRegistry.Decode(URLEncodingTypedV1, encoded, kind)
-}

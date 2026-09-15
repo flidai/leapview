@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/flidai/leapview/internal/app/tools/internal/bootstrap"
 )
 
 func TestVerifyArchiveDigest(t *testing.T) {
@@ -23,14 +25,14 @@ func TestVerifyArchiveDigest(t *testing.T) {
 }
 
 func TestTargetDirRequiresExplicitOutput(t *testing.T) {
-	if _, err := targetDir(""); err == nil || !strings.Contains(err.Error(), "out is required") {
+	if _, err := bootstrap.TargetDir(""); err == nil || !strings.Contains(err.Error(), "out is required") {
 		t.Fatalf("targetDir empty output error = %v, want required error", err)
 	}
 }
 
 func TestTargetDirResolvesExplicitOutput(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "olist")
-	got, err := targetDir(want)
+	got, err := bootstrap.TargetDir(want)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +78,14 @@ func TestExpectedCSVsIncludeRealGeographicInputs(t *testing.T) {
 func TestTruthiness(t *testing.T) {
 	truthyValues := []string{"1", "true", "TRUE", " yes "}
 	for _, value := range truthyValues {
-		if !truthy(value) {
+		if !bootstrap.Truthy(value) {
 			t.Fatalf("truthy(%q) = false, want true", value)
 		}
 	}
 
 	falseValues := []string{"", "0", "false", "no", "y"}
 	for _, value := range falseValues {
-		if truthy(value) {
+		if bootstrap.Truthy(value) {
 			t.Fatalf("truthy(%q) = true, want false", value)
 		}
 	}

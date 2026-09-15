@@ -10,6 +10,7 @@ import (
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
+	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	"github.com/flidai/leapview/internal/workload"
@@ -20,6 +21,24 @@ type consumerForwardingMetrics struct {
 	calls    int
 	governed bool
 	admitter bool
+}
+
+type spatialTileForwardingMetrics struct {
+	fakeMetrics
+	tileTokens map[string]string
+}
+
+func (m *spatialTileForwardingMetrics) ExpireVisualizationTileStream(streamID string) {
+	for token, owner := range m.tileTokens {
+		if owner == streamID {
+			delete(m.tileTokens, token)
+		}
+	}
+}
+
+func (m *spatialTileForwardingMetrics) resolvesTileToken(token string) bool {
+	_, ok := m.tileTokens[token]
+	return ok
 }
 
 func (m *consumerForwardingMetrics) ExecuteConsumersPage(ctx context.Context, request consumer.Request, publish consumer.Publisher) error {
@@ -96,5 +115,37 @@ func TestProductionDashboardWrappersForwardGovernedFilterOptions(t *testing.T) {
 	}
 	if underlying.calls != 1 || !underlying.governed || !underlying.admitter || !result.Complete {
 		t.Fatalf("calls=%d governed=%v admitter=%v complete=%v", underlying.calls, underlying.governed, underlying.admitter, result.Complete)
+	}
+}
+
+func TestProductionDashboardWrappersExpireSpatialTileStream(t *testing.T) {
+	underlying := &spatialTileForwardingMetrics{tileTokens: map[string]string{
+		"closed-token": "closed-stream",
+		"open-token":   "open-stream",
+	}}
+	controller, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatalf("new workload controller: %v", err)
+	}
+	t.Cleanup(controller.Close)
+	metrics := dashboardmodule.WithQueryAudit(
+		dashboardmodule.WithAdmission(queryauthz.New(underlying, queryauthz.Options{}), controller),
+		nil, nil,
+	)
+
+	expirer, ok := metrics.(queryruntime.SpatialTileStreamExpirer)
+	if !ok {
+		t.Fatalf("production dashboard wrappers do not expose spatial tile expiry: %T", metrics)
+	}
+	if !underlying.resolvesTileToken("closed-token") || !underlying.resolvesTileToken("open-token") {
+		t.Fatal("test fixture did not start with both tile tokens resolvable")
+	}
+
+	expirer.ExpireVisualizationTileStream("closed-stream")
+	if underlying.resolvesTileToken("closed-token") {
+		t.Fatal("closed stream tile token still resolves through production wrappers")
+	}
+	if !underlying.resolvesTileToken("open-token") {
+		t.Fatal("expiry retired an unrelated stream tile token")
 	}
 }

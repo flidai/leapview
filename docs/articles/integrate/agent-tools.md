@@ -59,7 +59,7 @@ Search and list results use the same compact item envelope. It contains the ref,
 
 ## Find an unknown resource
 
-`catalog_search` searches all authorized project resources. It does not require a preceding project-list call.
+`catalog_search` searches all authorized resources in the server-bound Project. LeapView does not expose a Project-listing step or allow the caller to switch Project context.
 
 ```json
 {
@@ -76,25 +76,25 @@ Every search page includes `count` and `hasMore`. Use `nextCursor` unchanged whe
 
 ## Browse a known hierarchy
 
-Call `catalog_list` without a parent to list authorized projects. Pass a returned project ref as `parent` to browse its project graph:
+Call `catalog_list` without a parent to list authorized resources across the active, server-bound Project graph. Pass a returned resource ref as `parent` to browse that resource's declared dependencies:
 
 | Parent | Children |
 | --- | --- |
-| none | projects |
-| project | connections, sources, models, semantic models, pipelines, and dashboards |
+| none | authorized resources in the active Project graph |
+| resource ref | authorized resources referenced by that resource |
 
 ```json
 {
   "parent": {
-    "kind": "project",
-    "id": "project:sales"
+    "kind": "semantic_model",
+    "id": "semantic-model:commerce"
   },
-  "kinds": ["dashboard", "semantic_model"],
+  "childKinds": ["model"],
   "limit": 25
 }
 ```
 
-`childTypes` is optional, but every requested type must be valid for the parent. Results are deterministically ordered. The default limit is 25 and the maximum is 50. Every page includes `count` and `hasMore`; pass `nextCursor` back as `cursor` when `hasMore` is true. Do not parse or edit the cursor.
+`childKinds` is optional, but every requested kind must be valid. Results are deterministically ordered. The default limit is 25 and the maximum is 50. Every page includes `count` and `hasMore`; pass `nextCursor` back as `cursor` when `hasMore` is true. Do not parse or edit the cursor.
 
 Listing an exact parent first resolves and authorizes that parent. Search and list silently omit inaccessible results.
 
@@ -113,7 +113,6 @@ Pass a returned ref to `catalog_get`:
 
 The result combines the normalized item envelope with type-specific `details`:
 
-- projects include metadata and the active serving identity;
 - dashboards include their semantic-model ref and page, visual, and filter counts;
 - pages include their components;
 - visuals include the compiled definition, query fields, columns, and placement;

@@ -139,3 +139,88 @@ FROM release.release_record
 WHERE project_id = $1 AND environment = $2 AND generation_id = $3 AND status = 'ready'
 ORDER BY finalized_at DESC, release_id DESC
 LIMIT 1;
+
+-- Transition policy authority.  Publication is insert-only and the exact
+-- pair is read back so the repository can distinguish an idempotent replay
+-- from a conflicting policy for the same immutable artifacts.
+
+-- name: InsertReleaseTransitionPolicy :execrows
+INSERT INTO release.release_transition_policy
+    (predecessor_artifact_digest, candidate_artifact_digest,
+     policy_version, policy_digest, policy_json)
+VALUES (sqlc.arg(predecessor_artifact_digest), sqlc.arg(candidate_artifact_digest),
+        sqlc.arg(policy_version), sqlc.arg(policy_digest), sqlc.arg(policy_json)::jsonb)
+ON CONFLICT (predecessor_artifact_digest, candidate_artifact_digest) DO NOTHING;
+
+-- name: GetReleaseTransitionPolicy :one
+SELECT predecessor_artifact_digest, candidate_artifact_digest,
+       policy_version, policy_digest, policy_json::text, published_at
+FROM release.release_transition_policy
+WHERE predecessor_artifact_digest = $1 AND candidate_artifact_digest = $2;
+
+-- OCI artifact admission authority. Publication and revocation are append-only;
+-- runtime resolution loads canonical evidence and any independent revocation.
+
+-- name: InsertOCIArtifactAdmission :execrows
+INSERT INTO release.oci_artifact_admission
+    (artifact_reference, repository_identity, oci_digest, admission_version,
+     admission_digest, admission_bytes, admitted_at)
+VALUES (sqlc.arg(artifact_reference), sqlc.arg(repository_identity), sqlc.arg(oci_digest),
+        sqlc.arg(admission_version), sqlc.arg(admission_digest),
+        sqlc.arg(admission_bytes), sqlc.arg(admitted_at))
+ON CONFLICT DO NOTHING;
+
+-- name: GetOCIArtifactAdmission :one
+SELECT a.artifact_reference, a.repository_identity, a.oci_digest,
+       a.admission_version, a.admission_digest, a.admission_bytes,
+       a.admitted_at, a.published_at,
+       r.admission_digest AS revoked_admission_digest,
+       r.revoked_at, r.reason AS revocation_reason
+FROM release.oci_artifact_admission a
+LEFT JOIN release.oci_artifact_admission_revocation r
+  ON r.artifact_reference = a.artifact_reference
+WHERE a.artifact_reference = $1;
+
+-- name: InsertOCIArtifactAdmissionRevocation :execrows
+INSERT INTO release.oci_artifact_admission_revocation
+    (artifact_reference, admission_digest, revoked_at, reason)
+VALUES (sqlc.arg(artifact_reference), sqlc.arg(admission_digest),
+        sqlc.arg(revoked_at), sqlc.arg(reason))
+ON CONFLICT (artifact_reference) DO NOTHING;
+
+-- Per-artifact migration capability authority. Publication is insert-only and
+-- owner-authenticated; runtime resolution loads exact canonical evidence for
+-- one admitted artifact, target, and subsystem.
+
+-- name: GetOCIArtifactReferenceByAdmissionDigest :one
+SELECT artifact_reference
+FROM release.oci_artifact_admission
+WHERE admission_digest = $1;
+
+-- name: LockOCIArtifactAdmissionByReference :one
+SELECT l.artifact_reference
+FROM release.lock_oci_artifact_admission($1) AS l(artifact_reference);
+
+-- name: InsertMigrationCapability :execrows
+INSERT INTO release.migration_capability
+    (artifact_admission_digest, target_identity_digest, subsystem,
+     owner_identity, owner_contract_version, capability_version,
+     capability_digest, capability_bytes, owner_evidence_version,
+     owner_evidence_digest, owner_evidence_bytes)
+VALUES (sqlc.arg(artifact_admission_digest), sqlc.arg(target_identity_digest),
+        sqlc.arg(subsystem), sqlc.arg(owner_identity),
+        sqlc.arg(owner_contract_version), sqlc.arg(capability_version),
+        sqlc.arg(capability_digest), sqlc.arg(capability_bytes),
+        sqlc.arg(owner_evidence_version), sqlc.arg(owner_evidence_digest),
+        sqlc.arg(owner_evidence_bytes))
+ON CONFLICT DO NOTHING;
+
+-- name: GetMigrationCapability :one
+SELECT artifact_admission_digest, target_identity_digest, subsystem,
+       owner_identity, owner_contract_version, capability_version,
+       capability_digest, capability_bytes, owner_evidence_version,
+       owner_evidence_digest, owner_evidence_bytes, published_at
+FROM release.migration_capability
+WHERE artifact_admission_digest = $1
+  AND target_identity_digest = $2
+  AND subsystem = $3;

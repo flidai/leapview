@@ -7,7 +7,7 @@ source objects remain in their configured object stores.
 
 ## Storage ownership
 
-The `leapview_control` PostgreSQL database owns users, grants, projects,
+The `leapview_control` PostgreSQL database owns users, grants, the server-bound Project claim,
 environments, deployments, jobs, event and audit records, lineage projections,
 leases, and active serving pointers. The separately owned
 `leapview_ducklake` database contains DuckLake metadata: analytical schemas,
@@ -421,7 +421,7 @@ adapter.
 ### Intended qualification cases
 
 The qualification uses a disposable versioned MinIO bucket and the frozen
-RecoverySet v3 evidence bundle. It uploads all six canonical payloads, captures
+RecoverySet v3 evidence bundle. It uploads all seven canonical payloads, captures
 their provider VersionIDs, overwrites each current object, and creates a delete
 marker before the repository reads anything. `CreateSet3` succeeds only by
 using the selected historical versions. After the PostgreSQL connection is
@@ -1946,11 +1946,22 @@ PostgreSQL. The transaction performs no provider I/O. A separate connection
 can read back the same exact payloads and reverify them under independently
 resolved trust.
 
-This slice follows the current `CreateSet3` bundle, where the capture core is
-embedded in the detached receipt and committed by its domain digest. It does
-not add the separately located capture-core transport entry described by the
-frozen transport design; that representation must be reconciled explicitly
-before production evidence upload is enabled.
+### Managed-capture-core persistence boundary
+
+This slice extends the `CreateSet3` bundle with the separately located,
+canonical capture-core entry described by the frozen transport design. The
+core remains embedded in the detached receipt for signature verification, but
+the transport persistence path now requires the independent
+`leapview.managed-capture-core` version-2 bytes and frozen domain digest. New
+associations retain the core locator and verify its exact bytes and relation to
+the receipt and manifest. The association verification metadata records the
+resolved worker fence, and the same transaction locks the authoritative trust
+generation row and rejects a changed generation or fence before inserting any
+evidence. An explicit persistence marker distinguishes those
+associations from the legacy embedded-only form. Historical v3 rows and
+in-flight older writers remain compatible without backfill; they retain the
+original embedded receipt-core behavior, are not presented as independently
+transported core payloads, and cannot be silently upgraded by retry.
 
 ### Deterministic and failure behavior
 
@@ -1972,7 +1983,71 @@ association is accepted.
 This qualification does not establish provider retention, restart durability of
 the source system, PostgreSQL restore or PITR, physical provider recovery,
 production signer/key deployment, or RPO/RTO. It also does not grant admission,
-startup, publication, or activation authority. Standalone capture-core payload
-transport remains unresolved as noted above. Signed evidence does not prove physical disaster recovery.
+startup, publication, or activation authority. Standalone capture-core
+transport is bounded to this persistence slice; upload intent execution,
+provider retention and production evidence enablement remain separate. Signed
+evidence does not prove physical disaster recovery.
+
+Evidence persistence does not prove physical disaster recovery.
+
+This validates recovery evidence binding. It does not prove successful physical disaster recovery.
+
+## Managed-data S3 disaster-recovery seed qualification
+
+The bounded seed harness composes the existing evidence owners without
+performing restoration. It creates one disposable, versioned MinIO bucket and
+one PostgreSQL control database, then seeds a single managed connection with
+two explicit logical revisions. Normal S3 writes populate both revisions and
+one revision also contains a multipart object. Every managed object remains
+under `recovered-data/`; independently versioned sentinel objects remain under
+`unrelated-sentinel/` and are compared byte-for-byte before and after capture.
+
+The writer persists the exact VersionID returned by each successful PUT or
+multipart completion together with its trusted provider profile, object key,
+SHA-256, size, and capture time. The harness never infers a version from HEAD
+or the mutable latest object. PostgreSQL then captures the complete ready
+revision projection and recovery marker, the existing Manifest v2 service
+resolves and re-verifies every exact version, and the existing signer and
+`CreateSet3` path produce and persist the prepared RecoverySet v3 evidence.
+The in-memory qualification key is never written to an artifact.
+
+Run the isolated seed capture with Docker available:
+
+```sh
+task qualify:ubdr:managed-data-s3-dr
+```
+
+The command removes only the previous
+`.tmp/qualification/ubdr/managed-data-s3/` output. The harness stages private
+evidence in a sibling directory, completes every positive and negative gate,
+and validates both report contracts against the captured Manifest v2 and
+RecoverySet v3. Only then does it atomically publish the final directory with
+mode `0700` and its two operator-facing reports with mode `0600`. A failed gate
+therefore cannot leave valid-looking final artifacts:
+
+- `recovery-point.json` records the scenario and RecoverySet identities,
+  source-anchor and frontier commitments, Manifest v2 digest, capture interval,
+  observation counts, revision identities, and logical scenario fingerprint.
+- `baseline-object-inventory.json` records the two revision memberships,
+  upload kind, exact managed-object versions, hashes and sizes, plus the
+  independent sentinel version inventory.
+
+Both reports use stable field and collection ordering and are never accepted
+as recovery-admission input. Strict semantic validation checks schema and
+scenario identities, commitments, timestamps, revision membership, exact
+versions, hashes, sizes, counts, sentinel isolation, and cross-report
+consistency before publication. Repeated runs are semantically deterministic:
+the fingerprint binds the project, connection, collection, stable provider
+profile identity, prefixes, revision membership, fixture content hashes and
+sizes, and sentinel membership to a checked-in compatibility vector.
+Disposable bucket names, endpoints, provider VersionIDs, PostgreSQL restore
+points and capture timestamps remain authoritative per-run values and are not
+part of that logical fingerprint or required to be byte-identical.
+
+The qualification rejects missing observations, unavailable exact versions,
+missing revision membership, sentinel namespace substitution, and digest
+mismatches before a usable v3 association can be created. It does not restore
+objects, execute provider recovery, activate state, exercise startup admission,
+or measure RPO/RTO.
 
 This validates recovery evidence binding. It does not prove successful physical disaster recovery.

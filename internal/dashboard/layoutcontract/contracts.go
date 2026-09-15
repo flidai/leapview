@@ -134,14 +134,6 @@ func Resolve(id ContractID, available Size, features []Feature) (Resolution, err
 	return resolve(available, requirements), nil
 }
 
-func ResolveOuter(id ContractID, available Size, features []Feature) (Resolution, error) {
-	requirements, err := OuterRequirements(id, features)
-	if err != nil {
-		return Resolution{}, err
-	}
-	return resolve(available, requirements), nil
-}
-
 func resolve(available Size, requirements []Requirement) Resolution {
 	for _, requirement := range requirements {
 		if available.Width >= requirement.Minimum.Width && available.Height >= requirement.Minimum.Height {

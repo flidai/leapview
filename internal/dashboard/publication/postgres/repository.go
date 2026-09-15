@@ -125,29 +125,23 @@ type publicationProjection struct {
 }
 
 func mapPublication(row publicationProjection) (publication.Publication, error) {
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(row.ProjectID))
-	if err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication project ID: %w", err)
-	}
-	out := publication.Publication{
-		ID: row.ID, ProjectID: projectID, Name: row.Name,
+	return publication.MapProjection(publication.Projection{
+		ID: row.ID, ProjectID: row.ProjectID, Name: row.Name,
 		PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 		ConfigurationDigest: row.ConfigurationDigest, Configured: row.Configured,
-		Revision: row.Revision, SuspendedBy: row.SuspendedBy,
-		SuspendedAt: timestampValue(row.SuspendedAt), ConfiguredAt: timestampValue(row.ConfiguredAt),
+		Revision: row.Revision, ServingStateID: servingStateID(row.ActiveServingStateID),
+		SuspendedBy: row.SuspendedBy, SuspendedAt: timestampValue(row.SuspendedAt), ConfiguredAt: timestampValue(row.ConfiguredAt),
 		DisabledAt: timestampValue(row.DisabledAt), RotatedAt: timestampValue(row.RotatedAt),
 		CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		AllowedOriginsJSON: row.AllowedOriginsJSON, DependencyAssetIDsJSON: row.DependencyAssetIDsJSON,
+	})
+}
+
+func servingStateID(value *string) string {
+	if value == nil {
+		return ""
 	}
-	if row.ActiveServingStateID != nil {
-		out.ServingStateID = strings.TrimSpace(*row.ActiveServingStateID)
-	}
-	if err := json.Unmarshal([]byte(row.AllowedOriginsJSON), &out.AllowedOrigins); err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication origins: %w", err)
-	}
-	if err := json.Unmarshal([]byte(row.DependencyAssetIDsJSON), &out.DependencyAssetIDs); err != nil {
-		return publication.Publication{}, fmt.Errorf("decode publication dependencies: %w", err)
-	}
-	return out, nil
+	return strings.TrimSpace(*value)
 }
 
 func timestampValue(value pgtype.Timestamptz) string {

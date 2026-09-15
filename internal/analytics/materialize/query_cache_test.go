@@ -301,7 +301,6 @@ func (c *queryResultCache) store(key string, generation uint64, result dataquery
 	}
 	c.scope.StoreArrow(key, resultcache.Token(generation), owned, resultcache.Metadata{SQL: result.SQL, TotalRows: result.TotalRows, TotalRowsKnown: result.TotalRowsKnown, Warnings: result.Warnings})
 	owned.Release()
-	c.syncStats()
 }
 
 func (c *queryResultCache) get(key string) (dataquery.Result, bool) {
@@ -326,7 +325,6 @@ func (c *queryResultCache) get(key string) (dataquery.Result, bool) {
 	for index := range rows {
 		result.Rows[index] = dataquery.Row(rows[index])
 	}
-	c.syncStats()
 	return result, true
 }
 
@@ -585,7 +583,8 @@ func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
 }
 
 func TestQueryResultCacheEnforcesByteBudgetAndRejectsOversizedEntries(t *testing.T) {
-	cache := newQueryResultCacheWithLimits(10, 700)
+	const maxBytes int64 = 700
+	cache := newQueryResultCacheWithLimits(10, maxBytes)
 	first := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, EffectivePolicyFingerprint: materializeTestDigest('p'), Metrics: []dataquery.Field{{Field: "revenue"}}}
 	second := first
 	second.Metrics = []dataquery.Field{{Field: "orders"}}
@@ -598,8 +597,8 @@ func TestQueryResultCacheEnforcesByteBudgetAndRejectsOversizedEntries(t *testing
 	_, secondKey, generation, _, err := cache.lookup(second)
 	require.NoError(t, err)
 	cache.store(secondKey, generation, dataquery.Result{Rows: []dataquery.Row{{"value": strings.Repeat("b", 80)}}})
-	if cache.currentBytes > cache.maxBytes {
-		t.Fatalf("cache bytes = %d, budget = %d", cache.currentBytes, cache.maxBytes)
+	if bytes := cache.pool.Stats().Bytes; bytes > maxBytes {
+		t.Fatalf("cache bytes = %d, budget = %d", bytes, maxBytes)
 	}
 	if entries := cache.scope.Stats().Entries; entries != 1 {
 		t.Fatalf("entries = %d, want byte-budget eviction", entries)
@@ -1032,14 +1031,48 @@ func TestRuntimeBundleCacheAllHitExecutesZeroAdditionalSQL(t *testing.T) {
 	database := &bundleCountingDatabase{}
 	runtime := bundleCacheRuntime(t, database)
 	requests := bundleCacheRequests()
-	if _, err := runtime.ExecuteDataQueryBundle(context.Background(), requests); err != nil {
+	first, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.ExecuteDataQueryBundle(context.Background(), requests); err != nil {
+	second, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := database.queries.Load(); got != 1 {
 		t.Fatalf("physical executions = %d, want one bundle miss and zero for all-hit", got)
+	}
+	for id, firstResult := range first.Results {
+		secondResult, ok := second.Results[id]
+		if !ok {
+			t.Fatalf("cache hit omitted branch %q", id)
+		}
+		if firstResult.TotalRows != secondResult.TotalRows || firstResult.TotalRowsKnown != secondResult.TotalRowsKnown || strings.Join(firstResult.Warnings, "\x00") != strings.Join(secondResult.Warnings, "\x00") {
+			t.Fatalf("branch %q metadata changed across cache hit: first=%#v second=%#v", id, firstResult, secondResult)
+		}
+	}
+	// Bundle-produced entries use a distinct cache family. A later single
+	// query with the same logical request must execute its own path rather than
+	// accepting the bundle's intentionally limited branch metadata.
+	single, err := runtime.ExecuteDataQuery(context.Background(), requests[0].Query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single.CacheOutcome != dataquery.CacheMiss {
+		t.Fatalf("single-query cache outcome = %q, want miss after bundle population", single.CacheOutcome)
+	}
+	if got := database.queries.Load(); got != 2 {
+		t.Fatalf("physical executions after isolated single query = %d, want two", got)
+	}
+	third, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := database.queries.Load(); got != 2 {
+		t.Fatalf("bundle cache hit executed additional SQL: %d", got)
+	}
+	if third.Results["orders"].CacheOutcome != dataquery.CacheHit || third.Results["events"].CacheOutcome != dataquery.CacheHit {
+		t.Fatalf("bundle cache outcomes after isolated single query = %#v", third.Results)
 	}
 }
 

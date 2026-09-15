@@ -41,6 +41,25 @@ func TestBuildRejectsMissingProductionAuthority(t *testing.T) {
 	}
 }
 
+func TestHandlerExecutionLeaseTimeoutOverridesModuleFallback(t *testing.T) {
+	m := &Module{
+		config:               Config{LeaseTimeout: time.Minute, RiverJobTimeout: 24 * time.Hour},
+		handlerLeaseTimeouts: map[string]time.Duration{"refresh_pipeline": 7 * time.Second},
+	}
+	if got := m.executionLeaseTimeout("refresh_pipeline"); got != 7*time.Second {
+		t.Fatalf("handler lease timeout = %s, want 7s", got)
+	}
+	if got := m.executionLeaseTimeout("release.finalize"); got != time.Minute {
+		t.Fatalf("fallback lease timeout = %s, want 1m", got)
+	}
+	if got := m.riverJobTimeout(); got != 24*time.Hour {
+		t.Fatalf("River job timeout = %s, want 24h independent deadline", got)
+	}
+	if got := (&Module{}).riverJobTimeout(); got != river.JobTimeoutDefault {
+		t.Fatalf("default River job timeout = %s, want library default", got)
+	}
+}
+
 func TestRiverPostgreSQL18ExecutionAndProductHistory(t *testing.T) {
 	harness := postgrestest.Start(t)
 	database := harness.NewDatabase(t, "river_jobs_module")

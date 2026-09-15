@@ -27,44 +27,12 @@ func (m *Model) ResolveDimension(ref string) (MetricDimension, error) {
 	return dimension, nil
 }
 
-func (m *Model) ResolveRelationshipEndpoint(ref string) (MetricDimension, error) {
-	tableName, fieldName, err := splitSemanticField(ref)
-	if err != nil {
-		return MetricDimension{}, err
-	}
-	table, ok := m.Tables[tableName]
-	if !ok {
-		return MetricDimension{}, fmt.Errorf("unknown table %q", tableName)
-	}
-	if dimension, ok := table.Dimensions[fieldName]; ok {
-		dimension.Field = ref
-		dimension.Table = tableName
-		dimension.Name = fieldName
-		return dimension, nil
-	}
-	return MetricDimension{}, fmt.Errorf("unknown relationship endpoint field %q on table %q", fieldName, tableName)
-}
-
 func (m *Model) ResolveMetric(ref string) (Metric, error) {
 	metric, ok := m.Metrics[ref]
 	if !ok {
 		return Metric{}, fmt.Errorf("unknown metric %q", ref)
 	}
 	metric.Name = ref
-	return metric, nil
-}
-
-func (m *Model) ResolveAggregateMetric(ref string) (Metric, error) {
-	metric, err := m.ResolveMetric(ref)
-	if err != nil {
-		return Metric{}, err
-	}
-	if metric.Type != "aggregate" {
-		return Metric{}, fmt.Errorf("metric %q is not aggregate", ref)
-	}
-	if metric.Input == nil || strings.TrimSpace(metric.Input.Field) == "" {
-		return Metric{}, fmt.Errorf("metric %q aggregate input is required", ref)
-	}
 	return metric, nil
 }
 
@@ -114,8 +82,4 @@ func splitSemanticField(ref string) (string, string, error) {
 		return "", "", fmt.Errorf("field %q is invalid: %w", parts[1], err)
 	}
 	return parts[0], parts[1], nil
-}
-
-func (d MetricDimension) SQLExpression() string {
-	return d.Name
 }

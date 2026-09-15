@@ -249,14 +249,6 @@ func (client capabilityAPIClient) Transport(ctx context.Context, credentials cli
 	}, nil
 }
 
-func (client capabilityAPIClient) PublicTransport(_ context.Context, target string) (apigenclient.Transport, error) {
-	target = strings.TrimRight(strings.TrimSpace(target), "/")
-	if target == "" {
-		return nil, fmt.Errorf("target is required")
-	}
-	return capabilityAPITransport{target: target, client: client.http()}, nil
-}
-
 func (client capabilityAPIClient) http() *http.Client {
 	if client.httpClient != nil {
 		return client.httpClient

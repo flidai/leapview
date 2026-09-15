@@ -107,6 +107,12 @@ func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) 
 	if approval.PublicationID != payload.PublicationID || approval.TargetID != payload.TargetID || approval.GenerationID != payload.GenerationID || approval.CandidateID != payload.CandidateID || approval.RequestDigest != payload.RequestDigest || approval.ExpectedTargetRevision != payload.ExpectedTargetRevision || approval.PolicyRevision != payload.PolicyRevision || approval.RequestedBy.PrincipalID != payload.RequestedBy || decision.DecidedBy.PrincipalID != payload.DecidedBy {
 		return deployment.ErrApprovalConflict
 	}
+	var requestMetadata struct {
+		Rollback bool `json:"rollback"`
+	}
+	if err := json.Unmarshal(approval.Evidence.Metadata, &requestMetadata); err != nil || requestMetadata.Rollback != payload.Rollback {
+		return deployment.ErrApprovalConflict
+	}
 	activator, ok := m.jobs.Coordinator.(approvedPublicationActivator)
 	if !ok {
 		return fmt.Errorf("native approval activation coordinator is unavailable")

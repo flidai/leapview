@@ -7,39 +7,39 @@ metadata:
   description: Aggregated real Olist delivery corridors represented as ordered origin and destination vertices.
 spec:
   fields:
-    vertex_id:
+    - name: vertex_id
       datatype: String
       label: Route vertex
       description: Stable route and point-order identity
-    route_id:
+    - name: route_id
       datatype: String
       label: Route
       description: Stable order and seller delivery identity
-    order_id:
+    - name: order_id
       datatype: String
       label: Order ID
       description: Order identity used to join governed order filters
-    point_order:
+    - name: point_order
       datatype: String
       label: Point order
       description: Zero for seller origin and one for customer destination
-    latitude:
+    - name: latitude
       datatype: Float
       label: Latitude
       description: Latitude of the ordered route vertex
-    longitude:
+    - name: longitude
       datatype: Float
       label: Longitude
       description: Longitude of the ordered route vertex
-    route_label:
+    - name: route_label
       datatype: String
       label: Route
       description: Human-readable origin to destination route label
-    destination_state:
+    - name: destination_state
       datatype: String
       label: Destination state
       description: Customer destination state used by dashboard filters
-    route_revenue:
+    - name: route_revenue
       datatype: Decimal
       label: Route revenue
       description: Order revenue allocated evenly across participating sellers
@@ -109,11 +109,11 @@ spec:
       )
       SELECT * FROM vertices
   entities:
-    vertex:
+    - name: vertex
       type: primary
       fields:
       - vertex_id
-    order:
+    - name: order
       type: foreign
       fields:
       - order_id

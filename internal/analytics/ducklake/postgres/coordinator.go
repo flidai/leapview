@@ -21,12 +21,11 @@ import (
 )
 
 const (
-	DefaultControlUpgradeCoordinatorRole  = "leapview_control_upgrade_coordinator"
-	DefaultControlMigratorRole            = "leapview_control_migrator"
-	DefaultControlDatabase                = "leapview_control"
-	DefaultDuckLakeCatalogMigratorRole    = "leapview_ducklake_migrator"
-	DefaultDuckLakeCatalogMaintenanceRole = "leapview_ducklake_maintenance"
-	DefaultDuckLakeDatabase               = "leapview_ducklake"
+	DefaultControlUpgradeCoordinatorRole = "leapview_control_upgrade_coordinator"
+	DefaultControlMigratorRole           = "leapview_control_migrator"
+	DefaultControlDatabase               = "leapview_control"
+	DefaultDuckLakeCatalogMigratorRole   = "leapview_ducklake_migrator"
+	DefaultDuckLakeDatabase              = "leapview_ducklake"
 )
 
 var (

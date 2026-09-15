@@ -7,7 +7,7 @@ metadata:
   description: Conformed country dimension shared by the finance facts.
 spec:
   fields:
-    country: {datatype: String, label: Country}
+    - {name: country, datatype: String, label: Country}
   definition:
     type: sql
     sql: |
@@ -15,7 +15,7 @@ spec:
       FROM source."finance.financials"
       WHERE country IS NOT NULL AND trim(country) <> ''
   entities:
-    country:
+    - name: country
       type: primary
       fields: [country]
   grain:

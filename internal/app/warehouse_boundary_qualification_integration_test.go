@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,9 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	"github.com/flidai/leapview/internal/deployment"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -34,6 +38,17 @@ type warehouseBoundarySpec struct {
 	root        string
 	multiSource bool
 	freshness   bool
+	// compiled and graph are optional so the legacy qualification fixtures can
+	// keep using their compact hand-built model while the end-to-end proof can
+	// pass the exact rootless compiler outputs into the candidate runtime.
+	compiled *semanticmodel.Model
+	graph    *projectgraph.ProjectGraph
+	targetID string
+	// deliveryPlan is optional for the legacy fixtures. The FAI-678 proof uses
+	// it to ensure runtime inputs derive from one validated, durable plan.
+	deliveryPlan *deployment.DeliveryPlan
+	bundleBytes  []byte
+	managedData  runtimehost.ManagedDataResolution
 }
 
 type warehouseBoundaryRuntime struct {
@@ -76,6 +91,24 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 	if !ok {
 		return nil, fmt.Errorf("warehouse-boundary specification is missing for %s", input.State.ID)
 	}
+	if spec.deliveryPlan != nil {
+		if err := spec.deliveryPlan.Validate(); err != nil {
+			return nil, fmt.Errorf("warehouse-boundary delivery plan: %w", err)
+		}
+		if spec.deliveryPlan.ProjectID != input.State.ProjectID || spec.deliveryPlan.Environment != string(input.State.Environment) || spec.deliveryPlan.TargetID != spec.targetID || spec.deliveryPlan.SourceDigest != input.State.ProjectDigest || spec.deliveryPlan.ServingArtifactDigest != input.Artifact.Digest {
+			return nil, fmt.Errorf("warehouse-boundary runtime inputs differ from validated delivery plan")
+		}
+		validation, _, err := projectbundle.ValidateArtifactBytes(spec.bundleBytes)
+		if err != nil {
+			return nil, fmt.Errorf("warehouse-boundary runtime artifact: %w", err)
+		}
+		if validation.Digest != input.Artifact.Digest {
+			return nil, fmt.Errorf("warehouse-boundary runtime artifact differs from validated delivery bytes")
+		}
+		if spec.managedData.RevisionID != input.ManagedData.RevisionID || !maps.Equal(spec.managedData.Roots, input.ManagedData.Roots) || !maps.Equal(spec.managedData.Revisions, input.ManagedData.Revisions) {
+			return nil, fmt.Errorf("warehouse-boundary managed-data inputs differ from delivery-bound resolution")
+		}
+	}
 	database, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
 		RootDir: filepath.Join(spec.root, ".ducklake"), MaxConnections: 2, ExtensionAdmission: f.admission,
 	})
@@ -96,9 +129,51 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 		return nil, err
 	}
 	model := warehouseBoundaryModel(spec)
+	if spec.deliveryPlan != nil {
+		connectionIDs := make(map[string]string)
+		for _, resource := range spec.graph.Resources() {
+			if resource.Kind == projectgraph.KindConnection {
+				connectionIDs[resource.Name] = resource.ID.String()
+			}
+		}
+		if len(input.ManagedData.Roots) != len(model.Connections) {
+			lease.Release()
+			controller.Close()
+			_ = database.Close()
+			return nil, fmt.Errorf("warehouse-boundary runtime roots are not an exact connection closure")
+		}
+		for name, connection := range model.Connections {
+			connectionID := connectionIDs[name]
+			root := strings.TrimSpace(input.ManagedData.Roots[connectionID])
+			if connectionID == "" || root == "" {
+				lease.Release()
+				controller.Close()
+				_ = database.Close()
+				return nil, fmt.Errorf("warehouse-boundary runtime root for connection %q is unavailable", name)
+			}
+			connection.Root = root
+			model.Connections[name] = connection
+		}
+	}
+	var resultPartition resultidentity.Partition
+	if spec.targetID != "" {
+		resultPartition, err = resultidentity.NewPartition(resultidentity.PartitionInput{
+			Kind:        resultidentity.PartitionProduction,
+			TargetID:    spec.targetID,
+			ProjectID:   input.State.ProjectID,
+			Environment: string(input.State.Environment),
+		})
+		if err != nil {
+			lease.Release()
+			controller.Close()
+			_ = database.Close()
+			return nil, err
+		}
+	}
 	projectRuntime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
 		Models: map[string]*semanticmodel.Model{"warehouse": model}, Database: database,
 		ExtensionAdmission: f.admission, ProjectID: input.State.ProjectID, Environment: string(input.State.Environment),
+		ServingStateID: string(input.State.ID), ResultPartition: resultPartition,
 	})
 	lease.Release()
 	if err != nil {
@@ -114,6 +189,9 @@ func (f *warehouseBoundaryFactory) Prepare(ctx context.Context, input runtimehos
 		return nil, err
 	}
 	graph, err := projectgraph.NewProjectGraph(nil, nil)
+	if spec.graph != nil {
+		graph = *spec.graph
+	}
 	if err != nil {
 		_ = projectRuntime.Close()
 		controller.Close()
@@ -342,6 +420,9 @@ func assertWarehouseBoundaryGeneration(t *testing.T, registry *runtimehost.Regis
 }
 
 func warehouseBoundaryModel(spec warehouseBoundarySpec) *semanticmodel.Model {
+	if spec.compiled != nil {
+		return spec.compiled
+	}
 	ordersFields := map[string]semanticmodel.SourceField{
 		"order_id": {Datatype: semanticmodel.DataTypeString}, "customer_id": {Datatype: semanticmodel.DataTypeString},
 		"revenue": {Datatype: semanticmodel.DataTypeFloat}, "updated_at": {Datatype: semanticmodel.DataTypeDateTime},

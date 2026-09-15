@@ -3,6 +3,7 @@ package planir
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -352,11 +353,57 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if input.Meta().FilterPhase.rank() > FilterPhaseRelationship.rank() {
 			return fmt.Errorf("aggregate input %q has phase %q after the aggregate boundary", n.Input, input.Meta().FilterPhase)
 		}
+		groupAliases := append([]string(nil), n.GroupByAliases...)
+		if len(groupAliases) != 0 && len(groupAliases) != len(n.GroupBy) {
+			return fmt.Errorf("group-by aliases must parallel group-by fields")
+		}
+		if len(groupAliases) == 0 {
+			groupAliases = append([]string(nil), n.GroupBy...)
+		}
 		seen := map[string]bool{}
+		groupSources := map[string]string{}
 		sourceFields, sourceMetrics := availableFields(inputMeta(n.Input)), availableMetrics(inputMeta(n.Input))
-		for _, key := range n.GroupBy {
+		for index, key := range n.GroupBy {
+			if key == "" {
+				return fmt.Errorf("group-by field is required")
+			}
+			identity := groupAliases[index]
+			if err := validUnqualifiedName(identity); err != nil {
+				return fmt.Errorf("group-by alias %q is invalid: %w", identity, err)
+			}
+			if seen[identity] {
+				return fmt.Errorf("group-by identity %q is duplicated", identity)
+			}
+			seen[identity] = true
+			groupSources[identity] = key
 			if !sourceFields[key] {
 				return fmt.Errorf("group-by field %q is unavailable", key)
+			}
+		}
+		seenBuckets := map[string]bool{}
+		for _, bucket := range n.TimeBuckets {
+			group := bucket.Group
+			if group == "" {
+				group = bucket.Field
+			}
+			if bucket.Field == "" || group == "" {
+				return fmt.Errorf("time bucket field and group are required")
+			}
+			source, exists := groupSources[group]
+			if !exists {
+				return fmt.Errorf("time bucket group %q is not an aggregate group-by field", group)
+			}
+			if bucket.Field != source {
+				return fmt.Errorf("time bucket field %q does not match group %q source %q", bucket.Field, group, source)
+			}
+			if seenBuckets[group] {
+				return fmt.Errorf("time bucket group %q is duplicated", group)
+			}
+			seenBuckets[group] = true
+			switch bucket.Grain {
+			case "second", "minute", "hour", "day", "week", "month", "quarter", "year":
+			default:
+				return fmt.Errorf("time bucket group %q has unsupported grain %q", group, bucket.Grain)
 			}
 		}
 		for _, metric := range n.Metrics {
@@ -437,15 +484,15 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if len(meta.AvailableMetrics) != len(n.Metrics) {
 			return fmt.Errorf("aggregate available metrics must exactly match metric specs")
 		}
-		if len(meta.OutputGrain.Fields) != len(n.GroupBy) || !sameOrdered(meta.OutputGrain.Fields, n.GroupBy) {
-			return fmt.Errorf("output grain must equal group-by fields")
+		if len(meta.OutputGrain.Fields) != len(groupAliases) || !sameOrdered(meta.OutputGrain.Fields, groupAliases) {
+			return fmt.Errorf("output grain must equal group-by identities")
 		}
 		if len(meta.AvailableFields) != len(n.GroupBy) {
 			return fmt.Errorf("aggregate available fields must equal group-by fields")
 		}
 		for index, field := range meta.AvailableFields {
-			if field.Name != n.GroupBy[index] {
-				return fmt.Errorf("aggregate available field %q does not match group-by field %q", field.Name, n.GroupBy[index])
+			if field.Name != groupAliases[index] {
+				return fmt.Errorf("aggregate available field %q does not match group-by identity %q", field.Name, groupAliases[index])
 			}
 		}
 		if n.Spatial != nil {
@@ -575,7 +622,7 @@ func validateNode(node Node, nodes map[string]Node) error {
 		if !ok || input == nil {
 			return fmt.Errorf("input %q is unavailable", n.Input)
 		}
-		sortInput, ok := asSortLimit(input)
+		sortInput, ok := as[SortLimit](input)
 		if !ok {
 			return fmt.Errorf("input %q must be a SortLimit", n.Input)
 		}
@@ -1035,27 +1082,11 @@ func containsRouteEdge(routes []RelationshipRoute, target RelationshipPath) bool
 }
 
 func sameJoinKeys(a, b []JoinKey) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func sameOrdered(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(a, b)
 }
 
 func sameStrings(a, b []string) bool {
@@ -1070,12 +1101,7 @@ func sameFields(a, b []Field) bool {
 	left, right := append([]Field(nil), a...), append([]Field(nil), b...)
 	sort.Slice(left, func(i, j int) bool { return left[i].Name < left[j].Name })
 	sort.Slice(right, func(i, j int) bool { return right[i].Name < right[j].Name })
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 func sameMetrics(a, b []Metric) bool {
@@ -1085,12 +1111,7 @@ func sameMetrics(a, b []Metric) bool {
 	left, right := append([]Metric(nil), a...), append([]Metric(nil), b...)
 	sort.Slice(left, func(i, j int) bool { return left[i].Name < left[j].Name })
 	sort.Slice(right, func(i, j int) bool { return right[i].Name < right[j].Name })
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left, right)
 }
 
 // operation wrapping the existing SortLimit output. The input graph is never
@@ -1102,7 +1123,7 @@ func WithTotalRows(graph *Graph, totalField string) (*Graph, error) {
 	if err := graph.Validate(); err != nil {
 		return nil, err
 	}
-	sortNode, ok := asSortLimit(graph.Nodes[graph.Output])
+	sortNode, ok := as[SortLimit](graph.Nodes[graph.Output])
 	if !ok {
 		return nil, fmt.Errorf("total rows requires SortLimit output, got %s", graph.Nodes[graph.Output].Kind())
 	}

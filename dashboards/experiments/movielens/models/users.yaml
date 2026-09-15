@@ -7,39 +7,39 @@ metadata:
   description: Derived user dimension based on rating and tagging activity.
 spec:
   fields:
-    user_id:
+    - name: user_id
       datatype: Integer
       label: User ID
       description: Anonymized MovieLens user identifier.
-    rating_count:
+    - name: rating_count
       datatype: Integer
       label: Rating count
       description: Number of ratings submitted by the user.
-    average_rating:
+    - name: average_rating
       datatype: Float
       label: Average rating
       description: User-level average rating value.
-    tag_count:
+    - name: tag_count
       datatype: Integer
       label: Tag count
       description: Number of tags submitted by the user.
-    first_rated_at:
+    - name: first_rated_at
       datatype: DateTime
       label: First rated at
       description: First observed rating timestamp.
-    last_rated_at:
+    - name: last_rated_at
       datatype: DateTime
       label: Last rated at
       description: Last observed rating timestamp.
-    first_rating_year:
+    - name: first_rating_year
       datatype: Integer
       label: First rating year
       description: First observed rating calendar year.
-    last_rating_year:
+    - name: last_rating_year
       datatype: Integer
       label: Last rating year
       description: Last observed rating calendar year.
-    activity_bucket:
+    - name: activity_bucket
       datatype: String
       label: Activity bucket
       description: Rating-volume segment derived from user activity.
@@ -85,7 +85,7 @@ spec:
       LEFT JOIN tag_activity t ON t.user_id = r.user_id
       WHERE r.user_id IS NOT NULL
   entities:
-    user:
+    - name: user
       type: primary
       fields:
       - user_id

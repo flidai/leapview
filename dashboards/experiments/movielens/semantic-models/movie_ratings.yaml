@@ -7,18 +7,73 @@ metadata:
   description: Rating-grain semantic model for movie, user, and rating trend analysis.
 spec:
   datasets:
-    ratings:
+    - name: ratings
       model: ratings
       defaultTimeDimension: activity_date
-    movies:
+      metrics:
+        - name: rating_count
+          type: simple
+          empty: zero
+          label: Ratings
+          description: Count of rating events.
+          format: integer
+          agg: count
+          field: rating_id
+        - name: average_rating
+          type: simple
+          empty: 'null'
+          label: Average rating
+          description: Average MovieLens rating.
+          format: decimal
+          agg: avg
+          field: rating
+        - name: active_users
+          type: simple
+          empty: zero
+          label: Active users
+          description: Distinct users who submitted ratings.
+          format: integer
+          agg: count_distinct
+          field: user_id
+        - name: rated_movies
+          type: simple
+          empty: zero
+          label: Rated movies
+          description: Distinct movies with ratings.
+          format: integer
+          agg: count_distinct
+          field: movie_id
+        - name: five_star_ratings
+          type: simple
+          where:
+            - five_star_ratings_filter
+          empty: zero
+          label: Five-star ratings
+          hidden: true
+          agg: count
+          field: rating_id
+      dimensions:
+        - name: rating_bucket
+          datatype: String
+          label: Rating bucket
+    - name: movies
       model: movies
-    users:
+    - name: users
       model: users
-    tags:
+    - name: tags
       model: tags
       defaultTimeDimension: activity_date
+      metrics:
+        - name: tag_count
+          type: simple
+          empty: zero
+          label: Tags
+          description: Count of tag events.
+          format: integer
+          agg: count
+          field: tag_id
   relationships:
-    ratings_movies:
+    - name: ratings_movies
       from:
         dataset: ratings
         entity: movie
@@ -26,7 +81,7 @@ spec:
         dataset: movies
         entity: movie
       description: Links each rating to the rated movie.
-    ratings_users:
+    - name: ratings_users
       from:
         dataset: ratings
         entity: user
@@ -34,7 +89,7 @@ spec:
         dataset: users
         entity: user
       description: Links each rating to the anonymized user who made it.
-    tags_movies:
+    - name: tags_movies
       from:
         dataset: tags
         entity: movie
@@ -42,7 +97,7 @@ spec:
         dataset: movies
         entity: movie
       description: Links each tag event to its movie.
-    tags_users:
+    - name: tags_users
       from:
         dataset: tags
         entity: user
@@ -51,129 +106,63 @@ spec:
         entity: user
       description: Links each tag event to its anonymized user.
   filters:
-    five_star_ratings_filter:
-      field: ratings.rating
-      operator: equals
-      value: 5
+    - name: five_star_ratings_filter
+      definition:
+        field: ratings.rating
+        operator: equals
+        value: 5
   dimensions:
-    activity_date:
+    - name: activity_date
       datatype: DateTime
       label: Activity date
       bindings:
-        ratings:
+        - dataset: ratings
           field: ratings.rated_at
-        tags:
+        - dataset: tags
           field: tags.tagged_at
       time:
         nativeGrain: second
         grains:
-        - second
-        - day
-        - week
-        - month
-        - quarter
-        - year
+          - second
+          - day
+          - week
+          - month
+          - quarter
+          - year
         calendar: iso8601
-    release_decade:
+    - name: release_decade
       datatype: String
       label: Release decade
       bindings:
-        ratings:
+        - dataset: ratings
           field: movies.release_decade
           path:
-          - ratings_movies
-        tags:
+            - ratings_movies
+        - dataset: tags
           field: movies.release_decade
           path:
-          - tags_movies
-    movie_title:
+            - tags_movies
+    - name: movie_title
       datatype: String
       label: Movie title
       bindings:
-        ratings:
+        - dataset: ratings
           field: movies.title
           path:
-          - ratings_movies
-        tags:
+            - ratings_movies
+        - dataset: tags
           field: movies.title
           path:
-          - tags_movies
-    rating_bucket:
-      datatype: String
-      label: Rating bucket
-      bindings:
-        ratings:
-          field: ratings.rating_bucket
+            - tags_movies
   metrics:
-    rating_count:
-      type: aggregate
-      dataset: ratings
-      aggregation: count
-      input:
-        field: ratings.rating_id
-      empty: zero
-      label: Ratings
-      description: Count of rating events.
-      format: integer
-    average_rating:
-      type: aggregate
-      dataset: ratings
-      aggregation: avg
-      input:
-        field: ratings.rating
-      empty: 'null'
-      label: Average rating
-      description: Average MovieLens rating.
-      format: decimal
-    active_users:
-      type: aggregate
-      dataset: ratings
-      aggregation: count_distinct
-      input:
-        field: ratings.user_id
-      empty: zero
-      label: Active users
-      description: Distinct users who submitted ratings.
-      format: integer
-    rated_movies:
-      type: aggregate
-      dataset: ratings
-      aggregation: count_distinct
-      input:
-        field: ratings.movie_id
-      empty: zero
-      label: Rated movies
-      description: Distinct movies with ratings.
-      format: integer
-    five_star_ratings:
-      type: aggregate
-      dataset: ratings
-      aggregation: count
-      input:
-        field: ratings.rating_id
-      where:
-      - five_star_ratings_filter
-      empty: zero
-      label: Five-star ratings
-      hidden: true
-    tag_count:
-      type: aggregate
-      dataset: tags
-      aggregation: count
-      input:
-        field: tags.tag_id
-      empty: zero
-      label: Tags
-      description: Count of tag events.
-      format: integer
-    five_star_share:
+    - name: five_star_share
       type: ratio
       numerator: five_star_ratings
       denominator: rating_count
       label: Five-star share
       description: Share of ratings that are exactly five stars.
       format: percent
-    tags_per_rating:
+    - name: tags_per_rating
       type: ratio
       numerator: tag_count
       denominator: rating_count

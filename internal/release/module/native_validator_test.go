@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -29,9 +30,20 @@ func TestImmutableArtifactValidatorChecksStateAndArtifactEvidence(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := servingstate.State{ID: "generation-1", ProjectID: projectID, Environment: "dev", Digest: digestForTest("a")}
-	artifact := servingstate.Artifact{ID: "artifact-1", ServingStateID: state.ID, Digest: state.Digest, Path: "s3://bucket/artifact"}
-	validator := immutableArtifactValidator{reader: immutableReaderFixture{state: state, artifact: artifact}}
+	state := servingstate.State{ID: "generation-1", ProjectID: projectID, Environment: "dev", Digest: digestForTest("a"), ManifestJSON: "{}"}
+	artifact := servingstate.Artifact{
+		ID:                    "artifact-" + strings.TrimPrefix(state.Digest, "sha256:"),
+		ServingStateID:        state.ID,
+		Digest:                state.Digest,
+		Format:                servingstate.ArtifactBundleFormat,
+		Locator:               "serving-artifacts/" + strings.TrimPrefix(state.Digest, "sha256:") + ".tar.gz",
+		StorageSecurityDomain: "runtime",
+		ContentType:           servingstate.ArtifactBundleContentType,
+		MetadataDigest:        digestForTest("c"),
+		ManifestJSON:          state.ManifestJSON,
+		SizeBytes:             1,
+	}
+	validator := immutableArtifactValidator{reader: immutableReaderFixture{state: state, artifact: artifact}, storageDomain: "runtime"}
 	got, err := validator.Validate(t.Context(), state.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +53,7 @@ func TestImmutableArtifactValidatorChecksStateAndArtifactEvidence(t *testing.T) 
 	}
 
 	artifact.Digest = digestForTest("b")
-	_, err = (immutableArtifactValidator{reader: immutableReaderFixture{state: state, artifact: artifact}}).Validate(t.Context(), state.ID)
+	_, err = (immutableArtifactValidator{reader: immutableReaderFixture{state: state, artifact: artifact}, storageDomain: "runtime"}).Validate(t.Context(), state.ID)
 	if !errors.Is(err, release.ErrConflict) {
 		t.Fatalf("digest mismatch error = %v", err)
 	}

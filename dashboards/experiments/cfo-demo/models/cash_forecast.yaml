@@ -7,26 +7,26 @@ metadata:
   description: Weekly cash-forecast fact at scenario and forecast-week grain.
 spec:
   fields:
-    cash_row_id: {datatype: String, label: Cash row ID}
-    week_index: {datatype: Integer, label: Week}
-    scenario: {datatype: String, label: Scenario key}
-    collections: {datatype: Decimal, label: Customer collections}
-    supplier_payments: {datatype: Decimal, label: Supplier payments}
-    payroll: {datatype: Decimal, label: Payroll}
-    operating_expenses: {datatype: Decimal, label: Operating expenses}
-    taxes: {datatype: Decimal, label: Taxes}
-    net_cash_flow: {datatype: Decimal, label: Net cash flow}
-    base_collections: {datatype: Decimal, label: Base collections}
-    base_supplier_payments: {datatype: Decimal, label: Base supplier payments}
-    base_net_cash_flow: {datatype: Decimal, label: Base net cash flow}
-    closing_cash: {datatype: Decimal, label: Closing cash}
-    scenario_ending_cash: {datatype: Decimal, label: Scenario ending cash}
-    scenario_headroom: {datatype: Decimal, label: Scenario cash headroom}
-    current_cash: {datatype: Decimal, label: Current cash}
-    base_ending_cash: {datatype: Decimal, label: Base ending cash}
-    base_headroom: {datatype: Decimal, label: Base cash headroom}
-    overdue_receivables: {datatype: Decimal, label: Overdue receivables}
-    dso_days: {datatype: Decimal, label: Days sales outstanding}
+    - {name: cash_row_id, datatype: String, label: Cash row ID}
+    - {name: week_index, datatype: Integer, label: Week}
+    - {name: scenario, datatype: String, label: Scenario key}
+    - {name: collections, datatype: Decimal, label: Customer collections}
+    - {name: supplier_payments, datatype: Decimal, label: Supplier payments}
+    - {name: payroll, datatype: Decimal, label: Payroll}
+    - {name: operating_expenses, datatype: Decimal, label: Operating expenses}
+    - {name: taxes, datatype: Decimal, label: Taxes}
+    - {name: net_cash_flow, datatype: Decimal, label: Net cash flow}
+    - {name: base_collections, datatype: Decimal, label: Base collections}
+    - {name: base_supplier_payments, datatype: Decimal, label: Base supplier payments}
+    - {name: base_net_cash_flow, datatype: Decimal, label: Base net cash flow}
+    - {name: closing_cash, datatype: Decimal, label: Closing cash}
+    - {name: scenario_ending_cash, datatype: Decimal, label: Scenario ending cash}
+    - {name: scenario_headroom, datatype: Decimal, label: Scenario cash headroom}
+    - {name: current_cash, datatype: Decimal, label: Current cash}
+    - {name: base_ending_cash, datatype: Decimal, label: Base ending cash}
+    - {name: base_headroom, datatype: Decimal, label: Base cash headroom}
+    - {name: overdue_receivables, datatype: Decimal, label: Overdue receivables}
+    - {name: dso_days, datatype: Decimal, label: Days sales outstanding}
   definition:
     type: sql
     sql: |
@@ -86,13 +86,13 @@ spec:
         CASE WHEN scenario = 'Base' AND week_index = 0 THEN CAST(47 AS DECIMAL(38,2)) ELSE NULL END AS dso_days
       FROM projected
   entities:
-    cash_forecast_row:
+    - name: cash_forecast_row
       type: primary
       fields: [cash_row_id]
-    cash_week:
+    - name: cash_week
       type: foreign
       fields: [week_index]
-    cash_scenario:
+    - name: cash_scenario
       type: foreign
       fields: [scenario]
   grain:

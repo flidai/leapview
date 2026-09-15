@@ -1,6 +1,6 @@
 export type AxeViolation = {
   id: string
-  impact: string | null
+  impact?: string | null
   help: string
   helpUrl: string
   nodes: Array<{
@@ -12,7 +12,7 @@ export type AxeViolation = {
 const blockingImpacts = new Set(['serious', 'critical'])
 
 export function blockingAxeViolations<T extends AxeViolation>(violations: readonly T[]): T[] {
-  return violations.filter((violation) => violation.impact !== null && blockingImpacts.has(violation.impact))
+  return violations.filter((violation) => violation.impact !== null && violation.impact !== undefined && blockingImpacts.has(violation.impact))
 }
 
 export function formatAxeViolations(route: { label: string; path: string }, violations: readonly AxeViolation[]): string {

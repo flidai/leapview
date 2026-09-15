@@ -53,6 +53,16 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	if !strings.Contains(aggregateGoLane, "- task: db:check") {
 		t.Fatal("local Go aggregate lane must retain the SQL quality gate")
 	}
+	for _, qualityTask := range []string{
+		"- task: quality:budget:check",
+		"- task: quality:exceptions:check",
+		"- task: quality:trends:report",
+		"- task: quality:critical:coverage",
+	} {
+		if !strings.Contains(aggregateGoLane, qualityTask) {
+			t.Fatalf("local Go aggregate lane missing quality gate %q", qualityTask)
+		}
+	}
 	for _, lane := range []string{"ci:lane:go", "ci:lane:frontend"} {
 		if !strings.Contains(taskfile, "  "+lane+":\n") {
 			t.Fatalf("Taskfile missing bounded CI lane %q", lane)
@@ -176,18 +186,19 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	hostedExtras := taskfileTaskBlock(t, taskfile, "ci:full:extras:hosted")
 	for _, want := range []string{
 		"- task: desktop:test",
-		"- task: qa:ui-framework",
-		"- task: generate",
 		"- task: ci:full:extras:parallel",
 	} {
 		if !strings.Contains(hostedExtras, want) {
 			t.Fatalf("ci:full:extras:hosted missing %q", want)
 		}
 	}
+	for _, moved := range []string{"- task: qa:ui-framework", "- task: generate"} {
+		if strings.Contains(hostedExtras, moved) {
+			t.Fatalf("ci:full:extras:hosted must not serialize the site-owned UI QA path with %q", moved)
+		}
+	}
 	hostedExtrasOrder := []string{
 		"- task: desktop:test",
-		"- task: qa:ui-framework",
-		"- task: generate",
 		"- task: ci:full:extras:parallel",
 	}
 	for index := 1; index < len(hostedExtrasOrder); index++ {

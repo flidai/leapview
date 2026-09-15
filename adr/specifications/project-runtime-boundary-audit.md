@@ -1,8 +1,9 @@
 # FAI-671 isolated runtime boundary evidence
 
-This is a partial implementation slice of [ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md),
-not final Project namespace conformance. FAI-671 completion remains blocked by
-FAI-670. No downstream work is unblocked by this patch.
+This records the bounded FAI-671 implementation slice of
+[ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md), not
+final Project namespace conformance. FAI-670 and FAI-671 are now merged; the
+non-exhaustive inventories below remain explicit evidence limitations.
 
 ## Extraction inventory
 
@@ -32,12 +33,13 @@ schema, migration, compiler identity, or canonical contract digest change.
 | API-03 generated locators | Principal/platform authentication alone did not constrain Project locators. Resolve the existing server-bound `CurrentProjectID`, reject disagreement with a populated runtime-host identity, and leave resource snapshot and bootstrap/delivery authorizers intact. A valid resolver does not require an allocated runtime host. | `TestAPIGenProjectBoundaryPrincipalAndPlatformLocators` in [authorizer tests](../../internal/access/module/project_boundary_test.go); `TestProjectBoundaryGeneratedLocatorsCannotRetarget` in [app tests](../../internal/app/project_boundary_test.go); existing `TestPostgresRefreshRouteJourney` in [PostgreSQL journey tests](../../internal/app/postgres_refresh_journey_test.go) |
 | API-07 startup | Existing claim reader checks environment; now also validates the claim's identity and durable evidence. | `TestReadClaimedProjectFailsClosedAndChecksEnvironment` in [claim tests](../../internal/app/composition_project_claim_test.go) |
 | API-06 cache partition | Existing sealed partition includes target, Project, environment, and candidate identity; preserve the dependency-addressed cache design. No UID or generation token is substituted for contract/data identity. | `TestProjectBoundaryCacheKeysDoNotCollide`, `TestProjectBoundaryCacheRejectsMissingScope` in [cache tests](../../internal/analytics/cache/project_boundary_test.go); policy rotation in [key tests](../../internal/analytics/cache/key_test.go) |
-| API-06 idempotency | Existing protocol partitions by authenticated caller/credential, method, and path, validates request digest, and reauthorizes replay. Protocol-only tests do not claim multiple Projects can be served by one instance. | `TestProjectBoundaryIdempotencySeparatesLocatorsAndReauthorizes` in [protocol tests](../../internal/app/api/protocol/project_boundary_test.go) |
+| API-06 idempotency | The versioned protocol scope partitions by authenticated caller/credential, server target, Project, environment, active generation, operation/resource locator, method/path, and caller key. Native refresh bypass scope includes Project/environment/generation. Request digest remains a separate drift detector and every replay is reauthorized. | [Complete boundary inventory](project-cache-idempotency-boundary-audit.md); `TestIdempotencyScopeSeparatesEveryAuthoritativeRuntimeIdentity`, `TestIdempotencyFailsClosedWhenAuthoritativeScopeIsUnavailable`, and `TestRefreshOperationScopeIsBoundedAndSeparated` |
 
 ## Remaining boundaries
 
 FAI-670 owns ResourceUID allocation, tombstone/restore audit and lifecycle
-qualification. This slice does not assess or change those guarantees.
+qualification. Those guarantees are merged and independently evidenced; this
+slice does not assess or change them.
 Release/deployment/rollback, storage/retention/cleanup, and the exhaustive
 catalog/lineage/audit/metadata/error-surface audit remain outside this extraction.
 Authorization and generation evidence at cache consumers still require the

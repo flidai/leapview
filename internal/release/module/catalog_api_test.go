@@ -72,8 +72,12 @@ func TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters(t *testing.T
 }
 
 func TestManagedConnectionAPIsReceiveAuthenticatedBearerPrincipal(t *testing.T) {
+	auth, err := accessmodule.NewAuth(nil, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "dev", CSRFKey: "0123456789abcdef0123456789abcdef"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	accessSurface, err := accessmodule.Build(t.Context(), accessmodule.Config{
-		ExistingAuth: accessmodule.NewAuth(nil, accessmodule.AuthConfig{DevBypass: true, DevAPIToken: "dev"}),
+		ExistingAuth: auth,
 	})
 	if err != nil {
 		t.Fatalf("build auth surface: %v", err)

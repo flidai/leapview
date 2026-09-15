@@ -82,8 +82,6 @@ const (
 	// read-only without pinning one snapshot. It is reserved for exact commit
 	// marker reconciliation; callers must not use it for serving reads.
 	PostgresCatalogMarkerReadOnly PostgresCatalogMode = "marker_read_only"
-	// PostgresCatalogRecovery is a descriptive alias for marker reconciliation.
-	PostgresCatalogRecovery = PostgresCatalogMarkerReadOnly
 	// PostgresCatalogMigrate is reserved for the fenced catalog upgrade
 	// coordinator. It is never accepted by ordinary AttachSQL/Statements;
 	// callers must use MigrationStatements so AUTOMATIC_MIGRATION=true is an

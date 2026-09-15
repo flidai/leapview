@@ -77,19 +77,6 @@ func (r *Repository) CreatePhysicalPool(ctx context.Context, input physicalpool.
 	return out, err
 }
 
-// CreatePhysicalPoolTx composes pool creation with another capability's
-// caller-owned pgx transaction. It never commits or rolls back tx.
-func (r *Repository) CreatePhysicalPoolTx(ctx context.Context, tx Tx, input physicalpool.PhysicalPool) (physicalpool.PhysicalPool, error) {
-	if tx == nil {
-		return physicalpool.PhysicalPool{}, invalidRepo()
-	}
-	normalized, err := normalizePool(input)
-	if err != nil {
-		return physicalpool.PhysicalPool{}, err
-	}
-	return createPhysicalPoolTx(ctx, tx, normalized)
-}
-
 func createPhysicalPoolTx(ctx context.Context, tx DBTX, normalized physicalpool.PhysicalPool) (physicalpool.PhysicalPool, error) {
 	retention, err := canonicalRetentionJSON(normalized.Identity.RetentionPolicy)
 	if err != nil {
@@ -158,26 +145,6 @@ func (r *Repository) CreateAndAdmit(ctx context.Context, pool physicalpool.Physi
 		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, err
 	}
 	return out, admission, nil
-}
-
-func (r *Repository) CreateAndAdmitTx(ctx context.Context, tx Tx, pool physicalpool.PhysicalPool, evidence physicalpool.Evidence) (physicalpool.PhysicalPool, physicalpool.PoolAdmission, error) {
-	if tx == nil {
-		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, invalidRepo()
-	}
-	normalized, err := normalizePool(pool)
-	if err != nil {
-		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, err
-	}
-	created, err := createPhysicalPoolTx(ctx, tx, normalized)
-	if err != nil {
-		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, err
-	}
-	a, err := admitTx(ctx, tx, created, evidence)
-	if err != nil {
-		return physicalpool.PhysicalPool{}, physicalpool.PoolAdmission{}, err
-	}
-	admitted, err := created.ApplyAdmission(a)
-	return admitted, a, err
 }
 
 // CreateAndAdmitWithOwnership first acquires the conditional marker in the
@@ -263,17 +230,6 @@ func (r *Repository) Admit(ctx context.Context, pool physicalpool.PhysicalPool, 
 		return e
 	})
 	return out, err
-}
-
-func (r *Repository) AdmitTx(ctx context.Context, tx Tx, pool physicalpool.PhysicalPool, evidence physicalpool.Evidence) (physicalpool.PoolAdmission, error) {
-	if tx == nil {
-		return physicalpool.PoolAdmission{}, invalidRepo()
-	}
-	normalized, err := normalizePool(pool)
-	if err != nil {
-		return physicalpool.PoolAdmission{}, err
-	}
-	return admitTx(ctx, tx, normalized, evidence)
 }
 
 func admitTx(ctx context.Context, tx DBTX, normalized physicalpool.PhysicalPool, evidence physicalpool.Evidence) (physicalpool.PoolAdmission, error) {

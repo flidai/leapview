@@ -1,0 +1,9 @@
+proof_consumer:
+  target: dbt-target-production-boundary-proof
+  outputs:
+    dbt-target-production-boundary-proof:
+      type: duckdb
+      path: target/commerce.duckdb
+      schema: commerce
+      threads: 2
+      external_root: ../published/commerce

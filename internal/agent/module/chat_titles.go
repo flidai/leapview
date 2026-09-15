@@ -22,9 +22,9 @@ func (m *Module) generateConversationTitleAsync(scope agent.Scope, conversationI
 		}
 		m.clearChatTitlePending(conversationID)
 		if m.broker != nil {
-			m.broker.Publish(ChatStreamID(scope, clientID), ui.ChatConversationsPatch(
-				m.chatConversations(ctx, scope), conversationID,
-			))
+			conversations := m.chatConversations(ctx, scope)
+			m.broker.Publish(ChatStreamID(scope, clientID), ui.ChatConversationsPatch(conversations, ""))
+			m.broker.Publish(ChatConversationStreamID(scope, clientID, conversationID), ui.ChatConversationsPatch(conversations, conversationID))
 		}
 	}()
 }
@@ -75,4 +75,11 @@ func ChatStreamID(scope agent.Scope, clientID string) string {
 		clientID = "default"
 	}
 	return "chat:" + clientID + ":" + scope.PrincipalID
+}
+
+// ChatConversationStreamID scopes worker updates to the conversation page
+// currently open in a browser. The global ChatStreamID remains available for
+// list and new-chat views.
+func ChatConversationStreamID(scope agent.Scope, clientID, conversationID string) string {
+	return ChatStreamID(scope, clientID) + ":conversation:" + strings.TrimSpace(conversationID)
 }

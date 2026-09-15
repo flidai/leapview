@@ -16,8 +16,9 @@ import (
 // copies, so a context cannot be changed through either input or output
 // values after construction.
 type ReferenceContext struct {
-	byID   map[projectgraph.ResourceID]projectgraph.Resource
-	byName map[string]projectgraph.Resource
+	byID            map[projectgraph.ResourceID]projectgraph.Resource
+	byName          map[string]projectgraph.Resource
+	modelFieldTypes map[projectgraph.ResourceID]map[string]string
 }
 
 // NewReferenceContext builds a resolver from a validated ProjectGraph. The
@@ -44,6 +45,34 @@ func NewReferenceContext(graph projectgraph.ProjectGraph) (ReferenceContext, err
 		context.byName[resource.Name] = resource
 	}
 	return context, nil
+}
+
+// WithModelFieldTypes adds resolved logical field types for semantic contract
+// projection. These come from the validated physical Models after discovery;
+// the returned context is detached from both the caller and the original.
+func (context ReferenceContext) WithModelFieldTypes(reference string, fields map[string]string) (ReferenceContext, error) {
+	id, err := context.ResolveReference(reference, projectgraph.KindModel)
+	if err != nil {
+		return ReferenceContext{}, err
+	}
+	clone := context
+	clone.modelFieldTypes = make(map[projectgraph.ResourceID]map[string]string, len(context.modelFieldTypes)+1)
+	for modelID, values := range context.modelFieldTypes {
+		copyValues := make(map[string]string, len(values))
+		for name, datatype := range values {
+			copyValues[name] = datatype
+		}
+		clone.modelFieldTypes[modelID] = copyValues
+	}
+	copyFields := make(map[string]string, len(fields))
+	for name, datatype := range fields {
+		if !validProjectionIdentifier(name) || !validProjectionDatatypeName(datatype) {
+			return ReferenceContext{}, fmt.Errorf("model %q has invalid field type for %q", reference, name)
+		}
+		copyFields[name] = datatype
+	}
+	clone.modelFieldTypes[id] = copyFields
+	return clone, nil
 }
 
 // ResolveReference resolves one authored reference and verifies its expected

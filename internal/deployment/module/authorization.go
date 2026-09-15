@@ -28,13 +28,6 @@ func (m *Module) publicationAuthorizer(config PublicationAuthorizationConfig) fu
 	}
 }
 
-func (m *Module) AuthorizePublicationDeployment(ctx context.Context, actor, environment, generationID string) error {
-	if m == nil || m.jobs.Authorize == nil {
-		return nil
-	}
-	return m.jobs.Authorize(ctx, actor, environment, generationID)
-}
-
 func authorizePublicationDeployment(ctx context.Context, actor, environment, generationID string, config PublicationAuthorizationConfig) error {
 	environmentValue := servingstate.Environment(environment)
 	if environmentValue != servingstate.Environment("prod") {

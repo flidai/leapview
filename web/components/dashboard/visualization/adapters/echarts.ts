@@ -115,6 +115,7 @@ export class EChartsHandle implements RendererHandle {
   private readiness: Promise<void> = Promise.resolve()
   private readinessAbort?: AbortController
   private compactLayout?: boolean
+  private compactWidth = 0
   private lastWidth = 0
   private lastHeight = 0
   private dataZoomInitialized = false
@@ -168,8 +169,12 @@ export class EChartsHandle implements RendererHandle {
   }
 
   resize(width: number, height: number): void {
-    this.chart.resize({ width, height, silent: true })
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return
+    // Deferred hosts can report their initial 0×0 layout before the renderer
+    // frame has entered the document. ECharts' hierarchy layouts assume a
+    // positive viewport and can dereference a missing layout slot during that
+    // resize. Keep the pending observer resize for the next valid frame.
+    this.chart.resize({ width, height, silent: true })
     this.lastWidth = width
     this.lastHeight = height
     this.applyResponsiveLayout(false)
@@ -180,7 +185,8 @@ export class EChartsHandle implements RendererHandle {
     const envelope = this.envelope
     if (!envelope || !this.context || this.lastWidth <= 0 || this.lastHeight <= 0) return
     const compact = this.lastWidth < 480 || this.lastHeight < 280
-    if (!force && compact === this.compactLayout) return
+    if (!force && compact === this.compactLayout && (!compact || this.compactWidth === this.lastWidth)) return
+    this.compactWidth = this.lastWidth
     this.compactLayout = compact
     const patch = responsiveEChartsPatch(echartsOption(envelope, this.context, this.categoryColors) as Record<string, any>, this.lastWidth, this.lastHeight)
     if (patch.dataZoom !== undefined) patch.dataZoom = overlayDataZoomNavigation(patch.dataZoom, this.captureViewState().dataZoom)

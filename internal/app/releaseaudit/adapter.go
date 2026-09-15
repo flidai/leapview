@@ -12,13 +12,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	"github.com/jackc/pgx/v5"
 )
 
 // Adapter is stateless and safe to share between release requests.
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ releasepostgres.AuditAppender = (*Adapter)(nil)
@@ -27,23 +28,23 @@ var _ releasepostgres.AuditAppender = (*Adapter)(nil)
 // NewWithRepository binds the adapter to the exact Access audit authority
 // allocated by application composition.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // Matches proves this adapter retains the exact Access audit repository
 // supplied by application composition rather than a sibling allocation.
 func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
-	return a != nil && a.audit != nil && a.audit == audit
+	return a != nil && a.authority.Matches(audit)
 }
 
 // RecordAuditEvent appends and reads back the canonical audit intent using the
 // exact transaction supplied by Release. It never begins, commits, or rolls
 // back the transaction itself.
 func (a *Adapter) RecordAuditEvent(ctx context.Context, tx releasepostgres.Tx, intent access.AuditIntent) (releasepostgres.AuditEvent, error) {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return releasepostgres.AuditEvent{}, fmt.Errorf("release audit adapter is not configured")
 	}
-	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	stored, err := a.authority.Record(ctx, tx, intent)
 	if err != nil {
 		if errors.Is(err, access.ErrAuditIntentConflict) || errors.Is(err, pgx.ErrNoRows) {
 			return releasepostgres.AuditEvent{}, fmt.Errorf("%w: release audit identity differs", releasepostgres.ErrConflict)

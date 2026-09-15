@@ -6,7 +6,7 @@ test('product search waits for an asset query instead of returning navigation sh
   const service = new ProductSearchService((async () => {
     requests += 1
     throw new Error('empty search must not fetch')
-  }) as typeof fetch)
+  }) as unknown as typeof fetch)
 
   const results = await service.search('')
 

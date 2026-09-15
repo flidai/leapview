@@ -895,20 +895,6 @@ func (c *CompiledModel) ResolvePhysicalModelName(name string) (string, error) {
 	return "", fmt.Errorf("unknown model dependency %q", name)
 }
 
-// ForEachDataset iterates detached compiled bindings in stable alias order.
-func (c *CompiledModel) ForEachDataset(fn func(CompiledDataset) error) error {
-	if fn == nil {
-		return fmt.Errorf("dataset iterator is required")
-	}
-	for _, name := range c.DatasetNames() {
-		dataset, _ := c.dataset(name)
-		if err := fn(dataset); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // CompiledModel returns the activation-owned immutable semantic graph.
 func (p *Planner) CompiledModel() *CompiledModel {
 	if p == nil {

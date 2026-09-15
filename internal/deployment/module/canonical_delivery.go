@@ -1,27 +1,9 @@
 package module
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
-
 	"github.com/flidai/leapview/internal/deployment"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
-
-// CanonicalDeliveryPlanID returns the stable plan identity bound to one target,
-// project, environment, operation, and caller idempotency key. Recovery paths
-// use the same identity to distinguish their own committed restatement from an
-// unrelated publication that advanced the target concurrently.
-func CanonicalDeliveryPlanID(targetID string, projectID projectgraph.ResourceID, environment string, operation deployment.DeliveryOperationKind, idempotencyKey string) string {
-	return "plan-" + digestID(strings.Join([]string{targetID, projectID.String(), environment, string(operation), idempotencyKey}, "\x00"))
-}
-
-func digestID(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
-}
 
 // EffectiveCandidateArtifacts applies the durable plan's reuse disposition to
 // the inspected artifact set before native physical materialization begins. An

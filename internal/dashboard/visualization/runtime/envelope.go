@@ -57,12 +57,6 @@ func FrameFromRecords(definition visualizationdefinition.Definition, records []m
 	return Frame{Columns: columns, Rows: rows}, nil
 }
 
-// SelectionEntriesFromDefinition projects canonical dashboard selection state
-// into renderer-independent DatumRef values.
-func SelectionEntriesFromDefinition(definition visualizationdefinition.Definition, entries []dashboard.InteractionSelectionEntry, dataRevision int64) ([]ir.VisualizationSelectionEntry, error) {
-	return compiledSelections(definition.Spec, entries, dataRevision)
-}
-
 // EnvelopeFromFrame creates the canonical inline renderer boundary directly
 // from a compiled query frame. No legacy visual presentation DTO participates
 // in this path.
@@ -292,6 +286,10 @@ func WindowEnvelopeFromDefinition(definition visualizationdefinition.Definition,
 	if table.Sort.Key == "" {
 		table.Sort.Key = schema.Fields[0].ID
 	}
+	rowCap := int64(table.RowCap)
+	if rowCap <= 0 {
+		rowCap = dashboard.TableInteractiveRowCap
+	}
 	sortValue := ir.VisualizationSort{Field: ir.VisualizationFieldRef{Dataset: definition.Query.DatasetID, Field: table.Sort.Key}, Direction: sortDirection(table.Sort.Direction)}
 	blocks := make(map[string]ir.VisualizationWindowBlock, len(table.Blocks))
 	fieldNames := make([]string, len(schema.Fields))
@@ -324,7 +322,7 @@ func WindowEnvelopeFromDefinition(definition visualizationdefinition.Definition,
 	}
 	state := ir.WindowedVisualizationDataState{
 		VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "windowed", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
-		Kind:                       "windowed", Schema: schema, Cardinality: cardinality, AvailableRows: int64(table.AvailableRows), RowCap: base.DataBudget.MaxRows,
+		Kind:                       "windowed", Schema: schema, Cardinality: cardinality, AvailableRows: int64(table.AvailableRows), RowCap: rowCap,
 		ChunkSize: int64(max(table.ChunkSize, dashboard.TableChunkSize)), ResetVersion: int64(table.ResetVersion), Sort: []ir.VisualizationSort{sortValue}, Blocks: blocks,
 	}
 	message := table.Error
@@ -427,7 +425,7 @@ func EmptyEnvelopeFromDefinition(definition visualizationdefinition.Definition, 
 		state := ir.WindowedVisualizationDataState{
 			VisualizationDataStateBase: ir.VisualizationDataStateBase{Kind: "windowed", SpecRevision: definition.SpecRevision, DataRevision: dataRevision, Generation: generation},
 			Kind:                       "windowed", Schema: schema, Cardinality: ir.VisualizationCardinality{Kind: ir.VisualizationCardinalityKindUnknown},
-			AvailableRows: 0, RowCap: base.DataBudget.MaxRows, ChunkSize: dashboard.TableChunkSize, ResetVersion: resetVersion,
+			AvailableRows: 0, RowCap: dashboard.TableInteractiveRowCap, ChunkSize: dashboard.TableChunkSize, ResetVersion: resetVersion,
 			Sort: sort, Blocks: map[string]ir.VisualizationWindowBlock{},
 		}
 		envelope.DataState = ir.VisualizationDataState{Value: &state}

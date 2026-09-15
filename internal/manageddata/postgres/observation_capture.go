@@ -17,14 +17,23 @@ import (
 )
 
 const (
-	providerObservationPageSize          int32 = 128
-	providerObservationMaxDuration             = 30 * time.Second
-	providerObservationMaxManifestBytes        = 1 << 20
-	providerObservationRollbackTimeout         = time.Second
-	providerObservationMaxRevisions            = 4096
-	providerObservationMaxRevisionFiles        = 4096
-	providerObservationMaxObjects              = 16384
-	providerObservationMaxInventoryBytes       = 8 << 20
+	providerObservationPageSize         int32 = 128
+	providerObservationMaxDuration            = 30 * time.Second
+	providerObservationMaxManifestBytes       = 1 << 20
+	providerObservationRollbackTimeout        = time.Second
+	providerObservationMaxRevisions           = 4096
+	providerObservationMaxRevisionFiles       = manageddata.MaxManifestFiles
+	providerObservationMaxObjects             = providerObservationMaxRevisions * providerObservationMaxRevisionFiles
+	// This is intentionally larger than the managed-data manifest budget. The
+	// captured inventory repeats storage keys and ownership identities that are
+	// not present in the admitted manifest. The estimate below is based on the
+	// PostgreSQL schema's legal widths: project/collection IDs (255 each),
+	// operational revision IDs (160), manifest digests (71), logical paths
+	// (1024), storage keys (2048), and SHA-256 digests (64). A 256 MiB document
+	// budget covers one hard-limit revision at that conservative six-byte
+	// escaping multiplier while keeping the cluster-wide capture bounded.
+	providerObservationMaxRevisionBytes  = 6*(255+255+160+71) + 128 + manageddata.MaxManifestFiles*(6*(1024+64+2048)+128)
+	providerObservationMaxInventoryBytes = 256 << 20
 )
 
 type capturedProjectionFile = manageddata.CapturedProjectionFile
@@ -224,7 +233,7 @@ func captureProviderObservationInventory(ctx context.Context, queries *manageddb
 		}
 		for _, row := range rows {
 			if len(inventory) >= providerObservationMaxRevisions {
-				return nil, fmt.Errorf("%w: ready revision count exceeds capture limit", ErrInvalid)
+				return nil, fmt.Errorf("%w: ready revision count exceeds capture limit", ErrCaptureLimit)
 			}
 			if row.FileCount > int64(providerObservationMaxRevisionFiles) {
 				return nil, fmt.Errorf("%w: revision %q file count exceeds capture limit", ErrInvalid, row.RevisionID)
@@ -235,11 +244,11 @@ func captureProviderObservationInventory(ctx context.Context, queries *manageddb
 			}
 			totalFiles += count
 			if totalFiles > providerObservationMaxObjects {
-				return nil, fmt.Errorf("%w: managed-data file count exceeds capture limit", ErrInvalid)
+				return nil, fmt.Errorf("%w: managed-data file count exceeds capture limit", ErrCaptureLimit)
 			}
 			revisionBytes := providerObservationRevisionBytes(revision)
 			if revisionBytes > providerObservationMaxInventoryBytes-inventoryBytes {
-				return nil, fmt.Errorf("%w: managed-data inventory exceeds capture limit", ErrInvalid)
+				return nil, fmt.Errorf("%w: managed-data inventory exceeds capture limit", ErrCaptureLimit)
 			}
 			inventory = append(inventory, revision)
 			inventoryBytes += revisionBytes

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -201,16 +202,6 @@ func (r *Repository) TransactionCapable() bool {
 	}
 	_, ok := r.db.(beginner)
 	return ok
-}
-
-// QuarantineMarkerTx persists immutable marker-anomaly evidence through a
-// caller-owned transaction. Exact replay is idempotent; changed evidence for
-// the same pool/catalog/attempt key returns ErrConflict.
-func (r *Repository) QuarantineMarkerTx(ctx context.Context, tx Tx, in MarkerQuarantineInput) (MarkerQuarantine, error) {
-	if r == nil || tx == nil {
-		return MarkerQuarantine{}, ErrInvalid
-	}
-	return QuarantineMarker(ctx, tx, in)
 }
 
 // QuarantineMarker records an anomaly observed while reconciling one external
@@ -865,13 +856,11 @@ func validMarkerQuarantineReason(reason MarkerQuarantineReason) bool {
 func sameMarkerQuarantine(got MarkerQuarantine, in MarkerQuarantineInput, canonicalEvidenceJSON string) bool {
 	if got.PhysicalPoolID != in.PhysicalPoolID || got.CatalogID != in.CatalogID || got.AttemptID != in.AttemptID ||
 		got.RequestDigest != in.RequestDigest || got.PlanDigest != in.PlanDigest || got.Reason != in.Reason ||
-		got.ObservedMarkerDigest != in.ObservedMarkerDigest || len(got.ObservedSnapshotIDs) != len(in.ObservedSnapshotIDs) {
+		got.ObservedMarkerDigest != in.ObservedMarkerDigest {
 		return false
 	}
-	for i := range got.ObservedSnapshotIDs {
-		if got.ObservedSnapshotIDs[i] != in.ObservedSnapshotIDs[i] {
-			return false
-		}
+	if !slices.Equal(got.ObservedSnapshotIDs, in.ObservedSnapshotIDs) {
+		return false
 	}
 	return evidenceEqual(got.Evidence, canonicalEvidenceJSON)
 }

@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
-import { testDocument } from './dashboard-page-test-fixtures'
+import { evaluateAcrossContextTurnover, testDocument } from './dashboard-page-test-fixtures'
 
 let server: Server
 let baseURL = ''
@@ -72,6 +72,107 @@ test('reopening an active agent drawer refocuses the composer and preserves retu
   } finally { await page.close() }
 })
 
+test('dashboard agent reads fresh signal state between render cycles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer'))
+    const observed = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-one' } })
+      await drawer.updateComplete
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      // The signal patch schedules Lit asynchronously. Reads made by event
+      // handlers in this gap must not reuse the previous render snapshot.
+      return drawer.agent.activeConversationId
+    })
+    expect(observed).toBe('conversation-two')
+  } finally { await page.close() }
+})
+
+test('dashboard agent clears draft and references when the active conversation changes', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({
+        agent: {
+          activeConversationId: 'conversation-one',
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask' },
+        },
+      })
+      const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      drawer.openDrawer()
+      await drawer.updateComplete
+      drawer.openWithReference({
+        reference: { kind: 'visual', id: 'sales.orders' },
+        name: 'Orders',
+        hierarchy: ['Sales'],
+        href: '/dashboards/sales/pages/overview',
+        locations: [],
+        context: ['current_page'],
+      })
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
+      composer.setDraft('Keep this draft')
+      await composer.updateComplete
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      await drawer.updateComplete
+      await composer.updateComplete
+      return {
+        draft: composer.shadowRoot.querySelector('textarea')?.value,
+        references: composer.references.length,
+      }
+    })
+    expect(state).toEqual({ draft: '', references: 0 })
+  } finally { await page.close() }
+})
+
+test('dashboard agent clears a closed draft without stealing focus on conversation switch', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-drawer') && customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const runtime = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      runtime.mergePatch({
+        agent: {
+          activeConversationId: 'conversation-one',
+          status: { enabled: true, running: false },
+          composer: { value: '', disabled: false, placeholder: 'Ask' },
+        },
+      })
+      const root = element.shadowRoot as ShadowRoot
+      const drawer = root.querySelector('lv-chat-drawer') as any
+      const trigger = root.querySelector('.agent-toggle') as HTMLButtonElement
+      await drawer.updateComplete
+      drawer.openDrawer()
+      await drawer.updateComplete
+      const composer = drawer.shadowRoot.querySelector('lv-chat-composer') as any
+      composer.setDraft('Keep this draft')
+      await composer.updateComplete
+      drawer.open = false
+      await drawer.updateComplete
+      trigger.focus()
+
+      runtime.mergePatch({ agent: { activeConversationId: 'conversation-two' } })
+      await drawer.updateComplete
+      await composer.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return {
+        draft: composer.shadowRoot.querySelector('textarea')?.value,
+        drawerOpen: drawer.open,
+        focusOutsideDrawer: root.activeElement === trigger,
+      }
+    })
+    expect(state).toEqual({ draft: '', drawerOpen: false, focusOutsideDrawer: true })
+  } finally { await page.close() }
+})
+
 test('dashboard agent drawer carries page context and explicit visual references', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -129,7 +230,8 @@ test('dashboard agent drawer carries page context and explicit visual references
         expandLeft: expand.getBoundingClientRect().left,
         askActionRow: ask.assignedSlot?.parentElement?.className,
         kpiAskActionRow: kpiAsk.assignedSlot?.parentElement?.className,
-        tableAskActionRow: tableAsk.assignedSlot?.parentElement?.className,
+        tableAskActionRow: tableAsk.assignedSlot?.assignedSlot?.parentElement?.className,
+        tableActionCenters: [tableAsk, tableExpand, tableOptions].map(item => item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2),
         tableAskLeft: tableAsk.getBoundingClientRect().left,
         tableAskRight: tableAsk.getBoundingClientRect().right,
         tableExpandLeft: tableExpand.getBoundingClientRect().left,
@@ -142,6 +244,12 @@ test('dashboard agent drawer carries page context and explicit visual references
           && drawer.shadowRoot.querySelector('.title svg')?.innerHTML === agentIconMarkup,
         chartAction: expand.getAttribute('aria-label'),
         tableHasExpand: Boolean(table.shadowRoot.querySelector('[data-visualization-expand]')),
+        zoomedTableActionHeights: await (async () => {
+          const surface = root.querySelector('lv-report-canvas').shadowRoot.querySelector('.surface') as HTMLElement
+          surface.style.cssText += `--report-canvas-scale:.47;--report-canvas-inverse-scale:${1 / .47}`
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          return [tableAsk, tableExpand, tableOptions].map(item => item.getBoundingClientRect().height)
+        })(),
       }
     })
     expect(visualActionsAtRest).toMatchObject({
@@ -157,10 +265,12 @@ test('dashboard agent drawer carries page context and explicit visual references
       chartAction: 'Expand chart',
       tableHasExpand: false,
     })
+    expect(Math.max(...visualActionsAtRest.tableActionCenters) - Math.min(...visualActionsAtRest.tableActionCenters)).toBeLessThanOrEqual(1)
     expect(visualActionsAtRest.tableAskRight).toBeLessThanOrEqual(visualActionsAtRest.tableExpandLeft)
     expect(visualActionsAtRest.tableExpandLeft - visualActionsAtRest.tableAskRight).toBeGreaterThanOrEqual(4)
     expect(visualActionsAtRest.tableExpandRight).toBeLessThanOrEqual(visualActionsAtRest.tableOptionsLeft)
     expect(visualActionsAtRest.tableRight - visualActionsAtRest.tableOptionsRight).toBe(8)
+    for (const height of visualActionsAtRest.zoomedTableActionHeights) expect(height).toBeGreaterThanOrEqual(31)
 
     await page.locator('lv-dashboard-visual-frame[data-visual-id="orders_chart"]').hover()
     const visualActionsOnHover = await page.locator('lv-dashboard-page').evaluate((element: any) => {
@@ -602,4 +712,32 @@ test('dashboard agent restores its open state and active conversation after relo
   } finally {
     await page.close()
   }
+})
+
+
+test('side agent keeps the composer visible and starter prompts never submit automatically', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 650 } })
+  try {
+    await page.goto(baseURL)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agent: { transcript: [], status: { enabled: true, running: false }, composer: { value: '', disabled: false, placeholder: 'Ask' } } })
+      ;(window as any).sideSubmits = 0
+      document.addEventListener('lv-chat-submit', () => (window as any).sideSubmits++)
+    })
+    await page.locator('.agent-toggle').click()
+    const drawer = page.locator('lv-chat-drawer[open]')
+    await drawer.getByRole('button', { name: 'Summarize the key takeaways on this page.', exact: true }).click()
+    expect(await drawer.locator('textarea').inputValue()).toBe('Summarize the key takeaways on this page.')
+    expect(await page.evaluate(() => (window as any).sideSubmits)).toBe(0)
+    const geometry = await drawer.evaluate(element => ({ bottom: element.getBoundingClientRect().bottom, composerBottom: element.shadowRoot!.querySelector('lv-chat-composer')!.getBoundingClientRect().bottom, viewport: innerHeight }))
+    expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewport + 1)
+    expect(geometry.composerBottom).toBeLessThanOrEqual(geometry.viewport + 1)
+    await evaluateAcrossContextTurnover(page, () => page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ agentTurnPending: true })
+    }))
+    expect(await drawer.getByRole('button', { name: 'New chat', exact: true }).isDisabled()).toBe(true)
+    await drawer.getByRole('status').filter({ hasText: 'Working' }).waitFor()
+  } finally { await page.close() }
 })

@@ -23,6 +23,11 @@ type Manifest struct {
 	Files []File `json:"files"`
 }
 
+// MaxManifestFiles is the hard upper bound shared by managed-data transport
+// admission and recovery observation capture. Configured limits may be lower,
+// but no production ingress path may admit a revision above this bound.
+const MaxManifestFiles = 10_000
+
 type Limits struct {
 	MaxFiles         int
 	MaxFileBytes     int64

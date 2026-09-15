@@ -7,27 +7,27 @@ metadata:
   description: Customer Model with stable BI-facing customer fields.
 spec:
   fields:
-    customer_id:
+    - name: customer_id
       datatype: String
       label: Customer ID
       description: Stable customer identifier from the Olist customers dataset.
-    state:
+    - name: state
       datatype: String
       label: State
       description: Brazilian state for the customer.
-    zip_prefix:
+    - name: zip_prefix
       datatype: String
       label: ZIP prefix
       description: Stable five-digit Brazilian ZIP-code prefix used for map aggregation and selection.
-    city:
+    - name: city
       datatype: String
       label: City
       description: Customer city supplied by Olist.
-    latitude:
+    - name: latitude
       datatype: Float
       label: Latitude
       description: Canonical latitude joined from the Olist ZIP geolocation dataset.
-    longitude:
+    - name: longitude
       datatype: Float
       label: Longitude
       description: Canonical longitude joined from the Olist ZIP geolocation dataset.
@@ -45,7 +45,7 @@ spec:
       LEFT JOIN model.zip_geolocations g
         ON g.zip_prefix = printf('%05d', try_cast(c.customer_zip_code_prefix AS INTEGER))
   entities:
-    customer:
+    - name: customer
       type: primary
       fields:
       - customer_id

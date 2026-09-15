@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import * as echarts from 'echarts'
 
-import type { VisualizationEnvelope } from '../../../../generated/visualization'
+import type { InlineVisualizationDataState, VisualizationEnvelope } from '../../../../generated/visualization'
 import { defaultRendererContext } from '../host-controller'
 import { brushSelectionCommands, echartsOption } from './echarts'
 import { CategoryColorRegistry } from './echarts/category-colors'
@@ -39,6 +39,36 @@ test('ECharts point axis visibility hides axes and restores native defaults with
   }
 })
 
+test('ECharts reserves boundary room for point symbols on continuous axes', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.xAxis.boundaryGap).toEqual(['5%', '5%'])
+  expect(option.yAxis.boundaryGap).toEqual(['5%', '5%'])
+})
+
+test('ECharts keeps explicit point axis bounds alongside symbol room', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+  envelope.spec.axes = [
+    { id: 'x', minimum: 1, maximum: 4 },
+    { id: 'primary_y', minimum: 1, maximum: 4 },
+  ]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.xAxis).toMatchObject({ min: 1, max: 4, boundaryGap: ['5%', '5%'] })
+  expect(option.yAxis).toMatchObject({ min: 1, max: 4, boundaryGap: ['5%', '5%'] })
+})
+
 test('ECharts renders deterministic categorical scatter legends without changing source rows', () => {
   const envelope = pointCategoricalFixture([
     ['p-empty', '', 2, 20],
@@ -46,7 +76,7 @@ test('ECharts renders deterministic categorical scatter legends without changing
     ['p-b', 'B', 3, 30],
     ['p-a', 'A', 4, 40],
   ])
-  const source = structuredClone(envelope.dataState.datasets[0])
+  const source = structuredClone((envelope.dataState as InlineVisualizationDataState).datasets[0])
   const option = echartsOption(envelope, defaultRendererContext) as any
 
   expect(option.legend).toMatchObject({ data: ['(null)', '(empty)', 'A', 'B'], selectedMode: 'multiple' })
@@ -57,13 +87,13 @@ test('ECharts renders deterministic categorical scatter legends without changing
   expect(option.dataset.slice(1).map((dataset: any) => dataset.transform.config['='])).toEqual([null, '', 'A', 'B'])
 
   const reordered = structuredClone(envelope)
-  reordered.dataState.datasets[0].rows.reverse()
+  ;(reordered.dataState as InlineVisualizationDataState).datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered, defaultRendererContext, new CategoryColorRegistry()) as any
   expect(reorderedOption.legend.data).toEqual(option.legend.data)
   expect(reorderedOption.series.map((series: any) => series.name)).toEqual(option.series.map((series: any) => series.name))
   for (const category of option.series) {
     const same = reorderedOption.series.find((candidate: any) => candidate.name === category.name)
-    const row = envelope.dataState.datasets[0].rows[category.__lv_source_row_indices[0]]
+    const row = (envelope.dataState as InlineVisualizationDataState).datasets[0].rows[category.__lv_source_row_indices[0]]
     expect(same.itemStyle.color({ value: row })).toBe(category.itemStyle.color({ value: row }))
   }
 
@@ -111,10 +141,16 @@ test('ECharts gives point mark fill precedence over categorical colors and honor
   const dark = { ...defaultRendererContext, theme: 'dark' as const, colors: { ...defaultRendererContext.colors, danger: '#ff7b72', attention: '#d29922', success: '#56d364' } }
   for (const context of [defaultRendererContext, dark]) {
     const option = echartsOption(envelope, context) as any
-    const byName = new Map(option.series.map((series: any) => [series.name, series]))
-    const canceled = byName.get('canceled')
-    const ok = byName.get('ok')
-    const missing = byName.get('(null)')
+    type PointSeries = {
+      name: string
+      itemStyle: { color: (params: { value: unknown[] }) => string }
+      symbol: (data: unknown[]) => string
+      symbolRotate: (data: unknown[]) => number
+    }
+    const byName = new Map<string, PointSeries>(option.series.map((series: PointSeries) => [series.name, series]))
+    const canceled = byName.get('canceled')!
+    const ok = byName.get('ok')!
+    const missing = byName.get('(null)')!
     expect(canceled.itemStyle.color({ value: ['p-canceled', 'canceled', 2, 20] })).toBe(context.colors.danger)
     expect(ok.itemStyle.color({ value: ['p-ok', 'ok', 1, 10] })).toBe(context.colors.success)
     expect(missing.itemStyle.color({ value: ['p-null', null, 3, 30] })).toBe(context.colors.attention)
@@ -140,6 +176,50 @@ test('ECharts disables large scatter mode when conditional fill needs per-point 
   expect(option.series[0].itemStyle.color({ value: ['p-1', 'ok', 1, 10] })).toBe('rgb(147 65 76)')
 })
 
+test('ECharts disables large scatter mode when variable colors, sizes, labels, or highlights need datum styling', () => {
+  const cases: Array<{ configure: (envelope: any) => void; reason: string }> = [
+    {
+      reason: 'quantitative colors',
+      configure: (envelope) => {
+        envelope.spec.color = { dataset: 'primary', field: 'y' }
+        envelope.spec.colorScale = { kind: 'quantitative' }
+      },
+    },
+    {
+      reason: 'bubble sizes',
+      configure: (envelope) => {
+        envelope.spec.size = { dataset: 'primary', field: 'x' }
+        envelope.spec.sizeScale = { minimumPixels: 4, maximumPixels: 16 }
+      },
+    },
+    {
+      reason: 'labels',
+      configure: (envelope) => {
+        envelope.spec.label = { dataset: 'primary', field: 'id' }
+        envelope.spec.presentation.labelPolicy = { density: 'always', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }
+      },
+    },
+    {
+      reason: 'highlights',
+      configure: (envelope) => {
+        envelope.highlights = [{
+          sourceVisualID: 'source', interactionID: 'selection', label: 'A',
+          entries: [{ label: 'A', mappings: [{ targetFieldID: 'id', targetDatasetID: 'primary', value: 'p-1', label: 'p-1' }] }],
+        }]
+      },
+    },
+  ]
+
+  for (const testCase of cases) {
+    const envelope = pointCategoricalFixture([['p-1', 'ok', 1, 10], ['p-2', 'ok', 2, 20]]) as any
+    envelope.spec.presentation.brush = []
+    envelope.spec.presentation.largeMode = 'always'
+    testCase.configure(envelope)
+    const option = echartsOption(envelope, defaultRendererContext) as any
+    expect(option.series[0].large, testCase.reason).toBe(false)
+  }
+})
+
 test('ECharts partitions large categorical scatter frames without losing source identity', () => {
   const rows = Array.from({ length: 5_000 }, (_, index) => [`p-${index}`, `category-${index % 5}`, index, index * 2])
   const envelope = pointCategoricalFixture(rows) as any
@@ -152,6 +232,15 @@ test('ECharts partitions large categorical scatter frames without losing source 
   expect(option.series.every((series: any) => series.large === true)).toBe(true)
   expect(option.series.flatMap((series: any) => series.__lv_source_row_indices).sort((a: number, b: number) => a - b)).toEqual(Array.from({ length: 5_000 }, (_, index) => index))
   expect(option.dataset[0].source).toHaveLength(5_001)
+
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    chart.setOption(option, { notMerge: true, lazyUpdate: false })
+    const model = (chart as any).getModel()
+    expect(Array.from({ length: 5 }, (_, index) => model.getSeriesByIndex(index).pipelineContext.large)).toEqual([true, true, true, true, true])
+  } finally {
+    chart.dispose()
+  }
 })
 
 test('ECharts accepts canonical decimal strings for quantitative point color domains and size', () => {
@@ -250,6 +339,44 @@ test('ECharts reports field-specific diagnostics for out-of-range canonical deci
   }
 })
 
+test('ECharts keeps point symbols inside the grid when continuous values reach both extents', () => {
+  const envelope = pointCategoricalFixture([
+    ['p-min', 'A', 0, 0],
+    ['p-max', 'A', 5, 5],
+  ]) as any
+  envelope.spec.presentation.brush = []
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const chart = echarts.init(null, null, { renderer: 'svg', ssr: true, width: 640, height: 320 })
+  try {
+    const rawOption = { ...option, xAxis: { ...option.xAxis, boundaryGap: undefined }, yAxis: { ...option.yAxis, boundaryGap: undefined } }
+    const bounds = (current: any) => {
+      chart.setOption(current, { notMerge: true, lazyUpdate: false })
+      chart.renderToSVGString()
+      const list = chart.getZr().storage.getDisplayList()
+      const rect = (chart as any).getModel().getComponent('grid').coordinateSystem.getRect()
+      const symbols = list
+        .filter((item: any) => item.type === 'path' && item.shape?.symbolType === 'circle' && item.shape.width <= 2)
+        .map((item: any) => {
+          const [scaleX, , scaleY, , translateX, translateY] = item.transform
+          const left = translateX + item.shape.x * scaleX
+          const right = translateX + (item.shape.x + item.shape.width) * scaleX
+          const top = translateY + item.shape.y * scaleY
+          const bottom = translateY + (item.shape.y + item.shape.height) * scaleY
+          return { left: Math.min(left, right), right: Math.max(left, right), top: Math.min(top, bottom), bottom: Math.max(top, bottom) }
+        })
+      return { rect, symbols }
+    }
+    const raw = bounds(rawOption)
+    expect(raw.symbols.some((symbol: any) => symbol.left < raw.rect.x || symbol.right > raw.rect.x + raw.rect.width || symbol.top < raw.rect.y || symbol.bottom > raw.rect.y + raw.rect.height)).toBe(true)
+
+    const padded = bounds(option)
+    expect(padded.symbols).toHaveLength(2)
+    expect(padded.symbols.every((symbol: any) => symbol.left >= padded.rect.x && symbol.right <= padded.rect.x + padded.rect.width && symbol.top >= padded.rect.y && symbol.bottom <= padded.rect.y + padded.rect.height)).toBe(true)
+  } finally {
+    chart.dispose()
+  }
+})
+
 function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {
   return {
     schemaVersion: 9, visualID: 'point-categories', rendererID: 'echarts', specRevision: 'sha256:point-categories', dataRevision: 1,
@@ -262,13 +389,13 @@ function pointCategoricalFixture(rows: unknown[][]): VisualizationEnvelope {
         { id: 'y', role: 'metric', dataType: 'decimal', nullable: false, label: 'Y' },
       ] }],
       dataBudget: { maxRows: 5_000, requiredCompleteness: 'complete' },
-      accessibility: { title: 'Point categories', description: 'Point categories' }, interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: ['details'], mappings: [{ source: { dataset: 'primary', field: 'id' }, targetFieldID: 'orders.id', targetDatasetID: 'orders' }] }],
+      accessibility: { title: 'Point categories', description: 'Point categories' }, interactions: [{ id: 'point_selection', kind: 'select', mode: 'multiple', requiresStableIdentity: true, targets: [{ visualID: 'details', effect: 'filter' }], mappings: [{ source: { dataset: 'primary', field: 'id' }, targetFieldID: 'orders.id', targetDatasetID: 'orders' }] }],
       identity: [{ dataset: 'primary', field: 'id' }], x: { dataset: 'primary', field: 'x' }, y: { dataset: 'primary', field: 'y' },
       color: { dataset: 'primary', field: 'category' }, colorScale: { kind: 'categorical' },
       presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, overplot: 'show_all', opacity: 1, largeMode: 'never', largeThreshold: 1000, brush: ['rectangle'] },
     },
     dataState: { kind: 'inline', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, datasets: [{ id: 'primary', specRevision: 'sha256:point-categories', dataRevision: 1, generation: 1, columns: ['id', 'category', 'x', 'y'], rows, completeness: rows.length ? 'complete' : 'empty' }] },
-    selection: [], status: { kind: 'ready' }, diagnostics: [],
+    selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [],
   } as VisualizationEnvelope
 }
 

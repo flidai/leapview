@@ -537,7 +537,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.ResourceKind != "dashboard" || event.ResourceID != "created-dashboard" || event.Capability != access.CapabilityResourceEdit || event.CorrelationID != "corr-1" {
+	if event.ProjectID != "sales" || event.ResourceKind != "dashboard" || event.ResourceID != "created-dashboard" || event.Capability != access.CapabilityResourceEdit || event.CorrelationID != "corr-1" {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"file"`) || !strings.Contains(event.MetadataJSON, `"draftId":"created-draft"`) {
@@ -558,7 +558,7 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.ResourceKind != "dashboard" || event.ResourceID != "dash-command" || event.Capability != access.CapabilityResourcePublish {
+	if event.ProjectID != "sales" || event.ResourceKind != "dashboard" || event.ResourceID != "dash-command" || event.Capability != access.CapabilityResourcePublish {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"agent"`) || !strings.Contains(event.MetadataJSON, `"draftId":"draft-command"`) {
@@ -595,7 +595,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		t.Fatalf("audit count = %d, want 1", len(app.audits))
 	}
 	event := app.audits[0]
-	if event.ResourceKind != "dashboard" || event.ResourceID != "forked-dashboard" || event.Capability != access.CapabilityResourceEdit {
+	if event.ProjectID != "target" || event.ResourceKind != "dashboard" || event.ResourceID != "forked-dashboard" || event.Capability != access.CapabilityResourceEdit {
 		t.Fatalf("audit identity = %#v", event)
 	}
 	if !strings.Contains(event.MetadataJSON, `"origin":"file"`) || !strings.Contains(event.MetadataJSON, `"draftId":"forked-draft"`) {

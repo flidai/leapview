@@ -2513,11 +2513,8 @@ func validateWindowedState(state WindowedVisualizationDataState, budget Visualiz
 	if err := validateSchema(state.Schema); err != nil {
 		return err
 	}
-	if state.AvailableRows < 0 || state.RowCap <= 0 || state.ChunkSize <= 0 || state.ResetVersion < 0 {
+	if state.AvailableRows < 0 || state.AvailableRows > state.RowCap || state.RowCap <= 0 || state.ChunkSize <= 0 || state.ResetVersion < 0 {
 		return fmt.Errorf("invalid window bounds")
-	}
-	if state.RowCap > budget.MaxRows {
-		return fmt.Errorf("window row cap %d exceeds budget %d", state.RowCap, budget.MaxRows)
 	}
 	switch state.Cardinality.Kind {
 	case VisualizationCardinalityKindUnknown:
@@ -2548,6 +2545,9 @@ func validateWindowedState(state WindowedVisualizationDataState, budget Visualiz
 		}
 		if block.Start+int64(len(block.Rows)) > state.AvailableRows {
 			return fmt.Errorf("window block %q exceeds available rows", key)
+		}
+		if int64(len(block.Rows)) > budget.MaxRows {
+			return fmt.Errorf("window block %q exceeds row budget %d", key, budget.MaxRows)
 		}
 		if err := validateRows(state.Schema, columns, block.Rows); err != nil {
 			return fmt.Errorf("window block %q: %w", key, err)

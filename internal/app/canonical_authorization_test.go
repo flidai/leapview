@@ -181,14 +181,14 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deliveryRoleAllows(roleSnapshot, subjects, access.CapabilityResourcePublish) {
+	if !accesssnapshot.RoleAllowsCapability(roleSnapshot, subjects, access.CapabilityResourcePublish) {
 		t.Fatal("explicit deployer role did not authorize publish")
 	}
 	viewerSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_viewer", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deliveryRoleAllows(viewerSnapshot, subjects, access.CapabilityResourcePublish) {
+	if accesssnapshot.RoleAllowsCapability(viewerSnapshot, subjects, access.CapabilityResourcePublish) {
 		t.Fatal("viewer role unexpectedly authorized publish")
 	}
 	projectResource, err := access.NewResourceRef(identity.ProjectID, projectgraph.KindProjectNamespace)

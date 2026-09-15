@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
@@ -52,6 +51,7 @@ import (
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
@@ -623,20 +623,11 @@ func refreshJobsMatches(jobs *jobspostgres.Repository, refresh *refreshpostgres.
 }
 
 func refreshCancelAuditMatches(audit *accesspostgres.AuditRepository, adapter *refreshcomposition.PostgresCancelAuditWriterAdapter) bool {
-	return audit != nil && adapter != nil && adapter.Audit == audit
+	return audit != nil && adapter != nil && adapter.Matches(audit)
 }
 
 func isNilAuthority(value any) bool {
-	if value == nil {
-		return true
-	}
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
+	return platformtypednil.IsNil(value)
 }
 
 func validateConfiguredAuthority(name string, value any) error {

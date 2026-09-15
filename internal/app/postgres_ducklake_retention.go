@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"time"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -22,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/extension"
+	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
@@ -93,14 +93,10 @@ func duckLakeRetentionOperationID(now time.Time, interval time.Duration, physica
 // (including workload saturation) is observable in logs but never escapes the
 // lifecycle component and therefore cannot make readiness fail.
 type duckLakeRetentionWorker struct {
-	interval time.Duration
-	logger   *slog.Logger
-	acquire  func(context.Context) (workloadmodule.Lease, error)
-	pass     func(context.Context) error
-
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
+	logger    *slog.Logger
+	acquire   func(context.Context) (workloadmodule.Lease, error)
+	pass      func(context.Context) error
+	lifecycle *platformlifecycle.IntervalWorker
 }
 
 type duckLakeRetentionWorkerConfig struct {
@@ -119,73 +115,26 @@ func newDuckLakeRetentionWorker(config duckLakeRetentionWorkerConfig) *duckLakeR
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &duckLakeRetentionWorker{interval: interval, acquire: config.Acquire, pass: config.Pass, logger: logger}
+	worker := &duckLakeRetentionWorker{acquire: config.Acquire, pass: config.Pass, logger: logger}
+	worker.lifecycle = platformlifecycle.NewIntervalWorker(interval, worker.runPass)
+	return worker
 }
 
 func (w *duckLakeRetentionWorker) Start(ctx context.Context) error {
-	if w == nil || w.pass == nil || w.acquire == nil {
+	if w == nil || w.pass == nil || w.acquire == nil || w.lifecycle == nil {
 		return nil
 	}
-	// Worker startup is a lifecycle boundary: normalize the parent context
-	// before deriving the cancellation scope used by the goroutine and ticker.
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w.mu.Lock()
-	if w.cancel != nil {
-		w.mu.Unlock()
-		return nil
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	w.cancel, w.done = cancel, done
-	w.mu.Unlock()
-
-	go func() {
-		defer close(done)
-		w.runPass(runCtx)
-		ticker := time.NewTicker(w.interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-runCtx.Done():
-				return
-			case <-ticker.C:
-				w.runPass(runCtx)
-			}
-		}
-	}()
-	return nil
+	return w.lifecycle.Start(ctx)
 }
 
 func (w *duckLakeRetentionWorker) Stop(ctx context.Context) error {
 	if w == nil {
 		return nil
 	}
-	// Worker shutdown is a lifecycle boundary: a nil caller context still needs
-	// a bounded wait context while cancellation drains the maintenance goroutine.
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	w.mu.Lock()
-	cancel, done := w.cancel, w.done
-	if cancel == nil {
-		w.mu.Unlock()
+	if w.lifecycle == nil {
 		return nil
 	}
-	cancel()
-	w.mu.Unlock()
-	select {
-	case <-done:
-		w.mu.Lock()
-		if w.done == done {
-			w.cancel, w.done = nil, nil
-		}
-		w.mu.Unlock()
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return w.lifecycle.Stop(ctx)
 }
 
 func (w *duckLakeRetentionWorker) runPass(ctx context.Context) {

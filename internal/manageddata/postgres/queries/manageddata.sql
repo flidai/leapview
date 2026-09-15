@@ -164,14 +164,15 @@ SELECT (COALESCE(MAX(sequence), 0) + 1)::bigint AS sequence
 FROM managed_data.revision
 WHERE collection_id = sqlc.arg(collection_id);
 
--- name: InsertRevisionFromUpload :exec
+-- name: InsertRevisionFromUpload :execresult
 INSERT INTO managed_data.revision
     (revision_id, collection_id, sequence, digest, status, manifest,
      file_count, size_bytes, created_by)
 SELECT sqlc.arg(revision_id), sqlc.arg(collection_id), sqlc.arg(sequence), sqlc.arg(digest),
        'pending', sqlc.arg(manifest)::jsonb, sqlc.arg(file_count), sqlc.arg(size_bytes), created_by
 FROM managed_data.upload_session
-WHERE upload_id = sqlc.arg(upload_id);
+WHERE upload_id = sqlc.arg(upload_id)
+ON CONFLICT (collection_id, digest) DO NOTHING;
 
 -- name: InsertRevisionFile :exec
 INSERT INTO managed_data.revision_file
@@ -198,6 +199,14 @@ SELECT revision_id, collection_id, sequence, digest, status, manifest::text,
 FROM managed_data.revision
 WHERE revision_id = sqlc.arg(revision_id);
 
+-- name: GetReadyRevisionByCollectionDigest :one
+SELECT revision_id, collection_id, sequence, digest, status, manifest::text,
+       file_count, size_bytes, created_by, created_at, ready_at, error
+FROM managed_data.revision
+WHERE collection_id = sqlc.arg(collection_id)
+  AND digest = sqlc.arg(digest)
+  AND status = 'ready';
+
 -- name: ListRevisionsByCollection :many
 SELECT revision_id, collection_id, sequence, digest, status, manifest::text,
        file_count, size_bytes, created_by, created_at, ready_at, error
@@ -222,8 +231,25 @@ FROM (
            r.manifest::text AS manifest,
            r.file_count,
            r.size_bytes
-      FROM managed_data.revision AS r
+     FROM managed_data.revision AS r
      WHERE r.status = 'ready'
+       -- A revision is retained conservatively until it has an explicit
+       -- serving-generation root. Once roots exist, only a live/retiring
+       -- root can retain its object bytes; all roots expired means the
+       -- immutable revision is no longer reachable by production state.
+       AND (
+         NOT EXISTS (
+           SELECT 1
+             FROM managed_data.retention_root AS rr
+            WHERE rr.revision_id = r.revision_id
+         )
+         OR EXISTS (
+           SELECT 1
+             FROM managed_data.retention_root AS rr
+            WHERE rr.revision_id = r.revision_id
+              AND rr.state IN ('live', 'retiring')
+         )
+       )
        AND (
          sqlc.arg(after_source_type)::text < 'revision'
          OR (sqlc.arg(after_source_type)::text = 'revision'

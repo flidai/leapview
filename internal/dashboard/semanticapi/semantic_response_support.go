@@ -11,6 +11,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	queryauthz "github.com/flidai/leapview/internal/dashboard/queryauthz"
+	"github.com/flidai/leapview/internal/dashboard/querymap"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	"github.com/flidai/leapview/internal/workload"
 )
@@ -290,11 +291,11 @@ func aggregateDataQuery(modelID string, request reportdef.AggregateQuery) dataqu
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticAggregate,
 		Target:  request.Dataset,
-		Fields:  queryFieldsToDataFields(request.Dimensions),
-		Metrics: queryFieldsToDataFields(request.Metrics),
+		Fields:  querymap.Fields(request.Dimensions),
+		Metrics: querymap.Fields(request.Metrics),
 		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters: queryFiltersToDataFilters(request.Filters),
-		Sort:    querySortToDataSort(request.Sort),
+		Filters: querymap.Filters(request.Filters),
+		Sort:    querymap.Sorts(request.Sort),
 		Limit:   request.Limit,
 		Offset:  request.Offset,
 	}
@@ -312,10 +313,10 @@ func previewDataQuery(modelID string, request reportdef.RowQuery) dataquery.Quer
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticRows,
 		Target:  request.Dataset,
-		Fields:  queryFieldsToDataFields(request.Dimensions),
-		Metrics: queryFieldsToDataFields(request.Metrics),
-		Filters: queryFiltersToDataFilters(request.Filters),
-		Sort:    querySortToDataSort(request.Sort),
+		Fields:  querymap.Fields(request.Dimensions),
+		Metrics: querymap.Fields(request.Metrics),
+		Filters: querymap.Filters(request.Filters),
+		Sort:    querymap.Sorts(request.Sort),
 		Limit:   request.Limit,
 		Offset:  request.Offset,
 	}
@@ -340,43 +341,6 @@ func statusForDataExecutionError(err error) int {
 		return nethttp.StatusGatewayTimeout
 	}
 	return nethttp.StatusBadRequest
-}
-
-func queryFieldsToDataFields(fields []reportdef.QueryField) []dataquery.Field {
-	out := make([]dataquery.Field, 0, len(fields))
-	for _, field := range fields {
-		out = append(out, dataquery.Field{
-			Field: field.Field,
-			Alias: field.Alias,
-		})
-	}
-	return out
-}
-
-func queryFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Filter {
-	out := make([]dataquery.Filter, 0, len(filters))
-	for _, filter := range filters {
-		groups := make([]dataquery.FilterGroup, 0, len(filter.Groups))
-		for _, group := range filter.Groups {
-			groups = append(groups, dataquery.FilterGroup{Filters: queryFiltersToDataFilters(group.Filters)})
-		}
-		out = append(out, dataquery.Filter{
-			Field:    filter.Field,
-			Dataset:  filter.Dataset,
-			Operator: filter.Operator,
-			Values:   append([]any{}, filter.Values...),
-			Groups:   groups,
-		})
-	}
-	return out
-}
-
-func querySortToDataSort(sort []reportdef.QuerySort) []dataquery.Sort {
-	out := make([]dataquery.Sort, 0, len(sort))
-	for _, item := range sort {
-		out = append(out, dataquery.Sort{Field: item.Field, Direction: item.Direction})
-	}
-	return out
 }
 
 func queryRowsFromDataResult(rows []dataquery.Row) reportdef.QueryRows {

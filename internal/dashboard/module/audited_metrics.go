@@ -28,6 +28,8 @@ type auditedMetrics struct {
 	principalID func(context.Context) (string, bool)
 }
 
+var _ queryruntime.SpatialTileStreamExpirer = auditedMetrics{}
+
 func WithQueryAudit(metrics queryruntime.Metrics, recorder queryaudit.Recorder, principalID func(context.Context) (string, bool)) queryruntime.Metrics {
 	if metrics == nil {
 		return metrics
@@ -198,7 +200,7 @@ func (m auditedMetrics) QueryVisualizationTile(ctx context.Context, dashboardID,
 }
 
 func (m auditedMetrics) ExpireVisualizationTileStream(streamID string) {
-	if expirer, ok := m.Metrics.(interface{ ExpireVisualizationTileStream(string) }); ok {
+	if expirer, ok := m.Metrics.(queryruntime.SpatialTileStreamExpirer); ok {
 		expirer.ExpireVisualizationTileStream(streamID)
 	}
 }

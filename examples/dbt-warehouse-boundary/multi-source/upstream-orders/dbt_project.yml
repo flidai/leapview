@@ -1,0 +1,8 @@
+name: upstream_orders
+version: 1.0.0
+config-version: 2
+model-paths: [models]
+seed-paths: [seeds]
+models:
+  upstream_orders:
+    +materialized: view

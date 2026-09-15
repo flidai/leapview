@@ -176,6 +176,9 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 		// runtime tables have nil AuthoredFields and keep their resolved fields as
 		// an exact contract for artifact compatibility.
 		if table.AuthoredFields != nil {
+			if table.SchemaMode == "strict" && len(table.AuthoredFields) != len(observed) {
+				return fmt.Errorf("semantic dataset %q strict schema has %d declared fields but discovered %d", tableName, len(table.AuthoredFields), len(observed))
+			}
 			for field := range table.AuthoredFields {
 				if _, ok := observed[field]; !ok {
 					return fmt.Errorf("semantic dataset %q authored field %q is not in discovered output", tableName, field)
@@ -290,9 +293,62 @@ func (m *Model) ValidateDiscoveredSourceSchemas() error {
 				return fmt.Errorf("source %q freshness field %q is not in discovered schema", sourceName, source.Freshness.Field)
 			}
 		}
+		for _, check := range source.Checks {
+			fields := []string{}
+			switch check.Type {
+			case "non_null", "accepted_values":
+				fields = append(fields, check.Field)
+			case "unique":
+				fields = append(fields, check.Fields...)
+			case "freshness":
+				if check.Freshness == nil || check.Freshness.Basis != "field" {
+					return fmt.Errorf("source %q check %q requires a timestamp field", sourceName, check.ID)
+				}
+				fields = append(fields, check.Freshness.Field)
+			case "relationship":
+				fields = append(fields, check.Field)
+				separator := strings.LastIndexByte(check.To, '.')
+				if separator <= 0 || separator == len(check.To)-1 {
+					return fmt.Errorf("source %q check %q has invalid relationship target", sourceName, check.ID)
+				}
+				targetName, targetField := check.To[:separator], check.To[separator+1:]
+				target, ok := m.Sources[targetName]
+				if !ok {
+					return fmt.Errorf("source %q check %q references unavailable source %q", sourceName, check.ID, targetName)
+				}
+				var targetColumn ColumnSchema
+				found := false
+				for _, column := range target.Schema.Columns {
+					if column.Name == targetField {
+						targetColumn = column
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("source %q check %q target field %q is not discovered", sourceName, check.ID, check.To)
+				}
+				if sourceColumn, exists := columns[check.Field]; exists {
+					sourceType := LogicalDataTypeFromPhysicalType(sourceColumn.PhysicalType)
+					targetType := LogicalDataTypeFromPhysicalType(targetColumn.PhysicalType)
+					if !relationshipTypesCompatible(MetricDimension{Datatype: sourceType}, MetricDimension{Datatype: targetType}, false) {
+						return fmt.Errorf("source %q check %q relationship field %q type %q is incompatible with target %q type %q", sourceName, check.ID, check.Field, sourceType, check.To, targetType)
+					}
+				}
+			}
+			for _, field := range fields {
+				column, ok := columns[field]
+				if !ok {
+					return fmt.Errorf("source %q check %q field %q is not in discovered schema", sourceName, check.ID, field)
+				}
+				if check.Type == "accepted_values" && LogicalDataTypeFromPhysicalType(column.PhysicalType) != DataTypeString {
+					return fmt.Errorf("source %q check %q accepted_values requires a String field", sourceName, check.ID)
+				}
+			}
+		}
 		mode := strings.ToLower(strings.TrimSpace(source.SchemaMode))
 		if mode == "" {
-			mode = "inferred"
+			mode = "compatible"
 		}
 		if mode != "inferred" && mode != "compatible" && mode != "strict" {
 			return fmt.Errorf("source %q has unsupported schema mode %q", sourceName, source.SchemaMode)
@@ -310,17 +366,8 @@ func (m *Model) ValidateDiscoveredSourceSchemas() error {
 				declared = canonicalSourceDatatype(LogicalDataType(strings.TrimSpace(declaration.Type)))
 			}
 			if declared != "" {
-				observed := LogicalDataTypeFromPhysicalType(column.PhysicalType)
-				if declared != observed || observed == DataTypeOpaque && declared != DataTypeOpaque {
-					return fmt.Errorf("source %q field %q datatype %q is incompatible with discovered physical type %q (mapped to %q)", sourceName, field, declared, column.PhysicalType, observed)
-				}
-			}
-			if declaration.Nullable != nil {
-				if column.Nullable == nil {
-					return fmt.Errorf("source %q field %q nullability could not be established from discovered schema", sourceName, field)
-				}
-				if !*declaration.Nullable && *column.Nullable {
-					return fmt.Errorf("source %q field %q nullability is incompatible: declared non-null but discovered nullable", sourceName, field)
+				if err := ValidateDiscoveredDatatype(sourceName, field, declared, column.PhysicalType); err != nil {
+					return err
 				}
 			}
 		}

@@ -8,13 +8,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/auditadapter"
 	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 )
 
 // Adapter forwards audit intents through the caller-owned pgx transaction. It
 // never opens, commits, or rolls back a transaction.
 type Adapter struct {
-	audit *accesspostgres.AuditRepository
+	authority auditadapter.Authority
 }
 
 var _ manageddatapostgres.AuditIntentRecorder = (*Adapter)(nil)
@@ -22,19 +23,19 @@ var _ manageddatapostgres.AuditIntentRecorder = (*Adapter)(nil)
 // NewWithRepository binds the adapter to the exact Access audit authority
 // allocated by application composition.
 func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
-	return &Adapter{audit: audit}
+	return &Adapter{authority: auditadapter.New(audit)}
 }
 
 // Matches proves this adapter retains the exact Access audit repository
 // supplied by application composition rather than a sibling allocation.
 func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
-	return a != nil && a.audit != nil && a.audit == audit
+	return a != nil && a.authority.Matches(audit)
 }
 
 func (a *Adapter) RecordAuditIntent(ctx context.Context, tx manageddatapostgres.Tx, intent access.AuditIntent) error {
-	if a == nil || a.audit == nil {
+	if a == nil || !a.authority.Configured() {
 		return errors.New("managed-data Access audit adapter is unavailable")
 	}
-	_, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	_, err := a.authority.Record(ctx, tx, intent)
 	return err
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
+	"github.com/flidai/leapview/internal/dashboard/querymap"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -52,6 +53,8 @@ type Metrics struct {
 	credentialFromContext     func(context.Context) (access.APICredential, bool)
 	auditRecorder             access.CanonicalAuditRecorder
 }
+
+var _ queryruntime.SpatialTileStreamExpirer = Metrics{}
 
 // Planner forwards the activation-owned planner exposed by the active runtime.
 // Authorization uses the same compiled semantic graph as execution and
@@ -695,11 +698,11 @@ func semanticAggregateDataQuery(modelID string, request reportdef.AggregateQuery
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticAggregate,
 		Target:  request.Dataset,
-		Fields:  queryFieldsToDataFields(request.Dimensions),
-		Metrics: queryFieldsToDataFields(request.Metrics),
+		Fields:  querymap.Fields(request.Dimensions),
+		Metrics: querymap.Fields(request.Metrics),
 		Time:    dataquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias},
-		Filters: queryFiltersToDataFilters(request.Filters),
-		Sort:    querySortToDataSort(request.Sort),
+		Filters: querymap.Filters(request.Filters),
+		Sort:    querymap.Sorts(request.Sort),
 		Limit:   request.Limit,
 		Offset:  request.Offset,
 	}
@@ -710,50 +713,13 @@ func semanticRowsDataQuery(modelID string, request reportdef.RowQuery) dataquery
 		ModelID: modelID,
 		Kind:    dataquery.KindSemanticRows,
 		Target:  request.Dataset,
-		Fields:  queryFieldsToDataFields(request.Dimensions),
-		Metrics: queryFieldsToDataFields(request.Metrics),
-		Filters: queryFiltersToDataFilters(request.Filters),
-		Sort:    querySortToDataSort(request.Sort),
+		Fields:  querymap.Fields(request.Dimensions),
+		Metrics: querymap.Fields(request.Metrics),
+		Filters: querymap.Filters(request.Filters),
+		Sort:    querymap.Sorts(request.Sort),
 		Limit:   request.Limit,
 		Offset:  request.Offset,
 	}
-}
-
-func queryFieldsToDataFields(fields []reportdef.QueryField) []dataquery.Field {
-	out := make([]dataquery.Field, 0, len(fields))
-	for _, field := range fields {
-		out = append(out, dataquery.Field{
-			Field: field.Field,
-			Alias: field.Alias,
-		})
-	}
-	return out
-}
-
-func queryFiltersToDataFilters(filters []reportdef.QueryFilter) []dataquery.Filter {
-	out := make([]dataquery.Filter, 0, len(filters))
-	for _, filter := range filters {
-		groups := make([]dataquery.FilterGroup, 0, len(filter.Groups))
-		for _, group := range filter.Groups {
-			groups = append(groups, dataquery.FilterGroup{Filters: queryFiltersToDataFilters(group.Filters)})
-		}
-		out = append(out, dataquery.Filter{
-			Field:    filter.Field,
-			Dataset:  filter.Dataset,
-			Operator: filter.Operator,
-			Values:   append([]any{}, filter.Values...),
-			Groups:   groups,
-		})
-	}
-	return out
-}
-
-func querySortToDataSort(sort []reportdef.QuerySort) []dataquery.Sort {
-	out := make([]dataquery.Sort, 0, len(sort))
-	for _, item := range sort {
-		out = append(out, dataquery.Sort{Field: item.Field, Direction: item.Direction})
-	}
-	return out
 }
 
 func queryRowsFromDataResult(rows []dataquery.Row) reportdef.QueryRows {
@@ -856,6 +822,14 @@ func (m Metrics) QueryVisualizationTile(ctx context.Context, dashboardID, visual
 		return dashboardruntime.SpatialTileResult{}, errors.New("spatial tile metrics are not configured")
 	}
 	return port.QueryVisualizationTile(dataquery.WithGovernor(ctx, m), dashboardID, visualID, revision, zoom, x, y)
+}
+
+// ExpireVisualizationTileStream preserves tile capability retirement through
+// the authorization decorator used by the production dashboard chain.
+func (m Metrics) ExpireVisualizationTileStream(streamID string) {
+	if expirer, ok := m.Metrics.(queryruntime.SpatialTileStreamExpirer); ok {
+		expirer.ExpireVisualizationTileStream(streamID)
+	}
 }
 
 func (m Metrics) QueryPublicVisualizationTile(ctx context.Context, publicID, dashboardID, visualID, revision string, zoom, x, y int) (dashboardruntime.SpatialTileResult, error) {

@@ -145,6 +145,7 @@ func TestRefreshEventEnvelopeCarriesExplicitDeliveryMetadata(t *testing.T) {
 		name          string
 		event         dashboardstream.RefreshEvent
 		wantBoundary  bool
+		wantPreserve  bool
 		wantGroup     string
 		wantMergeRoot string
 	}{
@@ -154,6 +155,14 @@ func TestRefreshEventEnvelopeCarriesExplicitDeliveryMetadata(t *testing.T) {
 				Type: dashboardstream.RefreshEventProgress, RefreshID: "refresh-9", Generation: 9,
 			},
 			wantBoundary: true,
+		},
+		{
+			name: "visual window start preserves queued prior results",
+			event: dashboardstream.RefreshEvent{
+				Type: dashboardstream.RefreshEventStart, Command: "visual_window", RefreshID: "refresh-9", Generation: 9,
+			},
+			wantBoundary: true,
+			wantPreserve: true,
 		},
 		{
 			name: "visual result batch",
@@ -167,7 +176,7 @@ func TestRefreshEventEnvelopeCarriesExplicitDeliveryMetadata(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			envelope := RefreshEventEnvelope(test.event)
-			if envelope.Delivery.Generation != 9 || envelope.Delivery.Boundary != test.wantBoundary || envelope.Delivery.CoalesceGroup != test.wantGroup {
+			if envelope.Delivery.Generation != 9 || envelope.Delivery.Boundary != test.wantBoundary || envelope.Delivery.PreservePriorGeneration != test.wantPreserve || envelope.Delivery.CoalesceGroup != test.wantGroup {
 				t.Fatalf("delivery metadata = %#v", envelope.Delivery)
 			}
 			if test.wantMergeRoot != "" && !slices.Contains(envelope.Delivery.MergeRoots, test.wantMergeRoot) {

@@ -25,20 +25,8 @@ model ContractProjectionFieldDeprecation {
   replacement?: Identifier;
 }
 
-model ContractProjectionField {
-  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
-  nullable?: boolean;
-  criticalDataElement?: boolean;
-  classification?: Identifier;
-  // The runtime projection treats these links as a set and sorts them by
-  // canonical type/URL bytes before sealing.
-  authoritativeDefinitions?: ContractProjectionAuthoritativeDefinition[];
-  deprecation?: ContractProjectionFieldDeprecation;
-}
-
 model ContractProjectionModelField {
   datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
-  nullable?: boolean;
   criticalDataElement?: boolean;
   classification?: Identifier;
   authoritativeDefinitions?: ContractProjectionAuthoritativeDefinition[];
@@ -50,23 +38,15 @@ model ContractProjectionDuration {
   unit: "second" | "minute" | "hour" | "day";
 }
 
-model ContractProjectionSourceFreshness {
-  basis: "field" | "revision";
-  field?: Identifier;
-  revision?: utcDateTime;
-  warningAfter?: ContractProjectionDuration;
-  errorAfter?: ContractProjectionDuration;
-}
-
 model ContractProjectionSourceSchema {
-  mode: "inferred" | "compatible" | "strict";
-  @apigen.propertyNames(Identifier)
-  fields?: Record<ContractProjectionField>;
+  mode: "compatible" | "strict";
 }
 
 model ContractProjectionSourceBody {
   schema: ContractProjectionSourceSchema;
-  freshness?: ContractProjectionSourceFreshness;
+  @apigen.propertyNames(Identifier)
+  fields: Record<ContractProjectionModelField>;
+  checks?: ContractProjectionModelCheck[];
 }
 
 @apigen.contract(#{ kind: "leapview-contract-v1", tags: #["source", "contract-projection"] })
@@ -97,7 +77,7 @@ model ContractProjectionModelGrain {
 
 model ContractProjectionModelCheck {
   id: Identifier;
-  type: "non_null" | "unique" | "accepted_values" | "relationship" | "row_count";
+  type: "non_null" | "unique" | "accepted_values" | "relationship" | "row_count" | "freshness";
   field?: Identifier;
   fields?: Identifier[];
   values?: string[];
@@ -107,6 +87,10 @@ model ContractProjectionModelCheck {
   minimum?: int64;
   maximum?: int64;
   severity?: "warning" | "error";
+  basis?: "field" | "revision";
+  revision?: utcDateTime;
+  warningAfter?: ContractProjectionDuration;
+  errorAfter?: ContractProjectionDuration;
 }
 
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*\\.[A-Za-z_][A-Za-z0-9_]*$")
@@ -117,6 +101,7 @@ model ContractProjectionModelBody {
   @apigen.propertyNames(Identifier)
   entities: Record<ContractProjectionModelEntity>;
   grain: ContractProjectionModelGrain;
+  schema: ContractProjectionSourceSchema;
   @apigen.propertyNames(Identifier)
   fields: Record<ContractProjectionModelField>;
   checks?: ContractProjectionModelCheck[];

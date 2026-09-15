@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -153,6 +154,79 @@ func TestCatalogProviderPreservesStableServiceErrors(t *testing.T) {
 	result = runCatalogTool(t, definitions, CatalogListToolName, `{}`)
 	if code := catalogTestErrorCode(result); code != "catalog_list_failed" {
 		t.Fatalf("code = %#v, want catalog_list_failed", code)
+	}
+}
+
+func TestCatalogProviderAddsBoundedSemanticDefinition(t *testing.T) {
+	service := &fakeCatalogService{getResult: CatalogGetResult{
+		Item:    CatalogItem{Ref: CatalogRef{Kind: CatalogType(agentcontracts.CatalogTypeSemanticModel), ID: "semantic-model:sales"}, Name: "sales"},
+		Details: map[string]any{"kind": "semantic_model", "metadata": map[string]any{"id": "semantic-model:sales"}},
+	}}
+	model := &semanticmodel.Model{
+		Name:        "sales",
+		Title:       "Sales",
+		Description: "Sales metrics",
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "model:sales_orders", Description: "Order grain"},
+			"secret": {Model: "model:secret"},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"category": {Label: "Category", Datatype: semanticmodel.DataTypeString},
+			"region":   {Label: "Region"},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue":     {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Description: "Total revenue"},
+			"secret_rate": {Type: "ratio", Dataset: "secret", Numerator: "revenue", Denominator: "orders", Description: "Hidden behind dataset access"},
+			"hidden":      {Type: "aggregate", Dataset: "orders", Hidden: true},
+		},
+		AccessPolicy: semanticmodel.SemanticAccessPolicy{
+			Datasets:   map[string]semanticmodel.SemanticDatasetAccessSpec{"secret": {RequiredAccessGrants: []string{"finance"}}},
+			Dimensions: map[string][]string{"region": {"finance"}},
+			Metrics:    map[string][]string{"secret_rate": {"finance"}},
+		},
+	}
+	provider := CatalogProvider{
+		Catalog: service,
+		SemanticModel: func(context.Context, Scope, CatalogRef) (*semanticmodel.Model, bool) {
+			return model, true
+		},
+	}
+	result := runCatalogTool(t, provider.Definitions(Scope{ProjectID: "project:sales"}), CatalogGetToolName, `{"ref":{"id":"semantic-model:sales","kind":"semantic_model"}}`)
+	if result.IsError {
+		t.Fatalf("catalog_get result = %#v", result.Content)
+	}
+	got, ok := result.Content.(CatalogGetResult)
+	if !ok {
+		t.Fatalf("catalog_get content = %T, want CatalogGetResult", result.Content)
+	}
+	metadata, ok := got.Details["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog_get metadata = %#v", got.Details["metadata"])
+	}
+	definition, ok := metadata["definition"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog_get definition = %#v", metadata["definition"])
+	}
+	metrics, ok := definition["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog_get metrics = %#v", definition["metrics"])
+	}
+	revenue, ok := metrics["revenue"].(map[string]any)
+	if !ok || revenue["aggregation"] != "sum" || revenue["dataset"] != "orders" {
+		t.Fatalf("catalog_get revenue = %#v", metrics["revenue"])
+	}
+	if _, ok := metrics["secret_rate"]; ok {
+		t.Fatal("catalog_get exposed protected metric")
+	}
+	if _, ok := metrics["hidden"]; ok {
+		t.Fatal("catalog_get exposed hidden metric")
+	}
+	dimensions, ok := definition["dimensions"].(map[string]any)
+	if !ok {
+		t.Fatalf("catalog_get dimensions = %#v", definition["dimensions"])
+	}
+	if _, ok := dimensions["region"]; ok {
+		t.Fatal("catalog_get exposed protected dimension")
 	}
 }
 

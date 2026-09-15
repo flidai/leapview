@@ -594,7 +594,7 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 	if err != nil {
 		return dataquery.Result{}, err
 	}
-	_, semanticConsumer, err := r.semanticPlannerForRequest(ctx, request)
+	semanticPlanner, semanticConsumer, err := r.semanticPlannerForRequest(ctx, request)
 	if err != nil {
 		return dataquery.Result{}, err
 	}
@@ -624,8 +624,23 @@ func (r *Runtime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Q
 		}
 		markPhysicalStatement(execCtx)
 		querySink := sink
+		// Native Arrow is the production boundary where the governed output
+		// descriptor can be checked against the physical schema and every
+		// borrowed batch. Keep the enforcement in this path so cached/buffered
+		// execution and the transport share the same immutable plan evidence.
+		if plan.IR != nil {
+			descriptor, descriptorErr := semanticPlanner.DescribeOutputSchema(plan)
+			if descriptorErr != nil {
+				return dataquery.Result{PlanningMS: planningMS}, descriptorErr
+			}
+			governedSink, sinkErr := arrowquery.NewOutputSchemaSink(descriptor, querySink)
+			if sinkErr != nil {
+				return dataquery.Result{PlanningMS: planningMS}, sinkErr
+			}
+			querySink = governedSink
+		}
 		if semanticConsumer != nil {
-			guard := semanticConsumerSink{consumer: semanticConsumer, plan: plan, sink: sink}
+			guard := semanticConsumerSink{consumer: semanticConsumer, plan: plan, sink: querySink}
 			if stats, ok := sink.(arrowquery.SinkStats); ok {
 				querySink = semanticConsumerStatsSink{semanticConsumerSink: guard, stats: stats}
 			} else {
