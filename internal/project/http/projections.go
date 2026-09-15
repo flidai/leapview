@@ -117,8 +117,8 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 	if trigger != "manual" && trigger != "schedule" {
 		trigger = ""
 	}
-	pageValue, _ := strconv.Atoi(query.Get("page"))
-	if pageValue < 1 {
+	pageValue, err := strconv.ParseInt(query.Get("page"), 10, 32)
+	if err != nil || pageValue < 1 {
 		pageValue = 1
 	}
 	if pageValue > 1000 {
@@ -129,7 +129,7 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 		search = string(runes[:120])
 	}
 	page := int32(pageValue)
-	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: (pageValue - 1) * 25}, rangeLabel, page
+	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: int(page-1) * 25}, rangeLabel, page
 }
 
 type assetPageProjection struct {
