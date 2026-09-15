@@ -295,6 +295,10 @@ func siteHead(metadata sitePageMetadata) []g.Node {
 }
 
 func siteHeader(isDocs, showcase bool) g.Node {
+	headerClass := "site-header"
+	if isDocs {
+		headerClass += " site-header--docs"
+	}
 	var actions []g.Node
 	if isDocs {
 		actions = append(actions, h.Div(h.Class("site-nav-links site-nav-links-docs"), siteActiveSearch()))
@@ -317,7 +321,7 @@ func siteHeader(isDocs, showcase bool) g.Node {
 		actions = append(actions, g.El("lv-site-mobile-menu", g.If(showcase, g.Attr("showcase", ""))))
 	}
 
-	return h.Header(h.Class("site-header"),
+	return h.Header(h.Class(headerClass),
 		h.Nav(h.Class("site-nav"),
 			siteBrandLink(),
 			h.Div(h.Class("site-nav-actions"), g.Group(actions)),

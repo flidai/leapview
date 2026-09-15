@@ -147,6 +147,16 @@ a {
   backdrop-filter: blur(12px);
 }
 
+.site-header--docs {
+  background: var(--lv-bg-panel);
+}
+
+.site-header--docs.is-scrolled::before {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
 .site-shell {
   width: min(calc(100% - var(--base-size-32)), var(--site-layout-width));
   margin: 0 auto;
