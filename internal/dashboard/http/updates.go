@@ -29,6 +29,11 @@ import (
 
 var readStreamInstanceRandom = rand.Read
 
+// Dashboard sessions expire after five minutes by default. Refreshing this
+// lease well before expiry keeps an otherwise-idle SSE dashboard alive while
+// still allowing a failed store to close the stream and trigger a reconnect.
+const dashboardSessionKeepAliveInterval = time.Minute
+
 func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	projectID, projectErr := h.projectIDForRequest(r.Context())
 	if projectErr != nil {
@@ -133,7 +138,12 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if registry == nil {
 		registry = dashboardstream.NewRegistry()
 	}
-	coordinatorContext := h.analyticalStreamContext(r.Context(), streamID)
+	streamContext, cancelStream := context.WithCancel(r.Context())
+	defer cancelStream()
+	if h.SessionStore != nil {
+		go keepDashboardSessionAlive(streamContext, h.SessionStore, sessionKey, dashboardSessionKeepAliveInterval, cancelStream)
+	}
+	coordinatorContext := h.analyticalStreamContext(streamContext, streamID)
 	coordinator, closeCoordinator, openErr := registry.OpenWithError(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))
 	})
@@ -224,7 +234,48 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if err != nil {
 		return
 	}
-	_ = updates.ForwardUpdates(r.Context(), mailbox)
+	_ = updates.ForwardUpdates(streamContext, mailbox)
+}
+
+func keepDashboardSessionAlive(
+	ctx context.Context,
+	store dashboardsession.Store,
+	key dashboardsession.Key,
+	interval time.Duration,
+	onFailure func(),
+) {
+	if store == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = dashboardSessionKeepAliveInterval
+	}
+	touch := func() bool {
+		if err := store.Touch(ctx, key); err != nil {
+			if ctx.Err() == nil && onFailure != nil {
+				onFailure()
+			}
+			return false
+		}
+		return true
+	}
+	// Loading a session does not extend its lease. Renew immediately so an SSE
+	// reconnect cannot inherit a record that expires before the first tick.
+	if !touch() {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !touch() {
+				return
+			}
+		}
+	}
 }
 
 func (h Handler) recordDashboardView(r *nethttp.Request, projectID projectgraph.ResourceID, dashboardID, pageID string) {

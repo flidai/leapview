@@ -111,10 +111,11 @@ func executeConsumers(ctx context.Context, executor consumer.Executor, request W
 	}
 	return executor.ExecuteConsumersPage(ctx, consumerRequest, func(result consumer.Result) bool {
 		event := RefreshEvent{
-			Target:         result.Target.ID,
-			Duration:       result.Duration,
-			Queries:        result.Queries,
-			StageTimingsMs: result.StageTimingsMs,
+			Target:          result.Target.ID,
+			MetadataPending: result.MetadataPending,
+			Duration:        result.Duration,
+			Queries:         result.Queries,
+			StageTimingsMs:  result.StageTimingsMs,
 		}
 		if result.Err != nil {
 			if errors.Is(result.Err, context.Canceled) || errors.Is(result.Err, context.DeadlineExceeded) || ctx.Err() != nil {

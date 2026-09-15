@@ -31,17 +31,20 @@ const (
 )
 
 type RefreshEvent struct {
-	Type            RefreshEventType
-	RefreshID       string
-	Generation      uint64
-	DataRevision    int64
-	FilterRevision  int64
-	ServingStateID  string
-	Command         string
-	Filters         dashboard.Filters
-	Targets         []string
-	Target          string
-	Value           any
+	Type           RefreshEventType
+	RefreshID      string
+	Generation     uint64
+	DataRevision   int64
+	FilterRevision int64
+	ServingStateID string
+	Command        string
+	Filters        dashboard.Filters
+	Targets        []string
+	Target         string
+	Value          any
+	// MetadataPending keeps an active window target plan carryable after its
+	// primary frame while runtime work still may publish exact cardinality.
+	MetadataPending bool
 	Err             error
 	Queries         int
 	Duration        time.Duration
@@ -440,10 +443,16 @@ func (c *Coordinator) emitCurrent(refresh Refresh, event RefreshEvent) bool {
 		c.active.queryCount += event.Queries
 	}
 	if c.active != nil && c.active.refresh.Generation == refresh.Generation {
-		if event.Type == RefreshEventVisual {
+		if event.Type == RefreshEventVisual && !event.MetadataPending {
+			delete(c.active.targetPlans, "visual:"+event.Target)
+		} else if event.Type == RefreshEventVisualMetadata {
 			delete(c.active.targetPlans, "visual:"+event.Target)
 		} else if event.Type == RefreshEventTargetError && event.Target != "refresh" {
-			delete(c.active.targetPlans, event.Target)
+			if _, exists := c.active.targetPlans[event.Target]; exists {
+				delete(c.active.targetPlans, event.Target)
+			} else {
+				delete(c.active.targetPlans, "visual:"+event.Target)
+			}
 		}
 		switch event.Type {
 		case RefreshEventStart:

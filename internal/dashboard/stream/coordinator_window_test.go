@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"context"
 	"testing"
 
 	"github.com/flidai/leapview/internal/dashboard"
@@ -37,5 +38,45 @@ func TestWindowCarryPreservesLatestTargetAndFilterBoundary(t *testing.T) {
 				t.Fatalf("newest request replaced: %#v", plan.Targets[0])
 			}
 		})
+	}
+}
+
+func TestCoordinatorCarriesWindowTargetWhileMetadataIsPending(t *testing.T) {
+	filters := dashboard.Filters{InteractionRevision: 1}.WithDefaults()
+	orders := command.Target{Kind: command.TargetWindow, ID: "orders", WindowRequest: dashboard.TableRequest{Block: "all", Start: 0, RequestSeq: 1}}
+	compact := command.Target{Kind: command.TargetWindow, ID: "compact", WindowRequest: dashboard.TableRequest{Block: "all", Start: 0, RequestSeq: 1}}
+	coordinator := NewCoordinator(context.Background(), nil)
+	t.Cleanup(coordinator.Close)
+	coordinator.generation = 1
+	refresh := Refresh{ID: "refresh-1", Generation: 1, Command: "initial", Filters: filters}
+	coordinator.active = &activeRefresh{
+		refresh:     refresh,
+		targetPlans: map[string]command.Target{orders.Key(): orders},
+	}
+
+	primary := testVisualizationEvent(RefreshEventVisual, orders.ID)
+	primary.MetadataPending = true
+	if !coordinator.emitCurrent(refresh, primary) {
+		t.Fatal("pending primary frame was rejected")
+	}
+
+	preparation := RefreshPreparation{
+		Command: "visual_window",
+		Filters: filters,
+		Targets: []string{compact.Key()},
+		Plan:    command.RefreshPlan{Command: "visual_window", Targets: []command.Target{compact}},
+	}
+	coordinator.carryUnfinishedWindowTargets(&preparation, filters)
+	plan := preparation.Plan.(command.RefreshPlan)
+	if len(plan.Targets) != 2 || plan.Targets[1].Key() != orders.Key() {
+		t.Fatalf("carried plan after pending primary frame = %#v", plan.Targets)
+	}
+
+	metadata := testVisualizationEvent(RefreshEventVisualMetadata, orders.ID)
+	if !coordinator.emitCurrent(refresh, metadata) {
+		t.Fatal("metadata frame was rejected")
+	}
+	if _, ok := coordinator.active.targetPlans[orders.Key()]; ok {
+		t.Fatalf("target plan survived metadata frame: %#v", coordinator.active.targetPlans)
 	}
 }
