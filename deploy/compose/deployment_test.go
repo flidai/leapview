@@ -239,6 +239,9 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if !strings.Contains(browser, `getByRole('heading', { name: 'Welcome back', exact: true })`) {
 		t.Error("browser qualification must assert the rendered login heading after invalid authentication")
 	}
+	if !strings.Contains(browser, "Authorization: `Bearer ${credentials.workloadToken}`") || strings.Contains(browser, "Authorization: `Bearer ${credentials.publisherToken}`") {
+		t.Error("browser qualification must prove PROJECT_ADMIN denial with the project-bound restricted workload credential")
+	}
 
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",

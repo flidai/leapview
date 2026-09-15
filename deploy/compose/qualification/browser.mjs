@@ -7,7 +7,7 @@ const credentialsPath = process.env.QUALIFICATION_CREDENTIALS || '/run/secrets/c
 const screenshotPath = process.env.QUALIFICATION_SCREENSHOT || '/evidence/browser-failure.png'
 const credentials = JSON.parse(await readFile(credentialsPath, 'utf8'))
 
-if (!credentials.email || !credentials.qualificationPassword || !credentials.publisherToken || !credentials.auditToken) {
+if (!credentials.email || !credentials.qualificationPassword || !credentials.workloadToken || !credentials.auditToken) {
   throw new Error('qualification credentials are incomplete')
 }
 
@@ -61,12 +61,12 @@ try {
   const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
   const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/grants`, baseURL).href, {
     headers: {
-      Authorization: `Bearer ${credentials.publisherToken}`,
+      Authorization: `Bearer ${credentials.workloadToken}`,
       'X-Request-ID': denialRequestID,
     },
   })
   if (denial.status() !== 403) {
-    throw new Error(`restricted publisher request returned ${denial.status()}, expected 403`)
+    throw new Error(`restricted workload request returned ${denial.status()}, expected 403`)
   }
   const auditResponse = await context.request.get(
     new URL(`/api/v1/projects/${projectPath}/audit-events?action=authorization.denied&limit=200`, baseURL).href,
@@ -83,7 +83,7 @@ try {
     event.capability === 'PROJECT_ADMIN'
   )
   if (!recorded) {
-    throw new Error('restricted publisher denial was not recorded in the project audit stream')
+    throw new Error('restricted workload denial was not recorded in the project audit stream')
   }
 } catch (error) {
   await page.screenshot({ path: screenshotPath }).catch(() => {})
