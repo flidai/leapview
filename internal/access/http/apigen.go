@@ -151,6 +151,15 @@ func (d *APIGenDispatcher) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.R
 func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RemoveGroupMember(w, r)
 }
+func (d *APIGenDispatcher) ListProjectRoleBindings(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListProjectRoleBindingsParams) {
+	d.handler.ListProjectRoleBindings(w, r)
+}
+func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenCreateProjectRoleBindingHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.CreateProjectRoleBinding(w, r)
+}
 func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
 	d.handler.ListGroupSemanticAttributeAssignments(w, r)
 }

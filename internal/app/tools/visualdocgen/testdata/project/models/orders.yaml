@@ -6,40 +6,40 @@ metadata:
   displayName: Documentation orders
 spec:
   fields:
-    order_id:
+    - name: order_id
       datatype: String
       label: Order ID
-    purchase_month:
+    - name: purchase_month
       datatype: String
       label: Purchase month
-    purchase_date:
+    - name: purchase_date
       datatype: Date
       label: Purchase date
-    status:
+    - name: status
       datatype: String
       label: Status
-    category:
+    - name: category
       datatype: String
       label: Category
-    state:
+    - name: state
       datatype: String
       label: State
-    latitude:
+    - name: latitude
       datatype: Float
       label: Latitude
-    longitude:
+    - name: longitude
       datatype: Float
       label: Longitude
-    revenue:
+    - name: revenue
       datatype: Decimal
       label: Revenue
-    review_score:
+    - name: review_score
       datatype: Float
       label: Review score
-    delivery_days:
+    - name: delivery_days
       datatype: Float
       label: Delivery days
-    delivery_bucket:
+    - name: delivery_bucket
       datatype: String
       label: Delivery speed
   definition:
@@ -60,7 +60,7 @@ spec:
         delivery_bucket
       FROM source."docs.orders"
   entities:
-    order:
+    - name: order
       type: primary
       fields:
       - order_id

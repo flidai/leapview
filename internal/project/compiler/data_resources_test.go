@@ -36,13 +36,15 @@ spec:
     options: {header: false}
   schema:
     mode: compatible
-    fields:
-      id: {datatype: Integer, nullable: false}
+  fields:
+    - {name: id, datatype: Integer}
+  checks:
+    - {id: id_present, type: non_null, field: id}
 `), metadata{})
 	if err != nil {
 		t.Fatalf("decode typed source: %v", err)
 	}
-	if source.LocationType != semanticmodel.KindPath || source.Path != "orders.csv" || source.Fields["id"].Datatype != semanticmodel.DataTypeInteger {
+	if source.LocationType != semanticmodel.KindPath || source.Path != "orders.csv" || source.Fields["id"].Datatype != semanticmodel.DataTypeInteger || len(source.Checks) != 1 || source.Checks[0].ID != "id_present" {
 		t.Fatalf("lowered source = %#v", source)
 	}
 	effective, err := ResolveEffectivePathLocation(source, connection)
@@ -52,6 +54,33 @@ spec:
 	variant, ok := effective.Value.(*projectcontracts.CSVPathSourceLocation)
 	if !ok || variant.Options == nil || variant.Options.Header == nil || *variant.Options.Header != false {
 		t.Fatalf("source option did not override connection default: %#v", effective)
+	}
+}
+
+func TestSourceFreshnessUsesSharedChecksAndRejectsUnauthoritativeRevision(t *testing.T) {
+	base := `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: files
+  location: {type: path, path: orders.csv, format: csv}
+  checks:
+    - id: recent_orders
+      type: freshness
+      basis: field
+      field: updated_at
+      errorAfter: {amount: 1, unit: day}
+`
+	source, err := decodeSourceResource("source.yaml", []byte(base), metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Freshness != nil || len(source.Checks) != 1 || source.Checks[0].Freshness == nil || source.Checks[0].Freshness.Field != "updated_at" {
+		t.Fatalf("source freshness did not lower into shared checks: %#v", source)
+	}
+	revision := strings.Replace(base, "basis: field\n      field: updated_at", "basis: revision\n      revision: '2026-09-14T00:00:00Z'", 1)
+	if _, err := decodeSourceResource("source.yaml", []byte(revision), metadata{}); err == nil || !strings.Contains(err.Error(), "authoritative connector revision evidence") {
+		t.Fatalf("unsupported revision freshness error = %v", err)
 	}
 }
 
@@ -180,9 +209,9 @@ spec:
     type: sql
     sql: |-
       ` + strings.ReplaceAll(tc.sql, "\n", "\n      ") + `
-  entities: {order: {type: primary, fields: [order_id]}}
+  entities: [{name: order, type: primary, fields: [order_id]}]
   grain: {entity: order}
-  fields: {order_id: {datatype: String}}
+  fields: [{name: order_id, datatype: String}]
 `
 			table, _, authored, err := decodeModelResourceWithDefinition("model.yaml", []byte(document), metadata{})
 			if err != nil {
@@ -201,13 +230,22 @@ spec:
 func TestTypedModelFieldsAllowMetadataWithoutDatatypeAndMayBeOmitted(t *testing.T) {
 	base := `apiVersion: leapview.dev/v1
 kind: Model
-metadata: {id: model:customers, name: customers}
+metadata:
+  id: model:customers
+  name: customers
 spec:
-  definition: {type: sql, sql: "SELECT customer_id, state FROM source.customers"}
-  entities: {customer: {type: primary, fields: [customer_id]}}
-  grain: {entity: customer}
+  definition:
+    type: sql
+    sql: SELECT customer_id, state FROM source.customers
+  entities:
+  - name: customer
+    type: primary
+    fields:
+    - customer_id
+  grain:
+    entity: customer
 `
-	table, _, err := decodeModelResource("model.yaml", []byte(base+"  fields: {customer_id: {label: Customer ID}}\n"), metadata{})
+	table, _, err := decodeModelResource("model.yaml", []byte(base+"  fields: [{name: customer_id, label: Customer ID}]\n"), metadata{})
 	if err != nil {
 		t.Fatalf("metadata-only field rejected: %v", err)
 	}
@@ -233,26 +271,26 @@ metadata: { id: semantic-model:sales, name: sales }
 aiContext: { instructions: Use governed sales language. }
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders_model
       defaultTimeDimension: ordered_at
       displayName: Orders
       metrics:
-        order_count: { type: simple, agg: count, field: order_id }
-        revenue: { type: simple, where: [ captured ], agg: sum }
+        - {name: order_count, type: simple, agg: count, field: order_id}
+        - {name: revenue, type: simple, where: [ captured ], agg: sum}
       dimensions:
-        ordered_at:
+        - name: ordered_at
           datatype: DateTime
           time: { nativeGrain: second, grains: [ second, day ], timezone: UTC }
   relationships:
-    customer:
+    - name: customer
       from: { dataset: orders, entity: customer }
       to: { dataset: orders, fields: [ customer_id ] }
   filters:
-    captured: { field: orders.status, operator: equals, value: captured }
+    - {name: captured, definition: {field: orders.status, operator: equals, value: captured}}
   metrics:
-    doubled: { type: derived, expression: revenue * 2, hidden: true }
-    share: { type: ratio, numerator: revenue, denominator: doubled }
+    - {name: doubled, type: derived, expression: revenue * 2, hidden: true}
+    - {name: share, type: ratio, numerator: revenue, denominator: doubled}
 `))
 	if err != nil {
 		t.Fatalf("decode SemanticModel: %v", err)
@@ -308,9 +346,9 @@ kind: SemanticModel
 metadata: { id: semantic-model:sales, name: sales }
 spec:
   accessGrants:
-    canViewSales: { userAttribute: department, allowedValues: [ sales ] }
+    - {name: canViewSales, userAttribute: department, allowedValues: [ sales ]}
   datasets:
-    orders: { model: orders_model, requiredAccessGrants: [ canViewSales ] }
+    - {name: orders, model: orders_model, requiredAccessGrants: [ canViewSales ]}
 `))
 	if err != nil {
 		t.Fatalf("structural access policy decode: %v", err)
@@ -335,9 +373,9 @@ func TestTypedSemanticModelLoweringPreservesExactNumericLiterals(t *testing.T) {
 kind: SemanticModel
 metadata: {id: semantic-model:sales, name: sales}
 spec:
-  datasets: {orders: {model: orders_model}}
-  filters: {threshold: {field: orders.amount, operator: equals, value: `+token+`}}
-  metrics: {}
+  datasets: [{name: orders, model: orders_model}]
+  filters: [{name: threshold, definition: {field: orders.amount, operator: equals, value: `+token+`}}]
+  metrics: []
 `))
 			if err != nil {
 				t.Fatal(err)

@@ -15,11 +15,11 @@ import (
 func testSource(t *testing.T, version string, optional bool) contractprojection.Source {
 	t.Helper()
 	var source projectcontracts.Source
-	fields := `"id":{"datatype":"Integer"}`
+	fields := `{"name":"id","datatype":"Integer"}`
 	if optional {
-		fields += `,"name":{"datatype":"String","nullable":true}`
+		fields = `{"name":"id","datatype":"Integer","criticalDataElement":true}`
 	}
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"compatible"},"fields":[` + fields + `]}}`
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestValidationEvidenceRejectsMissingDuplicateAndFailedChecks(t *testing.T) 
 func semanticPublication(t *testing.T, version, allowed string) ContractPublication {
 	t.Helper()
 	var input projectcontracts.SemanticModel
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":{"orders":{"model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowed + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders_semantic"},"spec":{"datasets":[{"name":"orders","model":"orders_model","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":[{"name":"orders","type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}]}],"accessGrants":[{"name":"region","userAttribute":"region","allowedValues":` + allowed + `}],"dimensions":[{"name":"region","datatype":"String","bindings":[{"dataset":"orders","field":"orders.region"}],"requiredAccessGrants":["region"]}]}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

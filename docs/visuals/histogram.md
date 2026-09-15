@@ -17,7 +17,7 @@ Select one numeric field and a bin count so LeapView can count observations in e
 
 ```yaml visual-example=delivery_histogram
 visuals:
-  delivery_histogram:
+  - id: delivery_histogram
     title: Delivery days histogram
     description: Buckets order volume by delivery duration.
     type: histogram
@@ -39,7 +39,7 @@ Change the numeric field to revenue and adjust `query.bins` to balance distribut
 
 ```yaml visual-example=revenue_histogram
 visuals:
-  revenue_histogram:
+  - id: revenue_histogram
     title: Revenue histogram
     type: histogram
     presentation:
@@ -60,7 +60,7 @@ Use fewer bins for the bounded review scale and an `automatic` label policy so u
 
 ```yaml visual-example=review_histogram
 visuals:
-  review_histogram:
+  - id: review_histogram
     title: Review score histogram
     type: histogram
     presentation:

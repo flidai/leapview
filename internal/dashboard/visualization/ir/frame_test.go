@@ -76,6 +76,50 @@ func TestValidateEnvelopeAcceptsConformanceFixtures(t *testing.T) {
 	}
 }
 
+func TestValidateWindowedStateSeparatesBrowseCapFromBlockBudget(t *testing.T) {
+	t.Parallel()
+
+	state := testWindowedState(2, 10000, [][]any{{"one"}})
+	if err := validateWindowedState(state, VisualizationDataBudget{MaxRows: 1}); err != nil {
+		t.Fatalf("row cap should be independent of block budget: %v", err)
+	}
+}
+
+func TestValidateWindowedStateRejectsAvailableRowsAboveBrowseCap(t *testing.T) {
+	t.Parallel()
+
+	state := testWindowedState(2, 1, nil)
+	if err := validateWindowedState(state, VisualizationDataBudget{MaxRows: 2}); err == nil {
+		t.Fatal("available rows above row cap should be rejected")
+	}
+}
+
+func TestValidateWindowedStateRejectsBlockAboveRowBudget(t *testing.T) {
+	t.Parallel()
+
+	state := testWindowedState(2, 10000, [][]any{{"one"}, {"two"}})
+	if err := validateWindowedState(state, VisualizationDataBudget{MaxRows: 1}); err == nil {
+		t.Fatal("window block above row budget should be rejected")
+	}
+}
+
+func testWindowedState(availableRows, rowCap int64, rows [][]any) WindowedVisualizationDataState {
+	count := availableRows
+	state := WindowedVisualizationDataState{
+		Schema:        VisualizationDatasetSchema{ID: "primary", Fields: []VisualizationField{{ID: "id", Role: VisualizationFieldRoleIdentity, DataType: VisualizationDataTypeString, Label: "ID"}}},
+		Cardinality:   VisualizationCardinality{Kind: VisualizationCardinalityKindExact, Count: &count},
+		AvailableRows: availableRows,
+		RowCap:        rowCap,
+		ChunkSize:     50,
+		ResetVersion:  0,
+		Blocks:        map[string]VisualizationWindowBlock{},
+	}
+	if rows != nil {
+		state.Blocks["0:1"] = VisualizationWindowBlock{ID: "0:1", Start: 0, Rows: rows, RequestSeq: 0, ResetVersion: 0}
+	}
+	return state
+}
+
 func TestValidateEnvelopeAcceptsTransportDecimalStrings(t *testing.T) {
 	for _, value := range []string{"252.24", "9007199254740993.125"} {
 		envelope := readEnvelopeFixture(t, "cartesian-inline.json")

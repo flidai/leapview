@@ -7,11 +7,11 @@ metadata:
   description: Rating-by-genre semantic model for safe genre analysis.
 spec:
   datasets:
-    rating_genres:
+    - name: rating_genres
       model: rating_genres
       defaultTimeDimension: rating_date
       metrics:
-        genre_rating_count:
+        - name: genre_rating_count
           type: simple
           empty: zero
           label: Genre ratings
@@ -19,7 +19,7 @@ spec:
           format: integer
           agg: count
           field: rating_genre_id
-        average_rating:
+        - name: average_rating
           type: simple
           empty: 'null'
           label: Average rating
@@ -27,7 +27,7 @@ spec:
           format: decimal
           agg: avg
           field: rating
-        active_users:
+        - name: active_users
           type: simple
           empty: zero
           label: Active users
@@ -35,7 +35,7 @@ spec:
           format: integer
           agg: count_distinct
           field: user_id
-        rated_movies:
+        - name: rated_movies
           type: simple
           empty: zero
           label: Rated movies
@@ -44,7 +44,7 @@ spec:
           agg: count_distinct
           field: movie_id
       dimensions:
-        rating_date:
+        - name: rating_date
           datatype: Date
           time:
             nativeGrain: day
@@ -53,18 +53,18 @@ spec:
               - week
               - month
             calendar: iso8601
-        genre:
+        - name: genre
           datatype: String
-        release_decade:
+        - name: release_decade
           datatype: String
-    ratings:
+    - name: ratings
       model: ratings
-    movies:
+    - name: movies
       model: movies
-    users:
+    - name: users
       model: users
   relationships:
-    rating_genres_movies:
+    - name: rating_genres_movies
       from:
         dataset: rating_genres
         entity: movie
@@ -72,7 +72,7 @@ spec:
         dataset: movies
         entity: movie
       description: Links each rating-genre row to the rated movie.
-    rating_genres_users:
+    - name: rating_genres_users
       from:
         dataset: rating_genres
         entity: user

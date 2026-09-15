@@ -24,14 +24,15 @@ import (
 )
 
 const (
-	planetURL              = "https://build.protomaps.com/20260720.pmtiles"
-	archiveDigest          = visualizationmapasset.ArchiveSHA256
-	globalArchiveDigest    = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
-	regionalBounds         = "-82,-56,-30,14"
-	regionalMinimumZoom    = "7"
-	regionalMaximumZoom    = "10"
-	archiveDownloadThreads = "2"
-	basemapAssetsSHA       = visualizationmapasset.BasemapAssetsRevision
+	planetURL                = "https://build.protomaps.com/20260720.pmtiles"
+	archiveDigest            = visualizationmapasset.ArchiveSHA256
+	globalArchiveDigest      = "2d97ee8907670936ab722da7ca06eafec0734392f73fa1cd337d4debd85d676f"
+	regionalBounds           = "-82,-56,-30,14"
+	regionalMinimumZoom      = "7"
+	regionalMaximumZoom      = "10"
+	archiveDownloadThreads   = "2"
+	pmtilesRateLimitAttempts = 3
+	basemapAssetsSHA         = visualizationmapasset.BasemapAssetsRevision
 )
 
 var glyphRanges = []string{
@@ -45,6 +46,7 @@ var glyphRanges = []string{
 	"3840-4095",
 	"4096-4351",
 	"11520-11775",
+	"65024-65279",
 }
 
 func main() {
@@ -290,7 +292,39 @@ func reuseVerifiedArchive(primary, legacy, digest, target string) error {
 }
 
 func runPMTiles(ctx context.Context, arguments ...string) error {
-	return pmtilesCommand(ctx, arguments...).Run()
+	var lastErr error
+	for attempt := 1; attempt <= pmtilesRateLimitAttempts; attempt++ {
+		var stderr strings.Builder
+		command := pmtilesCommand(ctx, arguments...)
+		command.Stderr = io.MultiWriter(os.Stderr, &stderr)
+		err := command.Run()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isPMTilesRateLimit(stderr.String()) || attempt == pmtilesRateLimitAttempts {
+			return err
+		}
+		if len(arguments) >= 3 && arguments[0] == "extract" {
+			if removeErr := os.Remove(arguments[2]); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fmt.Errorf("remove partial PMTiles extraction before retry: %w", removeErr)
+			}
+		}
+		delay := time.Duration(attempt*5) * time.Second
+		fmt.Fprintf(os.Stderr, "PMTiles source rate limited; retrying in %s (attempt %d/%d)\n", delay, attempt+1, pmtilesRateLimitAttempts)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastErr
+}
+
+func isPMTilesRateLimit(stderr string) bool {
+	return strings.Contains(stderr, "HTTP error: 429")
 }
 
 func pmtilesCommand(ctx context.Context, arguments ...string) *exec.Cmd {

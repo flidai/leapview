@@ -21,7 +21,7 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "AcceptedValuesModelCheck": {
+    "AcceptedValuesDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -271,31 +271,6 @@
         "sourceDataIdentityCapability": "unavailable"
       }
     },
-    "CompatibleSourceSchema": {
-      "properties": {
-        "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SourceSchemaField"
-          },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "mode": {
-          "enum": [
-            "compatible"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields",
-        "mode"
-      ],
-      "type": "object"
-    },
     "Connection": {
       "properties": {
         "apiVersion": {
@@ -513,46 +488,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "ContractProjectionField": {
-      "properties": {
-        "authoritativeDefinitions": {
-          "items": {
-            "$ref": "#/$defs/ContractProjectionAuthoritativeDefinition"
-          },
-          "type": "array"
-        },
-        "classification": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "criticalDataElement": {
-          "type": "boolean"
-        },
-        "datatype": {
-          "enum": [
-            "String",
-            "Integer",
-            "Decimal",
-            "Float",
-            "Boolean",
-            "Date",
-            "Time",
-            "DateTime",
-            "DateTimeTz",
-            "Opaque"
-          ],
-          "type": "string"
-        },
-        "deprecation": {
-          "$ref": "#/$defs/ContractProjectionFieldDeprecation"
-        },
-        "nullable": {
-          "type": "boolean"
-        }
-      },
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "ContractProjectionFieldDeprecation": {
       "properties": {
         "reason": {
@@ -628,19 +563,33 @@
         },
         "grain": {
           "$ref": "#/$defs/ContractProjectionModelGrain"
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractProjectionSourceSchema"
         }
       },
       "required": [
         "definition",
         "entities",
         "fields",
-        "grain"
+        "grain",
+        "schema"
       ],
       "type": "object",
       "unevaluatedProperties": false
     },
     "ContractProjectionModelCheck": {
       "properties": {
+        "basis": {
+          "enum": [
+            "field",
+            "revision"
+          ],
+          "type": "string"
+        },
+        "errorAfter": {
+          "$ref": "#/$defs/ContractProjectionDuration"
+        },
         "field": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -664,6 +613,10 @@
           "format": "int64",
           "type": "integer"
         },
+        "revision": {
+          "format": "date-time",
+          "type": "string"
+        },
         "severity": {
           "enum": [
             "warning",
@@ -681,7 +634,8 @@
             "unique",
             "accepted_values",
             "relationship",
-            "row_count"
+            "row_count",
+            "freshness"
           ],
           "type": "string"
         },
@@ -690,6 +644,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "warningAfter": {
+          "$ref": "#/$defs/ContractProjectionDuration"
         }
       },
       "required": [
@@ -780,9 +737,6 @@
         },
         "deprecation": {
           "$ref": "#/$defs/ContractProjectionFieldDeprecation"
-        },
-        "nullable": {
-          "type": "boolean"
         }
       },
       "type": "object",
@@ -1237,54 +1191,15 @@
     },
     "ContractProjectionSourceBody": {
       "properties": {
-        "freshness": {
-          "$ref": "#/$defs/ContractProjectionSourceFreshness"
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/ContractProjectionModelCheck"
+          },
+          "type": "array"
         },
-        "schema": {
-          "$ref": "#/$defs/ContractProjectionSourceSchema"
-        }
-      },
-      "required": [
-        "schema"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ContractProjectionSourceFreshness": {
-      "properties": {
-        "basis": {
-          "enum": [
-            "field",
-            "revision"
-          ],
-          "type": "string"
-        },
-        "errorAfter": {
-          "$ref": "#/$defs/ContractProjectionDuration"
-        },
-        "field": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "revision": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "warningAfter": {
-          "$ref": "#/$defs/ContractProjectionDuration"
-        }
-      },
-      "required": [
-        "basis"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ContractProjectionSourceSchema": {
-      "properties": {
         "fields": {
           "additionalProperties": {
-            "$ref": "#/$defs/ContractProjectionField"
+            "$ref": "#/$defs/ContractProjectionModelField"
           },
           "propertyNames": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -1292,9 +1207,21 @@
           },
           "type": "object"
         },
+        "schema": {
+          "$ref": "#/$defs/ContractProjectionSourceSchema"
+        }
+      },
+      "required": [
+        "fields",
+        "schema"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "ContractProjectionSourceSchema": {
+      "properties": {
         "mode": {
           "enum": [
-            "inferred",
             "compatible",
             "strict"
           ],
@@ -1348,6 +1275,223 @@
       "required": [
         "id",
         "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheck": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DatasetCheckNonNullVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckUniqueVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckAcceptedValuesVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckRelationshipVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckRowCountVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckFreshnessVariant"
+        }
+      ]
+    },
+    "DatasetCheckAcceptedValuesVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/AcceptedValuesDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "accepted_values"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckFreshnessVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/FreshnessDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "freshness"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckNonNullVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/NonNullDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "non_null"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckRelationshipVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RelationshipDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "relationship"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckRowCountVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RowCountDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "row_count"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckUniqueVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/UniqueDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "unique"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetField": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/AuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/FieldDeprecation"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetSchema": {
+      "properties": {
+        "mode": {
+          "enum": [
+            "compatible",
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -1414,6 +1558,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -1435,6 +1583,7 @@
       },
       "required": [
         "expression",
+        "name",
         "type"
       ],
       "type": "object"
@@ -1601,31 +1750,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "FieldFreshness": {
-      "properties": {
-        "basis": {
-          "enum": [
-            "field"
-          ],
-          "type": "string"
-        },
-        "errorAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        },
-        "field": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "warningAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        }
-      },
-      "required": [
-        "basis",
-        "field"
-      ],
-      "type": "object"
-    },
     "FieldsSemanticRelationshipEndpoint": {
       "properties": {
         "dataset": {
@@ -1647,6 +1771,56 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
+    },
+    "FreshnessDatasetCheck": {
+      "properties": {
+        "basis": {
+          "enum": [
+            "field",
+            "revision"
+          ],
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "errorAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        },
+        "field": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "revision": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "freshness"
+          ],
+          "type": "string"
+        },
+        "warningAfter": {
+          "$ref": "#/$defs/FreshnessDuration"
+        }
+      },
+      "required": [
+        "basis",
+        "id",
+        "type"
+      ],
+      "type": "object"
     },
     "FreshnessDuration": {
       "properties": {
@@ -1900,20 +2074,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "InferredSourceSchema": {
-      "properties": {
-        "mode": {
-          "enum": [
-            "inferred"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object"
-    },
     "IsNotNullSemanticFilter": {
       "properties": {
         "aiContext": {
@@ -2161,6 +2321,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -2174,6 +2338,9 @@
           "$ref": "#/$defs/SemanticTimeSemantics"
         }
       },
+      "required": [
+        "name"
+      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -2244,125 +2411,6 @@
         "kind",
         "metadata",
         "spec"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheck": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/ModelCheckNonNullVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckUniqueVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckAcceptedValuesVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckRelationshipVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckRowCountVariant"
-        }
-      ]
-    },
-    "ModelCheckAcceptedValuesVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/AcceptedValuesModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "accepted_values"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckNonNullVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/NonNullModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "non_null"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckRelationshipVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RelationshipModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "relationship"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckRowCountVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RowCountModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "row_count"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckUniqueVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/UniqueModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "unique"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -2440,6 +2488,10 @@
           },
           "type": "array"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "type": {
           "enum": [
             "primary",
@@ -2452,63 +2504,9 @@
       },
       "required": [
         "fields",
+        "name",
         "type"
       ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelField": {
-      "properties": {
-        "aiContext": {
-          "$ref": "#/$defs/AIContext"
-        },
-        "authoritativeDefinitions": {
-          "items": {
-            "$ref": "#/$defs/AuthoritativeDefinition"
-          },
-          "type": "array"
-        },
-        "classification": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "criticalDataElement": {
-          "type": "boolean"
-        },
-        "datatype": {
-          "enum": [
-            "String",
-            "Integer",
-            "Decimal",
-            "Float",
-            "Boolean",
-            "Date",
-            "Time",
-            "DateTime",
-            "DateTimeTz",
-            "Opaque"
-          ],
-          "type": "string"
-        },
-        "deprecation": {
-          "$ref": "#/$defs/FieldDeprecation"
-        },
-        "description": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "nullable": {
-          "type": "boolean"
-        },
-        "tags": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -2529,7 +2527,7 @@
       "properties": {
         "checks": {
           "items": {
-            "$ref": "#/$defs/ModelCheck"
+            "$ref": "#/$defs/DatasetCheck"
           },
           "type": "array"
         },
@@ -2537,27 +2535,22 @@
           "$ref": "#/$defs/ModelDefinition"
         },
         "entities": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/ModelEntity"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ModelField"
+          "items": {
+            "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "grain": {
           "$ref": "#/$defs/ModelGrain"
+        },
+        "schema": {
+          "$ref": "#/$defs/DatasetSchema"
         }
       },
       "required": [
@@ -2602,6 +2595,24 @@
         "supportStatus": "stable"
       }
     },
+    "NamedSemanticFilter": {
+      "description": "Only a top-level reusable filter has an identity; child expressions do not.",
+      "properties": {
+        "definition": {
+          "$ref": "#/$defs/SemanticFilter"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "definition",
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NamedSemanticRelationshipEndpoint": {
       "properties": {
         "dataset": {
@@ -2620,7 +2631,7 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "NonNullModelCheck": {
+    "NonNullDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -2985,6 +2996,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "numerator": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -3010,6 +3025,7 @@
       },
       "required": [
         "denominator",
+        "name",
         "numerator",
         "type"
       ],
@@ -3076,7 +3092,7 @@
       ],
       "type": "object"
     },
-    "RelationshipModelCheck": {
+    "RelationshipDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -3178,32 +3194,7 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "RevisionFreshness": {
-      "properties": {
-        "basis": {
-          "enum": [
-            "revision"
-          ],
-          "type": "string"
-        },
-        "errorAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        },
-        "revision": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "warningAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        }
-      },
-      "required": [
-        "basis",
-        "revision"
-      ],
-      "type": "object"
-    },
-    "RowCountModelCheck": {
+    "RowCountDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -3368,6 +3359,10 @@
           "$ref": "#/$defs/SemanticAllowedValues",
           "uniqueItems": true
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "userAttribute": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -3375,6 +3370,7 @@
       },
       "required": [
         "allowedValues",
+        "name",
         "userAttribute"
       ],
       "type": "object",
@@ -3428,30 +3424,26 @@
           "type": "string"
         },
         "dimensions": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/LocalSemanticDimension"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "displayName": {
           "type": "string"
         },
         "metrics": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SimpleSemanticMetric"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "model": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
         "requiredAccessGrants": {
@@ -3465,7 +3457,8 @@
         }
       },
       "required": [
-        "model"
+        "model",
+        "name"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -3476,14 +3469,10 @@
           "$ref": "#/$defs/AIContext"
         },
         "bindings": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDimensionBinding"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "datatype": {
           "enum": [
@@ -3506,6 +3495,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3520,13 +3513,18 @@
         }
       },
       "required": [
-        "bindings"
+        "bindings",
+        "name"
       ],
       "type": "object",
       "unevaluatedProperties": false
     },
     "SemanticDimensionBinding": {
       "properties": {
+        "dataset": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "field": {
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
@@ -3540,6 +3538,7 @@
         }
       },
       "required": [
+        "dataset",
         "field"
       ],
       "type": "object",
@@ -3768,65 +3767,41 @@
     "SemanticModelSpec": {
       "properties": {
         "accessGrants": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticAccessGrant"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "datasets": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDataset"
           },
-          "minProperties": 1,
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "minItems": 1,
+          "type": "array"
         },
         "dimensions": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticDimension"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "filters": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SemanticFilter"
+          "items": {
+            "$ref": "#/$defs/NamedSemanticFilter"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "metrics": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticMetric"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "relationships": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/SemanticRelationship"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         }
       },
       "required": [
@@ -3846,12 +3821,17 @@
         "from": {
           "$ref": "#/$defs/SemanticRelationshipEndpoint"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "to": {
           "$ref": "#/$defs/SemanticRelationshipEndpoint"
         }
       },
       "required": [
         "from",
+        "name",
         "to"
       ],
       "type": "object",
@@ -3952,6 +3932,10 @@
         "label": {
           "type": "string"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "requiredAccessGrants": {
           "items": {
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
@@ -3985,6 +3969,7 @@
       },
       "required": [
         "agg",
+        "name",
         "type"
       ],
       "type": "object",
@@ -4057,56 +4042,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "SourceFreshness": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/SourceFreshnessFieldVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceFreshnessRevisionVariant"
-        }
-      ]
-    },
-    "SourceFreshnessFieldVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/FieldFreshness"
-        }
-      ],
-      "properties": {
-        "basis": {
-          "enum": [
-            "field"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "basis"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceFreshnessRevisionVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RevisionFreshness"
-        }
-      ],
-      "properties": {
-        "basis": {
-          "enum": [
-            "revision"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "basis"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "SourceLocation": {
       "oneOf": [
         {
@@ -4157,145 +4092,29 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "SourceSchema": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/SourceSchemaInferredVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceSchemaCompatibleVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceSchemaStrictVariant"
-        }
-      ]
-    },
-    "SourceSchemaCompatibleVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/CompatibleSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "compatible"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaField": {
-      "properties": {
-        "authoritativeDefinitions": {
-          "items": {
-            "$ref": "#/$defs/AuthoritativeDefinition"
-          },
-          "type": "array"
-        },
-        "classification": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "criticalDataElement": {
-          "type": "boolean"
-        },
-        "datatype": {
-          "enum": [
-            "String",
-            "Integer",
-            "Decimal",
-            "Float",
-            "Boolean",
-            "Date",
-            "Time",
-            "DateTime",
-            "DateTimeTz",
-            "Opaque"
-          ],
-          "type": "string"
-        },
-        "deprecation": {
-          "$ref": "#/$defs/FieldDeprecation"
-        },
-        "description": {
-          "type": "string"
-        },
-        "nullable": {
-          "type": "boolean"
-        },
-        "tags": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "datatype"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaInferredVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/InferredSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "inferred"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaStrictVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/StrictSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "strict"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "SourceSpec": {
       "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/DatasetCheck"
+          },
+          "type": "array"
+        },
         "connection": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
-        "freshness": {
-          "$ref": "#/$defs/SourceFreshness"
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/DatasetField"
+          },
+          "type": "array"
         },
         "location": {
           "$ref": "#/$defs/SourceLocation"
         },
         "schema": {
-          "$ref": "#/$defs/SourceSchema"
+          "$ref": "#/$defs/DatasetSchema"
         }
       },
       "required": [
@@ -4304,31 +4123,6 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
-    },
-    "StrictSourceSchema": {
-      "properties": {
-        "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SourceSchemaField"
-          },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "mode": {
-          "enum": [
-            "strict"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields",
-        "mode"
-      ],
-      "type": "object"
     },
     "TextPathSourceLocation": {
       "allOf": [
@@ -4382,7 +4176,7 @@
         "sourceDataIdentityCapability": "unavailable"
       }
     },
-    "UniqueModelCheck": {
+    "UniqueDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"

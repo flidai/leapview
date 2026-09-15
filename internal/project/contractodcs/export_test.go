@@ -58,6 +58,21 @@ func TestGoldenExportsAndReports(t *testing.T) {
 	}
 }
 
+func TestHistoricalNullablePublicationHasExplicitUnsupportedExport(t *testing.T) {
+	old := []byte(`{"apiVersion":"leapview.dev/v1","contract":{"schema":{"fields":{"customer_id":{"datatype":"String","nullable":false}},"mode":"compatible"}},"kind":"Source","metadata":{"contract":{"compatibility":"backward","version":"1.2.3"},"id":"source:customers","name":"customers"},"profile":"leapview.contract/v1"}`)
+	publication := sourcePublication(t)
+	publication.CanonicalBytes = old
+	var err error
+	publication.Digest, err = contractprojection.DigestSourcePublication(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Export(publication)
+	if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || !hasLoss(result.LossReport, LossUnsupported, "contract.schema.fields") {
+		t.Fatalf("historical export result=%#v error=%v", result, err)
+	}
+}
+
 func TestExportRejectsInvalidPublicationEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -69,7 +84,9 @@ func TestExportRejectsInvalidPublicationEvidence(t *testing.T) {
 		{"version", func(p *contractpublication.ContractPublication) { p.Version = "9.0.0" }},
 		{"missing checks", func(p *contractpublication.ContractPublication) { p.Validation.Checks = nil }},
 		{"failed check", func(p *contractpublication.ContractPublication) { p.Validation.Checks[0].Outcome = "failed" }},
-		{"policy evidence", func(p *contractpublication.ContractPublication) { p.Validation.PolicyEvidence = &contractpublication.PolicyEvidence{} }},
+		{"policy evidence", func(p *contractpublication.ContractPublication) {
+			p.Validation.PolicyEvidence = &contractpublication.PolicyEvidence{}
+		}},
 		{"unpublished", func(p *contractpublication.ContractPublication) { p.PublishedAt = time.Time{} }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -131,7 +148,7 @@ func TestOracleNegativeFixturesViolateOfficialSchema(t *testing.T) {
 
 func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
 	var authored projectcontracts.SemanticModel
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":{"orders":{"model":"orders_model","metrics":{"orders":{"type":"simple","agg":"count","field":"id"}}}}}}`), &authored); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic-model:sales","name":"sales"},"spec":{"datasets":[{"name":"orders","model":"orders_model","metrics":[{"name":"orders","type":"simple","agg":"count","field":"id"}]}]}}`), &authored); err != nil {
 		t.Fatal(err)
 	}
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "model:orders", Name: "orders_model", Kind: projectgraph.KindModel}}, nil)
@@ -152,7 +169,7 @@ func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
 	}
 
 	var authoredSource projectcontracts.Source
-	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:opaque","name":"opaque"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/tmp/opaque.csv","format":"csv"},"schema":{"mode":"strict","fields":{"payload":{"datatype":"Opaque"}}}}}`), &authoredSource); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:opaque","name":"opaque"},"spec":{"connection":"connection:warehouse","location":{"type":"path","path":"/tmp/opaque.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"payload","datatype":"Opaque"}]}}`), &authoredSource); err != nil {
 		t.Fatal(err)
 	}
 	opaque, err := contractprojection.ProjectSource(authoredSource, contract())
@@ -160,7 +177,7 @@ func TestUnsupportedFeaturesRejectWithoutPartialDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err = Export(publication(t, opaque))
-	if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || !hasLoss(result.LossReport, LossUnsupported, "contract.schema.fields.payload.datatype") {
+	if !errors.Is(err, ErrUnsupportedMapping) || len(result.Document) != 0 || !hasLoss(result.LossReport, LossUnsupported, "contract.fields.payload.datatype") {
 		t.Fatalf("Opaque result=%#v err=%v", result, err)
 	}
 }
@@ -237,15 +254,7 @@ func TestExternalContractReferenceIsRejectedByProjectionAuthority(t *testing.T) 
 func sourcePublication(t *testing.T) contractpublication.ContractPublication {
 	t.Helper()
 	var source projectcontracts.Source
-	if err := json.Unmarshal([]byte(`{
-  "apiVersion":"leapview.dev/v1","kind":"Source",
-  "metadata":{"id":"source:customers","name":"customers","owner":"secret-owner","description":"private provenance","contract":{"version":"1.2.3","compatibility":"backward"}},
-  "spec":{"connection":"connection:private","location":{"type":"path","path":"/private/customer.csv","format":"csv"},"schema":{"mode":"strict","fields":{
-    "customer_id":{"datatype":"String","nullable":false,"criticalDataElement":true,"classification":"restricted","authoritativeDefinitions":[{"type":"businessDefinition","url":"https://example.com/glossary/customer"}]},
-    "amount":{"datatype":"Decimal","nullable":true,"deprecation":{"since":"1.2.0","reason":"Use total","replacement":"total"}},
-    "total":{"datatype":"Decimal","nullable":true}
-  }},"freshness":{"basis":"field","field":"customer_id","warningAfter":{"amount":2,"unit":"hour"},"errorAfter":{"amount":4,"unit":"hour"}}}
-}`), &source); err != nil {
+	if err := json.Unmarshal([]byte(`{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:customers","name":"customers","owner":"secret-owner","description":"private provenance","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"connection":"connection:private","location":{"type":"path","path":"/private/customer.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"customer_id","datatype":"String","criticalDataElement":true,"classification":"restricted","authoritativeDefinitions":[{"type":"businessDefinition","url":"https://example.com/glossary/customer"}]},{"name":"amount","datatype":"Decimal","deprecation":{"since":"1.2.0","reason":"Use total","replacement":"total"}},{"name":"total","datatype":"Decimal"}],"checks":[{"id":"freshness","type":"freshness","basis":"field","field":"customer_id","warningAfter":{"amount":2,"unit":"hour"},"errorAfter":{"amount":4,"unit":"hour"}},{"id":"customer_id_present","type":"non_null","field":"customer_id"}]}}`), &source); err != nil {
 		t.Fatalf("decode generated Source: %v", err)
 	}
 	projection, err := contractprojection.ProjectSource(source, contract())
@@ -288,7 +297,7 @@ func projectModelProjectionWithRelationship(unsupported bool, target string) (co
 		checks += `,{"id":"bad_values","type":"accepted_values","field":"unknown","values":["unused"]}`
 	}
 	checks += `]`
-	encoded := []byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"definition":{"type":"direct","source":"source:customers"},"entities":{"order":{"type":"primary","fields":["id"]},"email_index":{"type":"unique","fields":["email"]}},"grain":{"entity":"order"},"fields":{"id":{"datatype":"String","nullable":false},"email":{"datatype":"String","nullable":true},"amount":{"datatype":"Decimal","nullable":true}}`)
+	encoded := []byte(`{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders","contract":{"version":"1.2.3","compatibility":"backward"}},"spec":{"definition":{"type":"direct","source":"source:customers"},"entities":[{"name":"order","type":"primary","fields":["id"]},{"name":"email_index","type":"unique","fields":["email"]}],"grain":{"entity":"order"},"fields":[{"name":"id","datatype":"String"},{"name":"email","datatype":"String"},{"name":"amount","datatype":"Decimal"}]`)
 	encoded = append(encoded, []byte(checks+`}}`)...)
 	var authored projectcontracts.Model
 	if err := json.Unmarshal(encoded, &authored); err != nil {

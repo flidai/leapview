@@ -14,7 +14,7 @@ A visual calculation is stored with one visual. Its result changes with the visu
 
 ```yaml
 visuals:
-  monthly_revenue:
+  - id: monthly_revenue
     type: line
     title: Revenue and running total
     calculations:

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/command"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
@@ -28,17 +31,20 @@ const (
 )
 
 type RefreshEvent struct {
-	Type            RefreshEventType
-	RefreshID       string
-	Generation      uint64
-	DataRevision    int64
-	FilterRevision  int64
-	ServingStateID  string
-	Command         string
-	Filters         dashboard.Filters
-	Targets         []string
-	Target          string
-	Value           any
+	Type           RefreshEventType
+	RefreshID      string
+	Generation     uint64
+	DataRevision   int64
+	FilterRevision int64
+	ServingStateID string
+	Command        string
+	Filters        dashboard.Filters
+	Targets        []string
+	Target         string
+	Value          any
+	// MetadataPending keeps an active window target plan carryable after its
+	// primary frame while runtime work still may publish exact cardinality.
+	MetadataPending bool
 	Err             error
 	Queries         int
 	Duration        time.Duration
@@ -149,6 +155,7 @@ type activeRefresh struct {
 	targetWork       time.Duration
 	stageTimingsMs   map[string]float64
 	progressPercent  *float64
+	targetPlans      map[string]command.Target
 }
 
 func NewCoordinator(parent context.Context, publish EventPublisher) *Coordinator {
@@ -214,6 +221,7 @@ func (c *Coordinator) BeginPrepared(prepare RefreshPrepare, work func(RefreshPre
 		c.mu.Unlock()
 		return Refresh{}, fmt.Errorf("refresh generation %d does not advance current generation %d", preparation.Generation, c.generation)
 	}
+	c.carryUnfinishedWindowTargets(&preparation, filters)
 	var canceledSummary *RefreshSummary
 	if c.workCancel != nil {
 		c.workCancel()
@@ -241,6 +249,7 @@ func (c *Coordinator) BeginPrepared(prepare RefreshPrepare, work func(RefreshPre
 	c.active = &activeRefresh{
 		refresh: refresh, startedAt: time.Now(), plannedTargets: len(preparation.Targets),
 		progressPercent: dashboard.NormalizeProgressPercent(nil, true),
+		targetPlans:     unfinishedTargetPlanMap(preparation),
 	}
 	c.mu.Unlock()
 
@@ -255,6 +264,62 @@ func (c *Coordinator) BeginPrepared(prepare RefreshPrepare, work func(RefreshPre
 	}
 	go c.run(ctx, refresh, refreshWork)
 	return refresh, nil
+}
+
+func (c *Coordinator) carryUnfinishedWindowTargets(preparation *RefreshPreparation, filters dashboard.Filters) {
+	if preparation.Command != "visual_window" || c.active == nil || !sameWindowFilters(c.active.refresh.Filters, filters) {
+		return
+	}
+	plan, ok := preparation.Plan.(command.RefreshPlan)
+	if !ok || len(c.active.targetPlans) == 0 {
+		return
+	}
+	current := make(map[string]struct{}, len(plan.Targets))
+	for _, target := range plan.Targets {
+		current[target.Key()] = struct{}{}
+	}
+	keys := make([]string, 0, len(c.active.targetPlans))
+	for key := range c.active.targetPlans {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	appended := false
+	for _, key := range keys {
+		if _, exists := current[key]; exists {
+			continue
+		}
+		plan.Targets = append(plan.Targets, c.active.targetPlans[key])
+		appended = true
+	}
+	if !appended {
+		return
+	}
+	preparation.Plan = plan
+	preparation.Targets = make([]string, 0, len(plan.Targets))
+	for _, target := range plan.Targets {
+		preparation.Targets = append(preparation.Targets, target.Key())
+	}
+}
+
+func sameWindowFilters(left, right dashboard.Filters) bool {
+	// Data revisions are assigned as each target publishes. They are output
+	// bookkeeping, so a completed target must not make an otherwise identical
+	// window request look like a new filter state.
+	left.DataRevisions = nil
+	right.DataRevisions = nil
+	return reflect.DeepEqual(left, right)
+}
+
+func unfinishedTargetPlanMap(preparation RefreshPreparation) map[string]command.Target {
+	plan, ok := preparation.Plan.(command.RefreshPlan)
+	if !ok {
+		return nil
+	}
+	plans := make(map[string]command.Target, len(plan.Targets))
+	for _, target := range plan.Targets {
+		plans[target.Key()] = target
+	}
+	return plans
 }
 
 func (c *Coordinator) SetObserver(observer SummaryObserver) {
@@ -378,6 +443,17 @@ func (c *Coordinator) emitCurrent(refresh Refresh, event RefreshEvent) bool {
 		c.active.queryCount += event.Queries
 	}
 	if c.active != nil && c.active.refresh.Generation == refresh.Generation {
+		if event.Type == RefreshEventVisual && !event.MetadataPending {
+			delete(c.active.targetPlans, "visual:"+event.Target)
+		} else if event.Type == RefreshEventVisualMetadata {
+			delete(c.active.targetPlans, "visual:"+event.Target)
+		} else if event.Type == RefreshEventTargetError && event.Target != "refresh" {
+			if _, exists := c.active.targetPlans[event.Target]; exists {
+				delete(c.active.targetPlans, event.Target)
+			} else {
+				delete(c.active.targetPlans, "visual:"+event.Target)
+			}
+		}
 		switch event.Type {
 		case RefreshEventStart:
 			event.ProgressPercent = cloneProgressPercent(c.active.progressPercent)

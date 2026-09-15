@@ -115,7 +115,6 @@ jobs:
   full-validation:
     name: Full nightly validation
     if: github.repository == 'flidai/leapview'
-    needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:

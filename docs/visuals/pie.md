@@ -16,7 +16,7 @@ Use one categorical dimension and one metric for a part-to-whole comparison, sor
 
 ```yaml visual-example=status_pie
 visuals:
-  status_pie:
+  - id: status_pie
     title: Orders by status pie
     type: pie
     query:
@@ -40,7 +40,7 @@ Set `presentation.rose: true` to encode values through sector radius as well as 
 
 ```yaml visual-example=status_pie_rose
 visuals:
-  status_pie_rose:
+  - id: status_pie_rose
     title: Orders by status rose pie
     type: pie
     presentation:
@@ -74,7 +74,7 @@ Move labels inside the sectors for a compact presentation; keep the category cou
 
 ```yaml visual-example=category_pie_inside
 visuals:
-  category_pie_inside:
+  - id: category_pie_inside
     title: Compact category pie
     type: pie
     presentation:

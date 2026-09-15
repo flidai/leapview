@@ -149,6 +149,7 @@ export class ReportTable extends LitElement {
   private compactColumns = false
   private lastResetVersion = -1
   private shouldResetScroll = false
+  private shouldReconcileViewport = false
   private requestSeq = 0
   private scrollFrame = 0
   private jumpTimer = 0
@@ -247,7 +248,6 @@ export class ReportTable extends LitElement {
       z-index: calc(var(--zIndex-default) + 2);
       flex: 1 1 auto;
       min-width: 0;
-      padding-inline-end: var(--lv-table-agent-action-space, 0px);
     }
 
     h2 {
@@ -274,9 +274,9 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
-      width: var(--lv-button-height, var(--control-medium-size));
-      height: var(--lv-button-height, var(--control-medium-size));
-      min-height: var(--lv-button-height, var(--control-medium-size));
+      width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
     }
 
     .visual-options summary {
@@ -1049,7 +1049,11 @@ export class ReportTable extends LitElement {
       this.clearJumpTimer()
       this.clearLocalSelection()
     }
+    // A late window may evict cached rows after the user scrolls back. Recover
+    // that transition once; already-missing empty results must not retry forever.
+    const wasVisibleLoading = this.visibleLoading
     this.mergeIncomingBlocks()
+    this.shouldReconcileViewport = changedProperties.has('table') && !wasVisibleLoading && this.visibleLoading
     if (changedProperties.has('table')) {
       this.syncSelectedRowFromTableSelection()
     }
@@ -1068,6 +1072,10 @@ export class ReportTable extends LitElement {
         this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
         this.scheduleEnsureBlocksForScroll()
       })
+    }
+    if (this.shouldReconcileViewport) {
+      this.shouldReconcileViewport = false
+      this.scheduleEnsureBlocksForScroll()
     }
   }
 
@@ -1092,7 +1100,7 @@ export class ReportTable extends LitElement {
   }
 
   get visibleLoading(): boolean {
-    return this.visibleRows.some((row) => row.kind === 'skeleton') || this.expectedBlocks.size > 0
+    return this.visibleRows.some((row) => row.kind === 'skeleton')
   }
 
   get availableRows(): number {

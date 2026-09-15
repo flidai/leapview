@@ -95,11 +95,11 @@ with a symbol-level call trace is recorded as reachable and blocks clearance.
 
 ## Runtime OS packages
 
-The production server image combines a digest-pinned Debian base with the dated sources in `deploy/container/debian-bookworm.sources`. Both the Debian and Debian security suites use one immutable snapshot timestamp. APT binds each source to the Debian archive keyring, verifies signed repository metadata and package hashes, and therefore resolves direct and transitive packages from a frozen package universe on both release architectures. The bootstrap CA bundle comes from the separately digest-pinned Go builder before APT connects to the HTTPS snapshot.
+The production server image uses a digest-pinned distroless Debian compatibility base. It supplies glibc, libstdc++, CA certificates, tzdata, and the BusyBox utilities required by release qualification without carrying APT or general-purpose Debian runtime packages. The same immutable multi-platform digest is scanned on both release architectures.
 
-The distroless public-site runtime installs no OS packages. The authoring qualification image derives from the server runtime and inherits its frozen sources. The malicious-browser proof image is test-only, and the Ubuntu host bootstrap is an installation-time patching boundary: it intentionally consumes the current signed Ubuntu 24.04 repositories and enables unattended upgrades rather than becoming part of the immutable application image.
+The distroless public-site runtime installs no OS packages. The authoring qualification image is test-only: it copies the exact candidate binaries and evaluation fixture into a digest-pinned Debian client stage that supplies DBus and GNOME Keyring. The malicious-browser proof image is also test-only, and the Ubuntu host bootstrap is an installation-time patching boundary: it intentionally consumes the current signed Ubuntu 24.04 repositories and enables unattended upgrades rather than becoming part of the immutable application image.
 
-To refresh runtime packages, choose a reviewed snapshot containing the intended security updates, update the snapshot timestamp and the pinned runtime base digest together, build both `linux/amd64` and `linux/arm64`, inspect the installed package inventory, and rerun container vulnerability and provenance checks. Do not point a release build back at a moving mirror.
+To refresh the published runtime, select and pin a reviewed distroless Debian compatibility base digest containing the intended security updates, build both `linux/amd64` and `linux/arm64`, inspect the supplied runtime components, and rerun container vulnerability and provenance checks. Do not point a release build back at a moving mirror.
 
 ## Waivers
 

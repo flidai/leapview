@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/querymap"
@@ -171,6 +172,12 @@ func floatFromAny(value any) float64 {
 		return float64(typed)
 	case int64:
 		return float64(typed)
+	case string:
+		parsed, err := strconv.ParseFloat(typed, 64)
+		if err == nil {
+			return parsed
+		}
+		return 0
 	default:
 		return 0
 	}

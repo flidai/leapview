@@ -12,7 +12,7 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      movieId: {datatype: Integer, description: MovieLens movie identifier.}
-      imdbId: {datatype: Integer, description: Numeric IMDb identifier without the tt prefix.}
-      tmdbId: {datatype: Integer, description: Numeric TMDb movie identifier.}
+  fields:
+    - {name: movieId, datatype: Integer, description: MovieLens movie identifier.}
+    - {name: imdbId, datatype: String, description: IMDb identifier without the tt prefix; leading zeros are significant.}
+    - {name: tmdbId, datatype: Integer, description: Numeric TMDb movie identifier.}

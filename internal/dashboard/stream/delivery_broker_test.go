@@ -99,6 +99,135 @@ func TestDeliveryBrokerDropsPendingOlderGeneration(t *testing.T) {
 	}
 }
 
+func TestDeliveryBrokerDropsSupersededDurableSequence(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+
+	broker := NewDeliveryBrokerWithPendingLimit(8)
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "older"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    2,
+			Boundary:    true,
+		},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "newer"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    3,
+			Boundary:    true,
+		},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals: pagestream.SignalPatch{"page": "stale"},
+		Delivery: DeliveryMetadata{
+			SequenceKey: "navigation",
+			Sequence:    2,
+			Boundary:    true,
+		},
+	})
+
+	select {
+	case patch := <-updates:
+		if patch["page"] != "newer" {
+			t.Fatalf("patch = %#v, want newer navigation", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for newer navigation")
+	}
+	select {
+	case patch := <-updates:
+		t.Fatalf("superseded navigation was delivered: %#v", patch)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestDeliveryBrokerPreservesPendingPriorGenerationWhenRequested(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+
+	broker := NewDeliveryBroker()
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	// Keep the first result queued behind the unbuffered subscriber. A visual
+	// window refresh may supersede its work while its already-published result
+	// is still waiting for delivery.
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": "prior-result"},
+		Delivery: DeliveryMetadata{Generation: 1, CoalesceGroup: "dashboard-results"},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 2},
+		Delivery: DeliveryMetadata{Generation: 2, Boundary: true, PreservePriorGeneration: true},
+	})
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 3},
+		Delivery: DeliveryMetadata{Generation: 3, Boundary: true, PreservePriorGeneration: true},
+	})
+
+	select {
+	case patch := <-updates:
+		if patch["generation"] != "prior-result" {
+			t.Fatalf("first patch = %#v, want queued prior result", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for queued prior result")
+	}
+	select {
+	case patch := <-updates:
+		if patch["generation"] != 2 {
+			t.Fatalf("second patch = %#v, want generation 2 start", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for generation 2")
+	}
+	select {
+	case patch := <-updates:
+		if patch["generation"] != 3 {
+			t.Fatalf("third patch = %#v, want generation 3 start", patch)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for generation 3")
+	}
+}
+
+func TestDeliveryBrokerFullRefreshClearsQueuedWindowGenerations(t *testing.T) {
+	broker := NewDeliveryBroker()
+	updates, unsubscribe := broker.Subscribe("client:page")
+	defer unsubscribe()
+
+	for generation := uint64(1); generation <= 3; generation++ {
+		broker.PublishEnvelope("client:page", Envelope{
+			Signals:  pagestream.SignalPatch{"generation": generation},
+			Delivery: DeliveryMetadata{Generation: generation, Boundary: true, PreservePriorGeneration: generation < 3},
+		})
+	}
+	broker.PublishEnvelope("client:page", Envelope{
+		Signals:  pagestream.SignalPatch{"generation": 4},
+		Delivery: DeliveryMetadata{Generation: 4, Boundary: true},
+	})
+
+	select {
+	case patch := <-updates:
+		if patch["generation"] != 4 {
+			t.Fatalf("patch = %#v (%T), want full-refresh generation 4", patch, patch["generation"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for full-refresh generation")
+	}
+	select {
+	case patch := <-updates:
+		t.Fatalf("stale queued patch survived full refresh: %#v", patch)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 func TestDeliveryBrokerRetainsMergeRootsAcrossChain(t *testing.T) {
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)

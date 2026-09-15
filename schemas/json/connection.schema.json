@@ -21,7 +21,7 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "AcceptedValuesModelCheck": {
+    "AcceptedValuesDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -239,31 +239,6 @@
         "sourceDataIdentityCapability": "unavailable"
       }
     },
-    "CompatibleSourceSchema": {
-      "properties": {
-        "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SourceSchemaField"
-          },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "mode": {
-          "enum": [
-            "compatible"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields",
-        "mode"
-      ],
-      "type": "object"
-    },
     "Connection": {
       "properties": {
         "apiVersion": {
@@ -401,6 +376,223 @@
       "required": [
         "id",
         "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheck": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DatasetCheckNonNullVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckUniqueVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckAcceptedValuesVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckRelationshipVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckRowCountVariant"
+        },
+        {
+          "$ref": "#/$defs/DatasetCheckFreshnessVariant"
+        }
+      ]
+    },
+    "DatasetCheckAcceptedValuesVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/AcceptedValuesDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "accepted_values"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckFreshnessVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/FreshnessDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "freshness"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckNonNullVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/NonNullDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "non_null"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckRelationshipVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RelationshipDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "relationship"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckRowCountVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/RowCountDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "row_count"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetCheckUniqueVariant": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/UniqueDatasetCheck"
+        }
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "unique"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetField": {
+      "properties": {
+        "aiContext": {
+          "$ref": "#/$defs/AIContext"
+        },
+        "authoritativeDefinitions": {
+          "items": {
+            "$ref": "#/$defs/AuthoritativeDefinition"
+          },
+          "type": "array"
+        },
+        "classification": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "criticalDataElement": {
+          "type": "boolean"
+        },
+        "datatype": {
+          "enum": [
+            "String",
+            "Integer",
+            "Decimal",
+            "Float",
+            "Boolean",
+            "Date",
+            "Time",
+            "DateTime",
+            "DateTimeTz",
+            "Opaque"
+          ],
+          "type": "string"
+        },
+        "deprecation": {
+          "$ref": "#/$defs/FieldDeprecation"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DatasetSchema": {
+      "properties": {
+        "mode": {
+          "enum": [
+            "compatible",
+            "strict"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -575,12 +767,16 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "FieldFreshness": {
+    "FreshnessDatasetCheck": {
       "properties": {
         "basis": {
           "enum": [
-            "field"
+            "field",
+            "revision"
           ],
+          "type": "string"
+        },
+        "description": {
           "type": "string"
         },
         "errorAfter": {
@@ -590,13 +786,34 @@
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
           "type": "string"
         },
+        "id": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "revision": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "type": {
+          "enum": [
+            "freshness"
+          ],
+          "type": "string"
+        },
         "warningAfter": {
           "$ref": "#/$defs/FreshnessDuration"
         }
       },
       "required": [
         "basis",
-        "field"
+        "id",
+        "type"
       ],
       "type": "object"
     },
@@ -745,20 +962,6 @@
         "sourceDataIdentityCapability": "unavailable",
         "tableLike": true
       }
-    },
-    "InferredSourceSchema": {
-      "properties": {
-        "mode": {
-          "enum": [
-            "inferred"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object"
     },
     "JSONPathSourceLocation": {
       "allOf": [
@@ -919,125 +1122,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "ModelCheck": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/ModelCheckNonNullVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckUniqueVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckAcceptedValuesVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckRelationshipVariant"
-        },
-        {
-          "$ref": "#/$defs/ModelCheckRowCountVariant"
-        }
-      ]
-    },
-    "ModelCheckAcceptedValuesVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/AcceptedValuesModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "accepted_values"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckNonNullVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/NonNullModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "non_null"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckRelationshipVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RelationshipModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "relationship"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckRowCountVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RowCountModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "row_count"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelCheckUniqueVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/UniqueModelCheck"
-        }
-      ],
-      "properties": {
-        "type": {
-          "enum": [
-            "unique"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "ModelDefinition": {
       "oneOf": [
         {
@@ -1074,6 +1158,10 @@
           },
           "type": "array"
         },
+        "name": {
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
         "type": {
           "enum": [
             "primary",
@@ -1086,63 +1174,9 @@
       },
       "required": [
         "fields",
+        "name",
         "type"
       ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "ModelField": {
-      "properties": {
-        "aiContext": {
-          "$ref": "#/$defs/AIContext"
-        },
-        "authoritativeDefinitions": {
-          "items": {
-            "$ref": "#/$defs/AuthoritativeDefinition"
-          },
-          "type": "array"
-        },
-        "classification": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "criticalDataElement": {
-          "type": "boolean"
-        },
-        "datatype": {
-          "enum": [
-            "String",
-            "Integer",
-            "Decimal",
-            "Float",
-            "Boolean",
-            "Date",
-            "Time",
-            "DateTime",
-            "DateTimeTz",
-            "Opaque"
-          ],
-          "type": "string"
-        },
-        "deprecation": {
-          "$ref": "#/$defs/FieldDeprecation"
-        },
-        "description": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "nullable": {
-          "type": "boolean"
-        },
-        "tags": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -1163,7 +1197,7 @@
       "properties": {
         "checks": {
           "items": {
-            "$ref": "#/$defs/ModelCheck"
+            "$ref": "#/$defs/DatasetCheck"
           },
           "type": "array"
         },
@@ -1171,27 +1205,22 @@
           "$ref": "#/$defs/ModelDefinition"
         },
         "entities": {
-          "additionalProperties": {
+          "items": {
             "$ref": "#/$defs/ModelEntity"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/ModelField"
+          "items": {
+            "$ref": "#/$defs/DatasetField"
           },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         },
         "grain": {
           "$ref": "#/$defs/ModelGrain"
+        },
+        "schema": {
+          "$ref": "#/$defs/DatasetSchema"
         }
       },
       "required": [
@@ -1236,7 +1265,7 @@
         "supportStatus": "stable"
       }
     },
-    "NonNullModelCheck": {
+    "NonNullDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -1557,7 +1586,7 @@
       ],
       "type": "object"
     },
-    "RelationshipModelCheck": {
+    "RelationshipDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -1659,32 +1688,7 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "RevisionFreshness": {
-      "properties": {
-        "basis": {
-          "enum": [
-            "revision"
-          ],
-          "type": "string"
-        },
-        "errorAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        },
-        "revision": {
-          "format": "date-time",
-          "type": "string"
-        },
-        "warningAfter": {
-          "$ref": "#/$defs/FreshnessDuration"
-        }
-      },
-      "required": [
-        "basis",
-        "revision"
-      ],
-      "type": "object"
-    },
-    "RowCountModelCheck": {
+    "RowCountDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"
@@ -1855,56 +1859,6 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "SourceFreshness": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/SourceFreshnessFieldVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceFreshnessRevisionVariant"
-        }
-      ]
-    },
-    "SourceFreshnessFieldVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/FieldFreshness"
-        }
-      ],
-      "properties": {
-        "basis": {
-          "enum": [
-            "field"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "basis"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceFreshnessRevisionVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/RevisionFreshness"
-        }
-      ],
-      "properties": {
-        "basis": {
-          "enum": [
-            "revision"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "basis"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "SourceLocation": {
       "oneOf": [
         {
@@ -1955,145 +1909,29 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "SourceSchema": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/SourceSchemaInferredVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceSchemaCompatibleVariant"
-        },
-        {
-          "$ref": "#/$defs/SourceSchemaStrictVariant"
-        }
-      ]
-    },
-    "SourceSchemaCompatibleVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/CompatibleSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "compatible"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaField": {
-      "properties": {
-        "authoritativeDefinitions": {
-          "items": {
-            "$ref": "#/$defs/AuthoritativeDefinition"
-          },
-          "type": "array"
-        },
-        "classification": {
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-          "type": "string"
-        },
-        "criticalDataElement": {
-          "type": "boolean"
-        },
-        "datatype": {
-          "enum": [
-            "String",
-            "Integer",
-            "Decimal",
-            "Float",
-            "Boolean",
-            "Date",
-            "Time",
-            "DateTime",
-            "DateTimeTz",
-            "Opaque"
-          ],
-          "type": "string"
-        },
-        "deprecation": {
-          "$ref": "#/$defs/FieldDeprecation"
-        },
-        "description": {
-          "type": "string"
-        },
-        "nullable": {
-          "type": "boolean"
-        },
-        "tags": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "datatype"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaInferredVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/InferredSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "inferred"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SourceSchemaStrictVariant": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/StrictSourceSchema"
-        }
-      ],
-      "properties": {
-        "mode": {
-          "enum": [
-            "strict"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "mode"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "SourceSpec": {
       "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/DatasetCheck"
+          },
+          "type": "array"
+        },
         "connection": {
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
         },
-        "freshness": {
-          "$ref": "#/$defs/SourceFreshness"
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/DatasetField"
+          },
+          "type": "array"
         },
         "location": {
           "$ref": "#/$defs/SourceLocation"
         },
         "schema": {
-          "$ref": "#/$defs/SourceSchema"
+          "$ref": "#/$defs/DatasetSchema"
         }
       },
       "required": [
@@ -2102,31 +1940,6 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
-    },
-    "StrictSourceSchema": {
-      "properties": {
-        "fields": {
-          "additionalProperties": {
-            "$ref": "#/$defs/SourceSchemaField"
-          },
-          "propertyNames": {
-            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
-            "type": "string"
-          },
-          "type": "object"
-        },
-        "mode": {
-          "enum": [
-            "strict"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "fields",
-        "mode"
-      ],
-      "type": "object"
     },
     "TextPathSourceLocation": {
       "allOf": [
@@ -2180,7 +1993,7 @@
         "sourceDataIdentityCapability": "unavailable"
       }
     },
-    "UniqueModelCheck": {
+    "UniqueDatasetCheck": {
       "properties": {
         "description": {
           "type": "string"

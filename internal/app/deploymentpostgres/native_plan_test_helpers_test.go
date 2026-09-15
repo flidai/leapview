@@ -14,8 +14,15 @@ import (
 // admission tests into the complete immutable execution document required by
 // the PostgreSQL authority. The rich plan owns PlanDigest; callers must use
 // the returned value when constructing dependent candidate/attempt evidence.
-func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID string) deploymentnative.PlanInput {
+func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID string, policyEvidence ...AuthorizationPolicyEvidence) deploymentnative.PlanInput {
 	t.Helper()
+	if len(policyEvidence) > 1 {
+		t.Fatal("native plan fixture accepts at most one authorization policy identity")
+	}
+	policy := AuthorizationPolicyEvidence{Digest: admissionDigest('2')}
+	if len(policyEvidence) == 1 {
+		policy = policyEvidence[0]
+	}
 	now := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
 	plan, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
 		ID: input.PlanID, TargetID: input.TargetID, ProjectID: projectgraph.ResourceID(projectID), Environment: "prod",
@@ -33,7 +40,7 @@ func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID
 		},
 		Provenance: deploymentdomain.DeliveryProvenance{Builder: "native-test"},
 		Governance: deploymentdomain.DeliveryGovernance{
-			PolicyDigest: admissionDigest('2'), AuthorizationDigest: input.SecurityDomainFingerprint,
+			PolicyDigest: policy.Digest, PolicyRevision: policy.Revision, AuthorizationDigest: input.SecurityDomainFingerprint,
 			QualificationDigest: input.QualificationDigest, ExpiresAt: now.Add(time.Hour), ApprovalPolicyRevision: 1,
 		},
 		Evidence: deploymentdomain.DeliveryPlanEvidence{

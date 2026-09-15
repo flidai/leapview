@@ -49,28 +49,38 @@ func compileInventoryFiles(t *testing.T, files map[string]string) projectartifac
 func TestResourceUIDInventoryModelAndSemanticEvidence(t *testing.T) {
 	bundle := compileInventoryFiles(t, map[string]string{
 		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n",
-		"sources/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n",
-		"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model, contract: {version: 2.0.0, compatibility: backward}}\nspec: {definition: {type: direct, source: orders}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n",
-		"semantic-models/sales.yaml": "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic:sales, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {}}\n",
+		"sources/orders.yaml":        "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n",
+		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model, contract: {version: 2.0.0, compatibility: backward}}\nspec: {definition: {type: direct, source: orders}, entities: [{name: id, type: primary, fields: [id]}], grain: {entity: id}, fields: [{name: id, datatype: String}]}\n",
+		"semantic-models/sales.yaml": "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic:sales, name: sales}\nspec: {datasets: [{name: orders, model: orders_model}], metrics: []}\n",
 	})
 	inventory, err := project.NewResourceUIDInventory(bundle)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	encoded, _ := inventory.JSON()
 	var entries []struct {
-		ID string `json:"authored_id"`
-		Status string `json:"contract_status"`
+		ID        string `json:"authored_id"`
+		Status    string `json:"contract_status"`
 		Canonical string `json:"canonical_contract"`
-		Digest string `json:"contract_digest"`
+		Digest    string `json:"contract_digest"`
 	}
-	if err := json.Unmarshal(encoded, &entries); err != nil { t.Fatal(err) }
-	if len(entries) != 4 { t.Fatalf("inventory: %s", encoded) }
+	if err := json.Unmarshal(encoded, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("inventory: %s", encoded)
+	}
 	for _, entry := range entries {
 		switch entry.ID {
 		case "model:orders":
 			digest, err := contractprojection.DigestModelPublication([]byte(entry.Canonical))
-			if err != nil || digest != entry.Digest || entry.Status != "canonical" { t.Fatalf("model evidence: %+v, %v", entry, err) }
+			if err != nil || digest != entry.Digest || entry.Status != "canonical" {
+				t.Fatalf("model evidence: %+v, %v", entry, err)
+			}
 		case "semantic:sales", "source:orders":
-			if entry.Status != "unversioned" || entry.Digest != "" { t.Fatalf("invented version authority: %+v", entry) }
+			if entry.Status != "unversioned" || entry.Digest != "" {
+				t.Fatalf("invented version authority: %+v", entry)
+			}
 		}
 	}
 }
@@ -105,7 +115,9 @@ func TestResourceUIDInventorySealedCanonicalEvidence(t *testing.T) {
 	if entries[1].Profile != contractprojection.Profile {
 		t.Fatalf("profile = %q", entries[1].Profile)
 	}
-	if entries[1].Version != "1.0.0" { t.Fatalf("contract version = %q", entries[1].Version) }
+	if entries[1].Version != "1.0.0" {
+		t.Fatalf("contract version = %q", entries[1].Version)
+	}
 	digest, err := contractprojection.DigestSourcePublication([]byte(entries[1].Canonical))
 	if err != nil || digest != entries[1].Digest {
 		t.Fatalf("canonical replay: %s, %v", digest, err)

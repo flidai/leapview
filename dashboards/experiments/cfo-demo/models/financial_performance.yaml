@@ -7,35 +7,35 @@ metadata:
   description: Transaction-grain finance fact with conformed dimension keys and deterministic fictional planning measures.
 spec:
   fields:
-    record_id: {datatype: String, label: Record ID}
-    finance_date: {datatype: Date, label: Date}
-    segment: {datatype: String, label: Segment key}
-    country: {datatype: String, label: Country key}
-    product: {datatype: String, label: Product key}
-    discount_band: {datatype: String, label: Discount band key}
-    scorecard_group: {datatype: String, label: View}
-    units_sold: {datatype: Decimal, label: Units sold}
-    gross_sales: {datatype: Decimal, label: Gross sales}
-    discounts: {datatype: Decimal, label: Discounts}
-    net_sales: {datatype: Decimal, label: Net revenue}
-    cogs: {datatype: Decimal, label: Cost of goods sold}
-    gross_profit: {datatype: Decimal, label: Gross profit}
-    budget_sales: {datatype: Decimal, label: Budget revenue}
-    budget_cogs: {datatype: Decimal, label: Budget COGS}
-    budget_gross_profit: {datatype: Decimal, label: Budget gross profit}
-    forecast_sales: {datatype: Decimal, label: Forecast revenue}
-    forecast_gross_profit: {datatype: Decimal, label: Forecast gross profit}
-    sales_marketing_expense: {datatype: Decimal, label: Sales and marketing}
-    operations_expense: {datatype: Decimal, label: Operations expense}
-    research_development_expense: {datatype: Decimal, label: Research and development}
-    general_admin_expense: {datatype: Decimal, label: General and administrative}
-    budget_sales_marketing_expense: {datatype: Decimal, label: Budget sales and marketing}
-    budget_operations_expense: {datatype: Decimal, label: Budget operations expense}
-    budget_research_development_expense: {datatype: Decimal, label: Budget research and development}
-    budget_general_admin_expense: {datatype: Decimal, label: Budget general and administrative}
-    ebitda: {datatype: Decimal, label: EBITDA}
-    budget_ebitda: {datatype: Decimal, label: Budget EBITDA}
-    forecast_ebitda: {datatype: Decimal, label: Forecast EBITDA}
+    - {name: record_id, datatype: String, label: Record ID}
+    - {name: finance_date, datatype: Date, label: Date}
+    - {name: segment, datatype: String, label: Segment key}
+    - {name: country, datatype: String, label: Country key}
+    - {name: product, datatype: String, label: Product key}
+    - {name: discount_band, datatype: String, label: Discount band key}
+    - {name: scorecard_group, datatype: String, label: View}
+    - {name: units_sold, datatype: Decimal, label: Units sold}
+    - {name: gross_sales, datatype: Decimal, label: Gross sales}
+    - {name: discounts, datatype: Decimal, label: Discounts}
+    - {name: net_sales, datatype: Decimal, label: Net revenue}
+    - {name: cogs, datatype: Decimal, label: Cost of goods sold}
+    - {name: gross_profit, datatype: Decimal, label: Gross profit}
+    - {name: budget_sales, datatype: Decimal, label: Budget revenue}
+    - {name: budget_cogs, datatype: Decimal, label: Budget COGS}
+    - {name: budget_gross_profit, datatype: Decimal, label: Budget gross profit}
+    - {name: forecast_sales, datatype: Decimal, label: Forecast revenue}
+    - {name: forecast_gross_profit, datatype: Decimal, label: Forecast gross profit}
+    - {name: sales_marketing_expense, datatype: Decimal, label: Sales and marketing}
+    - {name: operations_expense, datatype: Decimal, label: Operations expense}
+    - {name: research_development_expense, datatype: Decimal, label: Research and development}
+    - {name: general_admin_expense, datatype: Decimal, label: General and administrative}
+    - {name: budget_sales_marketing_expense, datatype: Decimal, label: Budget sales and marketing}
+    - {name: budget_operations_expense, datatype: Decimal, label: Budget operations expense}
+    - {name: budget_research_development_expense, datatype: Decimal, label: Budget research and development}
+    - {name: budget_general_admin_expense, datatype: Decimal, label: Budget general and administrative}
+    - {name: ebitda, datatype: Decimal, label: EBITDA}
+    - {name: budget_ebitda, datatype: Decimal, label: Budget EBITDA}
+    - {name: forecast_ebitda, datatype: Decimal, label: Forecast EBITDA}
   definition:
     type: sql
     sql: |
@@ -122,22 +122,22 @@ spec:
         CAST(round((forecast_sales * CASE WHEN discount_band = 'High' THEN 0.125 ELSE 0.145 END) - (forecast_sales * 0.025) - (forecast_sales * 0.014) - (forecast_sales * 0.012) - (forecast_sales * 0.010), 2) AS DECIMAL(38,2)) AS forecast_ebitda
       FROM planned
   entities:
-    financial_record:
+    - name: financial_record
       type: primary
       fields: [record_id]
-    finance_date:
+    - name: finance_date
       type: foreign
       fields: [finance_date]
-    segment:
+    - name: segment
       type: foreign
       fields: [segment]
-    country:
+    - name: country
       type: foreign
       fields: [country]
-    product:
+    - name: product
       type: foreign
       fields: [product]
-    discount_band:
+    - name: discount_band
       type: foreign
       fields: [discount_band]
   grain:

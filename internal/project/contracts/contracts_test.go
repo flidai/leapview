@@ -2,11 +2,33 @@ package contracts_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	contracts "github.com/flidai/leapview/internal/project/contracts"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 )
+
+func TestAuthoredJSONRejectsKeyedCollections(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		json string
+		into any
+		path string
+	}{
+		{"source fields", `{"fields":{"id":{"datatype":"Integer"}}}`, &contracts.SourceSpec{}, "fields"},
+		{"model entities", `{"entities":{"row":{"type":"primary","fields":["id"]}}}`, &contracts.ModelSpec{}, "entities"},
+		{"semantic datasets", `{"datasets":{"orders":{"model":"orders"}}}`, &contracts.SemanticModelSpec{}, "datasets"},
+		{"dataset metrics", `{"datasets":[{"name":"orders","model":"orders","metrics":{"revenue":{"type":"simple","agg":"sum","field":"amount"}}}]}`, &contracts.SemanticModelSpec{}, "datasets.*.metrics"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := json.Unmarshal([]byte(test.json), test.into)
+			if err == nil || !strings.Contains(err.Error(), test.path+": authored collection must be a list") {
+				t.Fatalf("keyed collection error = %v", err)
+			}
+		})
+	}
+}
 
 func TestGeneratedResourceBoundaryDecodesTaggedVariants(t *testing.T) {
 	connectionYAML := []byte(`apiVersion: leapview.dev/v1
@@ -45,16 +67,18 @@ spec:
     options:
       header: true
   schema:
-    mode: inferred
-  freshness:
-    basis: field
-    field: updated_at
-    warningAfter:
-      amount: 1
-      unit: hour
-    errorAfter:
-      amount: 2
-      unit: hour
+    mode: compatible
+  checks:
+    - id: recent_orders
+      type: freshness
+      basis: field
+      field: updated_at
+      warningAfter:
+        amount: 1
+        unit: hour
+      errorAfter:
+        amount: 2
+        unit: hour
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", sourceYAML, &source); err != nil {
@@ -115,15 +139,15 @@ spec:
       SELECT order_id, customer_id
       FROM source."olist.orders"
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
   grain:
     entity: order
   fields:
-    order_id:
+    - name: order_id
       datatype: String
-    customer_id:
+    - name: customer_id
       datatype: String
 `)
 	var model contracts.Model
@@ -147,13 +171,13 @@ spec:
     type: direct
     source: olist.orders
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
   grain:
     entity: order
   fields:
-    order_id:
+    - name: order_id
       datatype: String
 `)
 	var direct contracts.Model
@@ -171,23 +195,24 @@ kind: SemanticModel
 metadata: { id: semantic-model:sales, name: sales }
 spec:
   datasets:
-    orders:
+    - name: orders
       model: orders_model
       metrics:
-        revenue: { type: simple, agg: sum }
-    customers: { model: customers_model }
+        - {name: revenue, type: simple, agg: sum}
+    - {name: customers, model: customers_model}
   relationships:
-    customer:
+    - name: customer
       from: { dataset: orders, entity: customer }
       to: { dataset: customers, fields: [ customer_id ] }
   filters:
-    captured:
-      all:
-        - { field: orders.status, operator: equals, value: captured }
-        - { not: { field: orders.deleted_at, operator: is_null } }
+    - name: captured
+      definition:
+        all:
+          - { field: orders.status, operator: equals, value: captured }
+          - { not: { field: orders.deleted_at, operator: is_null } }
   metrics:
-    margin: { type: derived, expression: revenue - cost }
-    margin_rate: { type: ratio, numerator: margin, denominator: revenue }
+    - {name: margin, type: derived, expression: revenue - cost}
+    - {name: margin_rate, type: ratio, numerator: margin, denominator: revenue}
 `)
 	var model contracts.SemanticModel
 	if err := configschema.DecodeResource(configschema.KindSemanticModel, "semantic-model.yaml", content, &model); err != nil {
@@ -325,7 +350,7 @@ func TestGeneratedGoPathVariantRejectsWrongTaggedOptions(t *testing.T) {
 	}
 }
 
-func TestGeneratedResourceBoundaryRejectsInferredSchemaFields(t *testing.T) {
+func TestGeneratedResourceBoundaryRejectsLegacySchemaFields(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: Source
 metadata:
@@ -345,7 +370,58 @@ spec:
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
-		t.Fatal("inferred schema accepted fields")
+		t.Fatal("legacy schema fields accepted")
+	}
+}
+
+func TestGeneratedResourceBoundaryRejectsBothLegacyNullableValues(t *testing.T) {
+	for _, nullable := range []string{"true", "false"} {
+		t.Run("source_"+nullable, func(t *testing.T) {
+			content := []byte(`apiVersion: leapview.dev/v1
+kind: Source
+metadata:
+  id: source:orders
+  name: orders
+spec:
+  connection: files
+  location:
+    type: path
+    path: orders.csv
+    format: csv
+  fields:
+    - name: id
+      datatype: Integer
+      nullable: ` + nullable + "\n")
+			var source contracts.Source
+			if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {
+				t.Fatal("Source accepted removed field nullable declaration")
+			}
+		})
+		t.Run("model_"+nullable, func(t *testing.T) {
+			content := []byte(`apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+spec:
+  definition:
+    type: direct
+    source: orders
+  entities:
+    - name: order
+      type: primary
+      fields: [id]
+  grain:
+    entity: order
+  fields:
+    - name: id
+      datatype: Integer
+      nullable: ` + nullable + "\n")
+			var model contracts.Model
+			if err := configschema.DecodeResource(configschema.KindModel, "model.yaml", content, &model); err == nil {
+				t.Fatal("Model accepted removed field nullable declaration")
+			}
+		})
 	}
 }
 
@@ -361,9 +437,11 @@ spec:
     type: path
     path: orders.csv
     format: csv
-  freshness:
-    basis: field
-    field: updated_at
+  checks:
+    - id: recent_orders
+      type: freshness
+      basis: field
+      field: updated_at
 `)
 	var source contracts.Source
 	if err := configschema.DecodeResource(configschema.KindSource, "source.yaml", content, &source); err == nil {

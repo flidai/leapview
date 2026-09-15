@@ -12,9 +12,9 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      order_id: {datatype: String, description: Raw order identifier.}
-      customer_id: {datatype: String, description: Customer identifier attached to the order.}
-      order_status: {datatype: String, description: Raw lifecycle status.}
-      order_purchase_timestamp: {datatype: DateTime, description: Timestamp when the order was placed.}
-      order_delivered_customer_date: {datatype: DateTime, description: Timestamp when the order reached the customer.}
+  fields:
+    - {name: order_id, datatype: String, description: Raw order identifier.}
+    - {name: customer_id, datatype: String, description: Customer identifier attached to the order.}
+    - {name: order_status, datatype: String, description: Raw lifecycle status.}
+    - {name: order_purchase_timestamp, datatype: DateTime, description: Timestamp when the order was placed.}
+    - {name: order_delivered_customer_date, datatype: DateTime, description: Timestamp when the order reached the customer.}

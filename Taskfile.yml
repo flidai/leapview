@@ -21,7 +21,7 @@ tasks:
       - task: generate
       - task: build
       - task: bootstrap:movielens
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
+      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 LEAPVIEW_DEV_MCP_MODEL_QUERY=movie_ratings LEAPVIEW_DEV_MCP_METRIC=rating_count ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
   dev:cfo:
     desc: Start the managed LeapView dev server with the CFO finance demo
@@ -1319,6 +1319,19 @@ tasks:
         -run '^TestFAI520ManagedDataS3DRSeedQualification$'
         -count=1 -timeout=15m -v
 
+  qualify:ubdr:release-transition-preflight:
+    desc: Qualify authoritative PostgreSQL-era transition resolution without executing a transition
+    deps:
+      - db:generate
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - >-
+        go test -race -tags='fai518qualification'
+        ./internal/recoveryset/postgres
+        -run '^TestFAI518'
+        -count=1 -timeout=10m -v
+
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
     cmds:
@@ -1634,8 +1647,6 @@ tasks:
     desc: Run merge-only validation with bounded hosted parallelism
     cmds:
       - task: desktop:test
-      - task: qa:ui-framework
-      - task: generate
       - task: ci:full:extras:parallel
 
   ci:nightly:

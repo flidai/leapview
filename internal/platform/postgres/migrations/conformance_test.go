@@ -247,6 +247,39 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 			}
 		}
 	}
+	for _, role := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+			var allowed bool
+			if err := db.QueryRow(ctx, `SELECT has_table_privilege($1, 'release.migration_capability', $2)`, role, privilege).Scan(&allowed); err != nil {
+				t.Fatal(err)
+			}
+			want := privilege == "SELECT" && role != "recovery_unrelated" || privilege == "INSERT" && role == "leapview_control_maintenance"
+			if allowed != want {
+				t.Errorf("migration capability privilege %s/%s = %t, want %t", role, privilege, allowed, want)
+			}
+		}
+	}
+	for _, role := range []string{"leapview_control_owner", "leapview_control_migrator", "leapview_control_maintenance", "leapview_control_runtime", "leapview_control_readonly", "leapview_control_backup", "recovery_unrelated"} {
+		var allowed bool
+		if err := db.QueryRow(ctx, `SELECT has_function_privilege($1, 'release.lock_oci_artifact_admission(text)', 'EXECUTE')`, role).Scan(&allowed); err != nil {
+			t.Fatal(err)
+		}
+		want := role == "leapview_control_owner" || role == "leapview_control_migrator" || role == "leapview_control_maintenance"
+		if allowed != want {
+			t.Errorf("OCI admission lock capability execute/%s = %t, want %t", role, allowed, want)
+		}
+	}
+	var lockOwner string
+	var lockSecurityDefiner bool
+	if err := db.QueryRow(ctx, `
+		SELECT pg_get_userbyid(p.proowner), p.prosecdef
+		FROM pg_proc p
+		WHERE p.oid = 'release.lock_oci_artifact_admission(text)'::regprocedure`).Scan(&lockOwner, &lockSecurityDefiner); err != nil {
+		t.Fatal(err)
+	}
+	if lockOwner != owner.Name || !lockSecurityDefiner {
+		t.Fatalf("OCI admission lock capability owner/security-definer = %q/%t, want %q/true", lockOwner, lockSecurityDefiner, owner.Name)
+	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
 	if err := db.QueryRow(ctx,
@@ -720,8 +753,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 
 func assertContractPublicationMigrationChecks(t *testing.T, ctx context.Context, db *pgxpool.Pool) {
 	t.Helper()
-	fields := `"id":{"datatype":"Integer"}`
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	fields := `{"name":"id","datatype":"Integer"}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[` + fields + `]}}`
 	var source projectcontracts.Source
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,6 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      order_id: {datatype: String, description: Order identifier for the item row.}
-      product_id: {datatype: String, description: Product identifier purchased in the order.}
+  fields:
+    - {name: order_id, datatype: String, description: Order identifier for the item row.}
+    - {name: product_id, datatype: String, description: Product identifier purchased in the order.}

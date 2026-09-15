@@ -234,6 +234,12 @@ test('open multi-select refreshes invalidated choices so another value can be se
     await page.waitForFunction(() => (document.querySelector('lv-filter-leaf') as any).requests === 2, undefined, { timeout: 2000 })
     await page.getByRole('checkbox', { name: 'RJ', exact: true }).check()
     expect(await page.locator('lv-filter-leaf').evaluate((leaf: any) => leaf.expression.values.map((value: any) => value.value))).toEqual(['SP', 'RJ'])
+    await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => {
+      leaf.showClearAction = true
+      await leaf.updateComplete
+    })
+    expect(await page.getByRole('button', { name: 'Clear State filter' }).count()).toBe(0)
+    expect(await page.locator('.dropdown-toolbar').count()).toBe(0)
     await page.locator('lv-filter-leaf').evaluate(async (leaf: any) => { await leaf.updateComplete; leaf.optionContext = 'new-dependency'; await leaf.updateComplete })
     await page.waitForFunction(() => (document.querySelector('lv-filter-leaf') as any).requests === 4, undefined, { timeout: 2000 })
     expect(await page.getByRole('checkbox', { name: 'SP', exact: true }).isChecked()).toBe(true)

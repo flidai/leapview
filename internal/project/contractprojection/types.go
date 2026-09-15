@@ -18,10 +18,9 @@ type Contract = projectcontracts.ContractProjectionContract
 type Metadata = projectcontracts.ContractProjectionMetadata
 type AuthoritativeDefinition = projectcontracts.ContractProjectionAuthoritativeDefinition
 type Deprecation = projectcontracts.ContractProjectionFieldDeprecation
-type Field = projectcontracts.ContractProjectionField
+type Field = projectcontracts.ContractProjectionModelField
 type ModelField = projectcontracts.ContractProjectionModelField
 type Duration = projectcontracts.ContractProjectionDuration
-type SourceFreshness = projectcontracts.ContractProjectionSourceFreshness
 type SourceSchema = projectcontracts.ContractProjectionSourceSchema
 type SourceContract = projectcontracts.ContractProjectionSourceBody
 

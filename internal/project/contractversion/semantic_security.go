@@ -380,10 +380,7 @@ func grantReferenced(value any, grant string) bool {
 
 func fieldRootChange(kind, path string) bool {
 	parts := strings.Split(path, ".")
-	if kind == "Source" {
-		return len(parts) == 4 && parts[0] == "contract" && parts[1] == "schema" && parts[2] == "fields"
-	}
-	return kind == "Model" && len(parts) == 3 && parts[0] == "contract" && parts[1] == "fields"
+	return (kind == "Source" || kind == "Model") && len(parts) == 3 && parts[0] == "contract" && parts[1] == "fields"
 }
 
 func datatypePath(kind, path string) bool {
@@ -400,9 +397,7 @@ func nullablePath(kind, path string) bool {
 func contractFieldPath(kind, path, field string) bool {
 	parts := strings.Split(path, ".")
 	switch kind {
-	case "Source":
-		return len(parts) == 5 && parts[0] == "contract" && parts[1] == "schema" && parts[2] == "fields" && parts[4] == field
-	case "Model":
+	case "Source", "Model":
 		return len(parts) == 4 && parts[0] == "contract" && parts[1] == "fields" && parts[3] == field
 	default:
 		return false
@@ -428,7 +423,7 @@ func nullabilityStrengthened(change rawChange) bool {
 }
 
 func semanticPath(kind, path string) bool {
-	return (kind == "SemanticModel" && strings.HasPrefix(path, "contract.")) || strings.HasPrefix(path, "contract.checks") || strings.HasPrefix(path, "contract.freshness")
+	return (kind == "SemanticModel" && strings.HasPrefix(path, "contract.")) || strings.HasPrefix(path, "contract.checks")
 }
 
 func semanticMemberRoot(path string) bool {
@@ -463,10 +458,7 @@ func semanticProtectedMemberRoot(path string) bool {
 }
 
 func behavioralMetadataPath(kind, path string) bool {
-	if kind == "Source" && (path == "contract.freshness" || strings.HasPrefix(path, "contract.freshness.")) {
-		return true
-	}
-	if kind == "Model" && (path == "contract.checks" || strings.HasPrefix(path, "contract.checks.")) {
+	if (kind == "Source" || kind == "Model") && (path == "contract.checks" || strings.HasPrefix(path, "contract.checks.")) {
 		return true
 	}
 	return contractFieldPath(kind, path, "authoritativeDefinitions") ||

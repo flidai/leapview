@@ -84,10 +84,35 @@ The evaluator emits exactly one decision:
   path safely.
 
 This FAI-518 preflight is the eligibility boundary for the later FAI-519
-transition execution work. It is pure and read-only: it does not inspect live
-PostgreSQL, run Goose or River migrations, contact a provider, acquire a
-fence, select an image, or mutate persistent state. FAI-519 must revalidate the
-same immutable evidence at its execution boundary.
+transition execution work. The read-only Go entrypoint accepts exact owner
+references rather than a caller-assembled evaluator input. It resolves the
+predecessor and candidate from the immutable OCI-admission authority, the
+target identity and compatibility projections from their migration owners,
+the matching release policy from its policy owner, and an exact recovery-set
+identity from PostgreSQL. The PostgreSQL recovery-frontier adapter accepts only
+a published set whose exact passed validation attempt, result digest, evidence
+envelope, frontier digest, and target binding all agree. Missing, ambiguous,
+mutable, stale, or mismatched owner results fail before evaluation. The
+application-level production composition supplies the concrete OCI-admission,
+release-policy, target, migration-capability, and RecoverySet authorities; it
+does not accept caller-provided projections.
+
+The resolver then calls the existing pure evaluator and returns its canonical
+evidence bytes and domain-separated digest; it does not define another evidence
+format. Owner adapters must not substitute project release rows, serving
+artifact digests, mutable image tags, or the latest recovery set for the
+required OCI admission, release policy, and exact frontier authorities. Run the
+bounded PostgreSQL-backed resolver qualification with:
+
+```sh
+task qualify:ubdr:release-transition-preflight
+```
+
+The entrypoint remains read-only: it does not run Goose or River migrations,
+contact a recovery provider, acquire an execution fence, switch an image, or
+mutate release or recovery state. FAI-519 must revalidate the same immutable
+evidence at its execution boundary. Preflight evidence does not execute a
+release transition.
 
 The release-owned PostgreSQL policy authority stores one immutable policy for
 each exact predecessor/candidate artifact-digest pair. Policy publication is a
@@ -117,6 +142,134 @@ caller booleans. The authority stores neither registry credentials nor signing
 keys.
 
 This provides authoritative artifact admission resolution. It does not execute a release transition.
+
+### Immutable migration compatibility owner evidence
+
+`migration-compatibility/v2` is the immutable handoff contract between the
+Goose, River/jobs, DuckLake, and PhysicalPool owners and the release-transition
+preflight. Each owner produces a separate canonical evidence envelope after it
+has independently resolved the same exact transition binding:
+
+- the predecessor OCI admission digest;
+- the candidate OCI admission digest; and
+- the digest of the deployment-target identity.
+
+The aggregate contract derives its binding from the Goose envelope and
+requires byte-for-byte agreement from the other three owners. It does not
+accept a separate caller binding. Each envelope also includes the fixed owner
+identity, supported owner-contract version, explicit compatibility verdict,
+the owner's version state, and a domain-separated SHA-256 digest. DuckLake and
+PhysicalPool must report identical predecessor and candidate physical-pool
+tuples. Missing, stale, ambiguous, or conflicting owner evidence fails closed.
+
+Canonical JSON follows the declared struct field order and contains no omitted
+or optional fields. Owner digests use
+`leapview/migration-compatibility/v2/owner/<owner-identity>\n`; the complete
+document digest uses `leapview/migration-compatibility/v2\n`. The checked-in
+canonical-byte and digest vector freezes this representation. Version 2 is a
+new contract and never reinterprets `migration-compatibility/v1` evidence.
+
+Parsing verifies canonical encoding, internal binding consistency, and digest
+integrity. Those checks do not establish provenance by themselves. Production
+composition must obtain each envelope directly from its concrete subsystem
+owner, which must resolve the artifact admissions and deployment target from
+authoritative state before creating the envelope. Caller-created projections
+must not cross that boundary.
+
+This provides authoritative migration compatibility evidence binding. It does not execute a release transition.
+
+The per-artifact migration capability authority closes the ownership gap
+between OCI admission and subsystem compatibility evaluation. A controlled
+subsystem owner signs one canonical `migration-capability-owner-evidence/v1`
+envelope containing the exact `migration-capability/v1` bytes for each OCI
+admission digest and deployment-target identity. Publication verifies the
+detached Ed25519 proof against trusted owner-key configuration before any
+database write; there is no production path that accepts a bare capability
+projection. Goose records its owned schema and migration-graph
+capability; River/jobs records both River schema and product job-history
+capability; DuckLake records the artifact-owned catalog schema, runtime tuple,
+and migration graph; PhysicalPool records its target-bound compatibility
+tuple. Candidate catalog schema is therefore never copied from mutable current
+catalog state.
+
+Capability publication is append-only. An exact signed retry returns the
+existing record, while a different capability or owner envelope for the same
+artifact, target, and subsystem fails closed. The PostgreSQL foreign key
+requires a durable admitted OCI artifact, maintenance has INSERT-only
+publication access, and runtime has SELECT-only resolution access. Publication
+and admission revocation serialize on the same artifact row: publication may
+commit before revocation, or revocation wins and publication is rejected, but
+evidence cannot be appended after a committed revocation. Every read reparses
+both canonical documents, recomputes their domain-separated digests, verifies
+the owner proof and denormalized bindings, and rechecks that the referenced
+artifact admission remains valid and unrevoked. Trusted registries retain old
+public keys for immutable historical verification; private keys are never
+persisted by this authority.
+The authority does not compose predecessor/candidate compatibility or execute
+migrations; future `migration-compatibility/v2` owner adapters must resolve two
+exact artifact capabilities and independently compare them.
+
+This provides authoritative per-artifact migration capability resolution. It does not execute a release transition.
+
+### Concrete migration compatibility owners
+
+The PostgreSQL-era owner adapters produce the four
+`migration-compatibility/v2` envelopes from authenticated, subsystem-owned
+`migration-capability/v1` records. Their production input is a set of lookup
+selectors only: exact predecessor and candidate OCI references and a
+deployment-target ID.
+There is no input field for an admission digest, target digest, compatibility
+verdict, version projection, or owner envelope.
+
+Each adapter independently resolves both immutable OCI admissions from the
+release authority and the exact target revision from the deployment authority.
+It then resolves the predecessor and candidate capability for its fixed
+subsystem, exact admission digests, and target digest through the concrete
+PostgreSQL capability authority:
+
+- Goose compares the two artifact-owned schema versions and runnable sets;
+- River/jobs compares the two artifact-owned River and job-history versions
+  and runnable sets;
+- DuckLake uses each artifact's catalog schema and runtime tuple, so candidate
+  schema is never copied from mutable current catalog state; and
+- PhysicalPool verifies that each artifact explicitly admits the other exact
+  tuple digest for rollback-safe compatibility.
+
+The artifact admissions, target revision, and both capability digests are
+resolved again before the adapter returns. A changed or revoked authority
+record, missing capability, target mismatch, digest substitution, or
+unsupported owner state prevents the adapter from emitting an envelope.
+Compatibility differences remain explicit and fail the aggregate transition
+closed; the adapters do not infer or execute a migration.
+This provides authoritative migration compatibility resolution. It does not execute a release transition.
+
+### Authoritative production preflight composition
+
+The production preflight entrypoint accepts only exact predecessor and
+candidate OCI references, a deployment-target ID, and a published RecoverySet
+frontier reference. Its constructor requires the concrete PostgreSQL release,
+deployment-target, migration-capability, and RecoverySet repositories. It has
+no interface or request field for caller-created artifact, release-policy,
+migration-compatibility, subsystem-capability, target, or frontier
+projections.
+
+For each request, the release authority resolves both unrevoked OCI admissions
+and their exact pair policy. The deployment authority resolves the exact
+target revision. The migration authority then obtains all four independently
+bound `migration-compatibility/v2` owner envelopes from authenticated
+per-artifact capabilities and validates their canonical aggregate. Finally,
+the RecoverySet authority resolves the exact published, passed, target-bound
+frontier in one read-only snapshot. Only after those owner checks does the
+existing evaluator produce its unchanged canonical transition-preflight
+evidence.
+
+The v2 admission bindings are verified before the existing preflight artifact
+identity digests are derived. The historical caller-constructible
+`migration-compatibility/v1` projection is not accepted, wrapped, or
+reinterpreted by this path. PhysicalPool incompatibility remains fail-closed
+when mapped into the existing persistent-domain decision model.
+
+Preflight evidence does not execute a release transition.
 
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does

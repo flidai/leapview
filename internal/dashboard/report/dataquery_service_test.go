@@ -9,12 +9,13 @@ import (
 )
 
 type captureDataQueryExecutor struct {
-	query dataquery.Query
+	query  dataquery.Query
+	result dataquery.Result
 }
 
 func (e *captureDataQueryExecutor) ExecuteDataQuery(_ context.Context, query dataquery.Query) (dataquery.Result, error) {
 	e.query = query
-	return dataquery.Result{}, nil
+	return e.result, nil
 }
 
 func TestDataQueryServicePreservesStatisticalBindings(t *testing.T) {
@@ -39,5 +40,26 @@ func TestDataQueryServicePreservesStatisticalBindings(t *testing.T) {
 	}
 	if got := executor.query.Distribution; got == nil || len(got.Quantiles) != 3 || got.WhiskerLower == nil || *got.WhiskerLower != lower || got.WhiskerUpper == nil || *got.WhiskerUpper != upper || got.Outliers != "omit" || got.Approximation != "exact" {
 		t.Fatalf("distribution options were not preserved: %#v", got)
+	}
+}
+
+func TestDataQueryServiceDecodesDecimalHistogramBounds(t *testing.T) {
+	executor := &captureDataQueryExecutor{result: dataquery.Result{Rows: []dataquery.Row{{
+		"bucket": int64(2), "count": int64(4), "start": "12.50", "end": "13.75",
+	}}}}
+	service := NewDataQueryService(projectgraph.ResourceID("project:test"), "model:test", executor)
+
+	bins, err := service.Histogram(context.Background(), RawValueQuery{
+		Dataset: "orders", Metric: QueryField{Field: "revenue", Alias: "revenue"},
+	}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bins) != 1 {
+		t.Fatalf("histogram bins = %#v, want one bin", bins)
+	}
+	got := bins[0]
+	if got.Bucket != 2 || got.Count != 4 || got.Start != 12.5 || got.End != 13.75 {
+		t.Fatalf("histogram bin = %#v, want bucket 2 count 4 bounds 12.5-13.75", got)
 	}
 }

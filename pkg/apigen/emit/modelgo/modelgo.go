@@ -17,6 +17,9 @@ import (
 type Options struct {
 	PackageName     string
 	ContractImports map[string]ContractImport
+	// GoFieldOverrides permits an indexed Go representation for authored lists.
+	// The emitted JSON Schema and TypeScript contract retain the source IR shape.
+	GoFieldOverrides map[string]string
 }
 
 type ContractImport = contractimport.Binding
@@ -62,7 +65,7 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("contract schema %q is missing", name)
 		}
-		if err := emitSchema(&b, doc, name, schema, resolveName); err != nil {
+		if err := emitSchema(&b, doc, name, schema, resolveName, opts.GoFieldOverrides); err != nil {
 			return nil, err
 		}
 	}
@@ -76,7 +79,7 @@ func packageName(opts Options) string {
 	return opts.PackageName
 }
 
-func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, resolveName func(string) string) error {
+func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, resolveName func(string) string, overrides map[string]string) error {
 	typeName := exportedName(name)
 	switch schema.Type {
 	case "union":
@@ -120,6 +123,9 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 			if _, ok := required[propertyName]; !ok {
 				fieldType = "*" + fieldType
 				optional = ",omitempty"
+			}
+			if override, ok := overrides[name+"."+propertyName]; ok {
+				fieldType = override
 			}
 			b.WriteString("\t")
 			b.WriteString(fieldName(propertyName))

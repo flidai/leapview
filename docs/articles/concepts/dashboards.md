@@ -24,7 +24,7 @@ Visual IDs are local reusable identities inside the dashboard. A page component 
 
 ```yaml
 visuals:
-  revenue_by_month:
+  - id: revenue_by_month
     title: Revenue by month
     type: area
     query:

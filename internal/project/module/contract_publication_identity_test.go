@@ -17,11 +17,11 @@ import (
 
 func modulePublication(t *testing.T, version string, optional bool) contractpublication.ContractPublication {
 	t.Helper()
-	fields := `"id":{"datatype":"Integer"}`
+	fields := `{"name":"id","datatype":"Integer"}`
 	if optional {
-		fields += `,"name":{"datatype":"String","nullable":true}`
+		fields = `{"name":"id","datatype":"Integer","criticalDataElement":true}`
 	}
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict","fields":{` + fields + `}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"compatible"},"fields":[` + fields + `]}}`
 	var source projectcontracts.Source
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func modulePublication(t *testing.T, version string, optional bool) contractpubl
 
 func moduleSemanticPublication(t *testing.T, version, allowedValues string) contractpublication.ContractPublication {
 	t.Helper()
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders"},"spec":{"datasets":{"orders":{"model":"orders","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":{"orders":{"type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}}}},"accessGrants":{"region":{"userAttribute":"region","allowedValues":` + allowedValues + `}},"dimensions":{"region":{"datatype":"String","bindings":{"orders":{"field":"orders.region"}},"requiredAccessGrants":["region"]}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"SemanticModel","metadata":{"id":"semantic:orders","name":"orders"},"spec":{"datasets":[{"name":"orders","model":"orders","requiredAccessGrants":["region"],"accessFilters":[{"field":"region","userAttribute":"region"}],"metrics":[{"name":"orders","type":"simple","agg":"count","field":"id","requiredAccessGrants":["region"]}]}],"accessGrants":[{"name":"region","userAttribute":"region","allowedValues":` + allowedValues + `}],"dimensions":[{"name":"region","datatype":"String","bindings":[{"dataset":"orders","field":"orders.region"}],"requiredAccessGrants":["region"]}]}}`
 	var model projectcontracts.SemanticModel
 	if err := json.Unmarshal([]byte(raw), &model); err != nil {
 		t.Fatal(err)

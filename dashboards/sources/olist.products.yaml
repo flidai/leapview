@@ -12,6 +12,6 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      product_id: {datatype: String, description: Stable product identifier.}
-      product_category_name: {datatype: String, description: Product category name in the source language.}
+  fields:
+    - {name: product_id, datatype: String, description: Stable product identifier.}
+    - {name: product_category_name, datatype: String, description: Product category name in the source language.}

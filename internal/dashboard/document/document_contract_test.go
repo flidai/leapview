@@ -105,6 +105,14 @@ func TestDashboardDocumentRejectsUnknownUnionDiscriminator(t *testing.T) {
 	}
 }
 
+func TestDashboardSpecRejectsKeyedVisuals(t *testing.T) {
+	var spec DashboardSpec
+	err := json.Unmarshal([]byte(`{"semanticModel":"sales","visuals":{"revenue":{}}}`), &spec)
+	if err == nil || !strings.Contains(err.Error(), "visuals: authored collection must be a list") {
+		t.Fatalf("keyed visuals error = %v", err)
+	}
+}
+
 func TestDashboardGeographicLabelContractKeepsLabelsOnSupportedLayers(t *testing.T) {
 	var point DashboardGeographicLayer
 	if err := json.Unmarshal([]byte(`{"kind":"point","id":"points","latitude":"latitude","longitude":"longitude","label":"city"}`), &point); err != nil {
@@ -305,8 +313,8 @@ func TestDashboardDocumentSchemaRejectsUnknownVisualAndPresentationKinds(t *test
 	}
 
 	spec := document["spec"].(map[string]any)
-	visuals := spec["visuals"].(map[string]any)
-	visual := visuals["revenue"].(map[string]any)
+	visuals := spec["visuals"].([]any)
+	visual := visuals[0].(map[string]any)
 	visual["type"] = "unknown"
 	if err := compiled.Validate(document); err == nil {
 		t.Fatal("generated schema accepted unknown visual type")
@@ -322,7 +330,7 @@ func TestDashboardDocumentSchemaRejectsUnknownVisualAndPresentationKinds(t *test
 func TestDashboardDocumentSchemaRejectsRemovedPointSeries(t *testing.T) {
 	compiled := loadDashboardDocumentSchema(t)
 	document := loadDashboardDocumentFixture(t)
-	visual := document["spec"].(map[string]any)["visuals"].(map[string]any)["revenue"].(map[string]any)
+	visual := document["spec"].(map[string]any)["visuals"].([]any)[0].(map[string]any)
 	visual["type"] = "scatter"
 	visual["presentation"] = map[string]any{
 		"type": "point", "identity": []any{"month"}, "x": "month", "y": "revenue", "series": "month",

@@ -18,7 +18,7 @@ the derived distribution only; they do not render separate outlier points.
 
 ```yaml visual-example=delivery_distribution
 visuals:
-  delivery_distribution:
+  - id: delivery_distribution
     title: Delivery day distribution
     description: Summarizes delivery-day distribution by speed bucket.
     type: boxplot
@@ -47,7 +47,7 @@ Swap the numeric field to compare review-score spread with the same `distributio
 
 ```yaml visual-example=review_distribution
 visuals:
-  review_distribution:
+  - id: review_distribution
     title: Review score distribution
     type: boxplot
     query:
@@ -75,7 +75,7 @@ Use revenue as the numeric field and enable `presentation.dataZoom` when the ran
 
 ```yaml visual-example=revenue_distribution
 visuals:
-  revenue_distribution:
+  - id: revenue_distribution
     title: Revenue distribution
     type: boxplot
     presentation:
