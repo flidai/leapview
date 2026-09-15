@@ -170,6 +170,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [leapview deploy](/docs/cli/deploy): Deprecated composition of plan, build, and publish
 - [leapview dev](/docs/cli/dev): Synchronize a source root into your private target candidate
 - [leapview healthcheck](/docs/cli/healthcheck): Check the local LeapView readiness endpoint
+- [leapview init](/docs/cli/init): Create a portable analytics project with reproducible sample data
 - [leapview login](/docs/cli/login): Sign in to a LeapView target for project authoring
 - [leapview logout](/docs/cli/logout): Revoke a LeapView authoring session and remove local credentials
 - [leapview plan](/docs/cli/plan): Capture an exact source snapshot and create a target-owned delivery plan

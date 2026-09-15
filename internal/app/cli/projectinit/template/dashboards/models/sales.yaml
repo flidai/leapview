@@ -1,0 +1,34 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:sales
+  name: sales
+  displayName: Sales
+spec:
+  definition:
+    type: sql
+    sql: |
+      SELECT
+        CAST(sale_id AS VARCHAR) AS sale_id,
+        TRY_CAST(sale_date AS DATE) AS sale_date,
+        CAST(region AS VARCHAR) AS region,
+        CAST(category AS VARCHAR) AS category,
+        TRY_CAST(amount AS DOUBLE) AS amount
+      FROM source."sample.sales"
+  entities:
+    sale:
+      type: primary
+      fields: [sale_id]
+  grain:
+    entity: sale
+  fields:
+    sale_id: {datatype: String}
+    sale_date: {datatype: Date}
+    region: {datatype: String}
+    category: {datatype: String}
+    amount: {datatype: Float}
+  checks:
+    - {id: sales_id_not_null, type: non_null, field: sale_id, severity: error}
+    - {id: sales_date_not_null, type: non_null, field: sale_date, severity: error}
+    - {id: sales_amount_not_null, type: non_null, field: amount, severity: error}
+    - {id: sales_row_count, type: row_count, minimum: 1, severity: error}

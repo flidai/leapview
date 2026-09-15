@@ -1123,6 +1123,7 @@ tasks:
       - cmd/leapview/**/*.go
       - internal/app/cli/**/*.go
       - internal/project/developmentprofile/**/*.go
+      - internal/project/developmentinput/**/*.go
       - api/data-resources/**/*.tsp
       - internal/project/contracts/**/*.go
       - internal/project/contracts/gen/**/*.json
@@ -1134,6 +1135,7 @@ tasks:
       - dashboards/**/*.yaml
     generates:
       - schemas/json/analytics-development-profile.schema.json
+      - schemas/json/analytics-development-inputs.schema.json
       - schemas/json/connection.schema.json
       - schemas/json/source.schema.json
       - schemas/json/model.schema.json
