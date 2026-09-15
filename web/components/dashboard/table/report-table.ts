@@ -76,24 +76,6 @@ const reportTableFeatures = tableFeatures({
 
 const groupHeaderHeight = 26
 
-function defaultColumnSize(column: TableColumn): number {
-  const configuredWidth = Number(column.width)
-  if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
-  const widths: Record<string, number> = {
-    order_id: 160,
-    purchase_date: 126,
-    status: 106,
-    state: 78,
-    category: 210,
-    revenue: 114,
-    review_score: 104,
-    delivery_days: 108,
-  }
-  if (widths[column.key]) return widths[column.key]
-  if (column.align === 'right') return 114
-  return 140
-}
-
 function applyUpdater<T>(updater: unknown, current: T): T {
   return typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater as T
 }
@@ -164,6 +146,7 @@ export class ReportTable extends LitElement {
   declare private rowSelection: RowSelectionState
   declare private hoveredRowId: string
   declare private resizeGuideX: number
+  private compactColumns = false
   private lastResetVersion = -1
   private shouldResetScroll = false
   private requestSeq = 0
@@ -290,9 +273,9 @@ export class ReportTable extends LitElement {
 
     .visual-actions .icon-action,
     .visual-options summary {
-      width: var(--lv-button-height, var(--control-medium-size));
-      height: var(--lv-button-height, var(--control-medium-size));
-      min-height: var(--lv-button-height, var(--control-medium-size));
+      width: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
+      min-height: var(--lv-visual-action-target, var(--lv-button-height, var(--control-medium-size)));
     }
 
     .visual-options summary {
@@ -936,6 +919,8 @@ export class ReportTable extends LitElement {
     }
 
     .empty {
+      position: sticky;
+      left: 0;
       display: grid;
       min-height: 240px;
       place-items: center;
@@ -1002,12 +987,6 @@ export class ReportTable extends LitElement {
       0% { background-position: 120% 0; }
       100% { background-position: -120% 0; }
     }
-
-    @media (max-width: 760px) {
-      .shell {
-        min-height: 360px;
-      }
-    }
   `]
 
   connectedCallback(): void {
@@ -1026,6 +1005,11 @@ export class ReportTable extends LitElement {
     if (!viewport) return
     this.resizeObserver?.disconnect()
     const syncViewport = () => {
+      const compactColumns = viewport.clientWidth > 0 && viewport.clientWidth < 480
+      if (compactColumns !== this.compactColumns) {
+        this.compactColumns = compactColumns
+        this.requestUpdate()
+      }
       const viewportHeight = viewport.clientHeight
       if (viewportHeight === this.viewportHeight) return
       this.viewportHeight = viewportHeight
@@ -1145,11 +1129,14 @@ export class ReportTable extends LitElement {
   }
 
   private columnPixelWidths(columns: TableColumn[]): number[] {
-    return this.columnController.pixelWidths(columns)
+    return columns.map(column => this.columnPixelWidth(column))
   }
 
   private columnPixelWidth(column: TableColumn): number {
-    return this.columnController.pixelWidth(column)
+    const width = this.columnController.pixelWidth(column)
+    // Keep default columns readable in narrow cards; authored/user widths still win.
+    return this.compactColumns && !column.width && this.columnSizing[column.key] === undefined
+      ? Math.max(168, width) : width
   }
 
   private minColumnSize(column: TableColumn): number {
@@ -1192,7 +1179,7 @@ export class ReportTable extends LitElement {
       accessorKey: column.key,
       header: column.label,
       cell: (info: any) => formatCell(info.getValue(), column, this.table.type !== 'table'),
-      size: defaultColumnSize(column),
+      size: this.columnPixelWidth(column),
       minSize: this.minColumnSize(column),
       enableResizing: true,
       meta: { align: column.align, column },
@@ -1630,7 +1617,7 @@ export class ReportTable extends LitElement {
           </div>
           <div class="visual-actions">
             <slot name="agent-action"></slot>
-            <button class="icon-action" type="button" aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
+            <button class="icon-action" type="button" data-visualization-expand aria-label="Expand table" title="Expand table" @click=${() => this.runAction('focus')}>${visualMenuIcon('focus')}</button>
             <details class="visual-options">
               <summary aria-label="Visual options" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
               <div class="menu" role="menu">
@@ -1671,7 +1658,7 @@ export class ReportTable extends LitElement {
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
               ${showHeader ? this.renderGroupHeaderRows(headers) : nothing}
               ${showHeader ? this.renderHeaderRow(headers) : nothing}
-              ${this.availableRows === 0 && !loading ? html`<div class="empty">Waiting for table data</div>` : html`
+              ${this.availableRows === 0 && !loading ? nothing : html`
                 <div class="canvas" role="rowgroup" style=${`height:${totalHeight}px`}>
                   <div class="grid-lines" aria-hidden="true">
                     ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}`}></span>`)}
@@ -1685,10 +1672,11 @@ export class ReportTable extends LitElement {
                 </div>
               `}
             </div>
+            ${this.availableRows === 0 && !loading ? html`<div class="empty">${this.table.cardinality.kind === 'exact' && this.table.cardinality.value === 0 ? 'No rows to display' : 'Waiting for table data'}</div>` : nothing}
           </div>
         </div>
         <div class="footer">
-          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.table.rowCap.toLocaleString()}` : nothing}</span>
+          <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.availableRows.toLocaleString()}` : nothing}</span>
           <span>${selectedText}</span>
         </div>
       </section>
@@ -1700,7 +1688,10 @@ export class ReportTable extends LitElement {
     const currentStart = Math.floor(Math.floor(this.viewportTop / this.rowHeight) / this.chunkSize) * this.chunkSize
     const desired = this.desiredStarts(currentStart)
     const desiredSet = new Set(desired)
-    const loadedStarts = new Set(blockIDs.map((id) => this.blocks[id]?.start ?? -1))
+    const loadedStarts = new Set(blockIDs.flatMap((id) => {
+      const block = this.blocks[id]
+      return block?.rows.length ? [block.start] : []
+    }))
     const expectedStarts = new Set([...this.expectedBlocks.values()].map((request) => request.start))
     const missingStarts = desired.filter((start) => !loadedStarts.has(start) && !expectedStarts.has(start))
 
@@ -1766,7 +1757,9 @@ export class ReportTable extends LitElement {
       const starts = this.allBlockStarts(start)
       blockIDs.forEach((id, index) => {
         const expectedStart = starts[index]
-        this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
+        if (expectedStart < this.availableRows) {
+          this.expectedBlocks.set(id, { start: expectedStart, requestSeq, resetVersion, sort })
+        }
       })
     } else {
       this.expectedBlocks.set(block, { start, requestSeq, resetVersion, sort })

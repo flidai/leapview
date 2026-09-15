@@ -148,25 +148,18 @@ spec:
       query:
         type: aggregate
         dimensions: [segment]
-        metrics: [revenue_variance]
-        sort: [{field: revenue_variance, direction: asc}]
+        metrics: [revenue_above_budget, revenue_below_budget]
+        sort: [{field: revenue_below_budget, direction: asc}, {field: revenue_above_budget, direction: asc}]
         limit: 10
       presentation:
         type: cartesian
         labelPosition: outside
+        stacking: normal
+        seriesIntent:
+        - {value: revenue_above_budget, color: success}
+        - {value: revenue_below_budget, color: danger}
         axes:
         - {id: primary_y, scale: automatic, zero: automatic, maximum: 1000000, tickDensity: normal}
-        conditionalFormatting:
-        - id: revenue-variance-tone
-          target: mark_fill
-          field: revenue_variance
-          rule:
-            kind: rules
-            rules:
-            - {operator: greater_or_equal, value: 0, style: {color: success, icon: arrow_up}}
-            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: circle}
     product_scorecard:
       type: matrix
       interactions:
@@ -222,28 +215,21 @@ spec:
     pnl_ebitda_bridge:
       type: bar
       title: EBITDA variance drivers
-      description: Signed contributions reconcile actual EBITDA to budget EBITDA.
+      description: Signed contributions reconcile actual EBITDA to budget EBITDA. Green increases EBITDA; red decreases EBITDA. Toggle either legend entry to isolate its contributions.
       query:
         type: aggregate
         dimensions: [variance_driver]
-        metrics: [variance_impact]
-        sort: [{field: variance_impact, direction: asc}]
+        metrics: [ebitda_positive_impact, ebitda_negative_impact]
+        sort: [{field: ebitda_negative_impact, direction: asc}, {field: ebitda_positive_impact, direction: asc}]
         limit: 10
       presentation:
         type: cartesian
         labelPosition: outside
         labels: {density: automatic, priority: [anomaly, threshold], maxCharacters: 24, minimumSpacing: 6, tooltipFallback: true}
-        conditionalFormatting:
-        - id: ebitda-impact-tone
-          target: mark_fill
-          field: variance_impact
-          rule:
-            kind: rules
-            rules:
-            - {operator: greater_or_equal, value: 0, style: {color: success, icon: arrow_up}}
-            - {operator: less_than, value: 0, style: {color: danger, icon: arrow_down}}
-            nullStyle: {color: neutral, icon: square}
-            defaultStyle: {color: neutral, icon: circle}
+        stacking: normal
+        seriesIntent:
+        - {value: ebitda_positive_impact, color: success}
+        - {value: ebitda_negative_impact, color: danger}
     pnl_monthly_ebitda:
       type: combo
       interactions:
@@ -309,7 +295,7 @@ spec:
         - {field: scenario, value: scenario, label: scenario}
         targets: [cash_scenario_summary]
       title: 13-week cash forecast
-      description: Base, upside, and downside liquidity paths.
+      description: Base, upside, and downside liquidity paths. The dashed red line marks the $5.14M minimum cash balance set by management.
       query:
         type: aggregate
         dimensions: [week_label, scenario]
@@ -325,7 +311,7 @@ spec:
         - id: liquidity_floor
           axis: primary_y
           value: {kind: number, value: 5140000}
-          label: Management floor
+          label: 'Minimum cash: $5.14M'
           tone: danger
     cash_scenario_summary:
       type: matrix
@@ -475,46 +461,46 @@ spec:
     - {id: overview-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: overview-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: overview-segment-filter, type: filter, filter: segment, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
-    - {id: overview-revenue-card, type: visual, visual: revenue_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: overview-margin-card, type: visual, visual: gross_margin_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: overview-ebitda-card, type: visual, visual: ebitda_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: overview-cash-card, type: visual, visual: current_cash_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: overview-monthly-performance, type: visual, visual: monthly_plan, placement: {column: 1, row: 7, columnSpan: 8, rowSpan: 7}}
-    - {id: overview-segment-variance, type: visual, visual: variance_by_segment, placement: {column: 9, row: 7, columnSpan: 4, rowSpan: 7}}
-    - {id: overview-product-table, type: visual, visual: product_scorecard, placement: {column: 1, row: 14, columnSpan: 12, rowSpan: 8}}
+    - {id: overview-revenue-card, type: visual, visual: revenue_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: overview-margin-card, type: visual, visual: gross_margin_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: overview-ebitda-card, type: visual, visual: ebitda_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: overview-cash-card, type: visual, visual: current_cash_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: overview-monthly-performance, type: visual, visual: monthly_plan, placement: {column: 1, row: 6, columnSpan: 8, rowSpan: 6}}
+    - {id: overview-segment-variance, type: visual, visual: variance_by_segment, placement: {column: 9, row: 6, columnSpan: 4, rowSpan: 6}}
+    - {id: overview-product-table, type: visual, visual: product_scorecard, placement: {column: 1, row: 12, columnSpan: 12, rowSpan: 6}}
   - id: statement
     title: P&L
     components:
     - {id: pnl-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: pnl-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: pnl-product-filter, type: filter, filter: product, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
-    - {id: pnl-ebitda-card, type: visual, visual: pnl_ebitda_kpi, placement: {column: 1, row: 3, columnSpan: 4, rowSpan: 4}}
-    - {id: pnl-ebitda-trend, type: visual, visual: pnl_monthly_ebitda, placement: {column: 5, row: 3, columnSpan: 8, rowSpan: 7}}
-    - {id: pnl-statement-table, type: visual, visual: pnl_matrix, placement: {column: 1, row: 10, columnSpan: 12, rowSpan: 8}}
-    - {id: pnl-variance-drivers, type: visual, visual: pnl_ebitda_bridge, placement: {column: 1, row: 18, columnSpan: 12, rowSpan: 7}}
+    - {id: pnl-ebitda-card, type: visual, visual: pnl_ebitda_kpi, placement: {column: 1, row: 3, columnSpan: 12, rowSpan: 2}}
+    - {id: pnl-ebitda-trend, type: visual, visual: pnl_monthly_ebitda, placement: {column: 1, row: 13, columnSpan: 6, rowSpan: 6}}
+    - {id: pnl-statement-table, type: visual, visual: pnl_matrix, placement: {column: 1, row: 5, columnSpan: 12, rowSpan: 8}}
+    - {id: pnl-variance-drivers, type: visual, visual: pnl_ebitda_bridge, placement: {column: 7, row: 13, columnSpan: 6, rowSpan: 6}}
   - id: liquidity
     title: Cash
     components:
-    - {id: cash-current-cash, type: visual, visual: cash_current_kpi, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 4}}
-    - {id: cash-ending-cash, type: visual, visual: cash_ending_kpi, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 4}}
-    - {id: cash-dso, type: visual, visual: cash_dso_kpi, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 4}}
-    - {id: cash-overdue-ar, type: visual, visual: cash_overdue_ar_kpi, placement: {column: 1, row: 5, columnSpan: 4, rowSpan: 4}}
-    - {id: cash-headroom, type: visual, visual: cash_headroom_kpi, placement: {column: 1, row: 9, columnSpan: 4, rowSpan: 4}}
-    - {id: cash-scenario-lines, type: visual, visual: cash_scenarios, placement: {column: 5, row: 5, columnSpan: 8, rowSpan: 8}}
-    - {id: cash-scenario-table, type: visual, visual: cash_scenario_summary, placement: {column: 1, row: 13, columnSpan: 6, rowSpan: 7}}
-    - {id: cash-movement-chart, type: visual, visual: cash_movements, placement: {column: 7, row: 13, columnSpan: 6, rowSpan: 7}}
+    - {id: cash-current-cash, type: visual, visual: cash_current_kpi, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 3}}
+    - {id: cash-ending-cash, type: visual, visual: cash_ending_kpi, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 3}}
+    - {id: cash-dso, type: visual, visual: cash_dso_kpi, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 3}}
+    - {id: cash-overdue-ar, type: visual, visual: cash_overdue_ar_kpi, placement: {column: 1, row: 4, columnSpan: 4, rowSpan: 3}}
+    - {id: cash-headroom, type: visual, visual: cash_headroom_kpi, placement: {column: 1, row: 7, columnSpan: 4, rowSpan: 3}}
+    - {id: cash-scenario-lines, type: visual, visual: cash_scenarios, placement: {column: 5, row: 4, columnSpan: 8, rowSpan: 6}}
+    - {id: cash-scenario-table, type: visual, visual: cash_scenario_summary, placement: {column: 1, row: 10, columnSpan: 12, rowSpan: 5}}
+    - {id: cash-movement-chart, type: visual, visual: cash_movements, placement: {column: 1, row: 15, columnSpan: 12, rowSpan: 5}}
   - id: drivers
     title: Drivers
     components:
     - {id: drivers-period-filter, type: filter, filter: finance_date, placement: {column: 1, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: drivers-country-filter, type: filter, filter: country, placement: {column: 5, row: 1, columnSpan: 4, rowSpan: 2}}
     - {id: drivers-discount-filter, type: filter, filter: discount_band, placement: {column: 9, row: 1, columnSpan: 4, rowSpan: 2}}
-    - {id: drivers-revenue-card, type: visual, visual: drivers_net_sales_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: drivers-profit-card, type: visual, visual: drivers_gross_profit_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: drivers-margin-card, type: visual, visual: drivers_margin_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: drivers-discount-card, type: visual, visual: drivers_discount_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 4}}
-    - {id: drivers-product-profit, type: visual, visual: drivers_profit_by_product, placement: {column: 1, row: 7, columnSpan: 6, rowSpan: 7}}
-    - {id: drivers-country-chart, type: visual, visual: drivers_country_performance, placement: {column: 7, row: 7, columnSpan: 6, rowSpan: 7}}
-    - {id: drivers-segment-matrix, type: visual, visual: drivers_segment_product_matrix, placement: {column: 1, row: 14, columnSpan: 7, rowSpan: 8}}
-    - {id: drivers-discount-chart, type: visual, visual: drivers_discount_analysis, placement: {column: 8, row: 14, columnSpan: 5, rowSpan: 8}}
+    - {id: drivers-revenue-card, type: visual, visual: drivers_net_sales_kpi, placement: {column: 1, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: drivers-profit-card, type: visual, visual: drivers_gross_profit_kpi, placement: {column: 4, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: drivers-margin-card, type: visual, visual: drivers_margin_kpi, placement: {column: 7, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: drivers-discount-card, type: visual, visual: drivers_discount_kpi, placement: {column: 10, row: 3, columnSpan: 3, rowSpan: 3}}
+    - {id: drivers-product-profit, type: visual, visual: drivers_profit_by_product, placement: {column: 1, row: 6, columnSpan: 6, rowSpan: 6}}
+    - {id: drivers-country-chart, type: visual, visual: drivers_country_performance, placement: {column: 7, row: 6, columnSpan: 6, rowSpan: 6}}
+    - {id: drivers-segment-matrix, type: visual, visual: drivers_segment_product_matrix, placement: {column: 1, row: 12, columnSpan: 7, rowSpan: 6}}
+    - {id: drivers-discount-chart, type: visual, visual: drivers_discount_analysis, placement: {column: 8, row: 12, columnSpan: 5, rowSpan: 6}}
   layout: {columns: 12, rowHeight: 48, gap: 16, padding: 16}

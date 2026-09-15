@@ -38,11 +38,11 @@ spec:
     - category_status_heatmap
     - category_status_heatmap_labels
   - id: purchase_time
-    label: Relative purchase period
+    label: Purchase period
     dimension: purchase_timestamp
     control:
-      type: relativePeriod
-    description: Filters dashboard content using a timestamp-relative period.
+      type: dateRange
+    description: Filters dashboard content between selected purchase dates, including the full end date.
     operators: []
     targets:
     - total_orders

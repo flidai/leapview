@@ -18,23 +18,23 @@ async function requireJSON(response, description) {
 async function signIn(page, email, temporaryPassword, password) {
   await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(temporaryPassword)
-  await page.getByLabel('Password').press('Enter')
-  await page.getByLabel('Temporary password').waitFor({ state: 'visible', timeout: 30_000 })
-  await page.getByLabel('Temporary password').fill(temporaryPassword)
-  await page.getByLabel('New password').fill(password)
+  await page.locator('input[name="password"]').fill(temporaryPassword)
+  await page.locator('input[name="password"]').press('Enter')
+  await page.locator('input[name="currentPassword"]').waitFor({ state: 'visible', timeout: 30_000 })
+  await page.locator('input[name="currentPassword"]').fill(temporaryPassword)
+  await page.locator('input[name="newPassword"]').fill(password)
   await Promise.all([
     page.waitForResponse((response) => {
       const url = new URL(response.url())
       return url.pathname === '/auth/local/password' && response.status() === 302
     }),
-    page.getByLabel('New password').press('Enter'),
+    page.locator('input[name="newPassword"]').press('Enter'),
   ])
   // Changing a temporary password revokes the bootstrap session. Complete a
   // fresh sign-in with the replacement password before continuing the journey.
   await page.getByLabel('Email').fill(email)
-  await page.getByLabel('Password').fill(password)
-  await page.getByLabel('Password').press('Enter')
+  await page.locator('input[name="password"]').fill(password)
+  await page.locator('input[name="password"]').press('Enter')
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
 }
 

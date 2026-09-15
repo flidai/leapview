@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { MessageSquareText, Plus, Search } from 'lucide'
+import { Archive, MessageSquareText, Plus, Search } from 'lucide'
 import type { ChatConversationSummary } from '../../generated/signals'
 import { jsonAttribute } from '../shared/json-attribute'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -43,6 +43,8 @@ class LeapViewChatList extends LitElement {
       font: var(--lv-type-page-title);
       letter-spacing: 0;
     }
+
+    .header-actions { display: flex; align-items: center; gap: var(--base-size-8); flex-wrap: wrap; }
 
     .toolbar {
       position: relative;
@@ -321,9 +323,12 @@ class LeapViewChatList extends LitElement {
       <section class="shell" aria-label="Chat history">
         <div class="header">
           <h2>Chats</h2>
-          ${this.agentEnabled
-            ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
-            : html`<button class="new-chat-link" type="button" disabled title="Agent is not configured">${lucideIcon(Plus)}<span>New chat</span></button>`}
+          <div class="header-actions">
+            <button class="new-chat-link" type="button" @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))}>${lucideIcon(Archive)}<span>Archived chats</span></button>
+            ${this.agentEnabled
+              ? html`<a class="new-chat-link" href="/chats/new">${lucideIcon(Plus)}<span>New chat</span></a>`
+              : html`<button class="new-chat-link" type="button" disabled title="Agent is not configured">${lucideIcon(Plus)}<span>New chat</span></button>`}
+          </div>
         </div>
         ${conversations.length > 0 ? html`<label class="toolbar">
           <span class="search-icon" aria-hidden="true">${lucideIcon(Search)}</span>

@@ -27,7 +27,6 @@ type authoredContract struct {
 
 type authoredField struct {
 	Datatype                 *string               `json:"datatype,omitempty"`
-	Nullable                 *bool                 `json:"nullable,omitempty"`
 	CriticalDataElement      *bool                 `json:"criticalDataElement,omitempty"`
 	Classification           *string               `json:"classification,omitempty"`
 	AuthoritativeDefinitions *[]authoredDefinition `json:"authoritativeDefinitions,omitempty"`
@@ -50,7 +49,27 @@ type authoredDuration struct {
 	Unit   string `json:"unit"`
 }
 
-func ProjectSource(value projectcontracts.Source, contract Contract) (Source, error) {
+type authoredCheck struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	Field        *string           `json:"field,omitempty"`
+	Fields       []string          `json:"fields,omitempty"`
+	Values       []string          `json:"values,omitempty"`
+	To           *string           `json:"to,omitempty"`
+	Minimum      *int64            `json:"minimum,omitempty"`
+	Maximum      *int64            `json:"maximum,omitempty"`
+	Severity     *string           `json:"severity,omitempty"`
+	Basis        *string           `json:"basis,omitempty"`
+	Revision     *string           `json:"revision,omitempty"`
+	WarningAfter *authoredDuration `json:"warningAfter,omitempty"`
+	ErrorAfter   *authoredDuration `json:"errorAfter,omitempty"`
+}
+
+func ProjectSource(value projectcontracts.Source, contract Contract, contexts ...ReferenceContext) (Source, error) {
+	resolver, err := referenceContextArgument(contexts)
+	if err != nil {
+		return Source{}, err
+	}
 	if err := validateAuthoredResource(configschema.KindSource, value); err != nil {
 		return Source{}, fmt.Errorf("project Source: validate authored resource: %w", err)
 	}
@@ -59,8 +78,9 @@ func ProjectSource(value projectcontracts.Source, contract Contract) (Source, er
 		Kind       string           `json:"kind"`
 		Metadata   authoredMetadata `json:"metadata"`
 		Spec       struct {
-			Schema    json.RawMessage `json:"schema,omitempty"`
-			Freshness json.RawMessage `json:"freshness,omitempty"`
+			Schema json.RawMessage          `json:"schema,omitempty"`
+			Fields map[string]authoredField `json:"fields,omitempty"`
+			Checks json.RawMessage          `json:"checks,omitempty"`
 		} `json:"spec"`
 	}
 	if err := decodeGenerated(value, &input); err != nil {
@@ -74,20 +94,40 @@ func ProjectSource(value projectcontracts.Source, contract Contract) (Source, er
 	if err != nil {
 		return Source{}, err
 	}
-	freshness, err := projectSourceFreshness(input.Spec.Freshness)
+	fields := make(map[string]ModelField, len(input.Spec.Fields))
+	for name, value := range input.Spec.Fields {
+		field, err := projectModelField(value)
+		if err != nil {
+			return Source{}, fmt.Errorf("project Source field %q: %w", name, err)
+		}
+		fields[name] = field
+	}
+	if err := validateModelFieldDeprecations(metadata.Contract.Version, fields); err != nil {
+		return Source{}, fmt.Errorf("project Source deprecation: %w", err)
+	}
+	var authoredChecks []authoredCheck
+	if len(input.Spec.Checks) > 0 {
+		if err := json.Unmarshal(input.Spec.Checks, &authoredChecks); err != nil {
+			return Source{}, fmt.Errorf("project Source checks: %w", err)
+		}
+	}
+	checks, err := projectChecks(authoredChecks, resolver, projectgraph.KindSource)
 	if err != nil {
 		return Source{}, err
 	}
-	return Source{payload: projectcontracts.SourceContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: SourceContract{Schema: schema, Freshness: freshness}}}, nil
+	body := SourceContract{Schema: schema, Fields: fields}
+	if len(checks) > 0 {
+		body.Checks = &checks
+	}
+	return Source{payload: projectcontracts.SourceContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: body}}, nil
 }
 
 func projectSourceSchema(raw json.RawMessage) (SourceSchema, error) {
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return SourceSchema{Mode: "inferred"}, nil
+		return SourceSchema{Mode: "compatible"}, nil
 	}
 	var input struct {
-		Mode   string                   `json:"mode"`
-		Fields map[string]authoredField `json:"fields,omitempty"`
+		Mode string `json:"mode"`
 	}
 	if err := decodeJSON(raw, &input); err != nil {
 		return SourceSchema{}, fmt.Errorf("project Source schema: %w", err)
@@ -96,56 +136,7 @@ func projectSourceSchema(raw json.RawMessage) (SourceSchema, error) {
 	if err != nil {
 		return SourceSchema{}, fmt.Errorf("project Source schema mode: %w", err)
 	}
-	result := SourceSchema{Mode: mode}
-	if len(input.Fields) > 0 {
-		fields := make(map[string]Field, len(input.Fields))
-		for name, value := range input.Fields {
-			field, err := projectField(value)
-			if err != nil {
-				return SourceSchema{}, fmt.Errorf("project Source field %q: %w", name, err)
-			}
-			fields[name] = field
-		}
-		result.Fields = &fields
-	}
-	return result, nil
-}
-
-func projectSourceFreshness(raw json.RawMessage) (*SourceFreshness, error) {
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return nil, nil
-	}
-	var input struct {
-		Basis        string            `json:"basis"`
-		Field        *string           `json:"field,omitempty"`
-		Revision     *string           `json:"revision,omitempty"`
-		WarningAfter *authoredDuration `json:"warningAfter,omitempty"`
-		ErrorAfter   *authoredDuration `json:"errorAfter,omitempty"`
-	}
-	if err := decodeJSON(raw, &input); err != nil {
-		return nil, fmt.Errorf("project Source freshness: %w", err)
-	}
-	result := &SourceFreshness{Basis: input.Basis, WarningAfter: projectDuration(input.WarningAfter), ErrorAfter: projectDuration(input.ErrorAfter)}
-	var err error
-	result.Basis, err = canonicalText(result.Basis)
-	if err != nil {
-		return nil, err
-	}
-	if input.Field != nil {
-		result.Field, err = canonicalTextPointer(input.Field)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if input.Revision != nil {
-		parsed, parseErr := time.Parse(time.RFC3339Nano, *input.Revision)
-		if parseErr != nil {
-			return nil, fmt.Errorf("project Source freshness revision: %w", parseErr)
-		}
-		revision := parsed.UTC().Format(time.RFC3339Nano)
-		result.Revision = &revision
-	}
-	return result, nil
+	return SourceSchema{Mode: mode}, nil
 }
 
 func ProjectModel(value projectcontracts.Model, contract Contract, contexts ...ReferenceContext) (Model, error) {
@@ -174,17 +165,8 @@ func ProjectModel(value projectcontracts.Model, contract Contract, contexts ...R
 				Entity string `json:"entity"`
 			} `json:"grain"`
 			Fields map[string]authoredField `json:"fields,omitempty"`
-			Checks []struct {
-				ID       string   `json:"id"`
-				Type     string   `json:"type"`
-				Field    *string  `json:"field,omitempty"`
-				Fields   []string `json:"fields,omitempty"`
-				Values   []string `json:"values,omitempty"`
-				To       *string  `json:"to,omitempty"`
-				Minimum  *int64   `json:"minimum,omitempty"`
-				Maximum  *int64   `json:"maximum,omitempty"`
-				Severity *string  `json:"severity,omitempty"`
-			} `json:"checks,omitempty"`
+			Schema json.RawMessage          `json:"schema,omitempty"`
+			Checks []authoredCheck          `json:"checks,omitempty"`
 		} `json:"spec"`
 	}
 	if err := decodeGenerated(value, &input); err != nil {
@@ -236,53 +218,98 @@ func ProjectModel(value projectcontracts.Model, contract Contract, contexts ...R
 		}
 		fields[name] = field
 	}
-	checks := make([]ModelCheck, len(input.Spec.Checks))
-	for index, value := range input.Spec.Checks {
+	if err := validateModelFieldDeprecations(metadata.Contract.Version, fields); err != nil {
+		return Model{}, fmt.Errorf("project Model deprecation: %w", err)
+	}
+	checks, err := projectChecks(input.Spec.Checks, resolver, projectgraph.KindModel)
+	if err != nil {
+		return Model{}, err
+	}
+	schema, err := projectSourceSchema(input.Spec.Schema)
+	if err != nil {
+		return Model{}, err
+	}
+	grain, err := canonicalText(input.Spec.Grain.Entity)
+	if err != nil {
+		return Model{}, err
+	}
+	body := ModelContract{Definition: definition, Entities: entities, Grain: ModelGrain{Entity: grain}, Schema: schema, Fields: fields}
+	if len(checks) > 0 {
+		body.Checks = &checks
+	}
+	return Model{payload: projectcontracts.ModelContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: body}}, nil
+}
+
+func projectChecks(values []authoredCheck, resolver *ReferenceContext, kind projectgraph.Kind) ([]ModelCheck, error) {
+	checks := make([]ModelCheck, len(values))
+	for index, value := range values {
 		check := ModelCheck{Minimum: value.Minimum, Maximum: value.Maximum}
 		var err error
 		check.ID, err = canonicalText(value.ID)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		check.Type, err = canonicalText(value.Type)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		check.Field, err = canonicalTextPointer(value.Field)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		check.To, err = canonicalTextPointer(value.To)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		if check.To != nil {
-			resolved, resolveErr := resolveModelMemberReference(resolver, *check.To, "Model relationship check target")
+			resolved, resolveErr := resolveDatasetMemberReference(resolver, *check.To, kind, "dataset relationship check target")
 			if resolveErr != nil {
-				return Model{}, resolveErr
+				return nil, resolveErr
 			}
 			check.To = &resolved
 		}
 		check.Severity, err = canonicalTextPointer(value.Severity)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		if check.Severity == nil {
 			severity := "error"
 			check.Severity = &severity
 		}
+		if check.Type == "freshness" {
+			check.Severity = nil
+			check.Basis, err = canonicalTextPointer(value.Basis)
+			if err != nil || check.Basis == nil {
+				return nil, fmt.Errorf("project freshness check %q: basis is required", check.ID)
+			}
+			if *check.Basis != "field" && *check.Basis != "revision" {
+				return nil, fmt.Errorf("project freshness check %q: unsupported basis", check.ID)
+			}
+			check.WarningAfter, check.ErrorAfter = projectDuration(value.WarningAfter), projectDuration(value.ErrorAfter)
+			if check.WarningAfter == nil && check.ErrorAfter == nil {
+				return nil, fmt.Errorf("project freshness check %q: threshold is required", check.ID)
+			}
+			if value.Revision != nil {
+				parsed, parseErr := time.Parse(time.RFC3339Nano, *value.Revision)
+				if parseErr != nil {
+					return nil, fmt.Errorf("project freshness check %q: invalid revision: %w", check.ID, parseErr)
+				}
+				revision := parsed.UTC().Format(time.RFC3339Nano)
+				check.Revision = &revision
+			}
+		}
 		// Unique-check columns form a set. Entity/relationship field tuples
 		// elsewhere remain ordered because their positions carry meaning.
 		projectedFields, err := projectUniqueCheckFields(value.Fields)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		if len(projectedFields) > 0 {
 			check.Fields = &projectedFields
 		}
 		projectedValues, err := canonicalSet(value.Values)
 		if err != nil {
-			return Model{}, err
+			return nil, err
 		}
 		if len(projectedValues) > 0 {
 			check.Values = &projectedValues
@@ -292,18 +319,10 @@ func ProjectModel(value projectcontracts.Model, contract Contract, contexts ...R
 	sort.SliceStable(checks, func(i, j int) bool { return projectedModelCheckKey(checks[i]) < projectedModelCheckKey(checks[j]) })
 	for index := 1; index < len(checks); index++ {
 		if checks[index-1].ID == checks[index].ID {
-			return Model{}, fmt.Errorf("project Model: duplicate canonical check ID %q", checks[index].ID)
+			return nil, fmt.Errorf("project Model: duplicate canonical check ID %q", checks[index].ID)
 		}
 	}
-	grain, err := canonicalText(input.Spec.Grain.Entity)
-	if err != nil {
-		return Model{}, err
-	}
-	body := ModelContract{Definition: definition, Entities: entities, Grain: ModelGrain{Entity: grain}, Fields: fields}
-	if len(checks) > 0 {
-		body.Checks = &checks
-	}
-	return Model{payload: projectcontracts.ModelContractProjection{Profile: Profile, APIVersion: input.APIVersion, Kind: input.Kind, Metadata: metadata, Contract: body}}, nil
+	return checks, nil
 }
 
 func projectMetadata(apiVersion, kind, wantKind string, authored authoredMetadata, contract Contract) (Metadata, error) {
@@ -347,7 +366,7 @@ func projectMetadata(apiVersion, kind, wantKind string, authored authoredMetadat
 }
 
 func projectField(value authoredField) (Field, error) {
-	result := Field{Nullable: value.Nullable, CriticalDataElement: value.CriticalDataElement}
+	result := Field{CriticalDataElement: value.CriticalDataElement}
 	var err error
 	result.Datatype, err = canonicalTextPointer(value.Datatype)
 	if err != nil {
@@ -369,7 +388,7 @@ func projectField(value authoredField) (Field, error) {
 }
 
 func projectModelField(value authoredField) (ModelField, error) {
-	result := ModelField{Nullable: value.Nullable, CriticalDataElement: value.CriticalDataElement}
+	result := ModelField{CriticalDataElement: value.CriticalDataElement}
 	var err error
 	result.Datatype, err = canonicalTextPointer(value.Datatype)
 	if err != nil {
@@ -525,12 +544,16 @@ func resolveProjectionReference(context *ReferenceContext, reference string, exp
 }
 
 func resolveModelMemberReference(context *ReferenceContext, reference, label string) (string, error) {
+	return resolveDatasetMemberReference(context, reference, projectgraph.KindModel, label)
+}
+
+func resolveDatasetMemberReference(context *ReferenceContext, reference string, kind projectgraph.Kind, label string) (string, error) {
 	parts := strings.Split(strings.TrimSpace(reference), ".")
 	if len(parts) < 2 || parts[len(parts)-1] == "" {
 		return "", fmt.Errorf("%s %q: relationship target must name a model and field", label, reference)
 	}
 	modelReference := strings.Join(parts[:len(parts)-1], ".")
-	resolved, err := resolveProjectionReference(context, modelReference, projectgraph.KindModel, label)
+	resolved, err := resolveProjectionReference(context, modelReference, kind, label)
 	if err != nil {
 		return "", err
 	}

@@ -208,8 +208,8 @@ export const dashboardPageInteractionStyles = css`
 			flex: 0 0 auto;
 			width: calc(var(--lv-button-height, var(--control-medium-size)) + var(--base-size-24));
 			min-width: calc(var(--lv-button-height, var(--control-medium-size)) + var(--base-size-24));
-			height: var(--lv-button-height-xs, var(--control-xsmall-size));
-			min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
+			height: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
+			min-height: var(--lv-visual-action-target, var(--lv-button-height-xs, var(--control-xsmall-size)));
 			align-items: center;
 			gap: var(--base-size-4);
 			border: var(--borderWidth-default, var(--lv-border-width)) solid transparent;

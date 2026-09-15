@@ -179,7 +179,7 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     const path = event.composedPath()
     if (event.target !== this && !path.includes(sidebar)) return
-    if (path.some((node) => node instanceof HTMLAnchorElement || node instanceof HTMLButtonElement)) return
+    if (path.some((node) => node instanceof HTMLElement && node.matches('a, button, summary'))) return
 
     const sidebarRect = sidebar.getBoundingClientRect()
     if (event.clientX < sidebarRect.left || event.clientX > sidebarRect.right || event.clientY < sidebarRect.top || event.clientY > sidebarRect.bottom) return

@@ -83,6 +83,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		CommandBinding:    dashboardBuilderCommandBinding,
 		FilterCommandPath: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter"),
 		FilterOptionPath:  dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter-options"),
+		VisualWindowPath:  dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/visual-window"),
 		AgentCommands:     h.AgentCommands,
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
@@ -395,13 +396,16 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	if streamInstanceID == "" {
 		streamInstanceID = clientID
 	}
+	updates := pagestream.NewSignalStream(w, r)
+	if err := updates.Patch(builderLoadingPatch(builder)); err != nil {
+		return
+	}
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
 	envelope.Runtime.ClientID = uisignals.Optional(clientID)
 	envelope.Runtime.StreamInstanceID = uisignals.Optional(streamInstanceID)
 	envelope.Runtime.ProjectID = uisignals.Optional(project.String())
 	envelope.Runtime.DashboardID = uisignals.Optional(dashboardID)
 	envelope.Runtime.PageID = uisignals.Optional(firstBuilderPage(builder))
-	updates := pagestream.NewSignalStream(w, r)
 	bootstrap := ui.DashboardBuilderBootstrapSignals(envelope)
 	if hasClientAgentState(r) {
 		delete(bootstrap, "agent")
@@ -1262,7 +1266,7 @@ func dashboardBuilderPreviewVisuals(builder uisignals.DashboardBuilderSignal, re
 		}
 		signal := uisignals.DashboardVisualizationSignalFromIR(envelope)
 		signal.VisualID = authoredVisualID
-		signal.ServingStateID = servingStateID
+		signal.ServingStateID = builderServingStateIDForGeneration(builder, servingStateID)
 		signal.StreamGeneration = generation
 		signal.FilterRevision = filterRevision
 		signal.InteractionRevision = int64(result.PagePatch.Filters.InteractionRevision)

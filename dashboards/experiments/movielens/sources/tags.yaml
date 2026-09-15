@@ -12,8 +12,8 @@ spec:
     format: csv
   schema:
     mode: compatible
-    fields:
-      userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
-      movieId: {datatype: Integer, description: MovieLens movie identifier.}
-      tag: {datatype: String, description: User-generated movie tag.}
-      timestamp: {datatype: Integer, description: Tag timestamp as Unix epoch seconds.}
+  fields:
+    userId: {datatype: Integer, description: Anonymized MovieLens user identifier.}
+    movieId: {datatype: Integer, description: MovieLens movie identifier.}
+    tag: {datatype: String, description: User-generated movie tag.}
+    timestamp: {datatype: Integer, description: Tag timestamp as Unix epoch seconds.}

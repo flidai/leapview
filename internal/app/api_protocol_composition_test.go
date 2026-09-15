@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestAPIProtocolPersistenceRequiresCompleteExplicitAuthorities(t *testing.T) {
@@ -28,6 +31,91 @@ func TestAPIProtocolPersistenceRequiresCompleteExplicitAuthorities(t *testing.T)
 	}).authorities()
 	if err != nil || store == nil || cursor == nil {
 		t.Fatalf("complete explicit protocol authorities = (%T, %T, %v)", store, cursor, err)
+	}
+}
+
+func TestAuthoritativeAPIIdempotencyScopeUsesServerIdentity(t *testing.T) {
+	resolveProjectID := func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:server", nil
+	}
+	config := runtimeAssemblyInputs{
+		InstanceID: "target:prod", DefaultEnvironment: "prod",
+		ServingSnapshotResolver: func(context.Context) (string, error) { return "generation:active", nil },
+	}
+	projectRequest := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:client/releases", nil)
+	scope, err := authoritativeAPIIdempotencyScope(projectRequest, resolveProjectID, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.TargetID != "target:prod" || scope.ProjectID != "project:server" || scope.Environment != "prod" || scope.GenerationID != "generation:active" {
+		t.Fatalf("Project command scope = %#v", scope)
+	}
+
+	platformRequest := httptest.NewRequest(http.MethodPost, "/api/v1/groups", nil)
+	scope, err = authoritativeAPIIdempotencyScope(platformRequest, resolveProjectID, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scope.TargetID != "target:prod" || scope.Environment != "prod" || scope.ProjectID != "" || scope.GenerationID != "" {
+		t.Fatalf("platform command inherited Project runtime scope = %#v", scope)
+	}
+
+	browserRequest := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
+	scope, err = authoritativeAPIIdempotencyScope(browserRequest, resolveProjectID, config)
+	if err != nil || scope.ProjectID != "project:server" || scope.GenerationID != "generation:active" {
+		t.Fatalf("browser command scope = %#v, %v", scope, err)
+	}
+}
+
+func TestAuthoritativeAPIIdempotencyScopeAllowsOnlyExplicitNoGenerationState(t *testing.T) {
+	resolveProjectID := func(context.Context) (projectgraph.ResourceID, error) {
+		return "project:server", nil
+	}
+	config := runtimeAssemblyInputs{
+		InstanceID: "target:prod", DefaultEnvironment: "prod",
+		ServingSnapshotResolver: func(context.Context) (string, error) { return "", servingstate.ErrNotFound },
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:server/releases", nil)
+	scope, err := authoritativeAPIIdempotencyScope(request, resolveProjectID, config)
+	if err != nil || scope.ProjectID != "project:server" || scope.GenerationID != "" {
+		t.Fatalf("unactivated Project scope = %#v, %v", scope, err)
+	}
+	config.ServingSnapshotResolver = func(context.Context) (string, error) { return "", errors.New("storage unavailable") }
+	if _, err := authoritativeAPIIdempotencyScope(request, resolveProjectID, config); err == nil {
+		t.Fatal("Project command accepted an unavailable generation authority")
+	}
+}
+
+func TestConfigureAPIProtocolUsesDurableClaimScopeBeforeFirstActivation(t *testing.T) {
+	store := &compositionCountingIdempotencyStore{}
+	platform := &platformServices{}
+	runtime := &runtimeServices{projectIDResolver: func(context.Context) (projectgraph.ResourceID, error) {
+		return "", servingstate.ErrNotFound
+	}}
+	config := runtimeAssemblyInputs{
+		InstanceID: "target:test", DefaultEnvironment: "test",
+		IdempotencyProjectIDResolver: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:claimed", nil
+		},
+		ServingSnapshotResolver: func(context.Context) (string, error) {
+			return "", servingstate.ErrNotFound
+		},
+	}
+	if err := configureAPIProtocol(&capabilityRoutes{}, runtime, platform, &httpPolicy{}, config, t.Context(), apiProtocolPersistence{
+		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:claimed/releases", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "release-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	platform.apiProtocol.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated || store.claims.Load() != 1 {
+		t.Fatalf("pre-activation claimed Project response = %d claims=%d body=%s", recorder.Code, store.claims.Load(), recorder.Body.String())
 	}
 }
 
@@ -60,7 +148,7 @@ func (*compositionCountingIdempotencyStore) MarkIndeterminate(context.Context, s
 func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.T) {
 	store := &compositionCountingIdempotencyStore{}
 	platform := &platformServices{}
-	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+	if err := configureAPIProtocol(&capabilityRoutes{}, testAPIProtocolRuntime(), platform, &httpPolicy{}, runtimeAssemblyInputs{InstanceID: "target:test", DefaultEnvironment: "test"}, t.Context(), apiProtocolPersistence{
 		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
 	}); err != nil {
@@ -87,7 +175,7 @@ func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.
 func TestConfigureAPIProtocolBypassesCandidateSourcePlanDurability(t *testing.T) {
 	store := &compositionCountingIdempotencyStore{}
 	platform := &platformServices{}
-	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+	if err := configureAPIProtocol(&capabilityRoutes{}, testAPIProtocolRuntime(), platform, &httpPolicy{}, runtimeAssemblyInputs{InstanceID: "target:test", DefaultEnvironment: "test"}, t.Context(), apiProtocolPersistence{
 		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		BypassDurableIdempotency: map[string]struct{}{deploymentmodule.PlanProjectCandidateSynchronizationOperationID: {}},
 	}); err != nil {
@@ -112,7 +200,7 @@ func TestConfigureAPIProtocolBypassesCandidateSourcePlanDurability(t *testing.T)
 func TestConfigureAPIProtocolReclaimsOnlyConfiguredCommand(t *testing.T) {
 	store := &compositionCountingIdempotencyStore{}
 	platform := &platformServices{}
-	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+	if err := configureAPIProtocol(&capabilityRoutes{}, testAPIProtocolRuntime(), platform, &httpPolicy{}, runtimeAssemblyInputs{InstanceID: "target:test", DefaultEnvironment: "test"}, t.Context(), apiProtocolPersistence{
 		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		ReclaimExpiredIdempotency: map[string]struct{}{"retainProjectCandidateSource": {}},
 	}); err != nil {
@@ -132,4 +220,8 @@ func TestConfigureAPIProtocolReclaimsOnlyConfiguredCommand(t *testing.T) {
 	if store.reclaims.Load() != 1 || store.claims.Load() != 0 {
 		t.Fatalf("configured reclaim calls = %d ordinary claims = %d", store.reclaims.Load(), store.claims.Load())
 	}
+}
+
+func testAPIProtocolRuntime() *runtimeServices {
+	return &runtimeServices{projectIDResolver: func(context.Context) (projectgraph.ResourceID, error) { return "project", nil }}
 }

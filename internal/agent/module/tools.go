@@ -228,6 +228,7 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, capa
 	}
 	bytes, _ := json.Marshal(payload)
 	_ = m.recordAudit(ctx, access.AuditEventInput{
+		ProjectID:     strings.TrimSpace(scope.ProjectID),
 		PrincipalID:   scope.PrincipalID,
 		Action:        "agent_tool.called",
 		ResourceKind:  targetType,

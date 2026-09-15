@@ -153,7 +153,8 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 
 	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
-	physicalContext := materialize.WithObservationBudget(buildCtx, materialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
+	physicalContext := materialize.WithObservationBudget(buildCtx, materialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis, MaxRows: c.bounds.MaxRows})
+	physicalContext = materialize.WithSourceCheckEvaluator(physicalContext, sourceCheckEvaluator)
 	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native successor managed-data roots: %w", releaseErr)))

@@ -1180,6 +1180,41 @@ func TestRepositoryListsAuditEvents(t *testing.T) {
 	}
 }
 
+func TestRepositoryAuditListingDoesNotDiscloseForeignProjects(t *testing.T) {
+	ctx := t.Context()
+	_, repo := openAccessRepo(t, ctx)
+	for _, input := range []access.AuditEventInput{
+		{ProjectID: "project:test", Action: "project.read", ResourceKind: "project", ResourceID: "project:test"},
+		{ProjectID: "project:foreign", Action: "project.read", ResourceKind: "project", ResourceID: "project:foreign"},
+		{Action: "platform.read", ResourceKind: "platform", ResourceID: "instance"},
+	} {
+		if err := repo.RecordAuditEvent(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	projectEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{ProjectID: "project:test", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projectEvents) != 1 || projectEvents[0].ProjectID != "project:test" {
+		t.Fatalf("project audit events = %#v", projectEvents)
+	}
+
+	platformEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{ProjectID: "project:test", IncludeUnscoped: true, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(platformEvents) != 2 {
+		t.Fatalf("platform audit events = %#v, want bound Project plus unscoped event", platformEvents)
+	}
+	for _, event := range platformEvents {
+		if event.ProjectID == "project:foreign" {
+			t.Fatalf("foreign Project audit event disclosed: %#v", event)
+		}
+	}
+}
+
 func TestRepositoryFiltersAndPaginatesAuditEvents(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAccessRepo(t, ctx)

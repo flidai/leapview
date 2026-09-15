@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { styleMap } from 'lit/directives/style-map.js'
 import { ChevronDown, Copy, EllipsisVertical, PencilLine, SlidersHorizontal, Star } from 'lucide'
 import type {
   AgentContextSignal,
@@ -105,7 +106,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }, () => this.status.generation)
   private readonly filterOptionGenerations = new Map<string, number>()
   private readonly filterOptionRequestContexts = new Map<string, Map<number, string>>()
-  private readonly filterOptionInFlight = new Map<string, { context: string, generation: number, startedAt: number }>()
+  private readonly filterOptionInFlight = new Map<string, { context: string, signature: string, generation: number, startedAt: number }>()
   private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
   private retainedFilterOptionServingStateID = ''
   private readonly filterController = new DashboardFilterController((command) => {
@@ -316,7 +317,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
 
     .dashboard-favorite[aria-pressed='true'] {
-      color: var(--display-yellow-fgColor, var(--lv-fg-default));
+      color: var(--lv-fg-warning);
     }
 
     .dashboard-favorite[aria-pressed='true'] svg {
@@ -388,6 +389,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
+      .route > .main { isolation: isolate; }
+
       .route > .header {
         grid-column: 1;
         grid-row: 1;
@@ -409,7 +412,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
+      @media (max-width: 480px) {
+        :host(:not([presentation='embed'])) .header { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
+        :host(:not([presentation='embed'])) .dashboard-heading { width: 100%; }
+        :host(:not([presentation='embed'])) .breadcrumb-dashboard .breadcrumb-label { white-space: normal; }
+        :host(:not([presentation='embed'])) .actions { justify-self: end; }
+      }
+
       :host(:not([presentation='embed'])) .actions {
+        margin-inline-start: auto;
         gap: var(--base-size-4);
       }
 
@@ -661,6 +672,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       if (page.bindingKey !== key || page.servingStateID !== servingStateID) continue
       const binding = this.filterContract.bindings[key]
       if (!binding) continue
+      const generation = this.filterOptionGenerations.get(key)
+      if (generation !== undefined && page.requestGeneration !== generation) continue
       const requestContext = this.filterOptionRequestContexts.get(key)?.get(page.requestGeneration)
       const currentContext = this.filterOptionContext(binding)
       const currentLegacyPage = requestContext === undefined
@@ -675,7 +688,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
     }
     return Object.fromEntries([...this.retainedFilterOptionPages].filter(([key, page]) =>
-      page.servingStateID === servingStateID && Boolean(this.filterContract.bindings[key])))
+      page.servingStateID === servingStateID && Boolean(this.filterContract.bindings[key])
+      && (this.filterOptionGenerations.get(key) === undefined || page.requestGeneration === this.filterOptionGenerations.get(key))))
   }
 
   private get filterOptionsReady(): boolean {
@@ -1109,7 +1123,12 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private renderCanvasComponent(component: DashboardComponentSignal) {
     const filterVisual = component.kind === 'slicer'
-    const visualType = component.visual ? this.visuals[component.visual]?.spec.kind ?? '' : ''
+    const visual = component.visual ? this.visuals[component.visual] : undefined
+    const visualType = visual?.spec.kind ?? ''
+    const rowCount = visual?.dataState.kind === 'inline' ? visual.dataState.datasets[0]?.rows.length
+      : visual?.dataState.kind === 'windowed' ? visual.dataState.availableRows : undefined
+    const mobileTableHeight = ['table', 'matrix', 'pivot'].includes(visualType) && rowCount !== undefined
+      ? `${Math.min(400, 180 + Math.max(1, rowCount) * 38)}px` : undefined
 		const currentPage = this.renderSnapshot?.page ?? this.page
 		const askReference = currentPage ? this.agentReference(component, currentPage) : undefined
 		const referenced = askReference ? this.agentReferences.some((reference) => reference.reference.kind === askReference.reference.kind
@@ -1119,6 +1138,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
                 data-canvas-visual
                 data-component-kind=${component.kind}
                 data-visual-type=${visualType}
+                style=${styleMap({ '--lv-mobile-table-height': mobileTableHeight })}
                 data-slicer-style=${component.kind === 'slicer' ? component.presentation?.style ?? '' : nothing}
 		data-visual-id=${component.visual || nothing}
         ?data-canvas-filter-visual=${filterVisual}
@@ -1193,6 +1213,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       ?? state?.appliedControls[binding.key]?.expression
       ?? binding.default
     return html`<lv-slicer
+      .autoHeight=${this.reportLayout === 'mobile'}
       .definition=${definition}
       .binding=${binding}
       .expression=${expression}
@@ -1437,11 +1458,12 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const binding = this.filterContract.bindings[detail.bindingKey]
     if (!binding) return
     const context = this.filterOptionContext(binding)
+    const signature = `${context}\u0000${detail.search}\u0000${detail.cursor ?? ''}`
     const inFlight = this.filterOptionInFlight.get(detail.bindingKey)
-    if (inFlight?.context === context && Date.now() - inFlight.startedAt < 250) return
+    if (inFlight?.signature === signature && Date.now() - inFlight.startedAt < 250) return
     const generation = (this.filterOptionGenerations.get(detail.bindingKey) ?? 0) + 1
     this.filterOptionGenerations.set(detail.bindingKey, generation)
-    this.filterOptionInFlight.set(detail.bindingKey, { context, generation, startedAt: Date.now() })
+    this.filterOptionInFlight.set(detail.bindingKey, { context, signature, generation, startedAt: Date.now() })
     const contexts = this.filterOptionRequestContexts.get(detail.bindingKey) ?? new Map<number, string>()
     contexts.set(generation, context)
     for (const existingGeneration of contexts.keys()) {

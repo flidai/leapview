@@ -146,6 +146,7 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 		}
 	}
 	token, err := s.tiles.register(spatialTileRevision{
+		Reports:     s.reports,
 		DashboardID: dashboardID, PageID: pageID, VisualID: visualID, PublicID: publicID,
 		PrincipalID: dataquery.MetadataFromContext(ctx).PrincipalID, StreamID: dataquery.MetadataFromContext(ctx).StreamID, Filters: filters, RawMinimumZoom: int(effectiveRawMinimumZoom), AuthoredRawMinimumZoom: int(spatial.Tiles.RawMinimumZoom),
 	})
@@ -171,8 +172,11 @@ func (s *VisualizationDataService) tiledEnvelope(ctx context.Context, runtime *m
 	return envelope, visualizationir.ValidateEnvelope(envelope)
 }
 
-func (s *SnapshotService) querySpatialTile(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, visualID, revision string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
-	report, runtime, err := s.reports.reportRuntime(dashboardID, s.runtimes)
+func (s *SnapshotService) querySpatialTile(ctx context.Context, reports *ReportService, dashboardID, pageID string, filters dashboard.Filters, visualID, revision string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
+	if reports == nil {
+		return SpatialTileResult{}, fmt.Errorf("spatial tile definition is unavailable")
+	}
+	report, runtime, err := reports.reportRuntime(dashboardID, s.runtimes)
 	if err != nil {
 		return SpatialTileResult{}, err
 	}

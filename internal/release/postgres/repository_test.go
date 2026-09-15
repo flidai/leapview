@@ -23,6 +23,16 @@ import (
 func testDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	h := postgrestest.Start(t)
+	// Provision the capability roles so release authority tests can exercise
+	// the same maintenance-only publication surface as production. The pool
+	// remains administrator-backed for the repository lifecycle tests.
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
+	h.GrantRole(t, owner, postgrestest.Role{Name: "leapview_control_migrator"})
 	db := h.NewDatabase(t, "release_authority_test")
 	p, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -44,6 +54,24 @@ func testDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func testMaintenanceConn(t *testing.T) *pgxpool.Conn {
+	t.Helper()
+	return testMaintenanceConnForPool(t, testDB(t))
+}
+
+func testMaintenanceConnForPool(t *testing.T, pool *pgxpool.Pool) *pgxpool.Conn {
+	t.Helper()
+	conn, err := pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(conn.Release)
+	if _, err := conn.Exec(t.Context(), `SET ROLE leapview_control_maintenance`); err != nil {
+		t.Fatal(err)
+	}
+	return conn
 }
 
 func testEffectsDB(t *testing.T) *pgxpool.Pool {

@@ -822,7 +822,7 @@ func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *tes
 		t.Fatal(err)
 	}
 	updated := &current.Document.Spec.Filters[0]
-	if updated.Label != "Order status" || updated.Default == nil || updated.Operators == nil || updated.Targets == nil || updated.URLParameter == nil || !*updated.Required || *updated.ReaderEditable {
+	if updated.Label != "Order status" || updated.Default != nil || updated.Operators == nil || updated.Targets == nil || updated.URLParameter == nil || *updated.Required || *updated.ReaderEditable {
 		t.Fatalf("updated filter lost canonical properties: %#v", updated)
 	}
 	if controlType, _ := updated.Control.Type(); controlType != "singleSelect" {
@@ -873,6 +873,49 @@ func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *tes
 		if filter, ok := component.Value.(*document.FilterDashboardPageComponent); ok && filter.Filter == filterID {
 			t.Fatalf("filter removal left placed component %#v", filter)
 		}
+	}
+}
+
+func TestCanonicalReducerFilterControlChangePreservesSelectOptionsAndDropsIncompatibleState(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	doc := revision.Document
+	if err := addCanonicalFilter(&doc, AddFilterPayload{FilterID: "delivered", Label: "Delivery state", Dimension: "delivered", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	filter := &doc.Spec.Filters[0]
+	filter.Control = document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{
+		Type:    "multiSelect",
+		Options: &document.DashboardFilterOptions{Value: &document.StaticDashboardFilterOptions{Type: "static", Values: []document.DashboardFilterOption{{Label: "Delivered"}, {Label: "Not delivered"}}}},
+	}}
+	operators := []document.DashboardFilterOperator{document.DashboardFilterOperatorIn}
+	filter.Operators = &operators
+	filter.Default = &document.DashboardFilterExpression{Value: &document.SetDashboardFilterExpression{Type: "set", Operator: document.DashboardFilterOperatorIn, Values: []document.DashboardFilterValue{{Value: &document.StringDashboardFilterValue{Type: "string", Value: "Delivered"}}, {Value: &document.StringDashboardFilterValue{Type: "string", Value: "Not delivered"}}}}}
+	required := true
+	filter.Required = &required
+	if err := updateCanonicalFilter(&doc, UpdateFilterPayload{FilterID: "delivered", Label: "Delivery state", Dataset: "orders", ControlType: "singleSelect", Required: true}); err != nil {
+		t.Fatal(err)
+	}
+	updated := &doc.Spec.Filters[0]
+	control, ok := updated.Control.Value.(*document.SingleSelectDashboardFilterControl)
+	if !ok || control.Options == nil {
+		t.Fatalf("select control = %#v", updated.Control)
+	}
+	options, ok := control.Options.Value.(*document.StaticDashboardFilterOptions)
+	if !ok || len(options.Values) != 2 || options.Values[0].Label != "Delivered" || options.Values[1].Label != "Not delivered" {
+		t.Fatalf("select options = %#v", control.Options)
+	}
+	if updated.Operators == nil || len(*updated.Operators) != 1 || (*updated.Operators)[0] != document.DashboardFilterOperatorIn || updated.Default == nil || updated.Required == nil || !*updated.Required {
+		t.Fatalf("compatible select state was not preserved: %#v", updated)
+	}
+	if set, ok := updated.Default.Value.(*document.SetDashboardFilterExpression); !ok || len(set.Values) != 1 {
+		t.Fatalf("single-select default values = %#v", updated.Default)
+	}
+	if err := updateCanonicalFilter(&doc, UpdateFilterPayload{FilterID: "delivered", Label: "Delivery state", Dataset: "orders", ControlType: "text"}); err != nil {
+		t.Fatal(err)
+	}
+	updated = &doc.Spec.Filters[0]
+	if updated.Operators != nil || updated.Default != nil || updated.Required == nil || *updated.Required {
+		t.Fatalf("incompatible select state survived text conversion: %#v", updated)
 	}
 }
 
@@ -971,6 +1014,12 @@ func TestCanonicalReducerMovesFilterBetweenPageAndReportScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	filterID := current.Document.Spec.Filters[0].ID
+	if err := apply(&AddFilterComponentPayload{PageID: "overview", FilterID: filterID, ComponentID: "overview-status-filter"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&AddFilterComponentPayload{PageID: "details", FilterID: filterID, ComponentID: "details-status-filter"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "overview"}); err != nil {
 		t.Fatal(err)
 	}
@@ -978,11 +1027,14 @@ func TestCanonicalReducerMovesFilterBetweenPageAndReportScope(t *testing.T) {
 	if bindings == nil || len(*bindings) != 1 || (*bindings)[0].ID != filterID || (*bindings)[0].Filter != filterID {
 		t.Fatalf("page bindings = %#v", bindings)
 	}
+	if current.Document.Spec.Pages[1].FilterBindings != nil || pageHasCanonicalFilterComponent(current.Document.Spec.Pages[1], filterID) {
+		t.Fatalf("page scope retained out-of-page references: %#v", current.Document.Spec.Pages[1])
+	}
 	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "details"}); err != nil {
 		t.Fatal(err)
 	}
-	if current.Document.Spec.Pages[0].FilterBindings == nil || current.Document.Spec.Pages[1].FilterBindings == nil {
-		t.Fatalf("page binding was moved instead of reused across pages: %#v", current.Document.Spec.Pages)
+	if current.Document.Spec.Pages[0].FilterBindings != nil || pageHasCanonicalFilterComponent(current.Document.Spec.Pages[0], filterID) || current.Document.Spec.Pages[1].FilterBindings == nil {
+		t.Fatalf("page binding transition retained stale references: %#v", current.Document.Spec.Pages)
 	}
 	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "report"}); err != nil {
 		t.Fatal(err)
@@ -999,6 +1051,15 @@ func TestCanonicalReducerMovesFilterBetweenPageAndReportScope(t *testing.T) {
 	if len(current.Document.Spec.Filters) != 0 {
 		t.Fatalf("removed page retained its page-scoped filter: %#v", current.Document.Spec.Filters)
 	}
+}
+
+func pageHasCanonicalFilterComponent(page document.DashboardPage, filterID string) bool {
+	for _, component := range page.Components {
+		if filter, ok := component.Value.(*document.FilterDashboardPageComponent); ok && filter.Filter == filterID {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCanonicalReducerIsolatesRepeatedVisualBeforeComponentScopedFilter(t *testing.T) {

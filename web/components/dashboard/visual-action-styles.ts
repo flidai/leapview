@@ -6,6 +6,7 @@ export const visualActionStyles = css`
     flex: 0 0 auto;
     align-items: center;
     gap: var(--base-size-4);
+    margin-inline-end: var(--lv-visual-focus-close-space, 0);
   }
 
   .icon-action {
@@ -25,6 +26,8 @@ export const visualActionStyles = css`
     font: inherit;
     line-height: 1;
   }
+
+  .icon-action[data-visualization-expand] { display: var(--lv-visual-expand-display, grid); }
 
   .icon-action svg {
     width: var(--base-size-16);

@@ -413,7 +413,6 @@ model AdminPublicationSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["admin", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "admin" })
 model AdminPublicationCommand {
-  `projectId`: string;
   `publication`: string;
   `action`: string;
   `expectedRevision`: int64;

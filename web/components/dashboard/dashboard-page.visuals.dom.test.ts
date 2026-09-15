@@ -101,6 +101,33 @@ test('every viewer presentation defers hosts and explicit capture readiness prop
   }
 })
 
+test('empty table distinguishes completed results from waiting and keeps its message visible', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-table'))
+    const result = await page.evaluate(async () => {
+      const table = document.createElement('lv-report-table') as any
+      table.style.cssText = 'display:block;width:380px;height:350px;'
+      document.body.prepend(table)
+      await table.updateComplete
+      const waiting = table.shadowRoot.querySelector('.empty')?.textContent
+      table.table = { ...table.table, cardinality: { kind: 'exact', value: 0 } }
+      await table.updateComplete
+      const message = table.shadowRoot.querySelector('.empty') as HTMLElement
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      scrollport.scrollLeft = 200
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      const outer = scrollport.getBoundingClientRect()
+      const inner = message.getBoundingClientRect()
+      return { waiting, message: message.textContent, visible: inner.left >= outer.left && inner.right <= outer.right + 1 }
+    })
+    expect(result.waiting).toBe('Waiting for table data')
+    expect(result.message).toBe('No rows to display')
+    expect(result.visible).toBe(true)
+  } finally { await page.close() }
+})
+
 for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: 'mobile', width: 390, height: 820 }]) {
   test(`dashboard composes envelope-native visuals on ${viewport.name}`, async () => {
     const page = await browser.newPage({ viewport })
@@ -258,5 +285,107 @@ test('visualization actions keep touch targets and spacing when a report is scal
     for (let index = 1; index < result.menuRects.length; index += 1) {
       expect(result.menuRects[index].top).toBeGreaterThanOrEqual(result.menuRects[index - 1].bottom)
     }
+  } finally { await page.close() }
+})
+
+for (const start of [50, 950]) {
+  test(`table scrolling loads missing rows at ${start} and completes at the browse boundary`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(baseURL)
+      await page.waitForFunction(() => customElements.get('lv-report-table'))
+      const result = await page.evaluate(async (start) => {
+        const table = document.createElement('lv-report-table') as any
+        table.style.cssText = 'display:block;width:500px;height:320px;'
+        const sort = { key: 'id', direction: 'asc' }
+        const block = (start: number, count: number, requestSeq = 0) => ({ start, requestSeq, resetVersion: 1, sort, rows: Array.from({ length: count }, (_, i) => ({ id: String(start + i) })) })
+        table.tableId = 'orders'
+        table.table = { ...table.table, columns: [{ key: 'id', label: 'ID' }], sort, resetVersion: 1, cardinality: { kind: 'exact', value: 2000 }, availableRows: 1000, rowCap: 100, isCapped: true, chunkSize: 50, rowHeight: 32, blocks: { a: block(0, 50), b: block(50, 0), c: block(100, 0) } }
+        document.body.prepend(table)
+        await table.updateComplete
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        const requests: any[] = []
+        table.addEventListener('lv-visual-window-change', (event: CustomEvent) => {
+          requests.push(event.detail)
+          const request = event.detail
+          const starts = request.start ? [request.start - 50, request.start, request.start + 50] : [0, 50, 100]
+          const blocks = Object.fromEntries(['a', 'b', 'c'].flatMap((id, i) => starts[i]! >= 1000 ? [] : [[id, block(starts[i]!, Math.min(50, 1000 - starts[i]!), request.requestSeq)]]))
+          table.table = { ...table.table, blocks }
+        })
+        const viewport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+        viewport.scrollTop = start * 32
+        viewport.dispatchEvent(new Event('scroll'))
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await table.updateComplete
+        return { footer: table.shadowRoot.querySelector('.footer').textContent, requests: requests.length, loading: table.visibleLoading, pending: table.expectedBlocks.size, skeletons: table.visibleRows.filter((row: any) => row.kind === 'skeleton').length }
+      }, start)
+      expect(result.requests).toBeGreaterThan(0)
+      expect(result.loading).toBe(false)
+      expect(result.pending).toBe(0)
+      expect(result.footer).toContain('browsing first 1,000')
+      expect(result.skeletons).toBe(0)
+    } finally { await page.close() }
+  })
+}
+
+test('phone headers keep page actions below the title and default table values readable', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('lv-visualization-host')?.shadowRoot))
+    await page.locator('lv-report-table .table-scrollport').first().waitFor()
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const title = root.querySelector('.dashboard-heading')!.getBoundingClientRect()
+      const actions = root.querySelector('.actions')!.getBoundingClientRect()
+      const host = [...root.querySelectorAll('lv-visualization-host')].find((h: any) => h.envelope?.visualID === 'orders') as any
+      const table = host.shadowRoot.querySelector('lv-report-table') as any
+      table.table = { ...table.table, columns: table.table.columns.map((column: any) => ({ ...column, width: undefined })) }
+      await table.updateComplete
+      // Allow ResizeObserver to measure the mounted narrow scrollport.
+      await new Promise(resolve => setTimeout(resolve, 100))
+      return { actionsBelowTitle: actions.top >= title.bottom, defaultWidths: table.columns.map((column: any) => table.columnPixelWidth(column)) }
+    })
+    expect(result.actionsBelowTitle).toBe(true)
+    expect(result.defaultWidths.length).toBeGreaterThan(0)
+    expect(Math.min(...result.defaultWidths)).toBeGreaterThanOrEqual(168)
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      mergePatch({ page: { pages: ['overview', 'statement', 'liquidity', 'drivers'].map((id, index) => ({
+        id, title: id, href: `/dashboards/executive-sales/pages/${id}`, active: index === 0,
+      })) } })
+    })
+    await page.locator('.mobile-page-menu summary').click()
+    // Exercise hit testing: chart/table stacking must not intercept the last option.
+    await page.locator('.mobile-page-menu a').last().click({ trial: true })
+  } finally { await page.close() }
+})
+
+test('table data updates preserve desktop canvas positions', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 940 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean(document.querySelector('lv-dashboard-page')?.shadowRoot?.querySelector('[data-visual-id="orders"]')?.getAttribute('style')?.includes('left:')))
+    const results = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const root = dashboard.shadowRoot as ShadowRoot
+      const frame = root.querySelector('[data-visual-id="orders"]') as HTMLElement
+      const geometry = () => ['left', 'top', 'width', 'height'].map(key => frame.style.getPropertyValue(key))
+      const before = geometry()
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
+      const envelope = structuredClone(dashboard.visuals.orders)
+      envelope.dataRevision++
+      envelope.dataState.availableRows = 2
+      envelope.dataState.cardinality = { kind: 'exact', count: 2 }
+      envelope.dataState.blocks.a.rows = envelope.dataState.blocks.a.rows.slice(0, 2)
+      envelope.dataState.dataRevision = envelope.dataRevision
+      mergePatch({ visuals: { orders: { dataRevision: envelope.dataRevision, dataState: {
+        dataRevision: envelope.dataRevision, payload: JSON.stringify(envelope.dataState),
+      } } } })
+      await dashboard.updateComplete
+      return { before, after: geometry(), mobileHeight: frame.style.getPropertyValue('--lv-mobile-table-height') }
+    })
+    expect(results.before.every(Boolean)).toBe(true)
+    expect(results.after).toEqual(results.before)
+    expect(results.mobileHeight).not.toBe('')
   } finally { await page.close() }
 })

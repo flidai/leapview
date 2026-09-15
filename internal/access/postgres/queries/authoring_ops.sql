@@ -31,17 +31,19 @@ SELECT (extract(epoch FROM clock_timestamp()) * 1000000)::bigint AS now_epoch_mi
 -- name: DatabaseNowPlus24Hours :one
 SELECT (extract(epoch FROM (clock_timestamp() + interval '24 hours')) * 1000000)::bigint AS expires_epoch_micros;
 
--- name: ApproveDeviceAuthorization :execresult
+-- name: ApproveDeviceAuthorization :one
 UPDATE access.device_authorization
 SET status = 'approved', principal_id = sqlc.arg(principal_id)::uuid,
     approved_at = clock_timestamp()
-WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > clock_timestamp();
+WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > clock_timestamp()
+RETURNING project_id;
 
--- name: DenyDeviceAuthorization :execresult
+-- name: DenyDeviceAuthorization :one
 UPDATE access.device_authorization
 SET status = 'denied', principal_id = sqlc.arg(principal_id)::uuid,
     denied_at = clock_timestamp()
-WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > clock_timestamp();
+WHERE id = sqlc.arg(id) AND status = 'pending' AND expires_at > clock_timestamp()
+RETURNING project_id;
 
 -- name: TouchDeviceAuthorizationPoll :exec
 UPDATE access.device_authorization

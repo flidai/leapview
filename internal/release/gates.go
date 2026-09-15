@@ -46,6 +46,7 @@ type GateCheckEvidence struct {
 	Identity          string      `json:"identity"`
 	Kind              string      `json:"kind"`
 	ResourceID        string      `json:"resourceId"`
+	Origin            string      `json:"origin,omitempty"`
 	Outcome           GateOutcome `json:"outcome"`
 	Severity          string      `json:"severity,omitempty"`
 	ObservedRows      int64       `json:"observedRows,omitempty"`
@@ -102,6 +103,7 @@ func (e GateEvidence) Validate() error {
 		return fmt.Errorf("invalid gate evidence bounds or identity")
 	}
 	seenSources := make(map[string]struct{}, len(e.Sources))
+	sourceWork := make(map[string]GateSourceEvidence, len(e.Sources))
 	accountedQueries := 0
 	accountedRows := int64(0)
 	for _, source := range e.Sources {
@@ -112,6 +114,7 @@ func (e GateEvidence) Validate() error {
 			return fmt.Errorf("duplicate gate source evidence %q", source.ID)
 		}
 		seenSources[source.ID] = struct{}{}
+		sourceWork[source.ID] = source
 		if source.ObservationQueries < 0 || source.ObservationRows < 0 || source.ObservationMillis < 0 || source.ObservationQueries > e.Bounds.MaxQueries || source.ObservationRows > e.Bounds.MaxRows || source.ObservationMillis > e.Bounds.MaxMillis {
 			return fmt.Errorf("invalid gate source observation bounds")
 		}
@@ -172,21 +175,34 @@ func (e GateEvidence) Validate() error {
 		}
 	}
 	seenChecks := make(map[string]struct{}, len(e.Checks))
+	sourceCheckQueries := map[string]int{}
+	sourceCheckRows := map[string]int64{}
 	for _, check := range e.Checks {
 		if check.Identity == "" || check.Kind == "" || check.ResourceID == "" || check.Queries < 0 || check.ObservedRows < 0 || (!e.QueriesExceeded && check.Queries > e.Bounds.MaxQueries) || (!e.RowsExceeded && check.ObservedRows > e.Bounds.MaxRows) {
 			return fmt.Errorf("invalid gate check evidence")
 		}
-		if check.Queries > e.Queries-accountedQueries || check.ObservedRows > e.ObservedRows-accountedRows {
-			return fmt.Errorf("gate aggregate totals do not cover component evidence")
+		if check.Origin == "source" {
+			source, ok := sourceWork[check.ResourceID]
+			if !ok || check.Queries > source.ObservationQueries-sourceCheckQueries[check.ResourceID] || check.ObservedRows > source.ObservationRows-sourceCheckRows[check.ResourceID] {
+				return fmt.Errorf("source observation totals do not cover check evidence")
+			}
+			sourceCheckQueries[check.ResourceID] += check.Queries
+			sourceCheckRows[check.ResourceID] += check.ObservedRows
+		} else if check.Origin == "" {
+			if check.Queries > e.Queries-accountedQueries || check.ObservedRows > e.ObservedRows-accountedRows {
+				return fmt.Errorf("gate aggregate totals do not cover component evidence")
+			}
+			accountedQueries += check.Queries
+			accountedRows += check.ObservedRows
+		} else {
+			return fmt.Errorf("invalid gate check origin %q", check.Origin)
 		}
-		accountedQueries += check.Queries
-		accountedRows += check.ObservedRows
 		if _, duplicate := seenChecks[check.Identity]; duplicate {
 			return fmt.Errorf("duplicate gate check evidence %q", check.Identity)
 		}
 		seenChecks[check.Identity] = struct{}{}
 		switch check.Kind {
-		case "non_null", "unique", "accepted_values", "relationship", "row_count":
+		case "non_null", "unique", "accepted_values", "relationship", "row_count", "freshness":
 		default:
 			return fmt.Errorf("invalid gate check kind %q", check.Kind)
 		}
