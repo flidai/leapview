@@ -137,10 +137,13 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native offline extension supply", "extension-supply.json.sha256", "duckdb_extension"} {
+	for _, required := range []string{"Verify target-native runtime entrypoint", `docker run --rm "$IMAGE_REFERENCE" version --json`, "Run installed-candidate journey"} {
 		if !strings.Contains(release, required) {
-			t.Fatalf("release qualification missing extension supply check %q", required)
+			t.Fatalf("release qualification missing distroless runtime contract %q", required)
 		}
+	}
+	if strings.Contains(release, "--entrypoint /bin/sh") {
+		t.Fatal("release qualification must not require a shell in the distroless production image")
 	}
 }
 
@@ -228,6 +231,11 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
+	for name, script := range map[string]string{"browser": browser, "authoring worker": authoringWorker, "performance": performance} {
+		if strings.Contains(script, "getByLabel('Password')") || !strings.Contains(script, `locator('input[name="password"]')`) {
+			t.Errorf("%s qualification must target the password input without matching its visibility control", name)
+		}
+	}
 
 	for _, required := range []string{
 		"cp -R deploy/compose/qualification",
@@ -447,7 +455,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(worker, "params.principalId") || strings.Contains(worker, "new URL('/api/v1/me'") || strings.Contains(worker, "/api/v1/principals?email=") {
 		t.Error("browser worker must not fabricate identities or send browser sessions to bearer-only API routes")
 	}
-	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", "getByLabel('Password').fill(password)"} {
+	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", `locator('input[name="password"]').fill(password)`, `locator('input[name="currentPassword"]')`, `locator('input[name="newPassword"]')`} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker must complete a fresh sign-in after temporary-password rotation: missing %q", required)
 		}

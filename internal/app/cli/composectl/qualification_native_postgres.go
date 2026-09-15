@@ -20,9 +20,9 @@ import (
 )
 
 // qualificationPostgreSQL18Image is intentionally kept with the
-// qualification code. The image is an evidence input and must not float with
-// the development Compose file or a test dependency.
-const qualificationPostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+// qualification code. The multi-architecture index is an evidence input and
+// must not float with the development Compose file or a test dependency.
+const qualificationPostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
 
 const (
 	qualificationNativePostgresControlDatabase  = "leapview_control"
