@@ -302,44 +302,14 @@ model QuackConnection extends ConnectionSpec {
   type: "quack";
 }
 
-model SourceSchemaField {
-  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
-  nullable?: boolean;
-  description?: string;
-  tags?: string[];
-  criticalDataElement?: boolean;
-  classification?: Identifier;
-  authoritativeDefinitions?: AuthoritativeDefinition[];
-  deprecation?: FieldDeprecation;
-}
-
 model AIContext {
   instructions?: string;
   synonyms?: string[];
   examples?: string[];
 }
 
-model InferredSourceSchema {
-  mode: "inferred";
-}
-
-model CompatibleSourceSchema {
-  mode: "compatible";
-  @apigen.propertyNames(Identifier)
-  fields: Record<SourceSchemaField>;
-}
-
-model StrictSourceSchema {
-  mode: "strict";
-  @apigen.propertyNames(Identifier)
-  fields: Record<SourceSchemaField>;
-}
-
-@discriminated(#{ envelope: "none", discriminatorPropertyName: "mode" })
-union SourceSchema {
-  inferred: InferredSourceSchema,
-  compatible: CompatibleSourceSchema,
-  strict: StrictSourceSchema,
+model DatasetSchema {
+  mode: "compatible" | "strict";
 }
 
 model FreshnessDuration {
@@ -446,8 +416,10 @@ union SourceLocation {
 model SourceSpec {
   connection: ResourceID;
   location: SourceLocation;
-  schema?: SourceSchema;
-  freshness?: SourceFreshness;
+  schema?: DatasetSchema;
+  @apigen.propertyNames(Identifier)
+  fields?: Record<DatasetField>;
+  checks?: DatasetCheck[];
 }
 
 model DirectModelDefinition extends ModelDefinition {
@@ -465,12 +437,11 @@ model ModelDefinition {
   type: string;
 }
 
-model ModelField {
+model DatasetField {
   datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   label?: string;
   description?: string;
   aiContext?: AIContext;
-  nullable?: boolean;
   tags?: string[];
   criticalDataElement?: boolean;
   classification?: Identifier;
@@ -489,7 +460,7 @@ model ModelGrain {
   entity: Identifier;
 }
 
-model NonNullModelCheck {
+model NonNullDatasetCheck {
   id: Identifier;
   type: "non_null";
   field: Identifier;
@@ -498,7 +469,7 @@ model NonNullModelCheck {
   tags?: string[];
 }
 
-model UniqueModelCheck {
+model UniqueDatasetCheck {
   id: Identifier;
   type: "unique";
   fields: Identifier[];
@@ -507,7 +478,7 @@ model UniqueModelCheck {
   tags?: string[];
 }
 
-model AcceptedValuesModelCheck {
+model AcceptedValuesDatasetCheck {
   id: Identifier;
   type: "accepted_values";
   field: Identifier;
@@ -517,7 +488,7 @@ model AcceptedValuesModelCheck {
   tags?: string[];
 }
 
-model RelationshipModelCheck {
+model RelationshipDatasetCheck {
   id: Identifier;
   type: "relationship";
   field: Identifier;
@@ -527,7 +498,7 @@ model RelationshipModelCheck {
   tags?: string[];
 }
 
-model RowCountModelCheck {
+model RowCountDatasetCheck {
   id: Identifier;
   type: "row_count";
   minimum?: int64;
@@ -537,13 +508,26 @@ model RowCountModelCheck {
   tags?: string[];
 }
 
+model FreshnessDatasetCheck {
+  id: Identifier;
+  type: "freshness";
+  basis: "field" | "revision";
+  field?: Identifier;
+  revision?: utcDateTime;
+  warningAfter?: FreshnessDuration;
+  errorAfter?: FreshnessDuration;
+  description?: string;
+  tags?: string[];
+}
+
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
-union ModelCheck {
-  non_null: NonNullModelCheck,
-  unique: UniqueModelCheck,
-  accepted_values: AcceptedValuesModelCheck,
-  relationship: RelationshipModelCheck,
-  row_count: RowCountModelCheck,
+union DatasetCheck {
+  non_null: NonNullDatasetCheck,
+  unique: UniqueDatasetCheck,
+  accepted_values: AcceptedValuesDatasetCheck,
+  relationship: RelationshipDatasetCheck,
+  row_count: RowCountDatasetCheck,
+  freshness: FreshnessDatasetCheck,
 }
 
 model ModelSpec {
@@ -552,8 +536,9 @@ model ModelSpec {
   entities: Record<ModelEntity>;
   grain: ModelGrain;
   @apigen.propertyNames(Identifier)
-  fields?: Record<ModelField>;
-  checks?: ModelCheck[];
+  fields?: Record<DatasetField>;
+  schema?: DatasetSchema;
+  checks?: DatasetCheck[];
 }
 
 @pattern("^[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*$")

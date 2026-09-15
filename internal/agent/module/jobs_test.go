@@ -275,3 +275,64 @@ func TestJobHandlerMissingRunFailsWithoutDomainEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDashboardRunGeneratesConversationTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name, title, status, want string
+	}{
+		{"dashboard", agent.ConversationDefaultTitle, agent.RunStatusRunning, "Revenue variance explained"},
+		{"completed redelivery", agent.ConversationDefaultTitle, agent.RunStatusCompleted, "Revenue variance explained"},
+		{"manual title", "My finance notes", agent.RunStatusRunning, "My finance notes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newModuleJobFixture(t)
+			ctx := context.Background()
+			f.mod.service = agent.NewService(f.repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(agentcore.ModelFunc(func(_ context.Context, req agentcore.ModelRequest, _ agentcore.ModelStream) (agentcore.ModelResponse, error) {
+				if req.Purpose == "title_generation" {
+					return agentcore.ModelResponse{Content: "Revenue variance explained", FinishReason: agentcore.FinishReasonStop}, nil
+				}
+				return agentcore.ModelResponse{Content: "Revenue is below budget.", FinishReason: agentcore.FinishReasonStop}, nil
+			})))
+			conv, err := f.repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: f.owner.ID, Title: tc.title})
+			if err != nil {
+				t.Fatal(err)
+			}
+			conv, err = f.repo.UpdateConversationTranscript(ctx, f.owner.ID, conv.ID, `[{"id":"prompt-core","role":"user","content":"Explain revenue variance"}]`, conv.TranscriptRevision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.repo.AppendMessage(ctx, agent.MessageInput{PrincipalID: f.owner.ID, ConversationID: conv.ID, Role: agent.MessageRoleUser, ContentText: "Explain revenue variance", ContentJSON: `{"message_id":"prompt-core"}`})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run, err := f.repo.CreateRun(ctx, agent.RunInput{PrincipalID: f.owner.ID, ConversationID: conv.ID, RunID: "run-title", Status: agent.RunStatusRunning})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.status == agent.RunStatusCompleted {
+				run, err = f.repo.FinishRun(ctx, agent.RunFinish{PrincipalID: f.owner.ID, ConversationID: conv.ID, RunID: run.ID, Status: tc.status, MetadataJSON: `{}`})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			job := f.claim(t, conv, run) // Dashboard/API runs have no full-chat client ID.
+			if err := f.mod.JobHandlers(f.jobs)[0].Handle(ctx, job); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(3 * time.Second)
+			for {
+				got, err := f.repo.GetConversation(ctx, f.owner.ID, conv.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Title == tc.want && !f.mod.isChatTitlePending(conv.ID) {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("title = %q, want %q", got.Title, tc.want)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+}

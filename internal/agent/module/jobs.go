@@ -50,6 +50,7 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 		if existing, getErr := m.service.GetRun(ctx, payload.Scope, payload.Conversation, payload.Run); getErr == nil {
 			switch existing.Status {
 			case agent.RunStatusCompleted:
+				m.queueMissingChatTitle(ctx, payload.Scope, payload.Conversation, payload.ChatClientID)
 				return nil
 			case agent.RunStatusFailed:
 				return fmt.Errorf("agent run already failed")
@@ -97,6 +98,10 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 		started.SetDurableClaim(job.ID, job.Fence())
 		if payload.ChatClientID == "" {
 			_, err = started.Complete(ctx, nil)
+			if err == nil {
+				// Dashboard/API runs also need searchable titles in chat history.
+				m.queueMissingChatTitle(ctx, payload.Scope, payload.Conversation, "")
+			}
 		} else {
 			_, err = m.executeStartedChatTurn(ctx, m.service, payload.Scope, started, agenthttp.ChatTurnExecution{
 				EmitInitialRunning: true,

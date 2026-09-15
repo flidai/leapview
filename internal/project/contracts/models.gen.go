@@ -14,7 +14,7 @@ type AIContext struct {
 	Examples     *[]string `json:"examples,omitempty" yaml:"examples,omitempty"`
 }
 
-type AcceptedValuesModelCheck struct {
+type AcceptedValuesDatasetCheck struct {
 	ID          string    `json:"id" yaml:"id"`
 	Type        string    `json:"type" yaml:"type"`
 	Field       string    `json:"field" yaml:"field"`
@@ -66,11 +66,6 @@ type CSVReaderOptions struct {
 	Quote      *string `json:"quote,omitempty" yaml:"quote,omitempty"`
 	Escape     *string `json:"escape,omitempty" yaml:"escape,omitempty"`
 	NullString *string `json:"nullString,omitempty" yaml:"nullString,omitempty"`
-}
-
-type CompatibleSourceSchema struct {
-	Mode   string                       `json:"mode" yaml:"mode"`
-	Fields map[string]SourceSchemaField `json:"fields" yaml:"fields"`
 }
 
 type Connection struct {
@@ -659,15 +654,6 @@ type ContractProjectionDuration struct {
 	Unit   string `json:"unit" yaml:"unit"`
 }
 
-type ContractProjectionField struct {
-	Datatype                 *string                                      `json:"datatype,omitempty" yaml:"datatype,omitempty"`
-	Nullable                 *bool                                        `json:"nullable,omitempty" yaml:"nullable,omitempty"`
-	CriticalDataElement      *bool                                        `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
-	Classification           *string                                      `json:"classification,omitempty" yaml:"classification,omitempty"`
-	AuthoritativeDefinitions *[]ContractProjectionAuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
-	Deprecation              *ContractProjectionFieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
-}
-
 type ContractProjectionFieldDeprecation struct {
 	Since       string  `json:"since" yaml:"since"`
 	Reason      string  `json:"reason" yaml:"reason"`
@@ -684,20 +670,25 @@ type ContractProjectionModelBody struct {
 	Definition ContractProjectionModelDefinition        `json:"definition" yaml:"definition"`
 	Entities   map[string]ContractProjectionModelEntity `json:"entities" yaml:"entities"`
 	Grain      ContractProjectionModelGrain             `json:"grain" yaml:"grain"`
+	Schema     ContractProjectionSourceSchema           `json:"schema" yaml:"schema"`
 	Fields     map[string]ContractProjectionModelField  `json:"fields" yaml:"fields"`
 	Checks     *[]ContractProjectionModelCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
 }
 
 type ContractProjectionModelCheck struct {
-	ID       string    `json:"id" yaml:"id"`
-	Type     string    `json:"type" yaml:"type"`
-	Field    *string   `json:"field,omitempty" yaml:"field,omitempty"`
-	Fields   *[]string `json:"fields,omitempty" yaml:"fields,omitempty"`
-	Values   *[]string `json:"values,omitempty" yaml:"values,omitempty"`
-	To       *string   `json:"to,omitempty" yaml:"to,omitempty"`
-	Minimum  *int64    `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum  *int64    `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Severity *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID           string                      `json:"id" yaml:"id"`
+	Type         string                      `json:"type" yaml:"type"`
+	Field        *string                     `json:"field,omitempty" yaml:"field,omitempty"`
+	Fields       *[]string                   `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Values       *[]string                   `json:"values,omitempty" yaml:"values,omitempty"`
+	To           *string                     `json:"to,omitempty" yaml:"to,omitempty"`
+	Minimum      *int64                      `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum      *int64                      `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Severity     *string                     `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Basis        *string                     `json:"basis,omitempty" yaml:"basis,omitempty"`
+	Revision     *string                     `json:"revision,omitempty" yaml:"revision,omitempty"`
+	WarningAfter *ContractProjectionDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
+	ErrorAfter   *ContractProjectionDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
 }
 
 type ContractProjectionModelDefinition struct {
@@ -713,7 +704,6 @@ type ContractProjectionModelEntity struct {
 
 type ContractProjectionModelField struct {
 	Datatype                 *string                                      `json:"datatype,omitempty" yaml:"datatype,omitempty"`
-	Nullable                 *bool                                        `json:"nullable,omitempty" yaml:"nullable,omitempty"`
 	CriticalDataElement      *bool                                        `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
 	Classification           *string                                      `json:"classification,omitempty" yaml:"classification,omitempty"`
 	AuthoritativeDefinitions *[]ContractProjectionAuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
@@ -812,21 +802,13 @@ type ContractProjectionSemanticTime struct {
 }
 
 type ContractProjectionSourceBody struct {
-	Schema    ContractProjectionSourceSchema     `json:"schema" yaml:"schema"`
-	Freshness *ContractProjectionSourceFreshness `json:"freshness,omitempty" yaml:"freshness,omitempty"`
-}
-
-type ContractProjectionSourceFreshness struct {
-	Basis        string                      `json:"basis" yaml:"basis"`
-	Field        *string                     `json:"field,omitempty" yaml:"field,omitempty"`
-	Revision     *string                     `json:"revision,omitempty" yaml:"revision,omitempty"`
-	WarningAfter *ContractProjectionDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
-	ErrorAfter   *ContractProjectionDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
+	Schema ContractProjectionSourceSchema          `json:"schema" yaml:"schema"`
+	Fields map[string]ContractProjectionModelField `json:"fields" yaml:"fields"`
+	Checks *[]ContractProjectionModelCheck         `json:"checks,omitempty" yaml:"checks,omitempty"`
 }
 
 type ContractProjectionSourceSchema struct {
-	Mode   string                              `json:"mode" yaml:"mode"`
-	Fields *map[string]ContractProjectionField `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Mode string `json:"mode" yaml:"mode"`
 }
 
 type ContractResourceMetadata struct {
@@ -840,6 +822,324 @@ type ContractResourceMetadata struct {
 	Documentation *string             `json:"documentation,omitempty" yaml:"documentation,omitempty"`
 	Provenance    *ResourceProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
 	Contract      *ContractMetadata   `json:"contract,omitempty" yaml:"contract,omitempty"`
+}
+
+type DatasetCheckVariant interface {
+	isDatasetCheckVariant()
+}
+
+type DatasetCheck struct {
+	Value DatasetCheckVariant
+}
+
+func (*DatasetCheckAcceptedValuesVariant) isDatasetCheckVariant() {}
+func (*DatasetCheckFreshnessVariant) isDatasetCheckVariant()      {}
+func (*DatasetCheckNonNullVariant) isDatasetCheckVariant()        {}
+func (*DatasetCheckRelationshipVariant) isDatasetCheckVariant()   {}
+func (*DatasetCheckRowCountVariant) isDatasetCheckVariant()       {}
+func (*DatasetCheckUniqueVariant) isDatasetCheckVariant()         {}
+
+func (value DatasetCheck) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *DatasetCheckAcceptedValuesVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DatasetCheckFreshnessVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DatasetCheckNonNullVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DatasetCheckRelationshipVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DatasetCheckRowCountVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case *DatasetCheckUniqueVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("DatasetCheck variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DatasetCheck variant %T", variant)
+	}
+}
+
+func (value *DatasetCheck) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal DatasetCheck into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode DatasetCheck object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode DatasetCheck discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("DatasetCheck discriminator type is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "accepted_values":
+		if _, ok := fields["field"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property field is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		if _, ok := fields["values"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property values is missing", tag.Value)
+		}
+		var variant DatasetCheckAcceptedValuesVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "freshness":
+		if _, ok := fields["basis"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property basis is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		var variant DatasetCheckFreshnessVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "non_null":
+		if _, ok := fields["field"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property field is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		var variant DatasetCheckNonNullVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "relationship":
+		if _, ok := fields["field"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property field is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["to"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property to is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		var variant DatasetCheckRelationshipVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "row_count":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		var variant DatasetCheckRowCountVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "unique":
+		if _, ok := fields["fields"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property fields is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property id is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode DatasetCheck variant %q: required property type is missing", tag.Value)
+		}
+		var variant DatasetCheckUniqueVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DatasetCheck variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown DatasetCheck discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type DatasetCheckVisitor interface {
+	VisitDatasetCheckAcceptedValuesVariant(*DatasetCheckAcceptedValuesVariant) error
+	VisitDatasetCheckFreshnessVariant(*DatasetCheckFreshnessVariant) error
+	VisitDatasetCheckNonNullVariant(*DatasetCheckNonNullVariant) error
+	VisitDatasetCheckRelationshipVariant(*DatasetCheckRelationshipVariant) error
+	VisitDatasetCheckRowCountVariant(*DatasetCheckRowCountVariant) error
+	VisitDatasetCheckUniqueVariant(*DatasetCheckUniqueVariant) error
+}
+
+func (value *DatasetCheck) Visit(visitor DatasetCheckVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil DatasetCheck")
+	}
+	if visitor == nil {
+		return fmt.Errorf("DatasetCheck visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *DatasetCheckAcceptedValuesVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckAcceptedValuesVariant(variant)
+	case *DatasetCheckFreshnessVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckFreshnessVariant(variant)
+	case *DatasetCheckNonNullVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckNonNullVariant(variant)
+	case *DatasetCheckRelationshipVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckRelationshipVariant(variant)
+	case *DatasetCheckRowCountVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckRowCountVariant(variant)
+	case *DatasetCheckUniqueVariant:
+		if variant == nil {
+			return fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return visitor.VisitDatasetCheckUniqueVariant(variant)
+	case nil:
+		return fmt.Errorf("DatasetCheck variant is required")
+	default:
+		return fmt.Errorf("unsupported DatasetCheck variant %T", variant)
+	}
+}
+
+func (value *DatasetCheck) Type() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil DatasetCheck")
+	}
+	switch variant := value.Value.(type) {
+	case *DatasetCheckAcceptedValuesVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "accepted_values", nil
+	case *DatasetCheckFreshnessVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "freshness", nil
+	case *DatasetCheckNonNullVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "non_null", nil
+	case *DatasetCheckRelationshipVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "relationship", nil
+	case *DatasetCheckRowCountVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "row_count", nil
+	case *DatasetCheckUniqueVariant:
+		if variant == nil {
+			return "", fmt.Errorf("DatasetCheck variant is nil")
+		}
+		return "unique", nil
+	case nil:
+		return "", fmt.Errorf("DatasetCheck variant is required")
+	default:
+		return "", fmt.Errorf("unsupported DatasetCheck variant %T", variant)
+	}
+}
+
+type DatasetCheckAcceptedValuesVariant struct {
+	AcceptedValuesDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetCheckFreshnessVariant struct {
+	FreshnessDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetCheckNonNullVariant struct {
+	NonNullDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetCheckRelationshipVariant struct {
+	RelationshipDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetCheckRowCountVariant struct {
+	RowCountDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetCheckUniqueVariant struct {
+	UniqueDatasetCheck
+	Type string `json:"type" yaml:"type"`
+}
+
+type DatasetField struct {
+	Datatype                 *string                    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
+	Label                    *string                    `json:"label,omitempty" yaml:"label,omitempty"`
+	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext                *AIContext                 `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Tags                     *[]string                  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	CriticalDataElement      *bool                      `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
+	Classification           *string                    `json:"classification,omitempty" yaml:"classification,omitempty"`
+	AuthoritativeDefinitions *[]AuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
+	Deprecation              *FieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
+}
+
+type DatasetSchema struct {
+	Mode string `json:"mode" yaml:"mode"`
 }
 
 type DeltaPathSourceLocation struct {
@@ -900,16 +1200,21 @@ type FieldDeprecation struct {
 	Replacement *string `json:"replacement,omitempty" yaml:"replacement,omitempty"`
 }
 
-type FieldFreshness struct {
-	Basis        string             `json:"basis" yaml:"basis"`
-	Field        string             `json:"field" yaml:"field"`
-	WarningAfter *FreshnessDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
-	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
-}
-
 type FieldsSemanticRelationshipEndpoint struct {
 	Dataset string   `json:"dataset" yaml:"dataset"`
 	Fields  []string `json:"fields" yaml:"fields"`
+}
+
+type FreshnessDatasetCheck struct {
+	ID           string             `json:"id" yaml:"id"`
+	Type         string             `json:"type" yaml:"type"`
+	Basis        string             `json:"basis" yaml:"basis"`
+	Field        *string            `json:"field,omitempty" yaml:"field,omitempty"`
+	Revision     *string            `json:"revision,omitempty" yaml:"revision,omitempty"`
+	WarningAfter *FreshnessDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
+	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
+	Description  *string            `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags         *[]string          `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type FreshnessDuration struct {
@@ -963,10 +1268,6 @@ type InSemanticFilter struct {
 	Value     []SemanticLiteral `json:"value" yaml:"value"`
 	Path      *[]string         `json:"path,omitempty" yaml:"path,omitempty"`
 	AiContext *AIContext        `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-}
-
-type InferredSourceSchema struct {
-	Mode string `json:"mode" yaml:"mode"`
 }
 
 type IsNotNullSemanticFilter struct {
@@ -1038,271 +1339,6 @@ type Model struct {
 	Metadata   ContractResourceMetadata `json:"metadata" yaml:"metadata"`
 	AiContext  *AIContext               `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 	Spec       ModelSpec                `json:"spec" yaml:"spec"`
-}
-
-type ModelCheckVariant interface {
-	isModelCheckVariant()
-}
-
-type ModelCheck struct {
-	Value ModelCheckVariant
-}
-
-func (*ModelCheckAcceptedValuesVariant) isModelCheckVariant() {}
-func (*ModelCheckNonNullVariant) isModelCheckVariant()        {}
-func (*ModelCheckRelationshipVariant) isModelCheckVariant()   {}
-func (*ModelCheckRowCountVariant) isModelCheckVariant()       {}
-func (*ModelCheckUniqueVariant) isModelCheckVariant()         {}
-
-func (value ModelCheck) MarshalJSON() ([]byte, error) {
-	switch variant := value.Value.(type) {
-	case *ModelCheckAcceptedValuesVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("ModelCheck variant is nil")
-		}
-		return json.Marshal(variant)
-	case *ModelCheckNonNullVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("ModelCheck variant is nil")
-		}
-		return json.Marshal(variant)
-	case *ModelCheckRelationshipVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("ModelCheck variant is nil")
-		}
-		return json.Marshal(variant)
-	case *ModelCheckRowCountVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("ModelCheck variant is nil")
-		}
-		return json.Marshal(variant)
-	case *ModelCheckUniqueVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("ModelCheck variant is nil")
-		}
-		return json.Marshal(variant)
-	case nil:
-		return nil, fmt.Errorf("ModelCheck variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported ModelCheck variant %T", variant)
-	}
-}
-
-func (value *ModelCheck) UnmarshalJSON(data []byte) error {
-	if value == nil {
-		return fmt.Errorf("cannot unmarshal ModelCheck into nil receiver")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode ModelCheck object: %w", err)
-	}
-	var tag struct {
-		Value string `json:"type"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode ModelCheck discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("ModelCheck discriminator type is required")
-	}
-	decode := func(dest any) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(dest)
-	}
-	switch tag.Value {
-	case "accepted_values":
-		if _, ok := fields["field"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
-		}
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
-		}
-		if _, ok := fields["values"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property values is missing", tag.Value)
-		}
-		var variant ModelCheckAcceptedValuesVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode ModelCheck variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "non_null":
-		if _, ok := fields["field"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
-		}
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
-		}
-		var variant ModelCheckNonNullVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode ModelCheck variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "relationship":
-		if _, ok := fields["field"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
-		}
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["to"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property to is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
-		}
-		var variant ModelCheckRelationshipVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode ModelCheck variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "row_count":
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
-		}
-		var variant ModelCheckRowCountVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode ModelCheck variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "unique":
-		if _, ok := fields["fields"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property fields is missing", tag.Value)
-		}
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
-		}
-		var variant ModelCheckUniqueVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode ModelCheck variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown ModelCheck discriminator %q", tag.Value)
-	}
-	return nil
-}
-
-type ModelCheckVisitor interface {
-	VisitModelCheckAcceptedValuesVariant(*ModelCheckAcceptedValuesVariant) error
-	VisitModelCheckNonNullVariant(*ModelCheckNonNullVariant) error
-	VisitModelCheckRelationshipVariant(*ModelCheckRelationshipVariant) error
-	VisitModelCheckRowCountVariant(*ModelCheckRowCountVariant) error
-	VisitModelCheckUniqueVariant(*ModelCheckUniqueVariant) error
-}
-
-func (value *ModelCheck) Visit(visitor ModelCheckVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil ModelCheck")
-	}
-	if visitor == nil {
-		return fmt.Errorf("ModelCheck visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *ModelCheckAcceptedValuesVariant:
-		if variant == nil {
-			return fmt.Errorf("ModelCheck variant is nil")
-		}
-		return visitor.VisitModelCheckAcceptedValuesVariant(variant)
-	case *ModelCheckNonNullVariant:
-		if variant == nil {
-			return fmt.Errorf("ModelCheck variant is nil")
-		}
-		return visitor.VisitModelCheckNonNullVariant(variant)
-	case *ModelCheckRelationshipVariant:
-		if variant == nil {
-			return fmt.Errorf("ModelCheck variant is nil")
-		}
-		return visitor.VisitModelCheckRelationshipVariant(variant)
-	case *ModelCheckRowCountVariant:
-		if variant == nil {
-			return fmt.Errorf("ModelCheck variant is nil")
-		}
-		return visitor.VisitModelCheckRowCountVariant(variant)
-	case *ModelCheckUniqueVariant:
-		if variant == nil {
-			return fmt.Errorf("ModelCheck variant is nil")
-		}
-		return visitor.VisitModelCheckUniqueVariant(variant)
-	case nil:
-		return fmt.Errorf("ModelCheck variant is required")
-	default:
-		return fmt.Errorf("unsupported ModelCheck variant %T", variant)
-	}
-}
-
-func (value *ModelCheck) Type() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil ModelCheck")
-	}
-	switch variant := value.Value.(type) {
-	case *ModelCheckAcceptedValuesVariant:
-		if variant == nil {
-			return "", fmt.Errorf("ModelCheck variant is nil")
-		}
-		return "accepted_values", nil
-	case *ModelCheckNonNullVariant:
-		if variant == nil {
-			return "", fmt.Errorf("ModelCheck variant is nil")
-		}
-		return "non_null", nil
-	case *ModelCheckRelationshipVariant:
-		if variant == nil {
-			return "", fmt.Errorf("ModelCheck variant is nil")
-		}
-		return "relationship", nil
-	case *ModelCheckRowCountVariant:
-		if variant == nil {
-			return "", fmt.Errorf("ModelCheck variant is nil")
-		}
-		return "row_count", nil
-	case *ModelCheckUniqueVariant:
-		if variant == nil {
-			return "", fmt.Errorf("ModelCheck variant is nil")
-		}
-		return "unique", nil
-	case nil:
-		return "", fmt.Errorf("ModelCheck variant is required")
-	default:
-		return "", fmt.Errorf("unsupported ModelCheck variant %T", variant)
-	}
-}
-
-type ModelCheckAcceptedValuesVariant struct {
-	AcceptedValuesModelCheck
-	Type string `json:"type" yaml:"type"`
-}
-
-type ModelCheckNonNullVariant struct {
-	NonNullModelCheck
-	Type string `json:"type" yaml:"type"`
-}
-
-type ModelCheckRelationshipVariant struct {
-	RelationshipModelCheck
-	Type string `json:"type" yaml:"type"`
-}
-
-type ModelCheckRowCountVariant struct {
-	RowCountModelCheck
-	Type string `json:"type" yaml:"type"`
-}
-
-type ModelCheckUniqueVariant struct {
-	UniqueModelCheck
-	Type string `json:"type" yaml:"type"`
 }
 
 type ModelContractProjection struct {
@@ -1481,29 +1517,17 @@ type ModelEntity struct {
 	AiContext   *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 }
 
-type ModelField struct {
-	Datatype                 *string                    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
-	Label                    *string                    `json:"label,omitempty" yaml:"label,omitempty"`
-	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
-	AiContext                *AIContext                 `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-	Nullable                 *bool                      `json:"nullable,omitempty" yaml:"nullable,omitempty"`
-	Tags                     *[]string                  `json:"tags,omitempty" yaml:"tags,omitempty"`
-	CriticalDataElement      *bool                      `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
-	Classification           *string                    `json:"classification,omitempty" yaml:"classification,omitempty"`
-	AuthoritativeDefinitions *[]AuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
-	Deprecation              *FieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
-}
-
 type ModelGrain struct {
 	Entity string `json:"entity" yaml:"entity"`
 }
 
 type ModelSpec struct {
-	Definition ModelDefinition        `json:"definition" yaml:"definition"`
-	Entities   map[string]ModelEntity `json:"entities" yaml:"entities"`
-	Grain      ModelGrain             `json:"grain" yaml:"grain"`
-	Fields     *map[string]ModelField `json:"fields,omitempty" yaml:"fields,omitempty"`
-	Checks     *[]ModelCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
+	Definition ModelDefinition          `json:"definition" yaml:"definition"`
+	Entities   map[string]ModelEntity   `json:"entities" yaml:"entities"`
+	Grain      ModelGrain               `json:"grain" yaml:"grain"`
+	Fields     *map[string]DatasetField `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Schema     *DatasetSchema           `json:"schema,omitempty" yaml:"schema,omitempty"`
+	Checks     *[]DatasetCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
 }
 
 type MySQLConnection struct {
@@ -1516,7 +1540,7 @@ type NamedSemanticRelationshipEndpoint struct {
 	Entity  string `json:"entity" yaml:"entity"`
 }
 
-type NonNullModelCheck struct {
+type NonNullDatasetCheck struct {
 	ID          string    `json:"id" yaml:"id"`
 	Type        string    `json:"type" yaml:"type"`
 	Field       string    `json:"field" yaml:"field"`
@@ -2076,7 +2100,7 @@ type RelationSourceLocation struct {
 	Name    string  `json:"name" yaml:"name"`
 }
 
-type RelationshipModelCheck struct {
+type RelationshipDatasetCheck struct {
 	ID          string    `json:"id" yaml:"id"`
 	Type        string    `json:"type" yaml:"type"`
 	Field       string    `json:"field" yaml:"field"`
@@ -2104,14 +2128,7 @@ type ResourceProvenance struct {
 	Source *string `json:"source,omitempty" yaml:"source,omitempty"`
 }
 
-type RevisionFreshness struct {
-	Basis        string             `json:"basis" yaml:"basis"`
-	Revision     string             `json:"revision" yaml:"revision"`
-	WarningAfter *FreshnessDuration `json:"warningAfter,omitempty" yaml:"warningAfter,omitempty"`
-	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
-}
-
-type RowCountModelCheck struct {
+type RowCountDatasetCheck struct {
 	ID          string    `json:"id" yaml:"id"`
 	Type        string    `json:"type" yaml:"type"`
 	Minimum     *int64    `json:"minimum,omitempty" yaml:"minimum,omitempty"`
@@ -3129,151 +3146,6 @@ type SourceContractProjection struct {
 	Contract   ContractProjectionSourceBody `json:"contract" yaml:"contract"`
 }
 
-type SourceFreshnessVariant interface {
-	isSourceFreshnessVariant()
-}
-
-type SourceFreshness struct {
-	Value SourceFreshnessVariant
-}
-
-func (*SourceFreshnessFieldVariant) isSourceFreshnessVariant()    {}
-func (*SourceFreshnessRevisionVariant) isSourceFreshnessVariant() {}
-
-func (value SourceFreshness) MarshalJSON() ([]byte, error) {
-	switch variant := value.Value.(type) {
-	case *SourceFreshnessFieldVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return json.Marshal(variant)
-	case *SourceFreshnessRevisionVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return json.Marshal(variant)
-	case nil:
-		return nil, fmt.Errorf("SourceFreshness variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported SourceFreshness variant %T", variant)
-	}
-}
-
-func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
-	if value == nil {
-		return fmt.Errorf("cannot unmarshal SourceFreshness into nil receiver")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode SourceFreshness object: %w", err)
-	}
-	var tag struct {
-		Value string `json:"basis"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode SourceFreshness discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("SourceFreshness discriminator basis is required")
-	}
-	decode := func(dest any) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(dest)
-	}
-	switch tag.Value {
-	case "field":
-		if _, ok := fields["basis"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property basis is missing", tag.Value)
-		}
-		if _, ok := fields["field"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property field is missing", tag.Value)
-		}
-		var variant SourceFreshnessFieldVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SourceFreshness variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "revision":
-		if _, ok := fields["basis"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property basis is missing", tag.Value)
-		}
-		if _, ok := fields["revision"]; !ok {
-			return fmt.Errorf("decode SourceFreshness variant %q: required property revision is missing", tag.Value)
-		}
-		var variant SourceFreshnessRevisionVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SourceFreshness variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown SourceFreshness discriminator %q", tag.Value)
-	}
-	return nil
-}
-
-type SourceFreshnessVisitor interface {
-	VisitSourceFreshnessFieldVariant(*SourceFreshnessFieldVariant) error
-	VisitSourceFreshnessRevisionVariant(*SourceFreshnessRevisionVariant) error
-}
-
-func (value *SourceFreshness) Visit(visitor SourceFreshnessVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil SourceFreshness")
-	}
-	if visitor == nil {
-		return fmt.Errorf("SourceFreshness visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *SourceFreshnessFieldVariant:
-		if variant == nil {
-			return fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return visitor.VisitSourceFreshnessFieldVariant(variant)
-	case *SourceFreshnessRevisionVariant:
-		if variant == nil {
-			return fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return visitor.VisitSourceFreshnessRevisionVariant(variant)
-	case nil:
-		return fmt.Errorf("SourceFreshness variant is required")
-	default:
-		return fmt.Errorf("unsupported SourceFreshness variant %T", variant)
-	}
-}
-
-func (value *SourceFreshness) Basis() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil SourceFreshness")
-	}
-	switch variant := value.Value.(type) {
-	case *SourceFreshnessFieldVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return "field", nil
-	case *SourceFreshnessRevisionVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SourceFreshness variant is nil")
-		}
-		return "revision", nil
-	case nil:
-		return "", fmt.Errorf("SourceFreshness variant is required")
-	default:
-		return "", fmt.Errorf("unsupported SourceFreshness variant %T", variant)
-	}
-}
-
-type SourceFreshnessFieldVariant struct {
-	FieldFreshness
-	Basis string `json:"basis" yaml:"basis"`
-}
-
-type SourceFreshnessRevisionVariant struct {
-	RevisionFreshness
-	Basis string `json:"basis" yaml:"basis"`
-}
-
 type SourceLocationVariant interface {
 	isSourceLocationVariant()
 }
@@ -3416,203 +3288,12 @@ type SourceLocationRelationVariant struct {
 	Type string `json:"type" yaml:"type"`
 }
 
-type SourceSchemaVariant interface {
-	isSourceSchemaVariant()
-}
-
-type SourceSchema struct {
-	Value SourceSchemaVariant
-}
-
-func (*SourceSchemaCompatibleVariant) isSourceSchemaVariant() {}
-func (*SourceSchemaInferredVariant) isSourceSchemaVariant()   {}
-func (*SourceSchemaStrictVariant) isSourceSchemaVariant()     {}
-
-func (value SourceSchema) MarshalJSON() ([]byte, error) {
-	switch variant := value.Value.(type) {
-	case *SourceSchemaCompatibleVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SourceSchema variant is nil")
-		}
-		return json.Marshal(variant)
-	case *SourceSchemaInferredVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SourceSchema variant is nil")
-		}
-		return json.Marshal(variant)
-	case *SourceSchemaStrictVariant:
-		if variant == nil {
-			return nil, fmt.Errorf("SourceSchema variant is nil")
-		}
-		return json.Marshal(variant)
-	case nil:
-		return nil, fmt.Errorf("SourceSchema variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported SourceSchema variant %T", variant)
-	}
-}
-
-func (value *SourceSchema) UnmarshalJSON(data []byte) error {
-	if value == nil {
-		return fmt.Errorf("cannot unmarshal SourceSchema into nil receiver")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode SourceSchema object: %w", err)
-	}
-	var tag struct {
-		Value string `json:"mode"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode SourceSchema discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("SourceSchema discriminator mode is required")
-	}
-	decode := func(dest any) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(dest)
-	}
-	switch tag.Value {
-	case "compatible":
-		if _, ok := fields["fields"]; !ok {
-			return fmt.Errorf("decode SourceSchema variant %q: required property fields is missing", tag.Value)
-		}
-		if _, ok := fields["mode"]; !ok {
-			return fmt.Errorf("decode SourceSchema variant %q: required property mode is missing", tag.Value)
-		}
-		var variant SourceSchemaCompatibleVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SourceSchema variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "inferred":
-		if _, ok := fields["mode"]; !ok {
-			return fmt.Errorf("decode SourceSchema variant %q: required property mode is missing", tag.Value)
-		}
-		var variant SourceSchemaInferredVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SourceSchema variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	case "strict":
-		if _, ok := fields["fields"]; !ok {
-			return fmt.Errorf("decode SourceSchema variant %q: required property fields is missing", tag.Value)
-		}
-		if _, ok := fields["mode"]; !ok {
-			return fmt.Errorf("decode SourceSchema variant %q: required property mode is missing", tag.Value)
-		}
-		var variant SourceSchemaStrictVariant
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode SourceSchema variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown SourceSchema discriminator %q", tag.Value)
-	}
-	return nil
-}
-
-type SourceSchemaVisitor interface {
-	VisitSourceSchemaCompatibleVariant(*SourceSchemaCompatibleVariant) error
-	VisitSourceSchemaInferredVariant(*SourceSchemaInferredVariant) error
-	VisitSourceSchemaStrictVariant(*SourceSchemaStrictVariant) error
-}
-
-func (value *SourceSchema) Visit(visitor SourceSchemaVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil SourceSchema")
-	}
-	if visitor == nil {
-		return fmt.Errorf("SourceSchema visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *SourceSchemaCompatibleVariant:
-		if variant == nil {
-			return fmt.Errorf("SourceSchema variant is nil")
-		}
-		return visitor.VisitSourceSchemaCompatibleVariant(variant)
-	case *SourceSchemaInferredVariant:
-		if variant == nil {
-			return fmt.Errorf("SourceSchema variant is nil")
-		}
-		return visitor.VisitSourceSchemaInferredVariant(variant)
-	case *SourceSchemaStrictVariant:
-		if variant == nil {
-			return fmt.Errorf("SourceSchema variant is nil")
-		}
-		return visitor.VisitSourceSchemaStrictVariant(variant)
-	case nil:
-		return fmt.Errorf("SourceSchema variant is required")
-	default:
-		return fmt.Errorf("unsupported SourceSchema variant %T", variant)
-	}
-}
-
-func (value *SourceSchema) Mode() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil SourceSchema")
-	}
-	switch variant := value.Value.(type) {
-	case *SourceSchemaCompatibleVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SourceSchema variant is nil")
-		}
-		return "compatible", nil
-	case *SourceSchemaInferredVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SourceSchema variant is nil")
-		}
-		return "inferred", nil
-	case *SourceSchemaStrictVariant:
-		if variant == nil {
-			return "", fmt.Errorf("SourceSchema variant is nil")
-		}
-		return "strict", nil
-	case nil:
-		return "", fmt.Errorf("SourceSchema variant is required")
-	default:
-		return "", fmt.Errorf("unsupported SourceSchema variant %T", variant)
-	}
-}
-
-type SourceSchemaCompatibleVariant struct {
-	CompatibleSourceSchema
-	Mode string `json:"mode" yaml:"mode"`
-}
-
-type SourceSchemaField struct {
-	Datatype                 string                     `json:"datatype" yaml:"datatype"`
-	Nullable                 *bool                      `json:"nullable,omitempty" yaml:"nullable,omitempty"`
-	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
-	Tags                     *[]string                  `json:"tags,omitempty" yaml:"tags,omitempty"`
-	CriticalDataElement      *bool                      `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
-	Classification           *string                    `json:"classification,omitempty" yaml:"classification,omitempty"`
-	AuthoritativeDefinitions *[]AuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
-	Deprecation              *FieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
-}
-
-type SourceSchemaInferredVariant struct {
-	InferredSourceSchema
-	Mode string `json:"mode" yaml:"mode"`
-}
-
-type SourceSchemaStrictVariant struct {
-	StrictSourceSchema
-	Mode string `json:"mode" yaml:"mode"`
-}
-
 type SourceSpec struct {
-	Connection string           `json:"connection" yaml:"connection"`
-	Location   SourceLocation   `json:"location" yaml:"location"`
-	Schema     *SourceSchema    `json:"schema,omitempty" yaml:"schema,omitempty"`
-	Freshness  *SourceFreshness `json:"freshness,omitempty" yaml:"freshness,omitempty"`
-}
-
-type StrictSourceSchema struct {
-	Mode   string                       `json:"mode" yaml:"mode"`
-	Fields map[string]SourceSchemaField `json:"fields" yaml:"fields"`
+	Connection string                   `json:"connection" yaml:"connection"`
+	Location   SourceLocation           `json:"location" yaml:"location"`
+	Schema     *DatasetSchema           `json:"schema,omitempty" yaml:"schema,omitempty"`
+	Fields     *map[string]DatasetField `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Checks     *[]DatasetCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
 }
 
 type TextPathSourceLocation struct {
@@ -3627,7 +3308,7 @@ type TextReaderOptions struct {
 	Header    *bool   `json:"header,omitempty" yaml:"header,omitempty"`
 }
 
-type UniqueModelCheck struct {
+type UniqueDatasetCheck struct {
 	ID          string    `json:"id" yaml:"id"`
 	Type        string    `json:"type" yaml:"type"`
 	Fields      []string  `json:"fields" yaml:"fields"`

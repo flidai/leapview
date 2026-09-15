@@ -12,8 +12,7 @@
       "properties": [
         {
           "name": "amount",
-          "logicalType": "number",
-          "required": false
+          "logicalType": "number"
         },
         {
           "name": "customer_id",
@@ -26,12 +25,21 @@
               "url": "https://example.com/glossary/customer",
               "type": "businessDefinition"
             }
+          ],
+          "quality": [
+            {
+              "id": "customer_id_present",
+              "name": "customer_id_present",
+              "type": "library",
+              "metric": "nullValues",
+              "severity": "error",
+              "mustBe": 0
+            }
           ]
         },
         {
           "name": "total",
-          "logicalType": "number",
-          "required": false
+          "logicalType": "number"
         }
       ]
     }
@@ -59,7 +67,7 @@
         "namespace": "leapview.dev/odcs-extension/v1",
         "resourceKind": "Source",
         "projectionProfile": "leapview.contract/v1",
-        "projectionDigest": "sha256:6f466e3f5bfa25d00b742ba07f8278e34dcc98506b1d76d62b8c5bdd77bdf2b4"
+        "projectionDigest": "sha256:f3658e0a74be15086c9b78dd13b6be708a95a150a09b9f9d16681ffad698d415"
       },
       "description": "Immutable LeapView publication provenance; not executable contract semantics."
     }

@@ -201,7 +201,7 @@ export class VisualizationHost extends LitElement {
     const tableActions = this.hasTableActions()
     const showInitialLoading = !this.presented && !error
     const loadingLabel = `Loading ${header ?? 'visualization'}…`
-    return html`<div class=${showHeader ? 'surface' : 'surface headerless'}>
+    return html`<div class=${showHeader ? 'surface' : 'surface headerless'} style=${`--lv-table-agent-action-space:${this.querySelector('[slot="agent-action"]') ? '64px' : '0px'}`}>
       ${showHeader ? html`
         <header class="toolbar">
           <div class="toolbar-title">

@@ -96,3 +96,71 @@ func TestEvaluateExecutesAllChecksAgainstDuckDBCandidateRelations(t *testing.T) 
 }
 
 func int64Ptr(value int64) *int64 { return &value }
+
+func TestSourceAndModelChecksObserveTheirOwnRelations(t *testing.T) {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		`CREATE SCHEMA "source"`,
+		`CREATE SCHEMA "model"`,
+		`CREATE TABLE "source"."orders" (id BIGINT, state VARCHAR)`,
+		`INSERT INTO "source"."orders" VALUES (1, 'valid'), (1, 'invalid'), (NULL, 'valid')`,
+		`CREATE TABLE "model"."orders" AS SELECT DISTINCT id, state FROM "source"."orders" WHERE id IS NOT NULL AND state = 'valid'`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	query := func(ctx context.Context, plan semanticquery.Plan) (semanticquery.Rows, error) {
+		rows, err := db.QueryContext(ctx, plan.SQL, plan.Args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		result := semanticquery.Rows{}
+		for rows.Next() {
+			var value any
+			if err := rows.Scan(&value); err != nil {
+				return nil, err
+			}
+			result = append(result, semanticquery.Row{plan.Columns[0]: value})
+		}
+		return result, rows.Err()
+	}
+	checks := []semanticmodel.ModelCheck{
+		{ID: "id_present", Type: "non_null", Field: "id", Severity: "error"},
+		{ID: "id_unique", Type: "unique", Fields: []string{"id"}, Severity: "error"},
+		{ID: "state_valid", Type: "accepted_values", Field: "state", Values: []string{"valid"}, Severity: "error"},
+	}
+	sourceEvidence, err := EvaluateSourceChecks(context.Background(), "source:orders", `"source"."orders"`, checks, nil, Bounds{}, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sourceEvidence) != len(checks) {
+		t.Fatalf("source evidence count = %d", len(sourceEvidence))
+	}
+	for _, check := range sourceEvidence {
+		if check.Outcome != release.GateBlocking {
+			t.Fatalf("source rule %q outcome = %s", check.Identity, check.Outcome)
+		}
+	}
+	evidence, err := Evaluate(context.Background(), Input{
+		CandidateID: "candidate-output", SourceDigest: testDigest, BindingGeneration: testBinding,
+		RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Query: query,
+		Models: []ModelInput{{ID: "orders", Model: semanticmodel.Table{ModelName: "orders", Checks: checks}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence.Checks) != len(checks) {
+		t.Fatalf("model evidence count = %d", len(evidence.Checks))
+	}
+	for _, check := range evidence.Checks {
+		if check.Outcome != release.GateSuccess {
+			t.Fatalf("model rule %q outcome = %s", check.Identity, check.Outcome)
+		}
+	}
+}

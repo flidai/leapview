@@ -675,3 +675,22 @@ for (const variant of ['chart', 'headerless chart', 'table']) {
     } finally { await page.close() }
   })
 }
+
+test('narrow chart cards keep long titles and renderer geometry within the card', async () => {
+  const page = await browser.newPage({ viewport: { width: 320, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    const widths = await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.style.cssText = 'width:294px;height:360px;--lv-type-body-compact:14px sans-serif'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      host.envelope.spec.title = 'LongUnbrokenChartTitleThatMustNotStretchThePlot'
+      document.body.append(host)
+      await host.updateComplete
+      const renderer = host.shadowRoot.querySelector('.renderer') as HTMLElement
+      return { card: host.clientWidth, renderer: renderer.clientWidth }
+    })
+    expect(widths.renderer).toBeLessThanOrEqual(widths.card)
+  } finally { await page.close() }
+})

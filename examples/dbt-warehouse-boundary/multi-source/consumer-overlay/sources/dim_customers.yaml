@@ -12,9 +12,9 @@ spec:
     format: parquet
   schema:
     mode: strict
-    fields:
-      customer_id: {datatype: String, nullable: true}
-      customer_name: {datatype: String, nullable: true}
-      region: {datatype: String, nullable: true}
-      order_count: {datatype: Integer, nullable: true}
-      lifetime_value: {datatype: Float, nullable: true}
+  fields:
+    customer_id: {datatype: String}
+    customer_name: {datatype: String}
+    region: {datatype: String}
+    order_count: {datatype: Integer}
+    lifetime_value: {datatype: Float}

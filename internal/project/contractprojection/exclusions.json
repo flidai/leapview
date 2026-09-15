@@ -51,13 +51,19 @@
       },
       {
         "paths": [
-          "spec.schema.fields.*.description",
-          "spec.schema.fields.*.tags.*"
+          "spec.checks.*.description",
+          "spec.checks.*.tags.*",
+          "spec.fields.*.aiContext.examples.*",
+          "spec.fields.*.aiContext.instructions",
+          "spec.fields.*.aiContext.synonyms.*",
+          "spec.fields.*.description",
+          "spec.fields.*.label",
+          "spec.fields.*.tags.*"
         ],
-        "sourceShapeFingerprint": "sha256:90c42e2169b7af155d9df5b9c7a6cd0039d84a0cf9988a7f04b02b142d178719",
+        "sourceShapeFingerprint": "sha256:4de0a6b436fdc3afd7c700806ff53ced5c17c006a37d08ac9d4f0d4cddd095a2",
         "reason": "Field descriptions and discovery tags are non-executable annotations.",
         "securityPrivacyImplications": "Exclusion avoids publishing free-form field prose and internal taxonomy labels.",
-        "compatibilityImplications": "Description and tag edits are contract-neutral; datatype and nullability remain projected."
+        "compatibilityImplications": "Description and tag edits are contract-neutral; datatype and executable checks remain projected."
       }
     ],
     "Model": [

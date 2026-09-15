@@ -22,7 +22,7 @@ func TestCFOVarianceLegendMeasuresPreserveSignedAmounts(t *testing.T) {
 		{"21457.29", "21457.29", nil}, {"-826392.56", nil, "-826392.56"},
 		{"0.01", "0.01", nil}, {"-0.01", nil, "-0.01"}, {"0", nil, nil}, {nil, nil, nil},
 	} {
-		for name, want := range map[string]any{"revenue_above_budget": tc.above, "revenue_below_budget": tc.below} {
+		for name, want := range map[string]any{"revenue_above_budget": tc.above, "revenue_below_budget": tc.below, "ebitda_positive_impact": tc.above, "ebitda_negative_impact": tc.below} {
 			metric, ok := (*finance.Metrics)[name]
 			if !ok {
 				t.Fatalf("missing legend measure %s", name)
@@ -32,7 +32,11 @@ func TestCFOVarianceLegendMeasuresPreserveSignedAmounts(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := expression.Evaluate(func(ref string) (any, error) {
-				if ref != "revenue_variance" {
+				expectedRef := "revenue_variance"
+				if name == "ebitda_positive_impact" || name == "ebitda_negative_impact" {
+					expectedRef = "variance_impact"
+				}
+				if ref != expectedRef {
 					return nil, fmt.Errorf("unexpected reference %s", ref)
 				}
 				return tc.input, nil

@@ -76,24 +76,6 @@ const reportTableFeatures = tableFeatures({
 
 const groupHeaderHeight = 26
 
-function defaultColumnSize(column: TableColumn): number {
-  const configuredWidth = Number(column.width)
-  if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
-  const widths: Record<string, number> = {
-    order_id: 160,
-    purchase_date: 126,
-    status: 106,
-    state: 78,
-    category: 210,
-    revenue: 114,
-    review_score: 104,
-    delivery_days: 108,
-  }
-  if (widths[column.key]) return widths[column.key]
-  if (column.align === 'right') return 114
-  return 140
-}
-
 function applyUpdater<T>(updater: unknown, current: T): T {
   return typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater as T
 }
@@ -164,6 +146,7 @@ export class ReportTable extends LitElement {
   declare private rowSelection: RowSelectionState
   declare private hoveredRowId: string
   declare private resizeGuideX: number
+  private compactColumns = false
   private lastResetVersion = -1
   private shouldResetScroll = false
   private requestSeq = 0
@@ -264,6 +247,7 @@ export class ReportTable extends LitElement {
       z-index: calc(var(--zIndex-default) + 2);
       flex: 1 1 auto;
       min-width: 0;
+      padding-inline-end: var(--lv-table-agent-action-space, 0px);
     }
 
     h2 {
@@ -1004,12 +988,6 @@ export class ReportTable extends LitElement {
       0% { background-position: 120% 0; }
       100% { background-position: -120% 0; }
     }
-
-    @media (max-width: 760px) {
-      .shell {
-        min-height: 360px;
-      }
-    }
   `]
 
   connectedCallback(): void {
@@ -1028,6 +1006,11 @@ export class ReportTable extends LitElement {
     if (!viewport) return
     this.resizeObserver?.disconnect()
     const syncViewport = () => {
+      const compactColumns = viewport.clientWidth > 0 && viewport.clientWidth < 480
+      if (compactColumns !== this.compactColumns) {
+        this.compactColumns = compactColumns
+        this.requestUpdate()
+      }
       const viewportHeight = viewport.clientHeight
       if (viewportHeight === this.viewportHeight) return
       this.viewportHeight = viewportHeight
@@ -1147,11 +1130,14 @@ export class ReportTable extends LitElement {
   }
 
   private columnPixelWidths(columns: TableColumn[]): number[] {
-    return this.columnController.pixelWidths(columns)
+    return columns.map(column => this.columnPixelWidth(column))
   }
 
   private columnPixelWidth(column: TableColumn): number {
-    return this.columnController.pixelWidth(column)
+    const width = this.columnController.pixelWidth(column)
+    // Keep default columns readable in narrow cards; authored/user widths still win.
+    return this.compactColumns && !column.width && this.columnSizing[column.key] === undefined
+      ? Math.max(168, width) : width
   }
 
   private minColumnSize(column: TableColumn): number {
@@ -1194,7 +1180,7 @@ export class ReportTable extends LitElement {
       accessorKey: column.key,
       header: column.label,
       cell: (info: any) => formatCell(info.getValue(), column, this.table.type !== 'table'),
-      size: defaultColumnSize(column),
+      size: this.columnPixelWidth(column),
       minSize: this.minColumnSize(column),
       enableResizing: true,
       meta: { align: column.align, column },

@@ -350,6 +350,10 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 		}
 		version = projection.Metadata.Contract.Version
 		fields = sourceSchemaFields(projection)
+		checks, err = publishedChecksFromProjection(projection.Contract.Checks)
+		if err != nil {
+			return publicationSchema{}, fmt.Errorf("contract publication %q: authored checks: %w", publication.AuthoredID, err)
+		}
 	case projectgraph.KindModel:
 		projection, err := contractprojection.DecodeModelPublication(publication.CanonicalBytes)
 		if err != nil {
@@ -360,7 +364,7 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 		}
 		version = projection.Metadata.Contract.Version
 		fields = modelSchemaFields(projection)
-		checks, err = modelPublishedChecks(projection)
+		checks, err = publishedChecksFromProjection(projection.Contract.Checks)
 		if err != nil {
 			return publicationSchema{}, fmt.Errorf("contract publication %q: authored checks: %w", publication.AuthoredID, err)
 		}
@@ -375,11 +379,8 @@ func decodeContractPublication(publication ContractPublication) (publicationSche
 }
 
 func sourceSchemaFields(projection contractprojection.SourceView) []schemaField {
-	if projection.Contract.Schema.Fields == nil {
-		return []schemaField{}
-	}
-	fields := make([]schemaField, 0, len(*projection.Contract.Schema.Fields))
-	for name, field := range *projection.Contract.Schema.Fields {
+	fields := make([]schemaField, 0, len(projection.Contract.Fields))
+	for name, field := range projection.Contract.Fields {
 		value := schemaField{name: name}
 		if field.Datatype != nil {
 			value.typeName = *field.Datatype
@@ -401,12 +402,12 @@ func modelSchemaFields(projection contractprojection.ModelView) []schemaField {
 	return fields
 }
 
-func modelPublishedChecks(projection contractprojection.ModelView) (map[string]publishedCheck, error) {
+func publishedChecksFromProjection(authored *[]contractprojection.ModelCheck) (map[string]publishedCheck, error) {
 	checks := make(map[string]publishedCheck)
-	if projection.Contract.Checks == nil {
+	if authored == nil {
 		return checks, nil
 	}
-	for _, check := range *projection.Contract.Checks {
+	for _, check := range *authored {
 		if !canonicalFacetText(check.ID, 256) || !canonicalFacetText(check.Type, 256) {
 			return nil, fmt.Errorf("check identity is invalid")
 		}

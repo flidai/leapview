@@ -191,6 +191,7 @@ export class DashboardFilterLeaf extends LitElement {
         ?disabled=${!binding.readerEditable}
         aria-busy=${String(this.pending || this.optionLoading)}
         @focusout=${this.onFilterFocusOut}
+        @keydown=${this.onDropdownEscape}
       >
         <legend class="visually-hidden">${label}</legend>
         ${this.showTitle || operationalStatus || this.showClearAction ? html`
@@ -362,6 +363,18 @@ export class DashboardFilterLeaf extends LitElement {
     if (!this.dropdownOpen) return
     this.requestOptions()
     queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.dropdown-search input')?.focus())
+  }
+
+  private onDropdownEscape = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return
+    const popover = this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')
+    if (!popover?.matches(':popover-open')) return
+    // Dismiss the nested choices before Escape reaches the surrounding filter panel.
+    event.preventDefault()
+    event.stopPropagation()
+    popover.hidePopover()
+    this.dropdownOpen = false
+    this.renderRoot.querySelector<HTMLElement>('.dropdown-trigger')?.focus({ preventScroll: true })
   }
 
   private onDropdownTriggerPointerDown = (event: PointerEvent) => {

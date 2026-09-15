@@ -153,6 +153,39 @@ must not cross that boundary.
 
 This provides authoritative migration compatibility evidence binding. It does not execute a release transition.
 
+The per-artifact migration capability authority closes the ownership gap
+between OCI admission and subsystem compatibility evaluation. A controlled
+subsystem owner signs one canonical `migration-capability-owner-evidence/v1`
+envelope containing the exact `migration-capability/v1` bytes for each OCI
+admission digest and deployment-target identity. Publication verifies the
+detached Ed25519 proof against trusted owner-key configuration before any
+database write; there is no production path that accepts a bare capability
+projection. Goose records its owned schema and migration-graph
+capability; River/jobs records both River schema and product job-history
+capability; DuckLake records the artifact-owned catalog schema, runtime tuple,
+and migration graph; PhysicalPool records its target-bound compatibility
+tuple. Candidate catalog schema is therefore never copied from mutable current
+catalog state.
+
+Capability publication is append-only. An exact signed retry returns the
+existing record, while a different capability or owner envelope for the same
+artifact, target, and subsystem fails closed. The PostgreSQL foreign key
+requires a durable admitted OCI artifact, maintenance has INSERT-only
+publication access, and runtime has SELECT-only resolution access. Publication
+and admission revocation serialize on the same artifact row: publication may
+commit before revocation, or revocation wins and publication is rejected, but
+evidence cannot be appended after a committed revocation. Every read reparses
+both canonical documents, recomputes their domain-separated digests, verifies
+the owner proof and denormalized bindings, and rechecks that the referenced
+artifact admission remains valid and unrevoked. Trusted registries retain old
+public keys for immutable historical verification; private keys are never
+persisted by this authority.
+The authority does not compose predecessor/candidate compatibility or execute
+migrations; future `migration-compatibility/v2` owner adapters must resolve two
+exact artifact capabilities and independently compare them.
+
+This provides authoritative per-artifact migration capability resolution. It does not execute a release transition.
+
 ### Concrete migration compatibility owners
 
 The PostgreSQL-era owner adapters produce the four
