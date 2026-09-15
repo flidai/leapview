@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -286,6 +287,7 @@ func siteDocsPageActions(document siteDocument) g.Node {
 			g.Attr("markdown-href", documentationMarkdownLink(document)),
 			g.Attr("source-href", sourceHref),
 			g.Attr("source-label", sourceLabel),
+			g.Attr("issue-href", documentationIssueLink(document)),
 		),
 	)
 }
@@ -444,6 +446,14 @@ func siteDocsPaginationCard(document *siteDocument, direction string) g.Node {
 
 func documentationMarkdownLink(document siteDocument) string {
 	return "https://raw.githubusercontent.com/flidai/leapview/main/docs/" + document.source
+}
+
+func documentationIssueLink(document siteDocument) string {
+	query := url.Values{}
+	query.Set("title", "Docs: "+document.title)
+	query.Set("labels", "documentation")
+	query.Set("body", "Page: /docs/"+document.slug+"\n\nDescribe the content issue or suggested improvement.")
+	return "https://github.com/flidai/leapview/issues/new?" + query.Encode()
 }
 
 func documentationSourceLink(document siteDocument) (string, string) {

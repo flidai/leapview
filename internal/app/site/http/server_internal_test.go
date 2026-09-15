@@ -763,6 +763,7 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 		`<lv-site-docs-drawer-toggle></lv-site-docs-drawer-toggle>`,
 		`<button class="site-docs-drawer-backdrop" type="button" aria-label="Close documentation menu" aria-hidden="true" tabindex="-1" data-site-docs-drawer-close="true"></button>`,
 		`<lv-site-docs-page-actions`,
+		`issue-href="https://github.com/flidai/leapview/issues/new?`,
 		`<article id="main-content" class="site-docs-article">`,
 		`<aside class="site-docs-sidebar" id="site-docs-sidebar">`,
 		`<a class="site-docs-link site-docs-link-current" href="/docs/getting-started" title="Get started with LeapView" aria-current="page">Get started with LeapView</a>`,

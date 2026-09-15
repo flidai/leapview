@@ -693,8 +693,9 @@ test('getting started route directs users through the first learning path', asyn
     const pageActions = page.locator('lv-site-docs-page-actions')
     expect(await pageActions.getAttribute('markdown')).toStartWith('# Get started with LeapView')
     expect(await pageActions.evaluate((element) => (element as HTMLElement & { markdown?: string }).markdown)).toStartWith('# Get started with LeapView')
-    await pageActions.locator('summary').click()
+    expect(await pageActions.locator('details').getAttribute('open')).toBeNull()
     const copyMarkdown = page.getByRole('button', { name: 'Copy Markdown' })
+    expect(await copyMarkdown.isVisible()).toBe(true)
     await copyMarkdown.click()
     await page.waitForFunction(() => document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('button')?.getAttribute('aria-label') === 'Markdown copied')
     expect(await pageActions.evaluate((element) => element.shadowRoot?.querySelector('button')?.getAttribute('aria-label'))).toBe('Markdown copied')
@@ -1765,7 +1766,7 @@ test('site disables smooth scrolling for reduced motion', async () => {
   }
 })
 
-test('documentation header keeps the page actions menu beside the title at every width', async () => {
+test('documentation header keeps copy and more actions readable at every width', async () => {
   const page = await browser.newPage({
     viewport: { width: 1440, height: 900 },
   })
@@ -1781,12 +1782,15 @@ test('documentation header keeps the page actions menu beside the title at every
         const titleRect = title?.getBoundingClientRect()
         const actionRect = action?.getBoundingClientRect()
         const buttonRect = button?.getBoundingClientRect()
+        const copyRect = document.querySelector('lv-site-docs-page-actions')?.shadowRoot?.querySelector('.copy')?.getBoundingClientRect()
         return {
           actionTop: actionRect?.top ?? 0,
           buttonFontSize: Number.parseFloat(buttonStyle?.fontSize ?? '0'),
           buttonHeight: buttonRect?.height ?? 0,
           buttonLeft: buttonRect?.left ?? 0,
           buttonRight: buttonRect?.right ?? 0,
+          copyLeft: copyRect?.left ?? 0,
+          copyRight: copyRect?.right ?? 0,
           pageWidth: document.documentElement.scrollWidth,
           titleBottom: titleRect?.bottom ?? 0,
           titleLeft: titleRect?.left ?? 0,
@@ -1801,9 +1805,14 @@ test('documentation header keeps the page actions menu beside the title at every
       const layout = await measure()
       expect(layout.buttonFontSize).toBeGreaterThan(0)
       expect(layout.buttonHeight).toBe(33)
-      expect(layout.buttonLeft).toBeGreaterThanOrEqual(layout.titleRight)
-      expect(layout.actionTop).toBeGreaterThanOrEqual(layout.titleTop)
-      expect(layout.actionTop).toBeLessThan(layout.titleBottom)
+      expect(layout.copyRight).toBeLessThan(layout.buttonLeft)
+      if (width <= 640) {
+        expect(layout.actionTop).toBeLessThan(layout.titleTop)
+      } else {
+        expect(layout.copyLeft).toBeGreaterThanOrEqual(layout.titleRight)
+        expect(layout.actionTop).toBeGreaterThanOrEqual(layout.titleTop)
+        expect(layout.actionTop).toBeLessThan(layout.titleBottom)
+      }
       expect(layout.buttonRight).toBeLessThanOrEqual(layout.viewportWidth)
       expect(layout.pageWidth).toBeLessThanOrEqual(layout.viewportWidth)
     }
@@ -1825,13 +1834,14 @@ test('documentation page actions replace the footer panel and work at compact wi
     await actions.locator('summary').click()
     expect(await actions.getByRole('link', { name: 'View Markdown' }).getAttribute('href')).toBe('https://raw.githubusercontent.com/flidai/leapview/main/docs/getting-started.md')
     expect(await actions.getByRole('link', { name: 'Edit this page on GitHub' }).getAttribute('href')).toBe('https://github.com/flidai/leapview/edit/main/docs/getting-started.md')
-    expect(await actions.getByRole('link', { name: /Report/ }).count()).toBe(0)
+    expect(await actions.getByRole('link', { name: 'Report an issue' }).getAttribute('href')).toContain('github.com/flidai/leapview/issues/new?')
     await page.keyboard.press('Escape')
     expect(await actions.locator('details').getAttribute('open')).toBeNull()
 
     await page.setViewportSize({ width: 390, height: 844 })
     await actions.locator('summary').click()
     expect(await actions.getByRole('button', { name: 'Copy Markdown' }).isVisible()).toBe(true)
+    expect(await actions.locator('summary').textContent()).toContain('More')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 
     await page.goto(`${baseURL}/docs/configuration`)

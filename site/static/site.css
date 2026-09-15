@@ -686,6 +686,23 @@ lv-site-search:not(:defined) > .site-search-active-input {
   align-self: center;
 }
 
+@media (max-width: 40rem) {
+  .site-docs-article:has(> .site-docs-article-actions) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .site-docs-article > h1 {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .site-docs-article-actions {
+    grid-column: 1 !important;
+    grid-row: 1;
+    justify-self: end;
+  }
+}
+
 .site-docs-article > * {
   margin: 0 0 var(--site-docs-block-gap);
 }

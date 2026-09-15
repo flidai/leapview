@@ -1,5 +1,5 @@
 import { LitElement, css, html } from 'lit'
-import { Blocks, Bot, Boxes, ChartNoAxesCombined, Check, CodeXml, Copy, Database, Ellipsis, FileCode2, GitBranch, Pencil, Radio, Server, SquareMousePointer, SquareTerminal, type IconNode } from 'lucide'
+import { Blocks, Bot, Boxes, ChartNoAxesCombined, Check, CircleAlert, CodeXml, Copy, Database, Ellipsis, FileCode2, GitBranch, Pencil, Radio, Server, SquareMousePointer, SquareTerminal, type IconNode } from 'lucide'
 import { DatastarLit } from '../../web/components/shared/datastar-lit'
 import { lucideIcon } from '../../web/components/shared/lucide-icons'
 import '../../web/components/shared/brand-mark'
@@ -23,39 +23,46 @@ class SiteDocsPageActions extends LitElement {
     markdownHref: { type: String, attribute: 'markdown-href' },
     sourceHref: { type: String, attribute: 'source-href' },
     sourceLabel: { type: String, attribute: 'source-label' },
+    issueHref: { type: String, attribute: 'issue-href' },
   }
 
   declare markdown: string
   declare markdownHref: string
   declare sourceHref: string
   declare sourceLabel: string
+  declare issueHref: string
 
   private copied = false
   private resetTimer?: number
 
   static styles = css`
     :host {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: var(--base-size-8);
     }
 
     details {
       position: relative;
     }
 
-    summary {
+    :is(.copy, summary) {
       display: inline-flex;
       box-sizing: border-box;
-      width: 33px;
       height: 33px;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      gap: var(--base-size-6);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-default);
       background: transparent;
       color: var(--lv-fg-muted);
       cursor: pointer;
+      font: inherit;
+      font-size: var(--text-body-size-small);
       list-style: none;
+      padding: 0 var(--base-size-12);
       transition: border-color var(--motion-duration-medium);
     }
 
@@ -63,13 +70,13 @@ class SiteDocsPageActions extends LitElement {
       display: none;
     }
 
-    summary:hover,
-    summary:focus-visible,
+    :is(.copy, summary):hover,
+    :is(.copy, summary):focus-visible,
     details[open] summary {
       border-color: var(--lv-button-border-hover);
     }
 
-    summary:focus-visible,
+    :is(.copy, summary):focus-visible,
     :is(button, a):focus-visible {
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
@@ -90,7 +97,7 @@ class SiteDocsPageActions extends LitElement {
       padding: var(--base-size-6);
     }
 
-    .menu :is(button, a) {
+    .menu a {
       display: flex;
       box-sizing: border-box;
       width: 100%;
@@ -108,12 +115,12 @@ class SiteDocsPageActions extends LitElement {
       text-decoration: none;
     }
 
-    .menu :is(button, a):hover {
+    .menu a:hover {
       background: var(--lv-bg-control-hover);
     }
 
     @media (prefers-reduced-motion: reduce) {
-      button {
+      :is(.copy, summary) {
         transition: none;
       }
     }
@@ -132,15 +139,16 @@ class SiteDocsPageActions extends LitElement {
 
   render() {
     const sourceIcon = this.sourceLabel?.startsWith('Edit') ? Pencil : FileCode2
-    return html`<details @keydown=${this.onKeyDown}>
-      <summary aria-label="Page actions" title="Page actions">${lucideIcon(Ellipsis, { size: 18, strokeWidth: 2 })}</summary>
+    return html`<button class="copy" type="button" aria-label=${this.copied ? 'Markdown copied' : 'Copy Markdown'} @click=${this.copyMarkdown}>
+      ${lucideIcon(this.copied ? Check : Copy, { size: 16, strokeWidth: 2 })}
+      <span>${this.copied ? 'Copied' : 'Copy Markdown'}</span>
+    </button>
+    <details @keydown=${this.onKeyDown}>
+      <summary aria-label="More page actions">${lucideIcon(Ellipsis, { size: 18, strokeWidth: 2 })}<span>More</span></summary>
       <div class="menu">
-        <button type="button" aria-label=${this.copied ? 'Markdown copied' : 'Copy Markdown'} @click=${this.copyMarkdown}>
-          ${lucideIcon(this.copied ? Check : Copy, { size: 16, strokeWidth: 2 })}
-          <span>${this.copied ? 'Copied' : 'Copy Markdown'}</span>
-        </button>
         <a href=${this.markdownHref} rel="external">${lucideIcon(FileCode2, { size: 16, strokeWidth: 2 })}<span>View Markdown</span></a>
         <a href=${this.sourceHref} rel="external">${lucideIcon(sourceIcon, { size: 16, strokeWidth: 2 })}<span>${this.sourceLabel}</span></a>
+        <a href=${this.issueHref} rel="external">${lucideIcon(CircleAlert, { size: 16, strokeWidth: 2 })}<span>Report an issue</span></a>
       </div>
     </details>`
   }
@@ -172,7 +180,6 @@ class SiteDocsPageActions extends LitElement {
 
     this.copied = true
     this.requestUpdate()
-    this.closeMenu()
     window.clearTimeout(this.resetTimer)
     this.resetTimer = window.setTimeout(() => {
       this.copied = false
