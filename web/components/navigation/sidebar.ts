@@ -775,6 +775,8 @@ class LeapViewSidebar extends LitElement {
       font-weight: var(--base-text-weight-medium);
     }
 
+    .user-loading { grid-column: 1 / -1; }
+
     .user-role {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
@@ -1582,7 +1584,7 @@ class LeapViewSidebar extends LitElement {
 
   private renderUserCard() {
     const userName = this.config.userName?.trim()
-    if (!userName) return html`<div class="user-card" aria-label="Loading account" aria-busy="true"><span class="user-name">Loading…</span></div>`
+    if (!userName) return html`<div class="user-card" aria-label="Loading account" aria-busy="true"><span class="user-name user-loading">Loading…</span></div>`
     const userAvatarUrl = this.liveUserAvatarUrl ?? this.config.userAvatarUrl?.trim()
     const href = this.config.userSettingsHref || '/admin/profile'
     return html`

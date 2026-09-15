@@ -1278,7 +1278,10 @@ test('admin sidebar replaces global navigation and provides a back to app action
       document.body.append(pendingIdentity)
       await pendingIdentity.updateComplete
       return {
-        pendingIdentity: pendingIdentity.shadowRoot.textContent.includes('Local user'),
+        pendingIdentity: {
+          hasLocalUser: pendingIdentity.shadowRoot.textContent.includes('Local user'),
+          loadingColumn: getComputedStyle(pendingIdentity.shadowRoot.querySelector('.user-name')).gridColumn,
+        },
         adminMode: sidebar.hasAttribute('data-admin'),
         width: Math.round(sidebar.getBoundingClientRect().width),
         links: Array.from(root.querySelectorAll('a')).map((link: any) => ({
@@ -1361,7 +1364,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
     expect(state.hasNavPrimaryAction).toBe(false)
     expect(state.hasHistory).toBe(false)
     expect(state.hasThemeToggle).toBe(false)
-    expect(state.pendingIdentity).toBe(false)
+    expect(state.pendingIdentity).toEqual({ hasLocalUser: false, loadingColumn: '1 / -1' })
     expect(state.currentUser).toEqual({
       title: 'Ada Lovelace', name: 'Ada Lovelace', initials: '',
       avatarSrc: '/profile/avatars/ada/avatar-digest', role: 'Platform admin',
