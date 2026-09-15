@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/project/developmentinput"
+	"github.com/flidai/leapview/internal/project/developmentprofile"
 	"github.com/flidai/leapview/internal/project/schema"
 )
 
@@ -53,6 +55,8 @@ func TestRunSchemaExportWritesJSONSchemas(t *testing.T) {
 		configschema.JSONSchemaFilename(configschema.KindSemanticModel),
 		configschema.JSONSchemaFilename(configschema.KindPipeline),
 		configschema.JSONSchemaFilename(configschema.KindDashboard),
+		developmentprofile.SchemaFilename,
+		developmentinput.SchemaFilename,
 	} {
 		content, err := os.ReadFile(filepath.Join(outDir, name))
 		if err != nil {
