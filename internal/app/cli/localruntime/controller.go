@@ -17,7 +17,6 @@ import (
 
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
-	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 	"golang.org/x/mod/semver"
@@ -41,17 +40,21 @@ const (
 )
 
 type Controller struct {
-	checkoutRoot            string
-	packageRoot             string
-	stateRoot               string
-	endpoint                Endpoint
-	resolveProjectAuthority func() (ProjectAuthority, error)
-	identity                buildinfo.Identity
-	runner                  Runner
-	httpClient              *http.Client
-	establishSessions       func(context.Context, SessionRequest) (SessionResult, error)
-	stdout                  io.Writer
-	sleep                   func(context.Context, time.Duration) error
+	checkoutRoot                string
+	packageRoot                 string
+	stateRoot                   string
+	endpoint                    Endpoint
+	resolveProjectAuthority     func() (ProjectAuthority, error)
+	identity                    buildinfo.Identity
+	runner                      Runner
+	httpClient                  *http.Client
+	establishSessions           func(context.Context, SessionRequest) (SessionResult, error)
+	resetSessions               func(context.Context, SessionRequest) error
+	stdout                      io.Writer
+	sleep                       func(context.Context, time.Duration) error
+	now                         func() time.Time
+	attachmentHeartbeatInterval time.Duration
+	attachmentStaleAfter        time.Duration
 }
 
 type osRunner struct{ dockerBin string }
@@ -143,11 +146,27 @@ func New(options Options) (*Controller, error) {
 			}
 		}
 	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	heartbeatInterval := options.AttachmentHeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = defaultAttachmentHeartbeatInterval
+	}
+	staleAfter := options.AttachmentStaleAfter
+	if staleAfter <= heartbeatInterval {
+		staleAfter = 3 * heartbeatInterval
+		if staleAfter < defaultAttachmentStaleAfter {
+			staleAfter = defaultAttachmentStaleAfter
+		}
+	}
 	return &Controller{
 		checkoutRoot: checkoutRoot, packageRoot: packageRoot, stateRoot: stateRoot,
 		endpoint: options.Endpoint, resolveProjectAuthority: options.ResolveProjectAuthority, identity: identity,
 		runner: runner, httpClient: httpClient, establishSessions: options.EstablishSessions,
-		stdout: stdout, sleep: sleep,
+		resetSessions: options.ResetSessions, stdout: stdout, sleep: sleep, now: now,
+		attachmentHeartbeatInterval: heartbeatInterval, attachmentStaleAfter: staleAfter,
 	}, nil
 }
 
@@ -174,7 +193,7 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 	if err := securefs.EnsurePrivateDir(root); err != nil {
 		return State{}, err
 	}
-	lock, err := instancelock.AcquireNamed(root, controllerLock)
+	lock, err := acquireLifecycleLock(ctx, root)
 	if err != nil {
 		return State{}, err
 	}
@@ -216,6 +235,11 @@ func (controller *Controller) Start(ctx context.Context) (result State, err erro
 			return State{}, err
 		}
 		if err := saveState(statePath, state); err != nil {
+			return State{}, err
+		}
+	}
+	if state.AttachmentRegistryVersion == 0 {
+		if err := controller.initializeAttachmentRegistry(ctx, root, statePath, &state); err != nil {
 			return State{}, err
 		}
 	}
@@ -379,6 +403,10 @@ func validateRetainedIntent(state State, root, checkoutID, manifestDigest string
 	if !validPhase[state.Phase] || !validStatus[state.Status] || (state.Status == statusApplied && state.Phase != phaseReady) {
 		return errors.New("retained local runtime progress state is invalid; refusing guessed recovery")
 	}
+	if state.AttachmentRegistryVersion != attachmentSchemaVersion &&
+		!(state.AttachmentRegistryVersion == 0 && state.Phase == phaseIntent && state.Status != statusApplied) {
+		return errors.New("retained local attachment registry intent is invalid; refusing guessed recovery")
+	}
 	if state.Checkout.CanonicalRoot != root || state.Checkout.ID != checkoutID {
 		return errors.New("retained local runtime belongs to a different canonical checkout")
 	}
@@ -463,6 +491,12 @@ func (controller *Controller) requireComposeVersion(ctx context.Context, minimum
 }
 
 func (controller *Controller) verifyResourceOwnership(ctx context.Context, state State, requireEmpty bool) error {
+	_, err := controller.ownedResources(ctx, state, requireEmpty)
+	return err
+}
+
+func (controller *Controller) ownedResources(ctx context.Context, state State, requireEmpty bool) ([]OwnedResource, error) {
+	var owned []OwnedResource
 	for _, resource := range []struct {
 		kind        string
 		list        []string
@@ -476,27 +510,28 @@ func (controller *Controller) verifyResourceOwnership(ctx context.Context, state
 		arguments := append(resource.list, "--filter", "label=com.docker.compose.project="+state.Runtime.ComposeProject, "--format", resource.format)
 		output, err := controller.dockerOutput(ctx, arguments...)
 		if err != nil {
-			return fmt.Errorf("list local runtime %ss: %w", resource.kind, err)
+			return nil, fmt.Errorf("list local runtime %ss: %w", resource.kind, err)
 		}
 		ids := strings.Fields(string(output))
 		if requireEmpty && len(ids) > 0 {
-			return fmt.Errorf("local runtime state is missing but Docker %ss already use project %q; refusing adoption", resource.kind, state.Runtime.ComposeProject)
+			return nil, fmt.Errorf("local runtime state is missing but Docker %ss already use project %q; refusing adoption", resource.kind, state.Runtime.ComposeProject)
 		}
 		for _, id := range ids {
 			encoded, err := controller.dockerOutput(ctx, resource.kind, "inspect", "--format", "{{json "+resource.inspectPath+"}}", id)
 			if err != nil {
-				return fmt.Errorf("inspect local runtime %s ownership: %w", resource.kind, err)
+				return nil, fmt.Errorf("inspect local runtime %s ownership: %w", resource.kind, err)
 			}
 			var labels map[string]string
 			if err := json.Unmarshal(bytes.TrimSpace(encoded), &labels); err != nil {
-				return fmt.Errorf("decode local runtime %s ownership: %w", resource.kind, err)
+				return nil, fmt.Errorf("decode local runtime %s ownership: %w", resource.kind, err)
 			}
 			if labels["io.leapview.local-runtime"] != "true" || labels["io.leapview.local-runtime.schema"] != "1" || labels["io.leapview.local-runtime.checkout"] != state.Checkout.ID || labels["io.leapview.local-runtime.owner"] != state.Runtime.OwnerID {
-				return fmt.Errorf("Docker %s %q does not have exact checkout ownership; refusing mutation", resource.kind, id)
+				return nil, fmt.Errorf("Docker %s %q does not have exact checkout ownership; refusing mutation", resource.kind, id)
 			}
+			owned = append(owned, OwnedResource{Kind: resource.kind, ID: id})
 		}
 	}
-	return nil
+	return owned, nil
 }
 
 func (controller *Controller) dockerOutput(ctx context.Context, arguments ...string) ([]byte, error) {

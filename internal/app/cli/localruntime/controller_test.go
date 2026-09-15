@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,14 +28,14 @@ const testImage = "ghcr.io/flidai/leapview@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 type fakeEndpoint struct {
 	host, server, fingerprint string
 	verifyErr                 error
-	verifications             int
+	verifications             atomic.Int64
 }
 
 func (endpoint *fakeEndpoint) Host() string        { return endpoint.host }
 func (endpoint *fakeEndpoint) ServerID() string    { return endpoint.server }
 func (endpoint *fakeEndpoint) Fingerprint() string { return endpoint.fingerprint }
 func (endpoint *fakeEndpoint) Verify(context.Context) error {
-	endpoint.verifications++
+	endpoint.verifications.Add(1)
 	return endpoint.verifyErr
 }
 func (endpoint *fakeEndpoint) DockerArguments(arguments ...string) []string {
@@ -92,6 +93,9 @@ func (runner *fakeRunner) Run(_ context.Context, environment []string, arguments
 		return []byte(fmt.Sprintf("pool_id: %s\ncompatibility_digest: %s\nevidence_digest: %s\nconformance_version: %s\napplied: %t\n", pool.ID, compatibility, runner.artifacts.Evidence.Evidence.Digest, runner.artifacts.Evidence.Evidence.ConformanceVersion, applied)), nil
 	case strings.Contains(joined, "admin project-claim"):
 		return []byte(`{"instanceId":"instance-local","projectUid":"lvproject_test","environment":"dev","claimedBy":"email_admin","claimedAt":"2026-09-15T12:00:00Z"}` + "\n"), nil
+	case strings.Contains(joined, " down --timeout"):
+		runner.responses = nil
+		return nil, nil
 	default:
 		return nil, nil
 	}
@@ -142,7 +146,7 @@ func TestStartPersistsExactIntentAndCompletesThroughExistingAuthorities(t *testi
 	require.Equal(t, state.Network.URL, sessionRequest.Origin)
 	require.Equal(t, state.Authority.ProjectUID, sessionRequest.ProjectID)
 	require.Equal(t, "session-local", state.Session.SessionID)
-	require.Greater(t, endpoint.verifications, len(runner.commands))
+	require.Greater(t, endpoint.verifications.Load(), int64(len(runner.commands)))
 	for _, command := range runner.commands {
 		require.GreaterOrEqual(t, len(command), 3)
 		require.Equal(t, []string{"--host", endpoint.host}, command[:2])
@@ -157,8 +161,12 @@ func TestStartPersistsExactIntentAndCompletesThroughExistingAuthorities(t *testi
 	require.Contains(t, strings.Join(runner.environments[poolIndex], "\n"), "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgresql://leapview_control_migrator:")
 	root := stateDirectory(stateRoot, state.Checkout.ID)
 	encodedState := string(mustReadFile(t, filepath.Join(root, stateFileName)))
+	require.Equal(t, attachmentSchemaVersion, state.AttachmentRegistryVersion)
 	require.NotContains(t, encodedState, "temporary")
 	require.NotContains(t, encodedState, "publisher")
+	attachmentInfo, err := os.Stat(filepath.Join(root, attachmentsFileName))
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), attachmentInfo.Mode().Perm())
 	env := mustReadFile(t, filepath.Join(root, runtimeEnvFileName))
 	require.Contains(t, string(env), "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=")
 	info, err := os.Stat(filepath.Join(root, runtimeEnvFileName))
@@ -216,6 +224,33 @@ func TestStartResumesExactIncompletePhaseWithoutReplacingCredentials(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, statusApplied, resumed.Status)
 	require.Equal(t, string(credentials), string(mustReadFile(t, filepath.Join(root, credentialsFileName))))
+}
+
+func TestStartRecoversAttachmentRegistryInitializationBoundary(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	controller, err := New(testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner))
+	require.NoError(t, err)
+	canonicalCheckout, checkoutID, err := checkoutIdentity(checkout)
+	require.NoError(t, err)
+	manifest, manifestDigest, err := loadManifest(packageRoot, testBuildIdentity())
+	require.NoError(t, err)
+	state, err := controller.newIntent(canonicalCheckout, checkoutID, manifestDigest)
+	require.NoError(t, err)
+	root := stateDirectory(stateRoot, checkoutID)
+	require.NoError(t, os.MkdirAll(root, 0o700))
+	values, err := initialEnvironment(state, manifest)
+	require.NoError(t, err)
+	require.NoError(t, writeEnvironment(filepath.Join(root, runtimeEnvFileName), values))
+	require.NoError(t, saveState(filepath.Join(root, stateFileName), state))
+
+	resumed, err := controller.Start(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, attachmentSchemaVersion, resumed.AttachmentRegistryVersion)
+	registry, err := loadAttachmentRegistry(filepath.Join(root, attachmentsFileName), attachmentBindingFor(resumed), false)
+	require.NoError(t, err)
+	require.Empty(t, registry.Attachments)
 }
 
 func TestStartRejectsEditedRetainedPoolQualificationIntent(t *testing.T) {

@@ -10,17 +10,22 @@ import (
 	accesscli "github.com/flidai/leapview/internal/access/cli"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	"github.com/flidai/leapview/internal/platform/securestore"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeLocalSessionAuthority struct {
-	profile       cliapi.TargetProfile
-	profileErr    error
-	resolveErr    error
-	loginRequest  accesscli.LoginRequest
-	loginCalls    int
-	notified      bool
-	reboundOrigin string
+	profile             cliapi.TargetProfile
+	profileErr          error
+	resolveErr          error
+	loginRequest        accesscli.LoginRequest
+	loginCalls          int
+	notified            bool
+	reboundOrigin       string
+	deletedProfile      *cliapi.TargetProfile
+	deletedAccount      string
+	deleteCredentialErr error
+	deleteProfileErr    error
 }
 
 func (authority *fakeLocalSessionAuthority) Profile(string) (cliapi.TargetProfile, error) {
@@ -44,6 +49,20 @@ func (authority *fakeLocalSessionAuthority) Login(_ context.Context, request acc
 	notify(accesscli.DeviceChallenge{UserCode: "ABCD-EFGH", VerificationURI: request.Origin + "/device"})
 	authority.notified = true
 	return accesscli.LoginResult{SessionID: "session-local"}, nil
+}
+
+func (authority *fakeLocalSessionAuthority) DeleteProfile(_ string, expected cliapi.TargetProfile) error {
+	if authority.deleteProfileErr != nil {
+		return authority.deleteProfileErr
+	}
+	authority.deletedProfile = &expected
+	authority.profileErr = cliapi.ErrProfileNotFound
+	return nil
+}
+
+func (authority *fakeLocalSessionAuthority) DeleteCredential(_ context.Context, account string) error {
+	authority.deletedAccount = account
+	return authority.deleteCredentialErr
 }
 
 func TestEstablishLocalAuthoringSessionsUsesNormalScopedDeviceAuthority(t *testing.T) {
@@ -90,4 +109,50 @@ func TestEstablishLocalAuthoringSessionsRebindsVerifiedLoopbackPortBeforeReuse(t
 	require.Equal(t, request.TargetName, result.TargetName)
 	require.Equal(t, request.Origin, authority.reboundOrigin)
 	require.Zero(t, authority.loginCalls)
+}
+
+func TestResetLocalAuthoringSessionsRemovesExactCredentialThenProfile(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	profile := cliapi.TargetProfile{Origin: request.Origin, InstanceID: request.InstanceID, Environment: request.Environment, ProjectID: request.ProjectID, CredentialAccount: "target/account"}
+	authority := &fakeLocalSessionAuthority{profile: profile}
+
+	require.NoError(t, resetLocalAuthoringSessionsWith(t.Context(), authority, request))
+	require.Equal(t, profile.CredentialAccount, authority.deletedAccount)
+	require.Equal(t, &profile, authority.deletedProfile)
+}
+
+func TestResetLocalAuthoringSessionsRetainsProfileWhenCredentialRemovalFails(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	profile := cliapi.TargetProfile{Origin: request.Origin, InstanceID: request.InstanceID, Environment: request.Environment, ProjectID: request.ProjectID, CredentialAccount: "target/account"}
+	authority := &fakeLocalSessionAuthority{profile: profile, deleteCredentialErr: errors.New("keychain unavailable")}
+
+	err := resetLocalAuthoringSessionsWith(t.Context(), authority, request)
+	require.ErrorContains(t, err, "keychain unavailable")
+	require.Nil(t, authority.deletedProfile)
+	require.NoError(t, authority.profileErr)
+}
+
+func TestResetLocalAuthoringSessionsRefusesChangedIdentityBeforeCredentialMutation(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	authority := &fakeLocalSessionAuthority{profile: cliapi.TargetProfile{
+		Origin: request.Origin, InstanceID: "different-instance", Environment: request.Environment,
+		ProjectID: request.ProjectID, CredentialAccount: "target/foreign",
+	}}
+
+	err := resetLocalAuthoringSessionsWith(t.Context(), authority, request)
+	require.ErrorContains(t, err, "changed before reset")
+	require.Empty(t, authority.deletedAccount)
+	require.Nil(t, authority.deletedProfile)
+}
+
+func TestResetLocalAuthoringSessionsTreatsMissingCredentialAndProfileAsIdempotent(t *testing.T) {
+	request := localruntime.SessionRequest{TargetName: "local-checkout", Origin: "http://127.0.0.1:54321", InstanceID: "instance-local", Environment: "dev", ProjectID: "lvproject_test"}
+	profile := cliapi.TargetProfile{Origin: request.Origin, InstanceID: request.InstanceID, Environment: request.Environment, ProjectID: request.ProjectID, CredentialAccount: "target/account"}
+	authority := &fakeLocalSessionAuthority{profile: profile, deleteCredentialErr: securestore.ErrNotFound}
+
+	require.NoError(t, resetLocalAuthoringSessionsWith(t.Context(), authority, request))
+	require.Equal(t, &profile, authority.deletedProfile)
+	authority.deletedProfile = nil
+	require.NoError(t, resetLocalAuthoringSessionsWith(t.Context(), authority, request))
+	require.Nil(t, authority.deletedProfile)
 }

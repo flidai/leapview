@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	stateSchemaVersion           = 1
+	stateSchemaVersion           = 2
 	manifestSchemaVersion        = 1
 	persistentStateSchemaVersion = 1
 	postgresMajor                = 18
@@ -33,32 +33,37 @@ type Runner interface {
 }
 
 type Options struct {
-	CheckoutRoot            string
-	RuntimePackage          string
-	StateRoot               string
-	DockerBin               string
-	Endpoint                Endpoint
-	ResolveProjectAuthority func() (ProjectAuthority, error)
-	BuildIdentity           buildinfo.Identity
-	Runner                  Runner
-	HTTPClient              *http.Client
-	EstablishSessions       func(context.Context, SessionRequest) (SessionResult, error)
-	Stdout                  io.Writer
-	Sleep                   func(context.Context, time.Duration) error
+	CheckoutRoot                string
+	RuntimePackage              string
+	StateRoot                   string
+	DockerBin                   string
+	Endpoint                    Endpoint
+	ResolveProjectAuthority     func() (ProjectAuthority, error)
+	BuildIdentity               buildinfo.Identity
+	Runner                      Runner
+	HTTPClient                  *http.Client
+	EstablishSessions           func(context.Context, SessionRequest) (SessionResult, error)
+	ResetSessions               func(context.Context, SessionRequest) error
+	Stdout                      io.Writer
+	Sleep                       func(context.Context, time.Duration) error
+	Now                         func() time.Time
+	AttachmentHeartbeatInterval time.Duration
+	AttachmentStaleAfter        time.Duration
 }
 
 type State struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	Status        string      `json:"status"`
-	Phase         string      `json:"phase"`
-	OperationID   string      `json:"operationId"`
-	Checkout      checkout    `json:"checkout"`
-	Runtime       runtimeID   `json:"runtime"`
-	Endpoint      endpointID  `json:"endpoint"`
-	Network       networkID   `json:"network"`
-	Authority     authorityID `json:"authority"`
-	Session       sessionID   `json:"session"`
-	LastError     *failure    `json:"lastError,omitempty"`
+	SchemaVersion             int         `json:"schemaVersion"`
+	AttachmentRegistryVersion int         `json:"attachmentRegistryVersion"`
+	Status                    string      `json:"status"`
+	Phase                     string      `json:"phase"`
+	OperationID               string      `json:"operationId"`
+	Checkout                  checkout    `json:"checkout"`
+	Runtime                   runtimeID   `json:"runtime"`
+	Endpoint                  endpointID  `json:"endpoint"`
+	Network                   networkID   `json:"network"`
+	Authority                 authorityID `json:"authority"`
+	Session                   sessionID   `json:"session"`
+	LastError                 *failure    `json:"lastError,omitempty"`
 }
 
 type checkout struct {
@@ -112,6 +117,45 @@ type SessionRequest struct {
 type SessionResult struct {
 	TargetName string
 	SessionID  string
+}
+
+type AttachmentStatus struct {
+	ID          string    `json:"id"`
+	PID         int       `json:"pid"`
+	AttachedAt  time.Time `json:"attachedAt"`
+	HeartbeatAt time.Time `json:"heartbeatAt"`
+}
+
+type LifecycleStatus struct {
+	Exists         bool               `json:"exists"`
+	RuntimeStatus  string             `json:"runtimeStatus,omitempty"`
+	Phase          string             `json:"phase,omitempty"`
+	CheckoutRoot   string             `json:"checkoutRoot"`
+	CheckoutID     string             `json:"checkoutId"`
+	StateRoot      string             `json:"stateRoot,omitempty"`
+	ComposeProject string             `json:"composeProject,omitempty"`
+	OwnerID        string             `json:"ownerId,omitempty"`
+	URL            string             `json:"url,omitempty"`
+	Services       map[string]string  `json:"services,omitempty"`
+	Attachments    []AttachmentStatus `json:"attachments"`
+}
+
+type OwnedResource struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+type ResetPlan struct {
+	CheckoutRoot string          `json:"checkoutRoot"`
+	CheckoutID   string          `json:"checkoutId"`
+	StateRoot    string          `json:"stateRoot"`
+	Resources    []OwnedResource `json:"resources"`
+	Confirmation string          `json:"confirmation"`
+}
+
+type DetachResult struct {
+	RemainingAttachments int  `json:"remainingAttachments"`
+	ServicesStopped      bool `json:"servicesStopped"`
 }
 
 type ProjectAuthority struct {

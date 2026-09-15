@@ -50,3 +50,20 @@ unless the source-only contributor workflow explicitly enables them.
 the lifecycle controller. The labels in this payload are evidence inputs for
 those checks; labels alone never authorize mutation. Local volumes are durable
 development state, not a production backup or recovery mechanism.
+
+Each `leapview dev` process holds an independent, token-bound attachment lease.
+It renews that lease every five seconds; a lease becomes stale after thirty
+seconds without a successful heartbeat. The PID shown by `leapview dev status`
+is diagnostic only and cannot renew or prove ownership. A normal Ctrl-C detaches
+the caller. Services remain running while another live attachment exists and
+stop after the last detach, while the checkout-scoped volumes remain intact.
+
+`leapview dev status` reports the canonical checkout, retained runtime phase,
+Compose project, service state, and live attachments. `leapview dev logs` reads
+a bounded log tail and redacts credential-shaped and retained runtime secrets.
+`leapview dev stop` refuses while any attachment is live and otherwise stops
+only the exactly verified checkout-owned services. `leapview dev reset` first
+prints the exact checkout-owned resource set and a `sha256:` confirmation. Pass
+that value back with `--confirm`; any attachment, endpoint change, ownership
+change, or resource-set change makes the confirmation invalid before mutation.
+Reset removes the confirmed volumes and local session state; stop retains them.
