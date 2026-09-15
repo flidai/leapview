@@ -39,7 +39,9 @@ class SiteDocsPageActions extends LitElement {
     :host {
       display: inline-flex;
       align-items: center;
-      gap: var(--base-size-8);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: transparent;
     }
 
     details {
@@ -49,21 +51,27 @@ class SiteDocsPageActions extends LitElement {
     :is(.copy, summary) {
       display: inline-flex;
       box-sizing: border-box;
-      height: 33px;
+      width: 32px;
+      height: 32px;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      gap: var(--base-size-6);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
+      border: 0;
       background: transparent;
       color: var(--lv-fg-muted);
       cursor: pointer;
-      font: inherit;
-      font-size: var(--text-body-size-small);
       list-style: none;
-      padding: 0 var(--base-size-12);
-      transition: border-color var(--motion-duration-medium);
+      padding: 0;
+      transition: background-color var(--motion-duration-medium);
+    }
+
+    .copy {
+      border-right: var(--lv-border-default);
+      border-radius: var(--lv-radius-default) 0 0 var(--lv-radius-default);
+    }
+
+    summary {
+      border-radius: 0 var(--lv-radius-default) var(--lv-radius-default) 0;
     }
 
     summary::-webkit-details-marker {
@@ -73,7 +81,8 @@ class SiteDocsPageActions extends LitElement {
     :is(.copy, summary):hover,
     :is(.copy, summary):focus-visible,
     details[open] summary {
-      border-color: var(--lv-button-border-hover);
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
     }
 
     :is(.copy, summary):focus-visible,
@@ -139,12 +148,11 @@ class SiteDocsPageActions extends LitElement {
 
   render() {
     const sourceIcon = this.sourceLabel?.startsWith('Edit') ? Pencil : FileCode2
-    return html`<button class="copy" type="button" aria-label=${this.copied ? 'Markdown copied' : 'Copy Markdown'} @click=${this.copyMarkdown}>
+    return html`<button class="copy" type="button" aria-label=${this.copied ? 'Markdown copied' : 'Copy Markdown'} title=${this.copied ? 'Markdown copied' : 'Copy Markdown'} @click=${this.copyMarkdown}>
       ${lucideIcon(this.copied ? Check : Copy, { size: 16, strokeWidth: 2 })}
-      <span>${this.copied ? 'Copied' : 'Copy Markdown'}</span>
     </button>
     <details @keydown=${this.onKeyDown}>
-      <summary aria-label="More page actions">${lucideIcon(Ellipsis, { size: 18, strokeWidth: 2 })}<span>More</span></summary>
+      <summary aria-label="More page actions" title="More page actions">${lucideIcon(Ellipsis, { size: 18, strokeWidth: 2 })}</summary>
       <div class="menu">
         <a href=${this.markdownHref} rel="external">${lucideIcon(FileCode2, { size: 16, strokeWidth: 2 })}<span>View Markdown</span></a>
         <a href=${this.sourceHref} rel="external">${lucideIcon(sourceIcon, { size: 16, strokeWidth: 2 })}<span>${this.sourceLabel}</span></a>
