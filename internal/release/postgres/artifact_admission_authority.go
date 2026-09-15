@@ -131,6 +131,11 @@ func (r *Repository) RevokeArtifactAdmission(ctx context.Context, artifactRefere
 	}
 	return pgx.BeginFunc(ctx, b, func(tx pgx.Tx) error {
 		q := releasedb.New(tx)
+		if _, err := q.LockOCIArtifactAdmissionByReference(ctx, artifactReference); errors.Is(err, pgx.ErrNoRows) {
+			return ErrArtifactAdmissionNotFound
+		} else if err != nil {
+			return err
+		}
 		row, err := q.GetOCIArtifactAdmission(ctx, artifactReference)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrArtifactAdmissionNotFound

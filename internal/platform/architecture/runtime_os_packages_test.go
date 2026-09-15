@@ -19,6 +19,7 @@ func TestProductionRuntimeUsesPinnedMinimalDebianBase(t *testing.T) {
 		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:",
 		"SHELL [\"/busybox/sh\", \"-c\"]",
 		"test \"$(id -u leapview)\" = 999",
+		"mkdir -p /var/lib/leapview/home && \\\n    chown -R leapview:leapview /var/lib/leapview /app",
 		"USER leapview:leapview",
 	} {
 		if !strings.Contains(dockerfile, required) {
