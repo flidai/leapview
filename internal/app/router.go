@@ -35,7 +35,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	}
 	var developmentSession *developmentsessionmodule.Handler
 	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" {
-		developmentSession = developmentsessionmodule.New(developmentsessionmodule.Config{
+		developmentSession = developmentsessionmodule.Build(context.Background(), developmentsessionmodule.Config{
 			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
 			ResolveProjectID: runtime.resolveProjectID,
 			CurrentPrincipal: func(r *http.Request) (string, bool) {
@@ -67,7 +67,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 					Identity: developmentsessionmodule.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, GraphDigest: value.GraphDigest, PreviewURL: value.PreviewURL},
 				}, nil
 			},
-		})
+		}).HTTP()
 	}
 	mountRouterMiddleware(mux, routerMiddlewareDependencies{
 		logger: platform.logger, telemetry: platform.telemetry, securityHeaders: policy.securityHeaders,

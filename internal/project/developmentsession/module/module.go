@@ -4,6 +4,8 @@
 package module
 
 import (
+	"context"
+
 	"github.com/flidai/leapview/internal/project/developmentsession"
 	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
 )
@@ -19,4 +21,23 @@ var (
 	ErrOwnerMismatch = developmentsession.ErrOwnerMismatch
 )
 
-func New(config Config) *Handler { return developmenthttp.New(config) }
+// Module is the application composition surface for development sessions.
+// Persistence and transport construction remain owned by this capability.
+type Module struct {
+	handler *developmenthttp.Handler
+}
+
+// Build constructs the capability through the repository-standard module
+// entrypoint. The handler itself remains fail-closed when the capability is
+// disabled or no durable store is configured.
+func Build(_ context.Context, config Config) *Module {
+	return &Module{handler: developmenthttp.New(config)}
+}
+
+// HTTP exposes the authenticated development-session transport surface.
+func (m *Module) HTTP() *Handler {
+	if m == nil {
+		return nil
+	}
+	return m.handler
+}
