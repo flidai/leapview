@@ -209,7 +209,7 @@ test('homepage hero fits the first screen and mission copy stays readable', asyn
     expect(desktop.heroBottom).toBeLessThan(1110)
     expect(desktop.titleTop).toBeGreaterThan(175)
     expect(desktop.titleTop).toBeLessThan(215)
-    expect(desktop.screenshotTop).toBeGreaterThan(390)
+    expect(desktop.screenshotTop).toBeGreaterThan(380)
     expect(desktop.screenshotTop).toBeLessThan(490)
     expect(desktop.missionWidth).toBeLessThanOrEqual(680)
     expect(desktop.missionFont).toBe(desktop.siteFont)
@@ -228,8 +228,8 @@ test('homepage hero fits the first screen and mission copy stays readable', asyn
     expect(mobile.heroBottom).toBeLessThanOrEqual(900)
     expect(mobile.titleTop).toBeGreaterThan(120)
     expect(mobile.titleTop).toBeLessThan(165)
-    expect(mobile.screenshotTop).toBeGreaterThan(480)
-    expect(mobile.screenshotTop).toBeLessThan(530)
+    expect(mobile.screenshotTop).toBeGreaterThan(420)
+    expect(mobile.screenshotTop).toBeLessThan(470)
   } finally {
     await page.close()
   }

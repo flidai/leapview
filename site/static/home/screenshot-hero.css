@@ -65,7 +65,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
   .hero-inner { width: 100%; max-width: none; padding: 145px 0 65px clamp(60px, 11.8vw, 170px); }
   .hero-copy { max-width: 440px; }
   .hero .eyebrow { margin-bottom: 34px; }
-  .hero h1 { max-width: 420px; font-size: clamp(51px, 4.05vw, 60px); line-height: 1.03; }
+  .hero h1 { max-width: 420px; font-size: clamp(46px, 3.4vw, 52px); line-height: 1.06; }
   .hero-description { max-width: 415px; margin-top: 19px; font-size: 18px; line-height: 1.5; }
   .hero-actions { margin-top: 31px; }
   .primary-link, .secondary-link { min-height: 44px; }
@@ -132,7 +132,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 @media (min-width: 1024px) and (max-width: 1100px) {
   .hero-inner { width: 100%; max-width: none; padding: 96px 0 0 32px; }
   .hero-copy { max-width: 350px; }
-  .hero h1 { max-width: 350px; font-size: 50px; line-height: 1.04; }
+  .hero h1 { max-width: 350px; font-size: 44px; line-height: 1.06; }
   .hero-description { max-width: 340px; margin-top: 25px; font-size: 18px; line-height: 1.5; }
   .hero-actions { margin-top: 31px; }
   .primary-link, .secondary-link { min-height: 44px; }
@@ -143,7 +143,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
   .hero-inner { padding: 39px 23px 0; }
   .hero-copy { align-items: flex-start; text-align: left; }
   .hero .eyebrow { margin-bottom: 31px; }
-  .hero h1 { font-size: 40px; line-height: 1.1; }
+  .hero h1 { font-size: 38px; line-height: 1.1; }
   .hero-description { max-width: 620px; margin: 16px 0 0; font-size: 16px; line-height: 1.5; }
   .hero-actions { justify-content: flex-start; margin-top: clamp(8px, 9.4vw - 64px, 32px); }
   .primary-link, .secondary-link { min-height: 42px; }
@@ -158,6 +158,7 @@ a{color:inherit}button{font:inherit;cursor:pointer}a:focus-visible,button:focus-
 
 @media (max-width: 639px) {
   .hero-inner { padding-top: 44px; padding-bottom: 0; }
+  .hero h1 { font-size: clamp(36px, 9.3vw, 43px); }
   .product-stage { width: calc(100vw - 18px); max-width: none; margin: 70px 0 0; }
   .product-frame { width: 587px; border-radius: 13px 0 0 0; }
   .image-scroller img { width: 100%; }
