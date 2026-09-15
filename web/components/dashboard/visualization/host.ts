@@ -59,6 +59,16 @@ export class VisualizationHost extends LitElement {
   private pendingApply?: Promise<void>
   private applyQueued = false
   private mountEpoch = 0
+  private handleOutsidePointerDown = (event: PointerEvent): void => {
+    const details = this.visualOptionsDetails()
+    if (!details?.open || event.composedPath().includes(details)) return
+    this.closeVisualOptions(false)
+  }
+  private handleDocumentKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.visualOptionsDetails()?.open) return
+    event.preventDefault()
+    this.closeVisualOptions(true)
+  }
 
   static styles = [visualActionStyles, visualizationHostStyles]
 
@@ -68,6 +78,8 @@ export class VisualizationHost extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
+    document.addEventListener('pointerdown', this.handleOutsidePointerDown)
+    document.addEventListener('keydown', this.handleDocumentKeyDown)
     const generation = ++this.connectionGeneration
     if (!this.hasUpdated || this.controller || this.mountObserver) return
     queueMicrotask(() => {
@@ -143,10 +155,14 @@ export class VisualizationHost extends LitElement {
       if (!this.deferMount || this.authoring) this.requestMount()
       else if (!this.mountObserver) this.setupMountLifecycle()
     }
+    this.setVisualOptionsOpen(this.visualOptionsDetails()?.open ?? false)
   }
 
   disconnectedCallback(): void {
     const generation = ++this.connectionGeneration
+    document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
+    document.removeEventListener('keydown', this.handleDocumentKeyDown)
+    this.setVisualOptionsOpen(false)
     super.disconnectedCallback()
     // A synchronous DOM move fires disconnected/connected callbacks even though
     // the visual remains live. Defer teardown so transient moves retain renderer
@@ -350,8 +366,8 @@ export class VisualizationHost extends LitElement {
   private visualActions() {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return null
-    return html`<details class="visual-options">
-      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options">${lucideIcon(EllipsisVertical)}</summary>
+    return html`<details class="visual-options" @toggle=${this.handleVisualOptionsToggle}>
+      <summary aria-label="Visual options" aria-haspopup="menu" title="Visual options" @click=${this.handleVisualOptionsClick}>${lucideIcon(EllipsisVertical)}</summary>
       <div class="menu" role="menu">
         <button type="button" role="menuitem" @click=${() => this.runAction('show-data')}>${visualMenuIcon('show-data')}<span>Show data</span></button>
         <button type="button" role="menuitem" @click=${() => this.runAction('copy-data')}>${visualMenuIcon('copy-data')}<span>Copy data</span></button>
@@ -361,10 +377,37 @@ export class VisualizationHost extends LitElement {
     </details>`
   }
 
+  private visualOptionsDetails(): HTMLDetailsElement | undefined {
+    return this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options') ?? undefined
+  }
+
+  private handleVisualOptionsToggle = (event: Event): void => {
+    this.setVisualOptionsOpen((event.currentTarget as HTMLDetailsElement).open)
+  }
+
+  private handleVisualOptionsClick = (event: Event): void => {
+    const details = (event.currentTarget as HTMLElement).parentElement as HTMLDetailsElement | null
+    queueMicrotask(() => this.setVisualOptionsOpen(details?.open ?? false))
+  }
+
+  private setVisualOptionsOpen(open: boolean): void {
+    this.toggleAttribute('data-visual-menu-open', open)
+    this.closest<HTMLElement>('[data-canvas-visual]')?.toggleAttribute('data-visual-menu-open', open)
+  }
+
+  private closeVisualOptions(restoreFocus: boolean): void {
+    const details = this.visualOptionsDetails()
+    if (!details?.open) return
+    const summary = details.querySelector<HTMLElement>('summary')
+    details.removeAttribute('open')
+    this.setVisualOptionsOpen(false)
+    if (restoreFocus) summary?.focus()
+  }
+
   private runAction(action: Extract<VisualActionDetail['action'], 'show-data' | 'copy-data' | 'export-csv' | 'clear-selection'>): void {
     const envelope = this.envelope
     if (!envelope || !supportsHostDataActions(envelope)) return
-    this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')?.removeAttribute('open')
+    this.closeVisualOptions(true)
     const data = accessibleVisualizationData(envelope, this.rendererContext())
     const metadata = resolveVisualizationMetadata(envelope)
     if (action === 'clear-selection') {

@@ -16,6 +16,51 @@ export type ZoomState = {
   scale: number
 }
 
+/**
+ * Resolve the dashboard-local target used for report view commands and state.
+ * Controls and canvases can live in different component shadow roots, so
+ * walking through shadow hosts lets both sides resolve the same marked scope.
+ */
+export function reportViewEventScope(element: Element): EventTarget {
+  let current: Node | null = element
+  while (current) {
+    if (current instanceof Element) {
+      const scope = current.closest('[data-report-view-scope]')
+      if (scope) return scope
+      current = current.parentNode
+      continue
+    }
+    if (current instanceof ShadowRoot) {
+      current = current.host
+      continue
+    }
+    break
+  }
+  return element.getRootNode()
+}
+
+/**
+ * Keep the legacy document event path available for one report view. If a
+ * document has several scoped views, only a lone direct-document view may use
+ * the fallback; otherwise an unscoped event would be ambiguous.
+ */
+export function reportViewDocumentFallbackAllowed(element: Element, tagName: string): boolean {
+  if (typeof document === 'undefined') return false
+  let total = 0
+  let unscoped = 0
+  const visit = (root: ParentNode): void => {
+    for (const element of root.querySelectorAll('*')) {
+      if (element.matches(tagName)) {
+        total += 1
+        if (reportViewEventScope(element) === document) unscoped += 1
+      }
+      if (element.shadowRoot) visit(element.shadowRoot)
+    }
+  }
+  visit(document)
+  return total === 1 || (reportViewEventScope(element) === document && unscoped === 1)
+}
+
 export const autoMobileLayoutQuery = '(max-width: 640px)'
 export const reportViewPathChangedEvent = 'lv-report-view-path-change'
 

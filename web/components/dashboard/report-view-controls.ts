@@ -4,6 +4,8 @@ import { ChevronDown, Maximize2, Minus, Monitor, MonitorSmartphone, MoveHorizont
 import { lucideIcon } from '../shared/lucide-icons'
 import {
   clampScale,
+  reportViewEventScope,
+  reportViewDocumentFallbackAllowed,
   resolvedLayoutMode,
   storedCustomScale,
   storedLayoutMode,
@@ -19,6 +21,7 @@ class ReportZoom extends LitElement {
   @state() private layout = resolvedLayoutMode(this.layoutMode)
   @state() private mode: PresentationMode = storedZoomMode()
   @state() private scale = storedCustomScale()
+  private zoomEventScope?: EventTarget
 
   static styles = css`
     :host {
@@ -312,15 +315,24 @@ class ReportZoom extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
+    this.zoomEventScope = reportViewEventScope(this)
+    this.zoomEventScope.addEventListener('lv-report-zoom-state', this.onZoomState as EventListener)
     document.addEventListener('lv-report-zoom-state', this.onZoomState as EventListener)
   }
 
   disconnectedCallback(): void {
+    this.zoomEventScope?.removeEventListener('lv-report-zoom-state', this.onZoomState as EventListener)
+    this.zoomEventScope = undefined
     document.removeEventListener('lv-report-zoom-state', this.onZoomState as EventListener)
     super.disconnectedCallback()
   }
 
   private onZoomState = (event: CustomEvent<ZoomState>): void => {
+    // Preserve the legacy document dispatch hook for a single control, while
+    // ignoring unscoped state once multiple controls are mounted.
+    if (event.currentTarget === document
+      && (!reportViewDocumentFallbackAllowed(this, 'lv-report-zoom')
+        || (event.target !== document && this.zoomEventScope !== document))) return
     this.layoutMode = event.detail.layoutMode
     this.layout = event.detail.layout
     this.mode = event.detail.mode

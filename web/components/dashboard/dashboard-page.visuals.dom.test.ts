@@ -449,6 +449,112 @@ test('visualization actions keep touch targets and spacing when a report is scal
   } finally { await page.close() }
 })
 
+test('scaled report tables preserve action targets and virtual row geometry', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean([...((document.querySelector('lv-dashboard-page') as any)?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? [])].find((host: any) => host.envelope?.visualID === 'orders')?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport')))
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      await dashboard.ensureVisualizationsMounted()
+      const canvas = (dashboard.shadowRoot as ShadowRoot).querySelector('lv-report-canvas') as any
+      const host = [...(dashboard.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')].find((item: any) => item.envelope?.visualID === 'orders') as any
+      const table = (host.shadowRoot as ShadowRoot).querySelector('lv-report-table') as any
+      document.dispatchEvent(new CustomEvent('lv-report-zoom-command', { detail: { mode: 'custom', scale: 0.7 } }))
+      await canvas.updateComplete
+      await table.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      await table.updateComplete
+      const root = table.shadowRoot as ShadowRoot
+      const rows = [...root.querySelectorAll<HTMLElement>('.canvas > .row[role="row"]')]
+      const actions = rows.flatMap((row) => [...row.querySelectorAll<HTMLElement>('.cell-action')])
+      const rowRects = rows.map((row) => {
+        const rect = row.getBoundingClientRect()
+        return { top: rect.top, bottom: rect.bottom, height: rect.height }
+      })
+      const actionRects = actions.slice(0, 12).map((action) => {
+        const rect = action.getBoundingClientRect()
+        return { top: rect.top, bottom: rect.bottom, height: rect.height, label: action.getAttribute('aria-label') }
+      })
+      const beforeScroll = rows.slice(0, 4).map((row) => row.textContent?.replace(/\s+/g, ' ').trim())
+      const viewport = root.querySelector<HTMLElement>('.table-scrollport')!
+      viewport.scrollTop = table.rowHeight * 10
+      viewport.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      const afterScroll = [...root.querySelectorAll<HTMLElement>('.canvas > .row[role="row"]')].slice(0, 4).map((row) => ({ top: row.getBoundingClientRect().top, text: row.textContent?.replace(/\s+/g, ' ').trim() }))
+      return {
+        scale: Number((canvas.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.surface')?.dataset.scale),
+        rowHeight: table.rowHeight,
+        authoredRowHeight: table.table.rowHeight,
+        rowRects,
+        actionRects,
+        beforeScroll,
+        afterScroll,
+      }
+    })
+    expect(result.scale).toBeCloseTo(0.7, 2)
+    expect(result.rowHeight).toBeCloseTo(result.authoredRowHeight / result.scale, 2)
+    expect(result.actionRects.length).toBeGreaterThan(0)
+    expect(Math.min(...result.actionRects.map((rect: any) => rect.height))).toBeGreaterThanOrEqual(24)
+    for (const rect of result.actionRects) {
+      const row = result.rowRects.find((candidate: any) => rect.top >= candidate.top - 1 && rect.bottom <= candidate.bottom + 1)
+      expect(row).toBeDefined()
+    }
+    expect(result.afterScroll.length).toBeGreaterThan(0)
+    expect(result.afterScroll.map((row: any) => row.text)).toContain('o11')
+  } finally { await page.close() }
+})
+
+test('short desktop visual cards keep an open action menu visible and interactive', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
+    const dashboard = page.locator('lv-dashboard-page')
+    const target = await dashboard.evaluate(async (element: any) => {
+      await element.ensureVisualizationsMounted()
+      const host = [...(element.shadowRoot as ShadowRoot).querySelectorAll('lv-visualization-host')]
+        .find((candidate: any) => candidate.envelope?.visualID === 'orders_kpi') as any
+      const card = host.closest('[data-canvas-visual]') as HTMLElement
+      const details = host.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const summary = details.querySelector('summary') as HTMLElement
+      let action = ''
+      host.addEventListener('lv-visual-action', (event: CustomEvent) => { action = event.detail.action })
+      summary.click()
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const button = details.querySelectorAll<HTMLElement>('[role="menuitem"]')[2]!
+      const buttonRect = button.getBoundingClientRect()
+      const cardRect = card.getBoundingClientRect()
+      const frame = card.shadowRoot?.querySelector('.frame') as HTMLElement
+      const sibling = (element.shadowRoot as ShadowRoot).querySelector('[data-visual-id="orders_chart"]') as HTMLElement
+      ;(element as any).__shortCardMenuAction = () => action
+      return {
+        point: { x: buttonRect.left + buttonRect.width / 2, y: buttonRect.top + buttonRect.height / 2 },
+        cardBottom: cardRect.bottom,
+        menuBottom: Math.max(...Array.from(details.querySelectorAll('[role="menuitem"]')).map((item) => (item as HTMLElement).getBoundingClientRect().bottom)),
+        cardOverflow: getComputedStyle(card).overflow,
+        frameOverflow: frame ? getComputedStyle(frame).overflow : '',
+        cardZIndex: getComputedStyle(card).zIndex,
+        siblingTop: sibling.getBoundingClientRect().top,
+        open: details.open,
+        hostMenuOpen: host.hasAttribute('data-visual-menu-open'),
+        cardTag: card.localName,
+        cardMenuOpen: card.hasAttribute('data-visual-menu-open'),
+      }
+    })
+    expect(target).toMatchObject({ hostMenuOpen: true, cardTag: 'lv-dashboard-visual-frame' })
+    await page.mouse.click(target.point.x, target.point.y)
+    const action = await dashboard.evaluate((element: any) => element.__shortCardMenuAction?.())
+    expect(target.open).toBe(true)
+    expect(target.cardMenuOpen).toBe(true)
+    expect(target.menuBottom).toBeGreaterThan(target.cardBottom)
+    expect(target.cardOverflow).toBe('visible')
+    expect(target.frameOverflow).toBe('visible')
+    expect(Number(target.cardZIndex)).toBeGreaterThan(0)
+    expect(target.point.y).toBeGreaterThanOrEqual(target.siblingTop)
+    expect(action).toBe('export-csv')
+  } finally { await page.close() }
+})
+
 for (const start of [50, 950]) {
   test(`table scrolling loads missing rows at ${start} and completes at the browse boundary`, async () => {
     const page = await browser.newPage()

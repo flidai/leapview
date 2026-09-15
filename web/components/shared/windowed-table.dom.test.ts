@@ -506,6 +506,80 @@ test('windowed table recreates viewport observation after reconnecting the same 
   }
 })
 
+test('windowed table requests visible blocks after reconnecting with a canceled scroll frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+
+    const state = await page.evaluate(async () => {
+      const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window)
+      const nativeCancelAnimationFrame = window.cancelAnimationFrame.bind(window)
+      const pendingFrames = new Map<number, FrameRequestCallback>()
+      let nextFrameID = 1
+      window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+        const id = nextFrameID++
+        pendingFrames.set(id, callback)
+        return id
+      }
+      window.cancelAnimationFrame = (id: number) => {
+        pendingFrames.delete(id)
+      }
+      try {
+        const sort = { key: 'id', direction: 'asc' as const }
+        const element = document.createElement('lv-windowed-table')
+        element.table = {
+          tableKey: 'reconnect-visible-block', title: 'Rows',
+          columns: [{ key: 'id', label: 'ID' }],
+          totalRows: 200, availableRows: 200, chunkSize: 50, rowHeight: 34,
+          resetVersion: 0, sort,
+          blocks: {
+            a: { start: 0, requestSeq: 0, resetVersion: 0, sort, rows: [{ id: 'one' }] },
+            b: { start: 50, requestSeq: 0, resetVersion: 0, sort, rows: [{ id: 'fifty' }] },
+            c: { start: 100, requestSeq: 0, resetVersion: 0, sort, rows: [{ id: 'one-hundred' }] },
+          },
+        }
+        const requests: WindowedTableRequest[] = []
+        element.addEventListener('lv-windowed-table-request', (event) => {
+          requests.push((event as CustomEvent<WindowedTableRequest>).detail)
+        })
+        document.body.append(element)
+        await element.updateComplete
+        const initialFrameCount = pendingFrames.size
+        const viewport = element.shadowRoot?.querySelector<HTMLDivElement>('.scrollport')
+        if (!viewport) throw new Error('windowed table viewport was not rendered')
+        viewport.scrollTop = 5200
+        viewport.dispatchEvent(new Event('scroll'))
+        element.remove()
+        const canceledFrameCount = pendingFrames.size
+        document.body.append(element)
+        await new Promise<void>((resolve) => queueMicrotask(resolve))
+        await element.updateComplete
+        const reconnectFrame = pendingFrames.values().next().value as FrameRequestCallback | undefined
+        if (!reconnectFrame) throw new Error('reconnect did not schedule a scroll frame')
+        reconnectFrame(performance.now())
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        return {
+          initialFrameCount,
+          canceledFrameCount,
+          request: requests[0],
+          requestCount: requests.length,
+        }
+      } finally {
+        window.requestAnimationFrame = nativeRequestAnimationFrame
+        window.cancelAnimationFrame = nativeCancelAnimationFrame
+      }
+    })
+
+    expect(state.initialFrameCount).toBe(1)
+    expect(state.canceledFrameCount).toBe(0)
+    expect(state.requestCount).toBe(1)
+    expect(state.request).toMatchObject({ block: 'all', start: 150, count: 50 })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument() {
   return `
     <!doctype html>

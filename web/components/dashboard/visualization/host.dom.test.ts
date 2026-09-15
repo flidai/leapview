@@ -694,3 +694,56 @@ test('narrow chart cards keep long titles and renderer geometry within the card'
     expect(widths.renderer).toBeLessThanOrEqual(widths.card)
   } finally { await page.close() }
 })
+
+test('visual options close outside and on Escape while restoring trigger focus', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => Boolean((window as any).__lvSourceHosts))
+    await page.evaluate(async () => {
+      const host = document.createElement('lv-visualization-host') as any
+      host.id = 'visual-options-focus-test'
+      host.envelope = structuredClone((window as any).__lvSourceHosts.orders_chart.envelope)
+      document.body.append(host)
+      const outside = document.createElement('button')
+      outside.id = 'visual-options-outside-target'
+      outside.textContent = 'Outside'
+      outside.addEventListener('click', () => outside.dataset.clicked = 'true')
+      document.body.append(outside)
+      await host.ensureMounted()
+      const shadow = host.shadowRoot as ShadowRoot
+      const details = shadow.querySelector('.visual-options') as HTMLDetailsElement
+      const summary = details.querySelector('summary') as HTMLElement
+      summary.click()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    })
+    await page.locator('#visual-options-outside-target').click()
+    const outside = await page.evaluate(() => {
+      const host = document.querySelector('#visual-options-focus-test') as any
+      const details = host.shadowRoot.querySelector('.visual-options') as HTMLDetailsElement
+      const outside = document.querySelector('#visual-options-outside-target') as HTMLButtonElement
+      return { open: details.open, clicked: outside.dataset.clicked === 'true', focused: document.activeElement === outside }
+    })
+    const escape = await page.evaluate(async () => {
+      const host = document.querySelector('#visual-options-focus-test') as any
+      const shadow = host.shadowRoot as ShadowRoot
+      const details = shadow.querySelector('.visual-options') as HTMLDetailsElement
+      const summary = details.querySelector('summary') as HTMLElement
+      summary.click()
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      ;(details.querySelector('[role="menuitem"]') as HTMLElement).focus()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      return { open: details.open, focused: shadow.activeElement === summary }
+    })
+    await page.evaluate(() => {
+      document.querySelector('#visual-options-focus-test')?.remove()
+      document.querySelector('#visual-options-outside-target')?.remove()
+    })
+    expect({ outside, escape }).toEqual({
+      outside: { open: false, clicked: true, focused: true },
+      escape: { open: false, focused: true },
+    })
+  } finally {
+    await page.close()
+  }
+})

@@ -8,6 +8,8 @@ import {
   resolvedLayoutMode,
   reportViewPathname,
   reportViewPathChangedEvent,
+  reportViewEventScope,
+  reportViewDocumentFallbackAllowed,
   storedCustomScale,
   storedLayoutMode,
   storedZoomMode,
@@ -53,6 +55,7 @@ class ReportCanvas extends LitElement {
 
   private resizeObserver?: ResizeObserver
   private autoLayoutMediaQuery?: MediaQueryList
+  private zoomEventScope?: EventTarget
 
   static styles = css`
     :host {
@@ -163,6 +166,11 @@ class ReportCanvas extends LitElement {
       box-sizing: border-box;
     }
 
+    ::slotted([data-canvas-visual][data-visual-menu-open]) {
+      overflow: visible;
+      z-index: var(--zIndex-dropdown);
+    }
+
     ::slotted([data-canvas-filter-visual]) {
       overflow: visible;
       z-index: 5;
@@ -265,6 +273,8 @@ class ReportCanvas extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback()
+    this.zoomEventScope = reportViewEventScope(this)
+    this.zoomEventScope.addEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
     document.addEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
     window.addEventListener(reportViewPathChangedEvent, this.onViewPathChanged)
     this.autoLayoutMediaQuery = window.matchMedia(autoMobileLayoutQuery)
@@ -283,6 +293,8 @@ class ReportCanvas extends LitElement {
   }
 
   disconnectedCallback(): void {
+    this.zoomEventScope?.removeEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
+    this.zoomEventScope = undefined
     document.removeEventListener('lv-report-zoom-command', this.onZoomCommand as EventListener)
     window.removeEventListener(reportViewPathChangedEvent, this.onViewPathChanged)
     this.autoLayoutMediaQuery?.removeEventListener('change', this.onAutoLayoutChange)
@@ -351,6 +363,7 @@ class ReportCanvas extends LitElement {
     if (scaleChanged) {
       const anchor = this.zoomAnchor
       this.scale = nextScale
+      this.syncVisualScale()
       this.emitZoomState()
       if (anchor) {
         this.updateComplete.then(() => this.restoreZoomAnchor(anchor))
@@ -377,6 +390,7 @@ class ReportCanvas extends LitElement {
     let nextContentHeight = responsive ? this.padding * 2 : this.height
     for (const element of assigned) {
       if (!(element instanceof HTMLElement)) continue
+      element.style.setProperty('--report-canvas-scale', String(this.scale))
       const geometry = this.positionVisual(element as VisualElement, nextContentWidth, responsive)
       nextContentHeight = Math.max(nextContentHeight, geometry.y + geometry.height + (responsive ? this.padding : 16))
     }
@@ -385,6 +399,13 @@ class ReportCanvas extends LitElement {
     }
     if (nextContentHeight !== this.contentHeight) {
       this.contentHeight = nextContentHeight
+    }
+  }
+
+  private syncVisualScale(): void {
+    const slot = this.shadowRoot?.querySelector('slot:not([name])') as HTMLSlotElement | null
+    for (const element of slot?.assignedElements({ flatten: true }) ?? []) {
+      if (element instanceof HTMLElement) element.style.setProperty('--report-canvas-scale', String(this.scale))
     }
   }
 
@@ -432,6 +453,11 @@ class ReportCanvas extends LitElement {
   }
 
   private onZoomCommand = (event: CustomEvent<ZoomCommand>): void => {
+    // Preserve the legacy document dispatch hook for single-canvas consumers,
+    // but never let an unscoped command fan out across multiple canvases.
+    if (event.currentTarget === document
+      && (!reportViewDocumentFallbackAllowed(this, 'lv-report-canvas')
+        || (event.target !== document && this.zoomEventScope !== document))) return
     const detail = event.detail ?? {}
     this.zoomAnchor = this.captureZoomAnchor()
     if (detail.layout !== undefined) {

@@ -603,6 +603,7 @@ class WindowedTable extends LitElement {
     this.resizeObserver?.disconnect()
     this.resizeObserver = undefined
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame)
+    this.scrollFrame = 0
     if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame)
     this.clearJumpTimer()
     this.clearResize()

@@ -776,7 +776,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
-			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
+			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`} data-report-view-scope>
           <header class="header">
 						<div class="dashboard-heading">
 						${renderBreadcrumb([
@@ -1599,6 +1599,10 @@ class DashboardVisualFrame extends LitElement {
       box-sizing: border-box;
     }
 
+    :host([data-component-kind='visual'][data-visual-menu-open]) {
+      overflow: visible;
+    }
+
     .frame {
       position: relative;
       height: 100%;
@@ -1609,6 +1613,10 @@ class DashboardVisualFrame extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
       box-sizing: border-box;
+    }
+
+    :host([data-component-kind='visual'][data-visual-menu-open]) .frame {
+      overflow: visible;
     }
 
 		:host([data-agent-referenced]) .frame {

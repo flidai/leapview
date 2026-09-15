@@ -134,6 +134,7 @@ export class ReportTable extends LitElement {
     rowSelection: { state: true },
     hoveredRowId: { state: true },
     resizeGuideX: { state: true },
+    canvasScale: { state: true },
   }
 
   declare tableId: string
@@ -146,6 +147,7 @@ export class ReportTable extends LitElement {
   declare private rowSelection: RowSelectionState
   declare private hoveredRowId: string
   declare private resizeGuideX: number
+  declare private canvasScale: number
   private compactColumns = false
   private lastResetVersion = -1
   private shouldResetScroll = false
@@ -181,6 +183,9 @@ export class ReportTable extends LitElement {
   private handleResizeGuideEnd = () => {
     this.clearResizeGuide()
   }
+  private handleReportZoomState = (): void => {
+    this.syncCanvasScale()
+  }
 
   constructor() {
     super()
@@ -194,6 +199,7 @@ export class ReportTable extends LitElement {
     this.rowSelection = {}
     this.hoveredRowId = ''
     this.resizeGuideX = -1
+    this.canvasScale = 1
   }
 
   static styles = [visualActionStyles, css`
@@ -994,11 +1000,13 @@ export class ReportTable extends LitElement {
     super.connectedCallback()
     document.addEventListener('pointerdown', this.handleOutsidePointerDown)
     document.addEventListener('keydown', this.handleDocumentKeyDown)
+    document.addEventListener('lv-report-zoom-state', this.handleReportZoomState)
     if (this.hasUpdated) queueMicrotask(() => this.startViewportObserver())
   }
 
   firstUpdated(): void {
     this.startViewportObserver()
+    this.syncCanvasScale()
   }
 
   private startViewportObserver(): void {
@@ -1025,6 +1033,7 @@ export class ReportTable extends LitElement {
   disconnectedCallback(): void {
     document.removeEventListener('pointerdown', this.handleOutsidePointerDown)
     document.removeEventListener('keydown', this.handleDocumentKeyDown)
+    document.removeEventListener('lv-report-zoom-state', this.handleReportZoomState)
     this.resizeObserver?.disconnect()
     if (this.scrollFrame) {
       cancelAnimationFrame(this.scrollFrame)
@@ -1059,7 +1068,7 @@ export class ReportTable extends LitElement {
     }
   }
 
-  updated(): void {
+  updated(changedProperties: Map<PropertyKey, unknown>): void {
     if (this.shouldResetScroll) {
       this.shouldResetScroll = false
       queueMicrotask(() => {
@@ -1077,6 +1086,17 @@ export class ReportTable extends LitElement {
       this.shouldReconcileViewport = false
       this.scheduleEnsureBlocksForScroll()
     }
+    if (changedProperties.has('canvasScale')) {
+      this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
+      this.scheduleEnsureBlocksForScroll()
+    }
+  }
+
+  private syncCanvasScale(): void {
+    const value = Number.parseFloat(getComputedStyle(this).getPropertyValue('--report-canvas-scale'))
+    const scale = Number.isFinite(value) && value > 0 ? value : 1
+    if (Math.abs(scale - this.canvasScale) <= 0.001) return
+    this.canvasScale = scale
   }
 
   get columns(): TableColumn[] {
@@ -1116,7 +1136,8 @@ export class ReportTable extends LitElement {
   }
 
   get rowHeight(): number {
-    return Math.max(1, this.table.rowHeight || defaultRowHeight)
+    const authoredHeight = Math.max(1, this.table.rowHeight || defaultRowHeight)
+    return authoredHeight / Math.max(0.1, this.canvasScale)
   }
 
   private gridTemplateFor(columns: TableColumn[]): string {
