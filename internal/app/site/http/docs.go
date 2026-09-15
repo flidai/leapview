@@ -29,19 +29,16 @@ var markdownRenderer = goldmark.New(
 )
 
 type siteDocument struct {
-	slug               string
-	title              string
-	breadcrumb         string
-	breadcrumbRoot     string
-	breadcrumbRootHref string
-	summary            string
-	markdown           string
-	sectionID          string
-	groupID            string
-	source             string
-	navigationTitle    string
-	documentType       string
-	generated          bool
+	slug            string
+	title           string
+	summary         string
+	markdown        string
+	sectionID       string
+	groupID         string
+	source          string
+	navigationTitle string
+	documentType    string
+	generated       bool
 }
 
 type siteCatalogDocument struct {
@@ -141,39 +138,20 @@ func (loaded *loadedDocumentation) add(section siteCatalogSection, group siteCat
 	if _, exists := loaded.bySlug[document.Slug]; exists {
 		panic(fmt.Sprintf("duplicate documentation slug %q", document.Slug))
 	}
-	rootTitle, rootHref := section.Title, section.Href
-	if group.ID != "" {
-		rootTitle, rootHref = group.Title, group.Href
-	}
-	if rootHref == "/docs/"+document.Slug {
-		rootTitle, rootHref = "Documentation", "/docs"
-	}
 	entry := siteDocument{
-		slug:               document.Slug,
-		title:              document.Title,
-		breadcrumb:         firstNonEmpty(document.Breadcrumb, document.Title),
-		breadcrumbRoot:     rootTitle,
-		breadcrumbRootHref: rootHref,
-		summary:            document.Summary,
-		markdown:           string(markdown),
-		sectionID:          section.ID,
-		groupID:            group.ID,
-		source:             document.Source,
-		navigationTitle:    document.NavigationTitle,
-		documentType:       document.Type,
-		generated:          document.Generated,
+		slug:            document.Slug,
+		title:           document.Title,
+		summary:         document.Summary,
+		markdown:        string(markdown),
+		sectionID:       section.ID,
+		groupID:         group.ID,
+		source:          document.Source,
+		navigationTitle: document.NavigationTitle,
+		documentType:    document.Type,
+		generated:       document.Generated,
 	}
 	loaded.documents = append(loaded.documents, entry)
 	loaded.bySlug[entry.slug] = entry
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func documentsInCatalogGroup(sectionID, groupID string, skipFirst bool) []siteDocument {

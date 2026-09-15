@@ -359,7 +359,7 @@ func siteDocsLayout(document *siteDocument, content ...g.Node) g.Node {
 		h.Div(h.Class("site-docs-content"),
 			h.Div(h.Class("site-docs-reading-layout"),
 				h.Div(h.Class("site-guide-shell"),
-					siteDocsArticleHeader(document),
+					siteDocsArticleHeader(),
 					g.Group(content),
 				),
 			),
@@ -367,27 +367,9 @@ func siteDocsLayout(document *siteDocument, content ...g.Node) g.Node {
 	)
 }
 
-func siteDocsArticleHeader(document *siteDocument) g.Node {
-	rootLabel := "Documentation"
-	rootHref := "/docs"
-	if document != nil && document.breadcrumbRoot != "" {
-		rootLabel = document.breadcrumbRoot
-		rootHref = document.breadcrumbRootHref
-	}
-	breadcrumb := []g.Node{h.Li(h.A(h.Href(rootHref), g.Text(rootLabel)))}
-	if document != nil {
-		if document.breadcrumb == rootLabel {
-			breadcrumb[0] = h.Li(h.Span(g.Attr("aria-current", "page"), g.Text(rootLabel)))
-		} else {
-			breadcrumb = append(breadcrumb, h.Li(h.Span(g.Attr("aria-current", "page"), g.Text(document.breadcrumb))))
-		}
-	} else {
-		breadcrumb[0] = h.Li(h.Span(g.Attr("aria-current", "page"), g.Text("Documentation")))
-	}
-
+func siteDocsArticleHeader() g.Node {
 	return h.Header(h.Class("site-docs-article-header"),
 		g.El("lv-site-docs-drawer-toggle"),
-		h.Nav(h.Class("site-docs-breadcrumb"), g.Attr("aria-label", "Breadcrumb"), h.Ol(g.Group(breadcrumb))),
 	)
 }
 

@@ -761,7 +761,6 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 	for _, want := range []string{
 		"<title>Get started with LeapView</title>",
 		`<lv-site-docs-drawer-toggle></lv-site-docs-drawer-toggle>`,
-		`<nav class="site-docs-breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/docs/introduction">Start here</a></li><li><span aria-current="page">Getting started</span></li></ol></nav>`,
 		`<button class="site-docs-drawer-backdrop" type="button" aria-label="Close documentation menu" aria-hidden="true" tabindex="-1" data-site-docs-drawer-close="true"></button>`,
 		`<lv-site-markdown-copy`,
 		`<article id="main-content" class="site-docs-article">`,
@@ -791,6 +790,9 @@ func TestSiteGettingStartedRendersGuide(t *testing.T) {
 	}
 	if strings.Contains(body, "LeapView Docs") {
 		t.Errorf("getting started page retains the redundant docs header:\n%s", body)
+	}
+	if strings.Contains(body, "site-docs-breadcrumb") {
+		t.Errorf("getting started page retains the breadcrumb:\n%s", body)
 	}
 	if strings.Contains(body, "Guides and reference") {
 		t.Errorf("getting started page retains the redundant sidebar heading:\n%s", body)
@@ -1342,7 +1344,6 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 	for _, want := range []string{
 		"<title>Line chart</title>",
 		`data-init="@get(&#39;/updates?view=visual-docs&amp;document=visuals%2Fline&#39;, {openWhenHidden: true})"`,
-		`<nav class="site-docs-breadcrumb" aria-label="Breadcrumb"><ol><li><a href="/docs/visuals/overview">Visuals</a></li><li><span aria-current="page">Line chart</span></li></ol></nav>`,
 		`<h1 id="line-chart">Line chart</h1>`,
 		`<h2 id="site-visual-api-reference">API reference</h2>`,
 		`<table aria-labelledby="site-visual-api-reference">`,
@@ -1364,6 +1365,9 @@ func TestSiteChartDocumentationArticleRendersConfiguration(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("line chart documentation missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "site-docs-breadcrumb") {
+		t.Errorf("line chart documentation retains the breadcrumb:\n%s", body)
 	}
 	if strings.Contains(body, `class="site-visual-api-summary"`) || strings.Contains(body, `class="site-visual-field-reference"`) {
 		t.Error("API reference is rendered inside a visual-specific container instead of the article's Markdown flow")
