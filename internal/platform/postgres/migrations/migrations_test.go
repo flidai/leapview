@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_profile_application.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_profile_application.sql,021_development_session.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,36 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestDevelopmentSessionMigrationIsOwnerScopedAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "021_development_session.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"project.development_session", "owner_id", "checkout_id", "worktree_id",
+		"attempted_artifact_digest", "last_valid_candidate_id", "last_valid_preview_url",
+		"UNIQUE (owner_id, checkout_id, worktree_id, project_id, target_id, environment)",
+		"development_session_mutation_guard", "revision must increase monotonically",
+		"GRANT SELECT, INSERT, UPDATE ON project.development_session TO leapview_control_runtime",
+		"development session authority migration is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("development session migration missing %q", required)
+		}
+	}
+	if strings.Contains(strings.ToUpper(migration[strings.Index(migration, "-- +goose Down"):]), "DROP TABLE") {
+		t.Error("development session migration Down must refuse instead of deleting evidence")
+	}
+	up := migration[:strings.Index(migration, "-- +goose Down")]
+	if !strings.HasSuffix(strings.TrimSpace(up), "RESET ROLE;") {
+		t.Error("development session migration Up must restore the Goose migrator role before version recording")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("development session migration must restore the migrator role")
 	}
 }
 

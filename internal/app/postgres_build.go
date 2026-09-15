@@ -973,6 +973,10 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
+	// The durable development-session pointer is a native PostgreSQL authority
+	// and is attached after surface assembly so local API routing can resolve it
+	// without introducing a second candidate/publication store.
+	runtimeServices.developmentSessions = graph.DevelopmentSession
 	// PostgreSQL NOTIFY wakes one listener per app instance. Browser streams
 	// subscribe to the existing in-process broker, then reread authorized state.
 	if routes.projectBrowser != nil {

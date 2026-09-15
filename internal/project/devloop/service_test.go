@@ -3,9 +3,13 @@ package devloop
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/flidai/leapview/internal/project/developmentsession"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 	"github.com/stretchr/testify/require"
 )
 
@@ -147,6 +151,63 @@ func TestReconcileSynchronizesChangedSourceRevisionForSameContent(t *testing.T) 
 	if remote.requests[1].Snapshot.SourceRevision == nil ||
 		remote.requests[1].Snapshot.SourceRevision.Revision != "commit-b" {
 		t.Fatalf("second source revision = %#v", remote.requests[1].Snapshot.SourceRevision)
+	}
+}
+
+func TestReconcilePersistsAttemptedAndLastValidSessionState(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "principal_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("sales_project"), TargetID: "target_1", Environment: "development"}
+	builder := &scriptedBuilder{steps: []buildStep{{snapshot: testSnapshot("session")}, {err: errors.New("password=do-not-store")}}}
+	service, err := NewWithSession(builder, &recordingRemote{}, store, key)
+	require.NoError(t, err)
+	first, err := service.Reconcile(t.Context())
+	require.NoError(t, err)
+	if first.Candidate.ID == "" {
+		t.Fatal("first candidate missing")
+	}
+	record, err := store.Resolve(t.Context(), key)
+	require.NoError(t, err)
+	if record.LastValid.CandidateID != first.Candidate.ID || record.Attempted.ArtifactDigest != first.Snapshot.Digest {
+		t.Fatalf("session after success = %#v", record)
+	}
+	_, err = service.Reconcile(t.Context())
+	if err == nil {
+		t.Fatal("invalid build unexpectedly succeeded")
+	}
+	record, err = store.Resolve(t.Context(), key)
+	require.NoError(t, err)
+	if record.LastValid.CandidateID != first.Candidate.ID || strings.Contains(record.Diagnostics[0].Message, "do-not-store") {
+		t.Fatalf("session lost valid/redacted state = %#v", record)
+	}
+	if got := service.SessionPreviewURL("https://local.test"); !strings.Contains(got, "/development-session/candidate/preview") || strings.Contains(got, first.Candidate.ID) {
+		t.Fatalf("unstable session URL = %q", got)
+	}
+}
+
+func TestReconcilePersistsRedactedFileLineDiagnostics(t *testing.T) {
+	store := developmentsession.NewMemoryStore()
+	key := developmentsession.Key{OwnerID: "principal_1", CheckoutID: "checkout_1", WorktreeID: "worktree_1", ProjectID: projectgraph.ResourceID("sales_project"), TargetID: "target_1", Environment: "development"}
+	buildErr := &configschema.Error{Diagnostics: []configschema.Diagnostic{{
+		File: "dashboards/orders.yaml", Line: 12, Column: 7, Code: "schema.contract",
+		Message:  "token=do-not-store is not allowed",
+		Severity: configschema.SeverityError,
+	}}}
+	service, err := NewWithSession(&scriptedBuilder{steps: []buildStep{{err: buildErr}}}, &recordingRemote{}, store, key)
+	require.NoError(t, err)
+	if _, err := service.Reconcile(t.Context()); err == nil {
+		t.Fatal("invalid build unexpectedly succeeded")
+	}
+	record, err := store.Resolve(t.Context(), key)
+	require.NoError(t, err)
+	if len(record.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v", record.Diagnostics)
+	}
+	diagnostic := record.Diagnostics[0]
+	if diagnostic.Path != "dashboards/orders.yaml" || diagnostic.Line != 12 || diagnostic.Column != 7 || diagnostic.Code != "schema.contract" {
+		t.Fatalf("diagnostic location = %#v", diagnostic)
+	}
+	if strings.Contains(diagnostic.Message, "do-not-store") || !strings.Contains(diagnostic.Message, "[REDACTED]") {
+		t.Fatalf("diagnostic was not redacted = %q", diagnostic.Message)
 	}
 }
 

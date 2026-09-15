@@ -1,14 +1,20 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
+	"github.com/flidai/leapview/internal/deployment"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	"github.com/flidai/leapview/internal/project/developmentsession"
+	developmenthttp "github.com/flidai/leapview/internal/project/developmentsession/http"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -28,6 +34,42 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	registerAPIGen := func(r chi.Router) {
 		apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 	}
+	var developmentSession *developmenthttp.Handler
+	if runtime.developmentSessions != nil && runtime.checkoutID != "" && runtime.worktreeID != "" {
+		developmentSession = developmenthttp.New(developmenthttp.Config{
+			Store: runtime.developmentSessions, CheckoutID: runtime.checkoutID, WorktreeID: runtime.worktreeID, TargetID: runtime.targetID, Environment: policy.defaultEnvironment,
+			ResolveProjectID: runtime.resolveProjectID,
+			CurrentPrincipal: func(r *http.Request) (string, bool) {
+				principal, ok := routes.accessModule.CurrentPrincipal(r)
+				return principal.ID, ok
+			}, Enabled: true,
+			ValidateCandidate: func(ctx context.Context, owner, candidate string, project projectgraph.ResourceID, target, environment string) (developmenthttp.CandidateValidation, error) {
+				if routes.deploymentModule == nil {
+					return developmenthttp.CandidateValidation{}, deployment.ErrCandidateUnavailable
+				}
+				value, err := routes.deploymentModule.ResolveOwnedCandidate(ctx, candidate, owner)
+				if err != nil {
+					if errors.Is(err, deployment.ErrCandidateNotFound) {
+						// A retired/deleted candidate is terminal for a durable
+						// session pointer. Stable reads will mark it expired and
+						// never redirect to its stale URL.
+						return developmenthttp.CandidateValidation{Expired: true}, nil
+					}
+					return developmenthttp.CandidateValidation{}, err
+				}
+				if value.Scope.ProjectID != project || value.TargetID != target || value.Scope.Environment != environment {
+					return developmenthttp.CandidateValidation{}, deployment.ErrCandidateNotFound
+				}
+				return developmenthttp.CandidateValidation{
+					Qualified: value.Status == deployment.CandidateReady,
+					Expired:   value.Status == deployment.CandidateExpired,
+					OwnerID:   value.OwnerID, ProjectID: value.Scope.ProjectID,
+					TargetID: value.TargetID, Environment: value.Scope.Environment,
+					Identity: developmentsession.Identity{CandidateID: value.ID, ArtifactDigest: value.ArtifactDigest, PreviewURL: value.PreviewURL},
+				}, nil
+			},
+		})
+	}
 	mountRouterMiddleware(mux, routerMiddlewareDependencies{
 		logger: platform.logger, telemetry: platform.telemetry, securityHeaders: policy.securityHeaders,
 		allowedHosts: policy.allowedHosts, requestBodyLimit: policy.requestBodyLimit, requestLogging: policy.requestLogging,
@@ -45,6 +87,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		access: routes.accessModule, apiProtocol: platform.apiProtocol, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
 		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,
 		pageStreams: runtime.pageStreams, rateLimits: policy.rateLimits, candidates: candidates,
+		developmentSession: developmentSession,
 	}, csrf)
 	mountAuthenticationRoutes(mux, routes.accessModule, policy.rateLimits, csrf)
 	mountAPIRoutes(mux, apiRouteDependencies{
@@ -52,6 +95,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		access: routes.accessModule, managedData: routes.managedDataModule, runtimeHost: runtime.runtimeHostModule,
 		rateLimits: policy.rateLimits, scimBearerToken: policy.scimBearerToken, managedDataTus: policy.managedDataTus,
 		managedDataBootstrap: policy.managedDataBootstrap,
+		developmentSession:   developmentSession,
 	}, publicProtocol, registerAPIGen)
 	mountStaticAndErrorRoutes(mux, staticRouteDependencies{
 		dashboardAssets: routes.dashboardAssets, assets: platform.assets, apiProtocol: platform.apiProtocol,

@@ -20,6 +20,8 @@ import (
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
+	developmentsession "github.com/flidai/leapview/internal/project/developmentsession"
+	developmenthttpstore "github.com/flidai/leapview/internal/project/developmentsession/httpstore"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
@@ -297,6 +299,49 @@ func (factory projectDevRemoteFactory) Remote(
 		return remote, nil
 	}
 	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
+}
+
+// DevelopmentSession supplies the durable local pointer only for the local
+// runtime path. The canonical checkout ID is also the worktree identity; the
+// local runtime owner is used solely as the authenticated owner component.
+func (factory projectDevRemoteFactory) DevelopmentSession(ctx context.Context, credentials cliapi.Credentials) (*projectcli.DevSessionBinding, error) {
+	local, ok := ctx.Value(localDevelopmentSessionContextKey{}).(localDevelopmentSession)
+	if !ok {
+		return nil, nil
+	}
+	if factory.client == nil {
+		return nil, errors.New("development session client is unavailable")
+	}
+	transport, err := factory.client.Transport(ctx, credentials)
+	if err != nil {
+		return nil, err
+	}
+	principalResponse, err := accessgen.NewGenClient(transport).GetCurrentPrincipal(ctx, accessgen.GenGetCurrentPrincipalClientRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("resolve development session owner: %w", err)
+	}
+	ownerID := strings.TrimSpace(principalResponse.Body.Id)
+	checkoutID := strings.TrimSpace(local.state.Checkout.ID)
+	targetID := strings.TrimSpace(local.state.Authority.InstanceID)
+	environment := strings.TrimSpace(local.state.Authority.Environment)
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(credentials.ProjectID))
+	if err != nil || ownerID == "" || checkoutID == "" || targetID == "" || environment == "" {
+		return nil, fmt.Errorf("local development session identity is incomplete")
+	}
+	key := developmentsession.Key{OwnerID: ownerID, CheckoutID: checkoutID, WorktreeID: checkoutID, ProjectID: projectID, TargetID: targetID, Environment: environment}
+	httpClient := http.DefaultClient
+	if provider, ok := factory.client.(interface{ HTTPClient() *http.Client }); ok && provider.HTTPClient() != nil {
+		httpClient = provider.HTTPClient()
+	}
+	origin := strings.TrimRight(strings.TrimSpace(credentials.CanonicalOrigin), "/")
+	if origin == "" {
+		origin = strings.TrimRight(strings.TrimSpace(credentials.Target), "/")
+	}
+	store, err := developmenthttpstore.New(httpClient, origin, credentials.Token, key)
+	if err != nil {
+		return nil, err
+	}
+	return &projectcli.DevSessionBinding{Store: store, Key: key}, nil
 }
 
 func newProjectDevSynchronizationTransport(native *candidateSynchronizationTransport) projectdevloop.SynchronizationTransport {

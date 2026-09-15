@@ -4,6 +4,7 @@ package devloop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -11,7 +12,9 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	"github.com/flidai/leapview/internal/project/developmentsession"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
 type Artifact struct {
@@ -91,11 +94,13 @@ type Result struct {
 }
 
 type Service struct {
-	mu        sync.Mutex
-	builder   Builder
-	remote    Remote
-	snapshot  Snapshot
-	candidate Candidate
+	mu           sync.Mutex
+	builder      Builder
+	remote       Remote
+	snapshot     Snapshot
+	candidate    Candidate
+	sessionStore developmentsession.Store
+	sessionKey   developmentsession.Key
 }
 
 func New(builder Builder, remote Remote) (*Service, error) {
@@ -103,6 +108,34 @@ func New(builder Builder, remote Remote) (*Service, error) {
 		return nil, fmt.Errorf("project dev loop requires builder and remote")
 	}
 	return &Service{builder: builder, remote: remote}, nil
+}
+
+// NewWithSession enables the durable owner-scoped checkpoint for this loop.
+// Existing callers may continue using New; no process-local state is treated
+// as authoritative when this option is configured.
+func NewWithSession(builder Builder, remote Remote, store developmentsession.Store, key developmentsession.Key) (*Service, error) {
+	service, err := New(builder, remote)
+	if err != nil {
+		return nil, err
+	}
+	if store == nil {
+		return nil, fmt.Errorf("development session store is required")
+	}
+	if err := key.Validate(); err != nil {
+		return nil, err
+	}
+	service.sessionStore, service.sessionKey = store, key
+	return service, nil
+}
+
+// SessionPreviewURL returns the stable pointer URL. It intentionally never
+// incorporates a candidate ID; callers resolve the pointer and then use the
+// exact immutable candidate URL returned by the candidate authority.
+func (service *Service) SessionPreviewURL(origin string) string {
+	if service == nil || service.sessionStore == nil {
+		return ""
+	}
+	return service.sessionKey.PreviewURL(origin)
 }
 
 // Reconcile builds a coherent snapshot before performing any remote mutation.
@@ -118,10 +151,12 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 
 	snapshot, err := service.builder.Build(ctx)
 	if err != nil {
+		service.recordSessionFailure(ctx, 0, developmentsession.Identity{}, err)
 		return service.result(StatusInvalid), err
 	}
 	snapshot, err = normalizeSnapshot(snapshot)
 	if err != nil {
+		service.recordSessionFailure(ctx, 0, developmentsession.Identity{}, err)
 		return service.result(StatusInvalid), err
 	}
 	if service.candidate.ID != "" &&
@@ -131,22 +166,143 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, nil
 	}
+	attemptRevision, err := service.markSessionAttempt(ctx, snapshot)
+	if err != nil {
+		return service.result(StatusRetryable), err
+	}
 	request := SyncRequest{Snapshot: cloneSnapshot(snapshot)}
 	candidate, err := service.remote.Synchronize(ctx, request)
 	if err != nil {
+		service.recordSessionFailure(ctx, attemptRevision, sessionIdentity(snapshot), err)
 		result := service.result(StatusRetryable)
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, err
 	}
 	candidate, err = normalizeCandidate(candidate, snapshot)
 	if err != nil {
+		service.recordSessionFailure(ctx, attemptRevision, sessionIdentity(snapshot), err)
 		result := service.result(StatusRetryable)
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, err
 	}
+	if err := service.markSessionValid(ctx, attemptRevision, snapshot, candidate); err != nil {
+		// A newer process may have advanced the pointer while this remote
+		// operation was in flight. The obsolete completion must not replace it.
+		return service.result(StatusRetryable), err
+	}
 	service.snapshot = cloneSnapshot(snapshot)
 	service.candidate = candidate
 	return service.result(StatusSynchronized), nil
+}
+
+func sessionIdentity(snapshot Snapshot) developmentsession.Identity {
+	return developmentsession.Identity{ArtifactDigest: snapshot.Digest, GraphDigest: snapshot.GraphDigest}
+}
+
+func (service *Service) markSessionAttempt(ctx context.Context, snapshot Snapshot) (int64, error) {
+	if service.sessionStore == nil {
+		return 0, nil
+	}
+	for tries := 0; tries < 2; tries++ {
+		record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+		if err != nil && !errors.Is(err, developmentsession.ErrNotFound) {
+			return 0, err
+		}
+		expected := int64(0)
+		if err == nil {
+			expected = record.Revision
+		} else {
+			record = developmentsession.Record{ID: service.sessionKey.ID(), Key: service.sessionKey}
+		}
+		record.Attempted, record.Diagnostics = sessionIdentity(snapshot), nil
+		updated, saveErr := service.sessionStore.Save(ctx, record, expected)
+		if saveErr == nil {
+			return updated.Revision, nil
+		}
+		if !errors.Is(saveErr, developmentsession.ErrConflict) {
+			return 0, saveErr
+		}
+	}
+	return 0, developmentsession.ErrConflict
+}
+
+func (service *Service) markSessionValid(ctx context.Context, expected int64, snapshot Snapshot, candidate Candidate) error {
+	if service.sessionStore == nil {
+		return nil
+	}
+	record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+	if err != nil {
+		return err
+	}
+	if record.Revision != expected {
+		return developmentsession.ErrConflict
+	}
+	record.Attempted = sessionIdentity(snapshot)
+	record.LastValid = developmentsession.Identity{CandidateID: candidate.ID, ArtifactDigest: candidate.ArtifactDigest, GraphDigest: snapshot.GraphDigest, PreviewURL: candidate.PreviewURL}
+	record.Diagnostics = nil
+	_, err = service.sessionStore.Save(ctx, record, expected)
+	return err
+}
+
+func (service *Service) recordSessionFailure(ctx context.Context, expected int64, attempted developmentsession.Identity, syncErr error) {
+	if service.sessionStore == nil {
+		return
+	}
+	diagnostics := sessionDiagnostics(syncErr)
+	for tries := 0; tries < 2; tries++ {
+		record, err := service.sessionStore.Resolve(ctx, service.sessionKey)
+		if errors.Is(err, developmentsession.ErrNotFound) {
+			record = developmentsession.Record{ID: service.sessionKey.ID(), Key: service.sessionKey}
+			expected = 0
+		} else if err != nil {
+			return
+		}
+		if err == nil && expected == 0 {
+			expected = record.Revision
+		}
+		if expected != 0 && record.Revision != expected {
+			return
+		}
+		record.Attempted, record.Diagnostics = attempted, diagnostics
+		if _, err = service.sessionStore.Save(ctx, record, expected); err == nil {
+			return
+		}
+		if !errors.Is(err, developmentsession.ErrConflict) {
+			return
+		}
+		expected = record.Revision
+	}
+}
+
+// sessionDiagnostics preserves safe authoring locations for the browser/API
+// while applying the session package's redaction and size bounds. The schema
+// package already understands CUE/YAML/compiler errors, so this keeps one
+// diagnostic interpretation for CLI output and durable session state.
+func sessionDiagnostics(err error) []developmentsession.Diagnostic {
+	if err == nil {
+		return nil
+	}
+	values := configschema.Diagnostics(err)
+	result := make([]developmentsession.Diagnostic, 0, len(values))
+	for _, value := range values {
+		code := strings.TrimSpace(value.Code)
+		if code == "" {
+			code = "DEVELOPMENT_SYNC_ERROR"
+		}
+		result = append(result, developmentsession.Diagnostic{
+			Code: code, Message: value.Message, Path: value.File,
+			Line: value.Line, Column: value.Column,
+		})
+	}
+	if len(result) == 0 {
+		result = append(result, developmentsession.Diagnostic{
+			Code: "DEVELOPMENT_SYNC_ERROR", Message: err.Error(),
+		})
+	}
+	if len(result) > 64 {
+		result = result[:64]
+	}
+	return result
 }
 
 func (service *Service) result(status Status) Result {

@@ -52,6 +52,7 @@ import (
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	platformtypednil "github.com/flidai/leapview/internal/platform/typednil"
+	developmentsessionpostgres "github.com/flidai/leapview/internal/project/developmentsession/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
@@ -74,11 +75,12 @@ type PostgresAuthorityGraph struct {
 	Jobs      *jobspostgres.Repository
 	Events    *eventspostgres.Repository
 
-	Project      *projectpostgres.Repository
-	Access       *accesspostgres.Repository
-	AccessAudit  *accesspostgres.AuditRepository
-	Product      *adminproductpostgres.Repository
-	ProductAudit *productaudit.Adapter
+	Project            *projectpostgres.Repository
+	DevelopmentSession *developmentsessionpostgres.Repository
+	Access             *accesspostgres.Repository
+	AccessAudit        *accesspostgres.AuditRepository
+	Product            *adminproductpostgres.Repository
+	ProductAudit       *productaudit.Adapter
 
 	Idempotency   *idempotencypostgres.Store
 	CursorSigning *cursorsigningpostgres.Repository
@@ -371,9 +373,10 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		Bootstrap: bootstrap,
 		Operation: operations, Jobs: jobs, Events: events,
 		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
-		Idempotency:       idempotencypostgres.NewStoreFromRepository(operations),
-		CursorSigning:     cursorsigningpostgres.NewRepository(runtime),
-		ConnectionBinding: binding, ProfileApplication: connectionbindingpostgres.NewProfileApplicationStore(runtime), ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), Lineage: lineageRepository,
+		DevelopmentSession: developmentsessionpostgres.New(runtime),
+		Idempotency:        idempotencypostgres.NewStoreFromRepository(operations),
+		CursorSigning:      cursorsigningpostgres.NewRepository(runtime),
+		ConnectionBinding:  binding, ProfileApplication: connectionbindingpostgres.NewProfileApplicationStore(runtime), ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), Lineage: lineageRepository,
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
@@ -463,6 +466,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"operation authority", g.Operation},
 		{"jobs authority", g.Jobs}, {"event authority", g.Events}, {"project authority", g.Project},
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
+		{"development-session authority", g.DevelopmentSession},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning},
 		{"connection-binding authority", g.ConnectionBinding}, {"profile-application authority", g.ProfileApplication}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"lineage authority", g.Lineage},
 		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},

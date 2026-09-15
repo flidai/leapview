@@ -42,6 +42,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	"github.com/flidai/leapview/internal/project/developmentsession"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -80,6 +81,7 @@ type capabilityRoutes struct {
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
 	profileApplications            connectionbinding.ProfileApplicationStore
+	developmentSessions            developmentsession.Store
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -93,6 +95,9 @@ type runtimeServices struct {
 	runtimeHostModule              *runtimehostmodule.Module
 	projectID                      projectgraph.ResourceID
 	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
+	targetID                       string
+	checkoutID                     string
+	worktreeID                     string
 }
 
 type dashboardAppearanceReader interface {
@@ -303,6 +308,7 @@ type capabilityAssemblyInputs struct {
 	ManagedDataModule   *manageddatamodule.Module
 	AnalyticsModule     *analyticsmodule.Module
 	ProfileApplications connectionbinding.ProfileApplicationStore
+	DevelopmentSessions developmentsession.Store
 	Authoring           *dashboardmodule.AuthoringApplication
 	DashboardAssets     dashboardmodule.Assets
 	Product             *adminmodule.ProductService
@@ -712,6 +718,13 @@ func buildApplicationSurfaces(
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	runtime.profileApplications = capabilities.ProfileApplications
+	runtime.developmentSessions = capabilities.DevelopmentSessions
+	runtime.targetID = runtimeConfig.InstanceID
+	runtime.checkoutID = runtimeConfig.LocalCheckoutID
+	// LocalCheckoutID is the canonical checkout/worktree identity supplied by
+	// the local runtime controller. LocalRuntimeID is an owner/runtime identity
+	// and must never be used as a worktree scope.
+	runtime.worktreeID = runtimeConfig.LocalCheckoutID
 	routes.dashboardAssets = capabilities.DashboardAssets
 	routes.dashboardAuthoring = capabilities.Authoring
 	routes.releaseModule = capabilities.ReleaseModule
