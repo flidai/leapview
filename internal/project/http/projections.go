@@ -79,7 +79,7 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 			return projectui.PipelineMonitorState{}, err
 		}
 		monitor := &projectui.PipelineRunMonitor{Query: filter.Search, Range: rangeLabel, Status: filter.Status, Trigger: filter.Trigger,
-			Page: page, PageSize: filter.Limit, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
+			Page: page, PageSize: 25, Total: result.Total, Failed: result.Failed, Completed: result.Completed, Active: result.Active}
 		for _, run := range result.Runs {
 			monitor.Runs = append(monitor.Runs, projectui.PipelineMonitorRun{PipelineID: run.PipelineID.String(), Run: projectui.AssetRefreshRun{
 				ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(), ServingStateID: run.Identity.GenerationID,
@@ -93,7 +93,7 @@ func (h *BrowserHandler) pipelineMonitorState(r *http.Request, projectID project
 	return state, nil
 }
 
-func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int) {
+func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.MonitorFilter, string, int32) {
 	query := r.URL.Query()
 	rangeLabel := query.Get("range")
 	since := now.Add(-24 * time.Hour)
@@ -117,18 +117,19 @@ func pipelineRunMonitorFilter(r *http.Request, now time.Time) (refreshrun.Monito
 	if trigger != "manual" && trigger != "schedule" {
 		trigger = ""
 	}
-	page, _ := strconv.Atoi(query.Get("page"))
-	if page < 1 {
-		page = 1
+	pageValue, _ := strconv.Atoi(query.Get("page"))
+	if pageValue < 1 {
+		pageValue = 1
 	}
-	if page > 1000 {
-		page = 1000
+	if pageValue > 1000 {
+		pageValue = 1000
 	}
 	search := strings.TrimSpace(query.Get("q"))
 	if runes := []rune(search); len(runes) > 120 {
 		search = string(runes[:120])
 	}
-	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: (page - 1) * 25}, rangeLabel, page
+	page := int32(pageValue)
+	return refreshrun.MonitorFilter{Since: since, Until: now.Add(time.Second), Search: search, Status: status, Trigger: trigger, Limit: 25, Offset: (pageValue - 1) * 25}, rangeLabel, page
 }
 
 type assetPageProjection struct {

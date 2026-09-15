@@ -43,7 +43,7 @@ type PipelineMonitorState struct {
 
 type PipelineRunMonitor struct {
 	Query, Range, Status, Trigger    string
-	Page, PageSize                   int
+	Page, PageSize                   int32
 	Total, Failed, Completed, Active int64
 	Runs                             []PipelineMonitorRun
 }
@@ -164,7 +164,7 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			}
 			page.RunsTable = pipelineRunsTable(monitorRows)
 			page.RunMonitor = &uisignals.PipelineRunMonitorSignal{Query: monitor.Query, Range: monitor.Range, Status: monitor.Status, Trigger: monitor.Trigger,
-				Page: int32(monitor.Page), PageSize: int32(monitor.PageSize), Total: monitor.Total}
+				Page: monitor.Page, PageSize: monitor.PageSize, Total: monitor.Total}
 			page.Metrics = []uisignals.PipelineMetricSignal{
 				{Label: "Active now", Value: fmt.Sprint(monitor.Active), Detail: uisignals.Pointer("All time · current state"), Tone: uisignals.Pointer("accent")},
 				{Label: "Failed in range", Value: fmt.Sprint(monitor.Failed), Detail: uisignals.Pointer("Selected time range"), Tone: uisignals.Pointer(metricFailureTone(int(monitor.Failed)))},

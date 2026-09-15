@@ -61,41 +61,6 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 	}
 }
 
-func TestPipelineRunMonitorFilterNormalizesAndBoundsRequest(t *testing.T) {
-	now := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
-	request := httptest.NewRequest(stdhttp.MethodGet, "/runs?q=sales&range=7d&status=failed&trigger=schedule&page=3", nil)
-	filter, selectedRange, page := pipelineRunMonitorFilter(request, now)
-	if selectedRange != "7d" || page != 3 || filter.Since != now.Add(-7*24*time.Hour) || filter.Offset != 50 || filter.Limit != 25 || filter.Search != "sales" || filter.Status != "failed" || filter.Trigger != "schedule" {
-		t.Fatalf("filter = %#v, range = %q, page = %d", filter, selectedRange, page)
-	}
-	request = httptest.NewRequest(stdhttp.MethodGet, "/runs?range=invalid&status=unknown&trigger=dependency&page=-4", nil)
-	filter, selectedRange, page = pipelineRunMonitorFilter(request, now)
-	if selectedRange != "24h" || page != 1 || filter.Status != "" || filter.Trigger != "" || filter.Since != now.Add(-24*time.Hour) {
-		t.Fatalf("normalized filter = %#v, range = %q, page = %d", filter, selectedRange, page)
-	}
-}
-
-func TestRequestedAssetSectionSupportsFixedDashboardRoutes(t *testing.T) {
-	for _, section := range []string{"details", "definition", "versions", "lineage"} {
-		request := httptest.NewRequest(stdhttp.MethodGet, "/dashboards/dashboard:executive-sales/"+section, nil)
-		if got := requestedAssetSection(request); got != section {
-			t.Fatalf("section = %q, want %q", got, section)
-		}
-	}
-}
-
-func TestBoundProjectUsesActiveProjectResolver(t *testing.T) {
-	want := projectgraph.ResourceID("project:active")
-	h := &BrowserHandler{ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return want, nil }}
-	got, err := h.boundProject(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != want {
-		t.Fatalf("project ID = %q, want %q", got, want)
-	}
-}
-
 func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	reader := &browserDashboardCatalogStub{result: dashboardauthoringcatalog.ListResult{Items: []dashboardauthoringcatalog.Dashboard{

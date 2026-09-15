@@ -736,7 +736,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// Subscribe before the bootstrap read, so a concurrent committed run
 	// transition remains queued for the first stream update.
 	route := uitransport.Route(r)
-	livePipeline := route == "pipelines" || ((route == "asset" || route == "data") && strings.HasPrefix(r.URL.Query().Get("asset"), "pipeline:"))
+	livePipeline := livePipelineRoute(route, r.URL.Query().Get("asset"))
 	var wake <-chan pagestream.SignalPatch
 	if livePipeline && h.PipelineChanges != nil && h.PipelineChangesStreamID != "" {
 		var unsubscribe func()
@@ -802,6 +802,16 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
+}
+
+func livePipelineRoute(route, assetID string) bool {
+	if route == "pipelines" {
+		return true
+	}
+	if route != "asset" && route != "data" {
+		return false
+	}
+	return strings.HasPrefix(assetID, "pipeline:") || strings.HasPrefix(assetID, "refresh_pipeline:")
 }
 
 func (h *BrowserHandler) livePipelinePage(r *stdhttp.Request) (pagestream.SignalPatch, error) {
