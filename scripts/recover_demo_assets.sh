@@ -161,28 +161,94 @@ demo_login_password_file=/tmp/leapview-demo-login-password
 agent_api_key_file=/tmp/leapview-demo-agent-api-key
 trap 'rm -f "$demo_login_password_file" "$agent_api_key_file"' EXIT
 
-if [[ ! -s "$agent_api_key_file" ]]; then
-  echo '--- local model capacity inventory ---'
-  free -h
-  df -h / /var /tmp
-  command -v ollama || true
-  command -v llama-server || true
-  systemctl list-units --type=service --all --no-legend | grep -Ei 'ollama|llama|model' || true
-  ss -ltnp | grep -E ':(11434|8080|8000)[[:space:]]' || true
-  echo 'DEEPSEEK_API_KEY is unavailable and no provider was configured' >&2
-  exit 1
-fi
-agent_api_key="$(<"$agent_api_key_file")"
-rm -f "$agent_api_key_file"
-[[ "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]
 install -d -m 0755 /etc/leapview
 umask 077
-{
-  printf 'LEAPVIEW_AGENT_API_KEY=%s\n' "$agent_api_key"
-  printf 'LEAPVIEW_AGENT_BASE_URL=https://api.deepseek.com\n'
-  printf 'LEAPVIEW_AGENT_MODEL=deepseek-v4-flash\n'
-} >/etc/leapview/demo-agent.env
-unset agent_api_key
+if [[ -s "$agent_api_key_file" ]]; then
+  agent_api_key="$(<"$agent_api_key_file")"
+  rm -f "$agent_api_key_file"
+  [[ "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]
+  {
+    printf 'LEAPVIEW_AGENT_API_KEY=%s\n' "$agent_api_key"
+    printf 'LEAPVIEW_AGENT_BASE_URL=https://api.deepseek.com\n'
+    printf 'LEAPVIEW_AGENT_MODEL=deepseek-v4-flash\n'
+  } >/etc/leapview/demo-agent.env
+  unset agent_api_key
+  agent_provider=deepseek
+else
+  ollama_version=v0.34.1
+  ollama_archive=/tmp/ollama-linux-amd64.tar.zst
+  ollama_archive_sha256=f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034
+  ollama_model=qwen3:4b
+  ollama_model_digest=359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7
+  if [[ ! -x /usr/local/bin/ollama ]] || \
+     [[ "$(/usr/local/bin/ollama --version 2>/dev/null || true)" != *"${ollama_version#v}"* ]]; then
+    if ! command -v zstd >/dev/null; then
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd
+    fi
+    curl --fail --location --silent --show-error \
+      --output "$ollama_archive" \
+      "https://github.com/ollama/ollama/releases/download/$ollama_version/ollama-linux-amd64.tar.zst"
+    printf '%s  %s\n' "$ollama_archive_sha256" "$ollama_archive" | sha256sum --check --status
+    tar --zstd --extract --file "$ollama_archive" --directory /usr/local
+    rm -f "$ollama_archive"
+  fi
+  if ! id ollama >/dev/null 2>&1; then
+    useradd --system --create-home --home-dir /var/lib/ollama --shell /usr/sbin/nologin ollama
+  fi
+  install -d -m 0750 -o ollama -g ollama /var/lib/ollama
+  cat >/etc/systemd/system/ollama.service <<'OLLAMA_SERVICE'
+[Unit]
+Description=Local Ollama model service for LeapView
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ollama
+Group=ollama
+Environment=HOME=/var/lib/ollama
+Environment=OLLAMA_HOST=127.0.0.1:11434
+Environment=OLLAMA_KEEP_ALIVE=10m
+ExecStart=/usr/local/bin/ollama serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ollama
+
+[Install]
+WantedBy=multi-user.target
+OLLAMA_SERVICE
+  chmod 0644 /etc/systemd/system/ollama.service
+  systemctl daemon-reload
+  systemctl enable --now ollama.service
+  for _ in $(seq 1 60); do
+    if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:11434/api/tags >/dev/null
+  installed_digest="$(curl -fsS http://127.0.0.1:11434/api/tags | \
+    jq -r --arg model "$ollama_model" '.models[]? | select(.name == $model) | .digest' | head -n 1)"
+  if [[ "$installed_digest" != "$ollama_model_digest" ]]; then
+    HOME=/var/lib/ollama OLLAMA_HOST=127.0.0.1:11434 \
+      /usr/local/bin/ollama pull "$ollama_model"
+    installed_digest="$(curl -fsS http://127.0.0.1:11434/api/tags | \
+      jq -r --arg model "$ollama_model" '.models[]? | select(.name == $model) | .digest' | head -n 1)"
+  fi
+  [[ "$installed_digest" == "$ollama_model_digest" ]]
+  {
+    printf 'LEAPVIEW_AGENT_API_KEY=local-ollama\n'
+    printf 'LEAPVIEW_AGENT_BASE_URL=http://127.0.0.1:11434/v1\n'
+    printf 'LEAPVIEW_AGENT_MODEL=%s\n' "$ollama_model"
+  } >/etc/leapview/demo-agent.env
+  unset installed_digest ollama_archive ollama_archive_sha256 ollama_model_digest
+  agent_provider=ollama
+fi
 install -d -m 0755 /etc/systemd/system/leapview-demo-current.service.d
 printf '%s\n' \
   '[Service]' \
@@ -204,7 +270,7 @@ service_pid="$(systemctl show --property MainPID --value leapview-demo-current.s
 for variable_name in LEAPVIEW_AGENT_API_KEY LEAPVIEW_AGENT_BASE_URL LEAPVIEW_AGENT_MODEL; do
   grep -zq "^${variable_name}=" "/proc/$service_pid/environ"
 done
-echo 'agent provider environment: installed'
+echo "agent provider environment: installed ($agent_provider)"
 echo '--- activation recovery inventory ---'
 systemctl is-active leapview-demo-current.service || true
 curl -sS -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:8132/healthz || true
