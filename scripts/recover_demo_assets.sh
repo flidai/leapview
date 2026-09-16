@@ -534,6 +534,9 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     done
     if [[ "$agent_run_status" != completed ]]; then
       jq -c '{id, status, model, stopReason, error}' <<<"$agent_run" >&2
+      if systemctl is-active --quiet ollama.service; then
+        journalctl --unit ollama.service --since '-5 minutes' --no-pager --lines 120 >&2 || true
+      fi
       echo 'agent provider probe did not complete' >&2
       exit 1
     fi
