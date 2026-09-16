@@ -176,6 +176,11 @@ func authorizeProjectResourcesWithCapability(
 	}
 	for _, resource := range resources {
 		capability := capabilityFor(resource)
+		// Project roles are graph-wide by definition and may authorize creation
+		// of a resource that is not present in the currently active graph.
+		if accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
+			continue
+		}
 		// Project-scoped browser operations use resource capabilities from an
 		// explicit project role bundle, just like APIGen. The project kind only
 		// accepts PROJECT_ADMIN as a direct grant, so calling snapshot.Allows for
