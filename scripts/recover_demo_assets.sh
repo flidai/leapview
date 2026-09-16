@@ -184,7 +184,6 @@ if ! "$leapview_binary" api call createProjectRoleBinding \
   --idempotency-key "demo-grant-approver-$approver_principal_id" >/dev/null 2>"$role_binding_error"; then
   grep -q 'subject/role already bound' "$role_binding_error" || { cat "$role_binding_error" >&2; exit 1; }
 fi
-unset publisher_token
 approver_email="$(jq -er '.principal.email | strings | select(length > 0)' "$approver_identity")"
 approver_password="$(<"$approver_password_file")"
 login_page="$repo/.tmp/recovery-login-page.html"
@@ -214,7 +213,7 @@ device_challenge="$(curl --fail --silent --show-error \
   --header 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'client_id=leapview-cli' \
   --data-urlencode "project_id=$project_id" \
-  --data-urlencode 'scope=PROJECT_ADMIN' \
+  --data-urlencode 'scope=PROJECT_ADMIN RESOURCE_READ' \
   https://demo.leapview.dev/oauth/device/code)"
 device_code="$(jq -er '.device_code' <<<"$device_challenge")"
 user_code="$(jq -er '.user_code' <<<"$device_challenge")"
@@ -248,19 +247,47 @@ device_oauth="$(curl --fail --silent --show-error \
   https://demo.leapview.dev/oauth/token)"
 approver_token="$(jq -er '.access_token | strings | select(length > 0)' <<<"$device_oauth")"
 unset device_challenge device_code user_code verification_uri_complete csrf_token device_oauth
-publication_id="$(jq -er '.deploymentId' "$approval_file")"
-approval_id="$(jq -er '.id' "$approval_file")"
-approval_revision="$(jq -er '.revision' "$approval_file")"
-approval_result="$("$leapview_binary" api call approveDeliveryPublicationApproval \
+cd "$repo"
+plan="$("$leapview_binary" plan \
+  --source-root "$repo/dashboards" \
   --target https://demo.leapview.dev \
-  --token "$approver_token" \
-  --path "project=$project_id" \
-  --path "publication=$publication_id" \
-  --path "approval=$approval_id" \
-  --body-json "{\"expectedRevision\":$approval_revision}" \
-  --idempotency-key "demo-recovery-approve-$approval_id")"
-unset approver_token
-printf 'approval result: %s\n' "$(jq -c '{id,status,revision,decidedBy}' <<<"$approval_result")"
+  --project-id "$project_id" \
+  --token "$publisher_token" \
+  --candidate-key hosted-demo-recovery-v2 \
+  --format json)"
+plan_id="$(jq -er '.planId' <<<"$plan")"
+[[ "$(jq -r '.status' <<<"$plan")" == planned ]]
+build="$("$leapview_binary" build "$plan_id" --token "$publisher_token" --format json)"
+[[ "$(jq -r '.status' <<<"$build")" == sealed ]]
+candidate_id="$(jq -er '.candidateId' <<<"$build")"
+publication="$("$leapview_binary" publish "$candidate_id" --token "$publisher_token" --format json)"
+publication_id="$(jq -er '.publicationId' <<<"$publication")"
+publication_status="$(jq -er '.status' <<<"$publication")"
+generation_id="$(jq -er '.generationId' <<<"$publication")"
+approval_result="$publication"
+if [[ "$publication_status" == pending ]]; then
+  approval_result="$("$leapview_binary" api call requestDeliveryPublicationApproval \
+    --target https://demo.leapview.dev \
+    --token "$publisher_token" \
+    --path "project=$project_id" \
+    --path "publication=$publication_id" \
+    --idempotency-key "demo-recovery-request-$publication_id")"
+  approval_id="$(jq -er '.id' <<<"$approval_result")"
+  approval_revision="$(jq -er '.revision' <<<"$approval_result")"
+  approval_result="$("$leapview_binary" api call approveDeliveryPublicationApproval \
+    --target https://demo.leapview.dev \
+    --token "$approver_token" \
+    --path "project=$project_id" \
+    --path "publication=$publication_id" \
+    --path "approval=$approval_id" \
+    --body-json "{\"expectedRevision\":$approval_revision}" \
+    --idempotency-key "demo-recovery-approve-$approval_id")"
+  [[ "$(jq -r '.status' <<<"$approval_result")" == approved ]]
+else
+  [[ "$publication_status" == committed ]]
+fi
+unset publisher_token approver_token
+printf 'publication result: %s\n' "$(jq -c --arg candidate "$candidate_id" --arg generation "$generation_id" '{status,candidate:$candidate,generation:$generation}' <<<"$approval_result")"
 ready=false
 for _ in $(seq 1 120); do
   if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
