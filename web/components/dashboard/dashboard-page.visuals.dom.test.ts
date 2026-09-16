@@ -242,6 +242,53 @@ test('empty table distinguishes completed results from waiting and keeps its mes
   } finally { await page.close() }
 })
 
+test('short report tables keep the footer next to the final row while long tables remain scrollable', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-table'))
+    const result = await page.evaluate(async () => {
+      const table = document.createElement('lv-report-table') as any
+      table.style.cssText = 'display:block;width:760px;height:540px;'
+      const sort = { key: 'id', direction: 'asc' }
+      const rows = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `row-${index + 1}` }))
+      const signal = (count: number) => ({
+        ...table.table,
+        columns: [{ key: 'id', label: 'ID' }],
+        sort,
+        resetVersion: 1,
+        cardinality: { kind: 'exact', value: count },
+        availableRows: count,
+        rowCap: 1_000,
+        chunkSize: 100,
+        rowHeight: 32,
+        blocks: { a: { start: 0, requestSeq: 0, resetVersion: 1, sort, rows: rows(count) } },
+      })
+      table.table = signal(6)
+      document.body.prepend(table)
+      await table.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const root = table.shadowRoot as ShadowRoot
+      const canvas = root.querySelector('.canvas') as HTMLElement
+      const footer = root.querySelector('.footer') as HTMLElement
+      const shortGap = Math.round(footer.getBoundingClientRect().top - canvas.getBoundingClientRect().bottom)
+
+      table.table = signal(100)
+      await table.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const scrollport = root.querySelector('.table-scrollport') as HTMLElement
+      return {
+        shortGap,
+        longTableScrolls: scrollport.scrollHeight > scrollport.clientHeight,
+        footerWithinTable: footer.getBoundingClientRect().bottom <= table.getBoundingClientRect().bottom + 1,
+      }
+    })
+    expect(result.shortGap).toBeLessThanOrEqual(2)
+    expect(result.longTableScrolls).toBe(true)
+    expect(result.footerWithinTable).toBe(true)
+  } finally { await page.close() }
+})
+
 for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: 'mobile', width: 390, height: 820 }]) {
   test(`dashboard composes envelope-native visuals on ${viewport.name}`, async () => {
     const page = await browser.newPage({ viewport })

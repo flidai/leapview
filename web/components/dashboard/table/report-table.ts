@@ -645,7 +645,7 @@ export class ReportTable extends LitElement {
     .table-frame {
       position: relative;
       display: flex;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       flex-direction: column;
       min-height: 0;
       min-width: 0;
@@ -657,7 +657,7 @@ export class ReportTable extends LitElement {
 
     .table-scrollport {
       position: relative;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       overflow: auto;
       min-height: 0;
       min-width: 0;
