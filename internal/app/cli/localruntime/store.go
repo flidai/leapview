@@ -16,23 +16,53 @@ import (
 	"strconv"
 	"strings"
 
+	analyticsenvironment "github.com/flidai/leapview/internal/analytics/environment"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/ociref"
+	platformsecret "github.com/flidai/leapview/internal/platform/security/secret"
 	"golang.org/x/mod/semver"
 )
 
+const developmentCredentialEncodingPrefix = "leapview-base64-v1:"
+
+func validateDevelopmentProfileIdentity(profile DevelopmentProfileIdentity) error {
+	if profile == (DevelopmentProfileIdentity{}) {
+		return nil
+	}
+	if profile.Name == "" || profile.Name != strings.TrimSpace(profile.Name) || len(profile.Name) > 128 {
+		return errors.New("development profile identity is invalid")
+	}
+	for index, char := range profile.Name {
+		if index == 0 && !((char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') || char == '_') {
+			return errors.New("development profile identity is invalid")
+		}
+		if (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' && char != '.' && char != '-' {
+			return errors.New("development profile identity is invalid")
+		}
+	}
+	if err := platformdigest.ValidateSHA256Identity(profile.GraphDigest); err != nil {
+		return errors.New("development profile graph identity is invalid")
+	}
+	if err := platformdigest.ValidateSHA256Identity(profile.ProfileDigest); err != nil {
+		return errors.New("development profile digest is invalid")
+	}
+	return nil
+}
+
 const (
-	stateFileName         = "state.json"
-	runtimeEnvFileName    = "runtime.env"
-	credentialsFileName   = "initial-credentials.json"
-	qualificationFileName = "physical-pool-qualification.json"
-	poolFileName          = "physical-pool.json"
-	evidenceFileName      = "physical-pool-evidence.json"
-	manifestFileName      = "runtime-package.json"
-	composeFileName       = "compose.yaml"
-	postgresInitName      = "postgres-init.sh"
-	manifestSchemaName    = "runtime-package.schema.json"
+	stateFileName                  = "state.json"
+	runtimeEnvFileName             = "runtime.env"
+	developmentCredentialsFileName = "development-credentials.env"
+	credentialsFileName            = "initial-credentials.json"
+	qualificationFileName          = "physical-pool-qualification.json"
+	poolFileName                   = "physical-pool.json"
+	evidenceFileName               = "physical-pool-evidence.json"
+	manifestFileName               = "runtime-package.json"
+	composeFileName                = "compose.yaml"
+	postgresInitName               = "postgres-init.sh"
+	manifestSchemaName             = "runtime-package.schema.json"
 )
 
 func canonicalDirectory(path string) (string, error) {
@@ -197,12 +227,19 @@ func availablePort() (int, error) {
 	return listener.Addr().(*net.TCPAddr).Port, nil
 }
 
-func initialEnvironment(state State, manifest runtimeManifest) (map[string]string, error) {
+func initialEnvironment(state State, manifest runtimeManifest, developmentCredentialsPath, developmentCredentialVariables string, profile DevelopmentProfileIdentity) (map[string]string, error) {
 	values := map[string]string{
-		"LEAPVIEW_IMAGE":             manifest.LeapView.Image,
-		"LEAPVIEW_LOCAL_APP_PORT":    strconv.Itoa(state.Network.AppPort),
-		"LEAPVIEW_LOCAL_CHECKOUT_ID": state.Checkout.ID,
-		"LEAPVIEW_LOCAL_OWNER_ID":    state.Runtime.OwnerID,
+		"LEAPVIEW_IMAGE":                            manifest.LeapView.Image,
+		"LEAPVIEW_LOCAL_APP_PORT":                   strconv.Itoa(state.Network.AppPort),
+		"LEAPVIEW_LOCAL_CHECKOUT_ID":                state.Checkout.ID,
+		"LEAPVIEW_LOCAL_OWNER_ID":                   state.Runtime.OwnerID,
+		"LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE":  developmentCredentialsPath,
+		"LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES": developmentCredentialVariables,
+	}
+	if profile != (DevelopmentProfileIdentity{}) {
+		values["LEAPVIEW_DEVELOPMENT_PROFILE_NAME"] = profile.Name
+		values["LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST"] = profile.GraphDigest
+		values["LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST"] = profile.ProfileDigest
 	}
 	for _, name := range []string{
 		"LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD",
@@ -231,6 +268,9 @@ func readEnvironment(path string) (map[string]string, error) {
 		return nil, err
 	}
 	values := map[string]string{}
+	if len(encoded) == 0 {
+		return values, nil
+	}
 	for index, line := range strings.Split(strings.TrimSuffix(string(encoded), "\n"), "\n") {
 		name, value, ok := strings.Cut(line, "=")
 		if !ok || name == "" || strings.TrimSpace(name) != name || strings.ContainsAny(name, " \t\r\n") {
@@ -263,7 +303,43 @@ func writeEnvironment(path string, values map[string]string) error {
 	return securefs.WritePrivateFileAtomic(path, []byte(out.String()))
 }
 
-func validateRetainedEnvironment(state State, manifest runtimeManifest, values map[string]string) error {
+// writeDevelopmentCredentialEnvironment uses an interpolation-safe transport
+// encoding for Compose env_file values. The server decodes this wrapper only
+// after the variable name passes the explicit development-profile allowlist.
+func writeDevelopmentCredentialEnvironment(path string, values map[string]string) error {
+	if err := validateDevelopmentCredentials(values); err != nil {
+		return err
+	}
+	encoded := make(map[string]string, len(values))
+	for name, value := range values {
+		encoded[name] = developmentCredentialEncodingPrefix + base64.RawStdEncoding.EncodeToString([]byte(value))
+	}
+	return writeEnvironment(path, encoded)
+}
+
+func readDevelopmentCredentialEnvironment(path string) (map[string]string, error) {
+	encoded, err := readEnvironment(path)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string, len(encoded))
+	for name, value := range encoded {
+		if !strings.HasPrefix(value, developmentCredentialEncodingPrefix) {
+			return nil, errors.New("retained development credential encoding is invalid")
+		}
+		decoded, decodeErr := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, developmentCredentialEncodingPrefix))
+		if decodeErr != nil {
+			return nil, errors.New("retained development credential encoding is invalid")
+		}
+		values[name] = string(decoded)
+	}
+	if err := validateDevelopmentCredentials(values); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+func validateRetainedEnvironment(state State, manifest runtimeManifest, values map[string]string, profile DevelopmentProfileIdentity, expectedCredentialFile string) error {
 	requiredSecrets := []string{
 		"LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD",
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD",
@@ -281,6 +357,17 @@ func validateRetainedEnvironment(state State, manifest runtimeManifest, values m
 		"LEAPVIEW_LOCAL_APP_PORT":    strconv.Itoa(state.Network.AppPort),
 		"LEAPVIEW_LOCAL_CHECKOUT_ID": state.Checkout.ID,
 		"LEAPVIEW_LOCAL_OWNER_ID":    state.Runtime.OwnerID,
+	}
+	credentialFile := values["LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE"]
+	if credentialFile == "" || !filepath.IsAbs(credentialFile) || filepath.Clean(credentialFile) != credentialFile || credentialFile != expectedCredentialFile {
+		return errors.New("retained local runtime credential file identity is invalid")
+	}
+	want["LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE"] = credentialFile
+	want["LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES"] = values["LEAPVIEW_DEVELOPMENT_CREDENTIAL_VARIABLES"]
+	if profile != (DevelopmentProfileIdentity{}) {
+		want["LEAPVIEW_DEVELOPMENT_PROFILE_NAME"] = profile.Name
+		want["LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST"] = profile.GraphDigest
+		want["LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST"] = profile.ProfileDigest
 	}
 	for name, expected := range want {
 		if values[name] != expected {
@@ -306,6 +393,66 @@ func validateRetainedEnvironment(state State, manifest runtimeManifest, values m
 		return errors.New("retained local runtime environment contains unowned fields; refusing mutation")
 	}
 	return nil
+}
+
+func retainedDevelopmentProfileIdentity(values map[string]string) (DevelopmentProfileIdentity, error) {
+	profile := DevelopmentProfileIdentity{
+		Name: values["LEAPVIEW_DEVELOPMENT_PROFILE_NAME"], GraphDigest: values["LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST"],
+		ProfileDigest: values["LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST"],
+	}
+	if profile == (DevelopmentProfileIdentity{}) {
+		return profile, nil
+	}
+	if err := validateDevelopmentProfileIdentity(profile); err != nil {
+		return DevelopmentProfileIdentity{}, errors.New("retained development profile identity is invalid")
+	}
+	return profile, nil
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	result := make(map[string]string, len(values))
+	for name, value := range values {
+		result[name] = value
+	}
+	return result
+}
+
+func developmentCredentialNames(values map[string]string) string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slicesSort(names)
+	return strings.Join(names, ",")
+}
+
+func validateDevelopmentCredentials(values map[string]string) error {
+	for name, value := range values {
+		if !strings.HasPrefix(name, "LEAPVIEW_DEV_CONNECTION_") || len(name) <= len("LEAPVIEW_DEV_CONNECTION_") || strings.ContainsAny(name, "abcdefghijklmnopqrstuvwxyz= \t\r\n\x00") {
+			return errors.New("selected development credential variable is invalid")
+		}
+		for _, char := range strings.TrimPrefix(name, "LEAPVIEW_DEV_CONNECTION_") {
+			if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' {
+				return errors.New("selected development credential variable is invalid")
+			}
+		}
+		if strings.ContainsAny(value, "\r\n\x00") || analyticsenvironment.ValidateCredentialBundle(value) != nil {
+			return errors.New("selected development credential bundle is invalid")
+		}
+	}
+	return nil
+}
+
+func samePrivateEnvironment(left, right map[string]string) bool {
+	if validateDevelopmentCredentials(left) != nil || validateDevelopmentCredentials(right) != nil || len(left) != len(right) {
+		return false
+	}
+	for name, value := range left {
+		if !platformsecret.Equal(right[name], value) {
+			return false
+		}
+	}
+	return true
 }
 
 func slicesSort(values []string) {

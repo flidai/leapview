@@ -4031,6 +4031,11 @@ type MultiSelectDashboardFilterControl struct {
 	Options           *DashboardFilterOptions `json:"options,omitempty" yaml:"options,omitempty"`
 }
 
+type NamedDashboardVisual struct {
+	DashboardVisual
+	ID string `json:"id" yaml:"id"`
+}
+
 type NullCheckDashboardFilterExpression struct {
 	DashboardFilterExpressionBase
 	Type     string                  `json:"type" yaml:"type"`

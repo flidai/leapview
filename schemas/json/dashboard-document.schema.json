@@ -2595,16 +2595,10 @@
           "type": "string"
         },
         "visuals": {
-          "additionalProperties": {
-            "$ref": "#/$defs/DashboardVisual"
+          "items": {
+            "$ref": "#/$defs/NamedDashboardVisual"
           },
-          "propertyNames": {
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-            "type": "string"
-          },
-          "type": "object"
+          "type": "array"
         }
       },
       "required": [
@@ -2766,8 +2760,7 @@
         "query",
         "type"
       ],
-      "type": "object",
-      "unevaluatedProperties": false
+      "type": "object"
     },
     "DashboardVisualType": {
       "enum": [
@@ -3320,6 +3313,27 @@
       },
       "required": [
         "type"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "NamedDashboardVisual": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardVisual"
+        }
+      ],
+      "description": "A visual declared in a Dashboard document carries its list identity.",
+      "properties": {
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
       ],
       "type": "object",
       "unevaluatedProperties": false

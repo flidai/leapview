@@ -25,7 +25,7 @@ Use true open, close, low, and high metrics over an ordered month dimension. Eac
 
 ```yaml visual-example=market_candlestick
 visuals:
-  market_candlestick:
+  - id: market_candlestick
     title: Monthly market range
     description: Shows monthly open, close, low, and high values.
     type: candlestick
@@ -56,7 +56,7 @@ Change the metric to revenue and enable `presentation.dataZoom` so dense monthly
 
 ```yaml visual-example=revenue_candlestick
 visuals:
-  revenue_candlestick:
+  - id: revenue_candlestick
     title: Revenue OHLC by month
     type: candlestick
     presentation:

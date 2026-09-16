@@ -22,7 +22,7 @@ recent history. `favorableDirection` makes the decision meaning explicit.
 
 ```yaml visual-example=revenue_kpi_favorable
 visuals:
-  revenue_kpi_favorable:
+  - id: revenue_kpi_favorable
     title: Revenue versus baseline
     type: kpi
     description: Shows revenue, its filter-aligned baseline, and monthly trend.
@@ -75,7 +75,7 @@ the current value and historical shape without adding baseline semantics.
 
 ```yaml visual-example=revenue_kpi_trend
 visuals:
-  revenue_kpi_trend:
+  - id: revenue_kpi_trend
     title: Revenue trend
     type: kpi
     description: Shows revenue with an explicitly configured monthly trend.
@@ -113,7 +113,7 @@ note may add context, but it should not duplicate the title.
 
 ```yaml visual-example=total_orders
 visuals:
-  total_orders:
+  - id: total_orders
     title: Total orders
     type: kpi
     description: Shows the filtered count of distinct orders.
@@ -140,7 +140,7 @@ without relying on color.
 
 ```yaml visual-example=revenue_kpi_unfavorable
 visuals:
-  revenue_kpi_unfavorable:
+  - id: revenue_kpi_unfavorable
     title: Cost proxy versus baseline
     type: kpi
     description: Demonstrates an increase that is explicitly unfavorable.
@@ -176,7 +176,7 @@ ordered, non-overlapping, and labeled so status never depends on color alone.
 
 ```yaml visual-example=revenue_kpi_bullet
 visuals:
-  revenue_kpi_bullet:
+  - id: revenue_kpi_bullet
     title: Revenue goal
     type: kpi
     description: Shows revenue against a filter-aligned target.
@@ -222,7 +222,7 @@ explicit operating status remain truthful.
 
 ```yaml visual-example=revenue_kpi_out_of_range
 visuals:
-  revenue_kpi_out_of_range:
+  - id: revenue_kpi_out_of_range
     title: Revenue outside the operating band
     type: kpi
     description: Demonstrates explicit out-of-range status.
@@ -261,7 +261,7 @@ toward a target. The visible label keeps status independent of color.
 
 ```yaml visual-example=revenue_kpi_status
 visuals:
-  revenue_kpi_status:
+  - id: revenue_kpi_status
     title: Revenue operating status
     type: kpi
     description: Shows a current value classified by explicit operating ranges.
@@ -296,7 +296,7 @@ configured feature.
 
 ```yaml visual-example=revenue_kpi_all_features
 visuals:
-  revenue_kpi_all_features:
+  - id: revenue_kpi_all_features
     title: Revenue decision summary
     subtitle: Current filtered scope
     type: kpi
@@ -372,7 +372,7 @@ Showing it distinguishes missing context from a zero delta.
 
 ```yaml visual-example=revenue_kpi_missing_comparison
 visuals:
-  revenue_kpi_missing_comparison:
+  - id: revenue_kpi_missing_comparison
     title: Revenue with unavailable comparison
     type: kpi
     description: Demonstrates an explicitly unavailable comparison.

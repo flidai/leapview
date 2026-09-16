@@ -10,6 +10,8 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
+Superseded by: [ADR-0024](0024-use-named-lists-for-authored-definitions.md), named collection syntax and member-name defaults only
+
 Amends: [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md), native
 semantic authoring placement, vocabulary, defaults, and pre-release authoring
 freeze only

@@ -239,6 +239,8 @@ type targetRuntimePool struct {
 	session         TargetRuntimeSession
 	connection      semanticmodel.Connection
 	healthStatement string
+	nextOperation   uint64
+	active          map[uint64]context.CancelFunc
 }
 
 var _ analyticsruntime.ConnectionResolver = (*targetRuntimePool)(nil)
@@ -248,15 +250,30 @@ func (pool *targetRuntimePool) HealthCheck(ctx context.Context) error {
 		return connectionbinding.ErrProviderUnavailable
 	}
 	pool.mu.Lock()
-	defer pool.mu.Unlock()
 	if pool.session == nil {
+		pool.mu.Unlock()
 		return connectionbinding.ErrProviderUnavailable
 	}
+	session := pool.session
 	statement := pool.healthStatement
 	if statement == "" {
 		statement = "SELECT 1"
 	}
-	_, err := pool.session.ExecContext(ctx, statement)
+	operationContext, cancel := context.WithCancel(ctx)
+	pool.nextOperation++
+	operationID := pool.nextOperation
+	if pool.active == nil {
+		pool.active = map[uint64]context.CancelFunc{}
+	}
+	pool.active[operationID] = cancel
+	pool.mu.Unlock()
+	defer func() {
+		cancel()
+		pool.mu.Lock()
+		delete(pool.active, operationID)
+		pool.mu.Unlock()
+	}()
+	_, err := session.ExecContext(operationContext, statement)
 	return err
 }
 
@@ -304,20 +321,42 @@ func (pool *targetRuntimePool) Resolve(
 }
 
 func (pool *targetRuntimePool) Close() error {
+	return pool.CloseContext(context.Background())
+}
+
+func (pool *targetRuntimePool) CloseContext(ctx context.Context) error {
 	if pool == nil {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	pool.mu.Lock()
 	session := pool.session
 	pool.session = nil
+	active := make([]context.CancelFunc, 0, len(pool.active))
+	for _, cancel := range pool.active {
+		active = append(active, cancel)
+	}
+	clear(pool.active)
 	clear(pool.connection.Auth)
 	pool.connection = semanticmodel.Connection{}
 	pool.healthStatement = ""
 	pool.mu.Unlock()
+	for _, cancel := range active {
+		cancel()
+	}
 	if session == nil {
 		return nil
 	}
-	return session.Close()
+	closed := make(chan error, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case err := <-closed:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func cloneTargetConnection(connection semanticmodel.Connection) semanticmodel.Connection {

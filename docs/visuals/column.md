@@ -12,7 +12,7 @@ Use one ordered category and one metric for a direct vertical comparison. Ascend
 
 ```yaml visual-example=orders_by_month_column
 visuals:
-  orders_by_month_column:
+  - id: orders_by_month_column
     title: Orders by month
     type: column
     query:
@@ -37,7 +37,7 @@ Use a second ordered dimension for status and `presentation.stacking: normal` to
 
 ```yaml visual-example=orders_by_month_status
 visuals:
-  orders_by_month_status:
+  - id: orders_by_month_status
     title: Orders by month and status
     description: Compares monthly order volume split by status.
     type: column
@@ -65,7 +65,7 @@ Keep the series unstacked to place statuses side by side, and use `presentation.
 
 ```yaml visual-example=orders_by_month_status_grouped
 visuals:
-  orders_by_month_status_grouped:
+  - id: orders_by_month_status_grouped
     title: Orders by month and status grouped
     type: column
     presentation:

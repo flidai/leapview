@@ -159,7 +159,7 @@ type visualExample struct {
 }
 
 type visualExampleFragment struct {
-	Visuals map[string]yaml.Node `yaml:"visuals"`
+	Visuals []yaml.Node `yaml:"visuals"`
 }
 
 type visualCatalog struct {
@@ -1240,14 +1240,15 @@ func parseVisualExamples(filename string, source []byte) ([]visualExample, error
 		if len(fragment.Visuals) != 1 {
 			return nil, fmt.Errorf("%s:%d: visual example %q must contain exactly one visual", filename, index+1, id)
 		}
-		visualNode, ok := fragment.Visuals[id]
-		if !ok {
-			keys := make([]string, 0, len(fragment.Visuals))
-			for key := range fragment.Visuals {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			return nil, fmt.Errorf("%s:%d: visual example %q must use visual key %q, got %q", filename, index+1, id, id, strings.Join(keys, ", "))
+		visualNode := fragment.Visuals[0]
+		var identity struct {
+			ID string `yaml:"id"`
+		}
+		if err := visualNode.Decode(&identity); err != nil {
+			return nil, fmt.Errorf("%s:%d: decode visual identity: %w", filename, index+2, err)
+		}
+		if identity.ID != id {
+			return nil, fmt.Errorf("%s:%d: visual example %q must use visual id %q, got %q", filename, index+1, id, id, identity.ID)
 		}
 		seenExamples[id] = index + 1
 		example, err := decodeVisualExample(id, filename, index+1, visualNode)
@@ -1320,7 +1321,7 @@ func validateVisualExampleContract(id, filename string, node yaml.Node) error {
 		"spec": map[string]any{
 			"semanticModel": "visual_examples",
 			"filters":       []any{},
-			"visuals":       map[string]any{id: visual},
+			"visuals":       []any{visual},
 			"pages": []any{map[string]any{
 				"id": "example", "title": "Example",
 				"components": []any{map[string]any{

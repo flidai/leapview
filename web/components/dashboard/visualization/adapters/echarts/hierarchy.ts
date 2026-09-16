@@ -1,10 +1,11 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
+import { parseDecimal } from '../../decimal'
 import { categoryIdentity } from './category-colors'
 import { escapeHTML, formatField, inlineDataset, legend, type EChartsTranslation } from './common'
-import { echartsLabelPolicy } from './label-policy'
+import { echartsLabelPolicy, isPriorityDatum } from './label-policy'
 
-type HierarchyNode = { name: string; value?: unknown; __lv_dataset: string; __lv_row_index: number; __lv_synthetic?: boolean; children?: HierarchyNode[]; label?: EChartsTranslation }
+type HierarchyNode = { name: string; value?: unknown; __lv_raw_value?: unknown; __lv_dataset: string; __lv_row_index: number; __lv_synthetic?: boolean; children?: HierarchyNode[]; label?: EChartsTranslation }
 
 export function hierarchyOption(envelope: VisualizationEnvelope, context: RendererContext): EChartsTranslation {
   const spec = envelope.spec
@@ -53,11 +54,16 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
         ? { color: 'gradient', opacity: 0.45, ...(spec.presentation.curveness === undefined ? {} : { curveness: spec.presentation.curveness }) }
         : spec.presentation.curveness === undefined ? {} : { curveness: spec.presentation.curveness },
       ...labels,
-      tooltip: { formatter: (params: { data?: { source?: unknown; target?: unknown; sourceLabel?: unknown; targetLabel?: unknown; value?: unknown } }) => {
+      tooltip: { formatter: (params: { data?: { source?: unknown; target?: unknown; sourceLabel?: unknown; targetLabel?: unknown; value?: unknown; displayName?: unknown; name?: unknown } }) => {
         const link = params.data
-        if (!link || link.source === undefined || link.target === undefined) return ''
-        const value = formatField(envelope, spec.value, link.value, context)
-        return `${escapeHTML(String(link.sourceLabel ?? link.source))} to ${escapeHTML(String(link.targetLabel ?? link.target))}: ${escapeHTML(value)}`
+        if (!link) return ''
+        if (link.source !== undefined || link.target !== undefined) {
+          if (link.source === undefined || link.target === undefined) return ''
+          const value = formatField(envelope, spec.value, link.value, context)
+          return `${escapeHTML(String(link.sourceLabel ?? link.source))} to ${escapeHTML(String(link.targetLabel ?? link.target))}: ${escapeHTML(value)}`
+        }
+        const nodeLabel = link.displayName ?? link.name
+        return nodeLabel === undefined ? '' : escapeHTML(String(nodeLabel))
       } },
     }
     if (spec.mark === 'graph') {
@@ -77,6 +83,35 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
         series.labelLayout = withLabelMove(series.labelLayout, 'shiftY')
       }
       if (spec.presentation.focus === 'adjacency') series.emphasis = { focus: 'adjacency' }
+      const priorityNodeNames = new Set(links.flatMap((link) => {
+        const rowIndex = link.__lv_row_index
+        return dataset && isPriorityDatum(envelope, dataset.id, rowIndex, spec.presentation.labelPolicy)
+          ? [link.source, link.target]
+          : []
+      }))
+      if (spec.presentation.labelPolicy.density === 'automatic' && nodes.length > 20) {
+        // A standard graph positions labels beside fixed nodes. Keeping every
+        // label visible makes dense graphs unreadable at showcase dimensions;
+        // retain priority labels and hover/focus labels so every node remains
+        // discoverable.
+        const labelFormatter = series.label?.formatter
+        series.label = {
+          ...(series.label ?? {}),
+          show: priorityNodeNames.size > 0,
+          ...(priorityNodeNames.size > 0 ? {
+            formatter: (params: { data?: { name?: unknown } }) => priorityNodeNames.has(String(params.data?.name ?? ''))
+              ? labelFormatter?.(params)
+            : '',
+          } : {}),
+        }
+        series.labelLayout = (params: { dataIndex?: number }) => ({
+          hideOverlap: priorityNodeNames.size === 0 || !priorityNodeNames.has(String(nodes[params.dataIndex ?? -1]?.name ?? '')),
+        })
+        series.emphasis = {
+          ...(series.emphasis ?? {}),
+          label: { ...(series.emphasis?.label ?? {}), show: true, ...(labelFormatter ? { formatter: labelFormatter } : {}) },
+        }
+      }
     } else {
       series.orient = spec.presentation.orientation
       if (spec.presentation.nodeGap !== undefined) series.nodeGap = spec.presentation.nodeGap
@@ -95,6 +130,10 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     }
   }
   const roots = hierarchyData(envelope)
+  // Empty tree layouts have no invertible view transform in ECharts. Loading
+  // and cleared frames still need a valid chart so the next data frame can
+  // render; omit the tree series until there are hierarchy nodes to lay out.
+  if (spec.mark === 'tree' && roots.length === 0) return { legend: legend(spec.presentation.legend, context), series: [] }
   const data = spec.mark === 'tree' && roots.length > 1 && dataset
     ? [{ name: 'All', __lv_dataset: dataset.id, __lv_row_index: -1, __lv_synthetic: true, children: roots }]
     : roots
@@ -127,6 +166,14 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     }
   }
   if (spec.mark === 'treemap') {
+    // ECharts names the virtual root from the series; an unnamed root leaves
+    // the breadcrumb as an empty button.
+    common.name = 'All'
+    // Treemap's series defaults enable a 900ms update animation even when the
+    // shared chart option disables animation. Keep the first frame complete so
+    // compact cards do not expose an empty root while tiles animate in.
+    common.animation = false
+    common.animationDurationUpdate = 0
     common.breadcrumb = { show: spec.presentation.breadcrumb }
     common.leafDepth = spec.presentation.initialDepth
     common.label = {
@@ -159,7 +206,8 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
       textBorderWidth: 2,
     }
   }
-  return { legend: legend(spec.presentation.legend, context), series: [common] }
+  // Naming the treemap root is navigation metadata, not another legend item.
+  return { legend: { ...legend(spec.presentation.legend, context), ...(spec.mark === 'treemap' ? { data: [] } : {}) }, series: [common] }
 }
 
 function countVisibleHierarchyLeaves(nodes: HierarchyNode[], initialDepth: number | undefined, depth = 0): number {
@@ -201,7 +249,16 @@ export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] 
     const id = parent ? `${parent}\u001f${escapeSegment(identity)}` : escapeSegment(identity)
     if (byID.has(id)) throw new Error(`duplicate hierarchy node ${JSON.stringify(id)}`)
     const name = entry.rawNode === null || entry.rawNode === undefined ? '—' : String(entry.rawNode)
-    byID.set(id, { name, value: valueIndex >= 0 ? entry.row[valueIndex] : undefined, __lv_dataset: dataset.id, __lv_row_index: entry.rowIndex })
+    const rawValue = valueIndex >= 0 ? entry.row[valueIndex] : undefined
+    const numericTreeMark: 'treemap' | 'sunburst' | undefined = spec.mark === 'treemap' || spec.mark === 'sunburst' ? spec.mark : undefined
+    const value = numericTreeMark && valueIndex >= 0 ? hierarchyNumericValue(rawValue, spec.value?.field ?? 'value', numericTreeMark) : rawValue
+    byID.set(id, {
+      name,
+      value,
+      ...(numericTreeMark && typeof rawValue === 'string' ? { __lv_raw_value: rawValue } : {}),
+      __lv_dataset: dataset.id,
+      __lv_row_index: entry.rowIndex,
+    })
     parentByID.set(id, parent)
   }
   const roots = pending.filter(({ rawParent }) => rawParent === null || rawParent === undefined || rawParent === '')
@@ -235,7 +292,20 @@ export function hierarchyData(envelope: VisualizationEnvelope): HierarchyNode[] 
 
 export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: HierarchyNode, context: RendererContext): string {
   const spec = envelope.spec
-  return spec.kind === 'hierarchy' ? formatField(envelope, spec.value, node.value, context) : String(node.value ?? '—')
+  return spec.kind === 'hierarchy' ? formatField(envelope, spec.value, node.__lv_raw_value ?? node.value, context) : String(node.value ?? '—')
+}
+
+function hierarchyNumericValue(value: unknown, field: string, mark: 'treemap' | 'sunburst'): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const parsed = parseDecimal(value)
+  if (!parsed) return undefined
+  const numeric = Number(value)
+  const zero = parsed.integer === '0' && /^0*$/.test(parsed.fraction)
+  if (!Number.isFinite(numeric) || (numeric === 0 && !zero)) {
+    throw new Error(`${mark} value field "${field}" canonical decimal "${value}" is outside the JavaScript finite numeric range (overflows or underflows)`)
+  }
+  return Number.isFinite(numeric) ? numeric : undefined
 }
 
 function escapeSegment(value: string): string { return value.replaceAll('\u001f', '\u001f\u001f') }

@@ -35,6 +35,9 @@ type CandidateCheckpoint struct {
 	CandidateID       string `json:"candidateId"`
 	CandidateKey      string `json:"candidateKey"`
 	CandidateRevision int64  `json:"candidateRevision"`
+	BuildID           string `json:"buildId,omitempty"`
+	BuildRevision     int64  `json:"buildRevision,omitempty"`
+	SealID            string `json:"sealId,omitempty"`
 	ArtifactDigest    string `json:"artifactDigest"`
 	ProvenanceDigest  string `json:"provenanceDigest"`
 	PlanID            string `json:"planId,omitempty"`
@@ -56,7 +59,7 @@ func (checkpoint *CandidateCheckpoint) UnmarshalJSON(data []byte) error {
 	}
 	for name := range fields {
 		switch name {
-		case "sourceRoot", "projectPath", "targetOrigin", "targetSelector", "targetId", "environment", "projectId", "candidateId", "candidateKey", "candidateRevision", "artifactDigest", "provenanceDigest", "planId", "planDigest", "executionDigest", "evidenceDigest":
+		case "sourceRoot", "projectPath", "targetOrigin", "targetSelector", "targetId", "environment", "projectId", "candidateId", "candidateKey", "candidateRevision", "buildId", "buildRevision", "sealId", "artifactDigest", "provenanceDigest", "planId", "planDigest", "executionDigest", "evidenceDigest":
 		default:
 			return fmt.Errorf("json: unknown field %q", name)
 		}
@@ -98,6 +101,7 @@ type DeliveryPlanCheckpoint struct {
 	TargetSelector          string `json:"targetSelector,omitempty"`
 	SourceDigest            string `json:"sourceDigest"`
 	SourceAttestationDigest string `json:"sourceAttestationDigest,omitempty"`
+	ProvenanceDigest        string `json:"provenanceDigest,omitempty"`
 	PlanDigest              string `json:"planDigest"`
 	ExecutionDigest         string `json:"executionDigest,omitempty"`
 	EvidenceDigest          string `json:"evidenceDigest,omitempty"`
@@ -402,6 +406,8 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 	checkpoint.ProjectID = strings.TrimSpace(checkpoint.ProjectID)
 	checkpoint.CandidateID = strings.TrimSpace(checkpoint.CandidateID)
 	checkpoint.CandidateKey = normalizeCheckpointCandidateKey(checkpoint.CandidateKey)
+	checkpoint.BuildID = strings.TrimSpace(checkpoint.BuildID)
+	checkpoint.SealID = strings.TrimSpace(checkpoint.SealID)
 	checkpoint.ArtifactDigest = strings.TrimSpace(checkpoint.ArtifactDigest)
 	checkpoint.ProvenanceDigest = strings.TrimSpace(checkpoint.ProvenanceDigest)
 	checkpoint.PlanID = strings.TrimSpace(checkpoint.PlanID)
@@ -412,6 +418,9 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 		checkpoint.ProjectID == "" || checkpoint.CandidateID == "" ||
 		checkpoint.CandidateRevision <= 0 {
 		return CandidateCheckpoint{}, fmt.Errorf("candidate checkpoint requires target, environment, project, candidate, and revision")
+	}
+	if checkpoint.BuildRevision < 0 {
+		return CandidateCheckpoint{}, fmt.Errorf("candidate build revision cannot be negative")
 	}
 	if err := digest.ValidateSHA256Identity(checkpoint.ArtifactDigest); err != nil {
 		return CandidateCheckpoint{}, fmt.Errorf("candidate artifact digest is invalid: %w", err)

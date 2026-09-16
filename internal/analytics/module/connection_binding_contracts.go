@@ -26,6 +26,7 @@ type RuntimeBindingRequest = connectionbinding.RuntimeBindingRequest
 type RuntimeBindingLeases = connectionbinding.RuntimeBindingLeases
 type RuntimeBindingLeaser = connectionbinding.RuntimeBindingLeaser
 type RuntimeBindingAuthorizer = connectionbinding.RuntimeBindingAuthorizer
+type ProfileApplicationAdmissionChecker = connectionbinding.ProfileApplicationAdmissionChecker
 
 const (
 	PermissionManageConnectionMetadata = connectionbinding.PermissionManageConnectionMetadata
@@ -64,9 +65,16 @@ type ConnectionAdministrationConfig struct {
 }
 
 type RuntimeBindingLeaserConfig struct {
-	Authorize      RuntimeBindingAuthorizer
-	Now            func() time.Time
-	RefreshTimeout time.Duration
-	MaxConcurrent  int
-	Audit          ConnectionRotationAuditRecorder
+	Authorize                          RuntimeBindingAuthorizer
+	Now                                func() time.Time
+	RefreshTimeout                     time.Duration
+	MaxConcurrent                      int
+	Audit                              ConnectionRotationAuditRecorder
+	ProfileApplicationAdmission        *ProfileApplicationAdmissionChecker
+	ProfileApplicationAdmissionChecker *ProfileApplicationAdmissionChecker
+	CheckoutID                         string
+	RuntimeID                          string
+	ProfileName                        string
+	GraphDigest                        string
+	ProfileDigest                      string
 }

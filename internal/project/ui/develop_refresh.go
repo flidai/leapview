@@ -357,11 +357,11 @@ func parseRefreshTime(value string) (time.Time, bool) {
 }
 
 func assetRefreshable(assetType string) bool {
-	return assetType == "refresh_pipeline"
+	return assetType == "refresh_pipeline" || assetType == "pipeline"
 }
 
 func assetHasRefreshHistory(assetType string) bool {
-	return assetType == "refresh_pipeline" || assetType == "model" || assetType == "semantic_model"
+	return assetType == "refresh_pipeline" || assetType == "pipeline" || assetType == "model" || assetType == "semantic_model"
 }
 
 func assetDataInspectable(assetType string) bool {

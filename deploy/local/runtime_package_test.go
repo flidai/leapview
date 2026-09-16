@@ -315,6 +315,10 @@ func localRuntimeTestEnvironment() []string {
 		"LEAPVIEW_LOCAL_APP_PORT=18080",
 		"LEAPVIEW_LOCAL_CHECKOUT_ID=sha256:" + strings.Repeat("b", 64),
 		"LEAPVIEW_LOCAL_OWNER_ID=owner-test",
+		"LEAPVIEW_DEVELOPMENT_PROFILE_NAME=local",
+		"LEAPVIEW_DEVELOPMENT_GRAPH_DIGEST=sha256:" + strings.Repeat("d", 64),
+		"LEAPVIEW_DEVELOPMENT_PROFILE_DIGEST=sha256:" + strings.Repeat("e", 64),
+		"LEAPVIEW_DEVELOPMENT_CREDENTIAL_ENV_FILE=/dev/null",
 		"LEAPVIEW_CSRF_KEY=" + strings.Repeat("c", 32),
 		"LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD=bootstrap",
 	}

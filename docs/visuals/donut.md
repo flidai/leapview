@@ -16,7 +16,7 @@ Use one categorical dimension and one metric to show each status as a share of t
 
 ```yaml visual-example=orders
 visuals:
-  orders:
+  - id: orders
     title: Orders by status
     description: Breaks down orders by lifecycle status.
     type: donut
@@ -41,7 +41,7 @@ Set `presentation.centerLabel` to state the total represented by the ring, and a
 
 ```yaml visual-example=orders_donut_center
 visuals:
-  orders_donut_center:
+  - id: orders_donut_center
     title: Orders donut with center label
     type: donut
     presentation:
@@ -68,7 +68,7 @@ Replace the category and metric to compare revenue composition without changing 
 
 ```yaml visual-example=category_donut
 visuals:
-  category_donut:
+  - id: category_donut
     title: Revenue by category donut
     type: donut
     query:

@@ -17,12 +17,33 @@ type RuntimeBindingLeaserConfig struct {
 	Bindings  BindingCatalog
 	Pools     ValidatedPoolDirectory
 	Authorize RuntimeBindingAuthorizer
+
+	// ProfileApplicationAdmission is optional because production runtimes do
+	// not use the local profile checkpoint. When configured, its fixed values
+	// identify the local checkout/runtime/profile intent; binding evidence is
+	// supplied by each request.
+	ProfileApplicationAdmission *ProfileApplicationAdmissionChecker
+	// ProfileApplicationAdmissionChecker is retained as an explicit spelling
+	// for callers that name the optional dependency after its concrete type.
+	// New code should use ProfileApplicationAdmission.
+	ProfileApplicationAdmissionChecker *ProfileApplicationAdmissionChecker
+	CheckoutID                         string
+	RuntimeID                          string
+	ProfileName                        string
+	GraphDigest                        string
+	ProfileDigest                      string
 }
 
 type RuntimeBindingLeaser struct {
-	bindings  BindingCatalog
-	pools     ValidatedPoolDirectory
-	authorize RuntimeBindingAuthorizer
+	bindings                    BindingCatalog
+	pools                       ValidatedPoolDirectory
+	authorize                   RuntimeBindingAuthorizer
+	profileApplicationAdmission *ProfileApplicationAdmissionChecker
+	checkoutID                  string
+	runtimeID                   string
+	profileName                 string
+	graphDigest                 string
+	profileDigest               string
 }
 
 type RuntimeBindingRequest struct {
@@ -48,8 +69,29 @@ func NewRuntimeBindingLeaser(config RuntimeBindingLeaserConfig) (*RuntimeBinding
 			ErrInvalidBinding,
 		)
 	}
+	profileApplicationAdmission := config.ProfileApplicationAdmission
+	if profileApplicationAdmission == nil {
+		profileApplicationAdmission = config.ProfileApplicationAdmissionChecker
+	}
+	if config.ProfileApplicationAdmission != nil && config.ProfileApplicationAdmissionChecker != nil && config.ProfileApplicationAdmission != config.ProfileApplicationAdmissionChecker {
+		return nil, fmt.Errorf("%w: local profile admission checker is specified more than once", ErrInvalidBinding)
+	}
+	if profileApplicationAdmission != nil {
+		if !validApplicationToken(config.CheckoutID) || !validApplicationToken(config.RuntimeID) || !validApplicationToken(config.ProfileName) || !validDigest(config.GraphDigest) || !validDigest(config.ProfileDigest) {
+			return nil, fmt.Errorf(
+				"%w: local profile admission requires canonical checkout, runtime, profile, graph, and profile identities",
+				ErrInvalidBinding,
+			)
+		}
+	}
 	return &RuntimeBindingLeaser{
 		bindings: config.Bindings, pools: config.Pools, authorize: config.Authorize,
+		profileApplicationAdmission: profileApplicationAdmission,
+		checkoutID:                  config.CheckoutID,
+		runtimeID:                   config.RuntimeID,
+		profileName:                 config.ProfileName,
+		graphDigest:                 config.GraphDigest,
+		profileDigest:               config.ProfileDigest,
 	}, nil
 }
 
@@ -64,6 +106,17 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 	if err != nil {
 		return nil, err
 	}
+	validated := make([]validatedRuntimeBinding, 0, len(requirements))
+	for _, requirement := range requirements {
+		binding, err := leaser.validateRequirement(ctx, request, requirement)
+		if err != nil {
+			return nil, err
+		}
+		validated = append(validated, validatedRuntimeBinding{binding: binding, requirement: requirement})
+	}
+	if err := leaser.checkProfileApplicationAdmission(ctx, request, validated); err != nil {
+		return nil, err
+	}
 	result := &RuntimeBindingLeases{
 		leases:   make([]ValidatedPoolLease, 0, len(requirements)),
 		evidence: make([]RuntimeBindingEvidence, 0, len(requirements)),
@@ -73,11 +126,8 @@ func (leaser *RuntimeBindingLeaser) Acquire(
 			result.Release()
 		}
 	}()
-	for _, requirement := range requirements {
-		binding, err := leaser.validateRequirement(ctx, request, requirement)
-		if err != nil {
-			return nil, err
-		}
+	for _, item := range validated {
+		requirement, binding := item.requirement, item.binding
 		lease, err := leaser.pools.AcquireValidated(ctx, binding, request.Actor)
 		if err != nil {
 			return nil, err
@@ -110,12 +160,20 @@ func (leaser *RuntimeBindingLeaser) Inspect(
 	if err != nil {
 		return nil, err
 	}
-	evidence := make([]RuntimeBindingEvidence, 0, len(requirements))
+	validated := make([]validatedRuntimeBinding, 0, len(requirements))
 	for _, requirement := range requirements {
 		binding, err := leaser.validateRequirement(ctx, request, requirement)
 		if err != nil {
 			return nil, err
 		}
+		validated = append(validated, validatedRuntimeBinding{binding: binding, requirement: requirement})
+	}
+	if err := leaser.checkProfileApplicationAdmission(ctx, request, validated); err != nil {
+		return nil, err
+	}
+	evidence := make([]RuntimeBindingEvidence, 0, len(requirements))
+	for _, item := range validated {
+		requirement, binding := item.requirement, item.binding
 		// Inspection is deliberately backed by durable health evidence. A
 		// pending or degraded binding must go through pool acquisition and
 		// health validation before it can be used for runtime compatibility.
@@ -131,6 +189,47 @@ func (leaser *RuntimeBindingLeaser) Inspect(
 		evidence = append(evidence, runtimeEvidence)
 	}
 	return evidence, nil
+}
+
+type validatedRuntimeBinding struct {
+	binding     TargetBinding
+	requirement Requirement
+}
+
+func (leaser *RuntimeBindingLeaser) checkProfileApplicationAdmission(
+	ctx context.Context,
+	request RuntimeBindingRequest,
+	validated []validatedRuntimeBinding,
+) error {
+	if leaser == nil || leaser.profileApplicationAdmission == nil {
+		return nil
+	}
+	eligible := make([]ProfileApplicationConnection, len(validated))
+	for index, item := range validated {
+		binding := item.binding
+		configuration := binding.Configuration()
+		eligible[index] = ProfileApplicationConnection{
+			BindingID:           binding.ID,
+			ConnectionID:        binding.ConnectionID,
+			ConnectorKind:       binding.ConnectorKind,
+			AuthenticationMode:  configuration.AuthenticationMode,
+			Endpoint:            configuration.Endpoint,
+			CredentialReference: configuration.CredentialReference,
+			BindingRevision:     binding.Revision,
+			ProviderVersion:     binding.ValidatedVersion,
+		}
+	}
+	return leaser.profileApplicationAdmission.Admit(ctx, ProfileApplicationAdmissionRequest{
+		CheckoutID:          leaser.checkoutID,
+		RuntimeID:           leaser.runtimeID,
+		TargetID:            request.TargetID,
+		ProjectID:           request.Identity.ProjectID,
+		Environment:         request.Identity.Environment,
+		ProfileName:         leaser.profileName,
+		GraphDigest:         leaser.graphDigest,
+		ProfileDigest:       leaser.profileDigest,
+		EligibleConnections: eligible,
+	})
 }
 
 func (leaser *RuntimeBindingLeaser) validateRequest(request RuntimeBindingRequest) ([]Requirement, error) {

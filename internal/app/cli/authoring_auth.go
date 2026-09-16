@@ -154,7 +154,7 @@ func establishLocalAuthoringSessionsWith(ctx context.Context, authenticator loca
 	result, err := authenticator.Login(ctx, accesscli.LoginRequest{
 		Name: request.TargetName, Origin: request.Origin, InstanceID: request.InstanceID,
 		Environment: request.Environment, ProjectID: request.ProjectID,
-		Capabilities: []string{"RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH"},
+		Capabilities: []string{"RESOURCE_USE", "RESOURCE_READ", "RESOURCE_EDIT", "RESOURCE_PUBLISH", "RESOURCE_MANAGE"},
 	}, func(challenge accesscli.DeviceChallenge) {
 		fmt.Fprintf(out, "Open %s and enter code %s\n", challenge.VerificationURI, challenge.UserCode)
 	})

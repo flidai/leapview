@@ -1,8 +1,11 @@
 # Local analytics runtime payload
 
-This directory is the versioned runtime payload consumed by the released
-`leapview dev` lifecycle. It is not the contributor workflow (`task dev`) and
-is not a supported manual Compose onboarding recipe.
+This directory is the versioned runtime payload for the installable authoring
+CLI. It is not the contributor workflow (`task dev`) and is not a supported
+manual Compose onboarding recipe. The current public archives are recorded as
+Compose/`leapviewctl`-only until FAI-798 ships the installable authoring CLI;
+this payload therefore must not be described as released merely because it is
+present in the checkout.
 
 The v1 payload requires Docker Compose 2.17.0 or newer because dependency
 updates must restart the network-namespace-sharing application service. The
@@ -19,6 +22,24 @@ and pinned PostgreSQL 18. PostgreSQL initializes the separate
 LeapView volume retain the checkout's database state, analytical files,
 managed objects, immutable source and serving artifacts, DuckDB state, and
 runtime artifacts.
+
+The future/exact released authoring-archive qualification boundary is documented
+in the [authoring package qualification guide](https://github.com/flidai/leapview/blob/main/deploy/local/qualification/README.md).
+Its static package and CLI identity checks produce release evidence only when
+run against the exact public archive after the authoring archive is available.
+The optional
+`init`/`dev` journey
+requires an explicitly selected local Docker socket and, where local device
+authentication is configured, a manual browser approval. Preview
+edit-to-visible measurements and production delivery qualification remain
+planned; this runtime payload does not claim those journeys are released.
+
+For the author-facing workflow and the migration from contributor `task dev`,
+see the [analytics development workflow](https://github.com/flidai/leapview/blob/main/docs/guides/cli/analytics-development.md).
+The repository-wide [Milestone 5 conformance evidence matrix](https://github.com/flidai/leapview/blob/main/adr/specifications/adr-0021-milestone-5-conformance-evidence.md)
+maps each ADR confirmation group and CLI contract scenario to its FAI owner,
+existing local test/harness path, and evidence boundary. The matrix does not
+claim released or external evidence.
 
 The application joins PostgreSQL's network namespace. PostgreSQL listens only
 on that namespace's `127.0.0.1`, so its development-only, TLS-disabled database

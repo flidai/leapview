@@ -95,7 +95,11 @@ func (controller *Controller) lifecycleRuntime(ctx context.Context) (lifecycleRu
 	if err != nil {
 		return lifecycleRuntime{}, fmt.Errorf("read retained local runtime environment: %w", err)
 	}
-	if err := validateRetainedEnvironment(state, manifest, values); err != nil {
+	profile, err := retainedDevelopmentProfileIdentity(values)
+	if err != nil {
+		return lifecycleRuntime{}, err
+	}
+	if err := validateRetainedEnvironment(state, manifest, values, profile, filepath.Join(root, developmentCredentialsFileName)); err != nil {
 		return lifecycleRuntime{}, err
 	}
 	return lifecycleRuntime{state: state, root: root, envPath: envPath}, nil
@@ -266,6 +270,69 @@ func (controller *Controller) Run(ctx context.Context, once bool) error {
 	}
 }
 
+// RunAction keeps one checkout attachment alive while action runs against the
+// exact local session established by Start. Heartbeat failure cancels the
+// action before the attachment is released.
+func (controller *Controller) RunAction(ctx context.Context, action func(context.Context, State) error) error {
+	if action == nil {
+		return errors.New("local development action is required")
+	}
+	if _, err := controller.Start(ctx); err != nil {
+		return err
+	}
+	attachment, state, err := controller.Attach(ctx)
+	if err != nil {
+		return err
+	}
+	actionContext, cancelAction := context.WithCancel(ctx)
+	defer cancelAction()
+	heartbeatErrors := make(chan error, 1)
+	actionResult := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(controller.attachmentHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-actionContext.Done():
+				return
+			case <-ticker.C:
+				if err := controller.Heartbeat(actionContext, attachment); err != nil {
+					heartbeatErrors <- err
+					return
+				}
+			}
+		}
+	}()
+	go func() { actionResult <- action(actionContext, state) }()
+	select {
+	case err = <-actionResult:
+	case heartbeatErr := <-heartbeatErrors:
+		cancelAction()
+		select {
+		case actionErr := <-actionResult:
+			err = errors.Join(heartbeatErr, actionErr)
+		case <-time.After(45 * time.Second):
+			// Preserve the live attachment when callback liveness is uncertain;
+			// bounded stale-session recovery may reap it later. Detaching here
+			// could stop resources still used by an uncooperative callback.
+			return errors.Join(heartbeatErr, errors.New("local development action did not stop after heartbeat failure"))
+		}
+	case <-ctx.Done():
+		cancelAction()
+		select {
+		case actionErr := <-actionResult:
+			err = errors.Join(ctx.Err(), actionErr)
+		case <-time.After(45 * time.Second):
+			return errors.Join(ctx.Err(), errors.New("local development action did not stop after cancellation"))
+		}
+	}
+	cancelAction()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancelShutdown()
+	_, detachErr := controller.Detach(shutdownCtx, attachment)
+	return errors.Join(err, detachErr)
+}
+
 func (controller *Controller) Status(ctx context.Context) (LifecycleStatus, error) {
 	runtime, err := controller.lifecycleRuntime(ctx)
 	if errors.Is(err, ErrRuntimeNotFound) {
@@ -280,6 +347,8 @@ func (controller *Controller) Status(ctx context.Context) (LifecycleStatus, erro
 			CheckoutRoot: runtime.state.Checkout.CanonicalRoot, CheckoutID: runtime.state.Checkout.ID,
 			StateRoot: runtime.root, ComposeProject: runtime.state.Runtime.ComposeProject,
 			OwnerID: runtime.state.Runtime.OwnerID, URL: runtime.state.Network.URL,
+			TargetName: runtime.state.Session.TargetName, TargetID: runtime.state.Authority.InstanceID,
+			ProjectID:   runtime.state.Authority.ProjectUID,
 			Attachments: []AttachmentStatus{},
 		}, nil
 	}
@@ -308,7 +377,9 @@ func (controller *Controller) Status(ctx context.Context) (LifecycleStatus, erro
 		CheckoutRoot: runtime.state.Checkout.CanonicalRoot, CheckoutID: runtime.state.Checkout.ID,
 		StateRoot: runtime.root, ComposeProject: runtime.state.Runtime.ComposeProject,
 		OwnerID: runtime.state.Runtime.OwnerID, URL: runtime.state.Network.URL,
-		Services: services, Attachments: attachmentStatuses(live),
+		TargetName: runtime.state.Session.TargetName, TargetID: runtime.state.Authority.InstanceID,
+		ProjectID: runtime.state.Authority.ProjectUID,
+		Services:  services, Attachments: attachmentStatuses(live),
 	}, nil
 }
 

@@ -41,8 +41,8 @@ export function pointOption(envelope: VisualizationEnvelope, context: RendererCo
       bottom: 16 + (spec.presentation.legend === 'bottom' && spec.presentation.legendTitle !== undefined ? 24 : 0),
       containLabel: true,
     },
-    xAxis: pointAxis(envelope, spec.x, pointAxisType(envelope, spec.x), context),
-    yAxis: axis(envelope, spec.y, 'value', context, 'primary_y'),
+    xAxis: pointAxis(envelope, spec.x, pointAxisType(envelope, spec.x), context, 'x'),
+    yAxis: pointAxis(envelope, spec.y, 'value', context, 'primary_y'),
     ...pointLegend(spec, context, categories),
     series,
     ...(categoricalRef && dataset ? { dataset: pointCategoryDatasets(envelope, dataset, categoricalRef, categories) } : {}),
@@ -116,6 +116,7 @@ function pointCategorySeries(
   const ref = spec.color!
   const datasetID = `dataset:point:${encodeURIComponent(category.key)}`
   const seriesLabels = pointLabelsForSeries(envelope, spec, labels, rowCount, category.rowIndexes)
+  const large = largePointMode(envelope, spec, markFill)
   return {
     id: `series:primary:point:${encodeURIComponent(category.key)}`,
     name: category.name,
@@ -130,8 +131,11 @@ function pointCategorySeries(
     ...pointMarkSymbols(markFill),
     ...seriesLabels,
     label: { ...seriesLabels.label, position: 'top' },
-    large: largePointMode(envelope, spec, markFill),
-    largeThreshold: spec.presentation.largeThreshold,
+    large,
+    // ECharts evaluates largeThreshold after the category transform. The
+    // authored threshold applies to the complete point frame, so lower the
+    // per-partition threshold when that frame is intentionally in large mode.
+    largeThreshold: large ? Math.min(spec.presentation.largeThreshold, category.rowIndexes.length) : spec.presentation.largeThreshold,
     progressiveThreshold: spec.presentation.largeThreshold,
     // Kept on the translation so cross-highlight and diagnostics can retain
     // the source row tuple after ECharts applies the category transform.
@@ -203,12 +207,26 @@ function pointLegend(spec: PointSpec, context: RendererContext, categories: read
 function largePointMode(envelope: VisualizationEnvelope, spec: PointSpec, markFill: PointMarkFill | undefined): boolean {
   const dataset = inlineDataset(envelope, spec.x.dataset)
   const rows = dataset?.rows ?? []
-  // ECharts large scatter mode does not preserve per-datum item styling.
-  if (markFill) return false
+  // ECharts large scatter mode does not preserve per-datum item styling,
+  // visualMap colors, variable symbol sizes, labels, or selection opacity.
+  if (
+    markFill
+    || spec.size
+    || spec.colorScale?.kind === 'quantitative'
+    || pointLabelsCanRender(spec, rows.length)
+    || envelope.selection.length > 0
+    || (envelope.highlights?.length ?? 0) > 0
+  ) return false
   return spec.presentation.brush.length === 0 && (
     spec.presentation.largeMode === 'always'
     || spec.presentation.largeMode === 'automatic' && rows.length >= spec.presentation.largeThreshold
   )
+}
+
+function pointLabelsCanRender(spec: PointSpec, rowCount: number): boolean {
+  if (!spec.label) return false
+  if (spec.presentation.labelPolicy.density !== 'automatic') return spec.presentation.labelPolicy.density !== 'hidden'
+  return rowCount <= 18 || spec.presentation.labelPolicy.priority.length > 0
 }
 
 function pointMarkSymbols(markFill: PointMarkFill | undefined): EChartsTranslation {
@@ -356,8 +374,13 @@ function pointAxis(
   ref: VisualizationFieldRef,
   type: 'value' | 'time',
   context: RendererContext,
+  axisID: 'x' | 'primary_y',
 ): EChartsTranslation {
-  const result = axis(envelope, ref, type, context, 'x')
+  const result = axis(envelope, ref, type, context, axisID)
+  // Scatter symbols have area, so a datum at the data extent is otherwise
+  // clipped by ECharts' grid clip rectangle. A small percentage gap reserves
+  // modest room for symbols at both ends of each axis.
+  if (result.type === 'value' || result.type === 'time') result.boundaryGap = ['5%', '5%']
   if (result.type !== 'time') return result
   result.splitNumber = 6
   result.axisLabel = {

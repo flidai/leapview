@@ -111,7 +111,12 @@ func candidateReview(deps candidateRouteDependencies, w http.ResponseWriter, r *
 }
 
 func candidateDashboard(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request, action func(dashboardmodule.HTTP)) {
-	handler, ok := resolveCandidateDashboardHTTP(deps, w, r)
+	candidateID := strings.TrimSpace(chi.URLParam(r, "candidate"))
+	candidateDashboardAtRoute(deps, w, r, candidateID, candidateRouteBase(candidateID), action)
+}
+
+func candidateDashboardAtRoute(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request, candidateID, routeBase string, action func(dashboardmodule.HTTP)) {
+	handler, ok := resolveCandidateDashboardHTTPAtRoute(deps, w, r, candidateID, routeBase)
 	if !ok {
 		return
 	}
@@ -163,11 +168,29 @@ func resolveCandidateDashboardHTTP(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (dashboardmodule.HTTP, bool) {
-	candidate, principalID, ok := resolveOwnedCandidate(deps, w, r)
+	candidateID := strings.TrimSpace(chi.URLParam(r, "candidate"))
+	return resolveCandidateDashboardHTTPAtRoute(deps, w, r, candidateID, candidateRouteBase(candidateID))
+}
+
+func resolveCandidateDashboardHTTPAtRoute(
+	deps candidateRouteDependencies,
+	w http.ResponseWriter,
+	r *http.Request,
+	candidateID, routeBase string,
+) (dashboardmodule.HTTP, bool) {
+	candidate, principalID, ok := resolveOwnedCandidateID(deps, w, r, candidateID)
 	if !ok {
 		return dashboardmodule.HTTP{}, false
 	}
 	if candidate.Status != deploymentmodule.CandidateReady {
+		if strings.TrimSpace(routeBase) != candidateRouteBase(candidate.ID) {
+			status := http.StatusServiceUnavailable
+			if candidate.Status == deploymentmodule.CandidateExpired || candidate.Status == deploymentmodule.CandidateCancelled {
+				status = http.StatusGone
+			}
+			http.Error(w, http.StatusText(status), status)
+			return dashboardmodule.HTTP{}, false
+		}
 		http.Redirect(w, r, "/candidates/"+url.PathEscape(candidate.ID), http.StatusSeeOther)
 		return dashboardmodule.HTTP{}, false
 	}
@@ -207,7 +230,7 @@ func resolveCandidateDashboardHTTP(
 		Metrics: metrics, CandidateID: candidate.ID, OwnerPrincipalID: principalID,
 		ProjectID: projectID, ArtifactDigest: candidate.ArtifactDigest,
 		AuthorizationFingerprint: view.AuthorizationFingerprint,
-		RouteBasePath:            candidateRouteBase(candidate.ID),
+		RouteBasePath:            routeBase,
 		Restrictions:             restrictions,
 		BootstrapAuthorized: candidatePreviewBootstrapAuthorized(
 			r.Context(), projectID, principalID, access.CapabilityProjectAdmin,
@@ -258,6 +281,10 @@ func resolveCandidateRuntimeWith(
 }
 
 func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) (deploymentmodule.Candidate, string, bool) {
+	return resolveOwnedCandidateID(deps, w, r, strings.TrimSpace(chi.URLParam(r, "candidate")))
+}
+
+func resolveOwnedCandidateID(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request, candidateID string) (deploymentmodule.Candidate, string, bool) {
 	if deps.access == nil || deps.deployments == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return deploymentmodule.Candidate{}, "", false
@@ -269,7 +296,7 @@ func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWrite
 	}
 	candidate, err := deps.deployments.ResolveOwnedCandidate(
 		r.Context(),
-		strings.TrimSpace(chi.URLParam(r, "candidate")),
+		strings.TrimSpace(candidateID),
 		principal.ID,
 	)
 	if err != nil {

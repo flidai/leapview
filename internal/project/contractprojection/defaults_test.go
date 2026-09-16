@@ -21,7 +21,7 @@ func TestModelCheckDefaultsAndSetOrder(t *testing.T) {
 	var previous []byte
 	for _, check := range []string{`{"id":"row_unique","type":"unique","fields":["b","a"]}`, `{"id":"row_unique","type":"unique","fields":["a","b"],"severity":"error"}`} {
 		var input contracts.Model
-		raw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"direct","source":"orders"},"entities":{"row":{"type":"primary","fields":["a","b"]}},"grain":{"entity":"row"},"fields":{"a":{"datatype":"Integer"},"b":{"datatype":"Integer"}},"checks":[` + check + `]}}`
+		raw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"direct","source":"orders"},"entities":[{"name":"row","type":"primary","fields":["a","b"]}],"grain":{"entity":"row"},"fields":[{"name":"a","datatype":"Integer"},{"name":"b","datatype":"Integer"}],"checks":[` + check + `]}}`
 		if err := json.Unmarshal([]byte(raw), &input); err != nil {
 			t.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func TestModelCheckDefaultsAndSetOrder(t *testing.T) {
 		t.Fatal("duplicate unique-check fields silently collapsed")
 	}
 	var duplicateInput contracts.Model
-	duplicateRaw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"direct","source":"orders"},"entities":{"row":{"type":"primary","fields":["a"]}},"grain":{"entity":"row"},"fields":{"a":{"datatype":"Integer"}},"checks":[{"id":"same_check","type":"unique","fields":["a"]},{"id":"same_check","type":"non_null","field":"a"}]}}`
+	duplicateRaw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders_model"},"spec":{"definition":{"type":"direct","source":"orders"},"entities":[{"name":"row","type":"primary","fields":["a"]}],"grain":{"entity":"row"},"fields":[{"name":"a","datatype":"Integer"}],"checks":[{"id":"same_check","type":"unique","fields":["a"]},{"id":"same_check","type":"non_null","field":"a"}]}}`
 	if err := json.Unmarshal([]byte(duplicateRaw), &duplicateInput); err != nil {
 		t.Fatal(err)
 	}

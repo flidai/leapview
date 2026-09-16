@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
@@ -38,14 +39,16 @@ import (
 // storage: materialization is one immutable object write and hydration is
 // one exact object read.
 type nativeCandidateArtifactPhases struct {
-	reader               project.CandidateSourceObjectReader
-	states               ServingStateReader
-	provenance           release.ServingStateProvenanceRepository
-	artifacts            platformobjectstore.ImmutableStore
-	storageDomain        string
-	environment          servingstate.Environment
-	pins                 ManagedDataPins
-	extensionPreparation extension.Preparation
+	reader                project.CandidateSourceObjectReader
+	states                ServingStateReader
+	provenance            release.ServingStateProvenanceRepository
+	artifacts             platformobjectstore.ImmutableStore
+	storageDomain         string
+	environment           servingstate.Environment
+	targetID              string
+	authorizationPolicies access.AuthorizationPolicyReader
+	pins                  ManagedDataPins
+	extensionPreparation  extension.Preparation
 }
 
 var _ candidateArtifactPhases = (*nativeCandidateArtifactPhases)(nil)
@@ -134,6 +137,25 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiledProject.Graph(), policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("resolve target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	result.AuthorizationPolicyRevision = targetPolicy.revision
+	result.AuthorizationPolicyDigest = targetPolicy.digest
+	result.AuthorizationFingerprint = authorizationFingerprint
+	result.Generation.AccessPolicyJSON = targetPolicy.canonical
+	result.Generation.Restrictions = candidateRestrictions(targetPolicy.snapshot)
 	if err := retainNativeServingDocuments(&result.Generation, compiledProject); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -389,10 +411,29 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 		}
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiledProject.Graph(), policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("revalidate target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if targetPolicy.revision != inspected.AuthorizationPolicyRevision || targetPolicy.digest != inspected.AuthorizationPolicyDigest ||
+		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
+	}
+	_, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	accessPolicyJSON := targetPolicy.canonical
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -520,10 +561,29 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if compiled.GraphDigest != inspected.Compiler.Graph.Digest() || !sameNativeJSON(compiled.Plan, inspected.Compiler.Plan) || !sameNativeJSON(compiled.Manifest, inspected.Compiler.Manifest) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving artifact compiler evidence mismatch"))
 	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	targetPolicy, err := service.resolveTargetAuthorizationPolicy(
+		ctx, request.Scope.ProjectID, request.Scope.Environment, 0, "", compiled.Graph, policyIdentity,
+	)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(fmt.Errorf("revalidate target authorization policy: %w", err))
+	}
+	authorizationFingerprint, err := targetPolicy.snapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if targetPolicy.revision != inspected.AuthorizationPolicyRevision || targetPolicy.digest != inspected.AuthorizationPolicyDigest ||
+		targetPolicy.canonical != inspected.Generation.AccessPolicyJSON || authorizationFingerprint != inspected.AuthorizationFingerprint {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("target authorization policy changed after candidate inspection"))
+	}
+	_, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	accessPolicyJSON := targetPolicy.canonical
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -563,166 +623,6 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	return result, nil
-}
-
-// RecoverCandidateArtifacts reloads one immutable serving bundle for native
-// physical-build recovery. It intentionally has no source reader, serving
-// state writer, provenance reader, or materialization dependency. Runtime
-// extensions are re-admitted from requirements derived from that exact bundle
-// so a restarted process retains the capability evidence used by result
-// identity derivation.
-func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRecoveryRequest) (release.CandidateArtifactSet, error) {
-	if service == nil || service.artifacts == nil || service.storageDomain == "" {
-		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
-	}
-	if !validNativeStorageDomain(service.storageDomain) {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native candidate artifact storage security domain is invalid"))
-	}
-	if err := validateNativeRecoveryRequest(request, service.environment); err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-
-	digest := request.Artifact.ServingArtifactDigest
-	key := nativeServingArtifactKey(digest)
-	object, err := service.artifacts.Open(ctx, key)
-	if err != nil {
-		return release.CandidateArtifactSet{}, nativeCandidateObjectError(err)
-	}
-	if object.Body == nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact object body is nil"))
-	}
-	defer object.Body.Close()
-	if object.Info.SizeBytes <= 0 || object.Info.SizeBytes > projectbundle.MaxBundleBytes {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact object size is invalid"))
-	}
-	expectedMetadata := platformobjectstore.ObjectMetadata{
-		StorageSecurityDomain: service.storageDomain,
-		Digest:                digest,
-		SizeBytes:             object.Info.SizeBytes,
-		ContentType:           nativeServingArtifactContentType,
-		MetadataDigest:        nativeServingArtifactMetadataDigest(),
-	}
-	if err := validateNativeServingArtifactInfo(object.Info, key, expectedMetadata); err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-
-	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	if validation.Digest != digest || validation.BundleDigest != compiled.BundleDigest {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact content identity mismatch"))
-	}
-	if err := validateNativeBundleManifestJSON(validation.ManifestJSON); err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-
-	canonicalProject, err := projectartifact.NewSourceBundle(compiled.Graph, compiled.Manifest)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	if canonicalProject.Digest() != compiled.BundleDigest {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered source bundle identity mismatch"))
-	}
-	var repacked bytes.Buffer
-	repackedManifest, repackedDigest, err := projectbundle.PackCompiledProject(canonicalProject, compiled.Plan, &repacked)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	repackedManifestJSON, err := nativeBundleManifestJSON(repackedManifest)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	if repackedDigest != digest || int64(repacked.Len()) != object.Info.SizeBytes || repackedManifestJSON != validation.ManifestJSON {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact canonical bytes do not match bound object"))
-	}
-
-	activations, err := canonicalProject.ConnectionActivations()
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	extensionRequirements, err := requiredExtensionNames(activations, canonicalProject.Manifest())
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	extensions, err := (&candidateArtifactInspector{extensionPreparation: service.extensionPreparation}).collectExtensionEvidence(ctx, extensionRequirements)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
-	}
-	requirements, managedConnections, authored, err := candidateConnectionRequirements(activations)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	managedPins, err := nativeRecoveryManagedDataPins(request.ManagedDataPins)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	if len(managedConnections) != len(managedPins) {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact managed-data pin set differs from compiled activations"))
-	}
-	for _, connectionID := range managedConnections {
-		if _, ok := managedPins[connectionID]; !ok {
-			return release.CandidateArtifactSet{}, candidateArtifactInvalid(fmt.Errorf("native recovered serving artifact managed-data pin %q is missing", connectionID))
-		}
-	}
-
-	// Keep restrictions bound to the concrete serving identity used for this
-	// recovery. The fingerprint itself is governance evidence and must remain
-	// stable when the same artifact is reattached to another generation.
-	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	policyIdentity, err := candidatePolicyIdentity(request.ServingIdentity.ProjectID, request.ServingIdentity.Environment)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, canonicalProject.Graph(), projectmanifest.AccessPolicy{})
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	authorizationFingerprint, err := policySnapshot.Digest()
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	dataRevision, err := release.CandidateSourcesDataRevision(request.SourceDigest, releaseManagedDataPins(managedPins))
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(canonicalProject)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	relationContext, err := candidateRelationContexts(managedPins, canonicalProject, candidateActivationBindings(activations))
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-	relationExecution, err := canonicalProject.RelationExecutionDigestsByContext(relationContext)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
-
-	return release.CandidateArtifactSet{
-		Artifact: release.ProjectArtifactProvenance{
-			SourceDigest: request.SourceDigest, ProjectDigest: canonicalProject.Digest(), ContentDigest: digest,
-			CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: canonicalProject.Version(),
-		},
-		Extensions:               extensions,
-		AuthorizationFingerprint: authorizationFingerprint,
-		Generation: release.CandidateGenerationArtifact{
-			Identity: request.ServingIdentity, ServingArtifactID: request.Artifact.ServingArtifactID,
-			ArtifactDigest: digest, BundleManifestJSON: validation.ManifestJSON,
-			NativeArtifact:   nativeArtifactObjectEvidence(object.Info),
-			AccessPolicyJSON: accessPolicyJSON, DashboardPublicationsJSON: publicationsJSON, DashboardAppearancesJSON: appearancesJSON,
-			DataRevision: dataRevision, DataMode: release.GenerationDataRefreshSources,
-			Deterministic: compiled.Plan.Deterministic, ManagedDataPins: releaseManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored,
-			Restrictions: candidateRestrictions(authorizationSnapshot),
-		},
-		Compiler: release.CandidateCompilerEvidence{
-			Graph: canonicalProject.Graph(), Manifest: canonicalProject.Manifest(), Plan: compiled.Plan, Artifact: canonicalProject,
-			RelationExecution: relationExecution,
-		},
-	}, nil
 }
 
 func validateNativeRecoveryRequest(request release.CandidateArtifactRecoveryRequest, environment servingstate.Environment) error {
@@ -805,7 +705,11 @@ func retainNativeServingDocuments(generation *release.CandidateGenerationArtifac
 	if err != nil {
 		return err
 	}
-	generation.AccessPolicyJSON = accessPolicyJSON
+	if generation.AccessPolicyJSON == "" {
+		generation.AccessPolicyJSON = accessPolicyJSON
+	} else if err := validateNativeServingDocument(generation.AccessPolicyJSON, "access policy"); err != nil {
+		return err
+	}
 	generation.DashboardPublicationsJSON = publicationsJSON
 	generation.DashboardAppearancesJSON = appearancesJSON
 	return nil

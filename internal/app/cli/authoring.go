@@ -5,17 +5,23 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
+	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
+	"github.com/flidai/leapview/internal/app/cli/localruntime"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
+	developmentsession "github.com/flidai/leapview/internal/project/developmentsession"
+	developmenthttpstore "github.com/flidai/leapview/internal/project/developmentsession/httpstore"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
@@ -32,6 +38,116 @@ type projectDevRemoteFactory struct {
 	client cliapi.Client
 }
 
+type localDevelopmentSession struct {
+	profile localDevelopmentProfile
+	state   localruntime.State
+}
+
+type localDevelopmentSessionContextKey struct{}
+
+type profileApplyingDevRemote struct {
+	remote projectdevloop.Remote
+	client *analyticsgen.GenClient
+	local  localDevelopmentSession
+}
+
+func (remote *profileApplyingDevRemote) Synchronize(ctx context.Context, request projectdevloop.SyncRequest) (projectdevloop.Candidate, error) {
+	if remote == nil || remote.remote == nil || remote.client == nil {
+		return projectdevloop.Candidate{}, errors.New("development profile application transport is unavailable")
+	}
+	profile := remote.local.profile
+	if request.Snapshot.GraphDigest == "" || request.Snapshot.GraphDigest != profile.GraphDigest {
+		return projectdevloop.Candidate{}, errors.New("compiled graph differs from the local runtime profile identity; run `leapview dev reset`, review the profile, and start again")
+	}
+	projectID := request.Snapshot.ProjectID.String()
+	targetID := remote.local.state.Authority.InstanceID
+	if targetID == "" {
+		return projectdevloop.Candidate{}, errors.New("local runtime target identity is unavailable")
+	}
+	mode := analyticsgen.DevelopmentProfileApplicationModeNew
+	applicationID := developmentProfileApplicationID(remote.local)
+	current, err := remote.client.GetDevelopmentProfileApplication(ctx, analyticsgen.GenGetDevelopmentProfileApplicationClientRequest{Project: projectID, Target: targetID})
+	if err == nil {
+		if current.Body.GraphDigest != profile.GraphDigest || current.Body.ProfileDigest != profile.Profile.ProfileDigest {
+			return projectdevloop.Candidate{}, errors.New("retained development profile differs from this runtime; run `leapview dev reset`, review the profile, and start again")
+		}
+		applicationID = current.Body.ApplicationId
+		mode = analyticsgen.DevelopmentProfileApplicationModeResume
+	} else if !isDevelopmentProfileNotFound(err) {
+		return projectdevloop.Candidate{}, fmt.Errorf("read retained development profile application: %w", err)
+	}
+	body := analyticsgen.DevelopmentProfileApplicationRequest{
+		ApplicationId: applicationID, Mode: mode, SourceDigest: request.Snapshot.Digest,
+		GraphDigest: profile.GraphDigest, ProfileDigest: profile.Profile.ProfileDigest,
+		Connections: developmentProfileConnectionIntents(projectID, remote.local.state.Authority.Environment, profile),
+	}
+	response, err := remote.client.ApplyDevelopmentProfile(ctx, analyticsgen.GenApplyDevelopmentProfileClientRequest{
+		Project: projectID, Target: targetID,
+		Headers: analyticsgen.GenApplyDevelopmentProfileClientHeaders{IdempotencyKey: developmentProfileIdempotencyKey(applicationID, mode)},
+		Body:    body,
+	})
+	if err != nil {
+		return projectdevloop.Candidate{}, fmt.Errorf("apply development profile: %w", err)
+	}
+	if response.Body.Status != analyticsgen.DevelopmentProfileApplicationStatusApplied || response.Body.GraphDigest != profile.GraphDigest || response.Body.ProfileDigest != profile.Profile.ProfileDigest {
+		return projectdevloop.Candidate{}, errors.New("local runtime did not acknowledge the exact applied development profile")
+	}
+	return remote.remote.Synchronize(ctx, request)
+}
+
+func developmentProfileApplicationID(local localDevelopmentSession) string {
+	identity := local.state.Checkout.ID + "\x00" + local.state.Runtime.OwnerID + "\x00" + local.profile.Profile.ProfileDigest
+	return "profile_" + uuid.NewSHA1(uuid.NameSpaceURL, []byte(identity)).String()
+}
+
+func developmentProfileIdempotencyKey(applicationID string, mode analyticsgen.DevelopmentProfileApplicationMode) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview:development-profile:"+applicationID+"\x00"+string(mode))).String()
+}
+
+func isDevelopmentProfileNotFound(err error) bool {
+	var problem *apigenclient.ProblemError
+	return errors.As(err, &problem) && problem.Response.StatusCode == http.StatusNotFound
+}
+
+func developmentProfileConnectionIntents(projectID, environment string, profile localDevelopmentProfile) []analyticsgen.DevelopmentProfileConnectionIntent {
+	connections := make([]analyticsgen.DevelopmentProfileConnectionIntent, len(profile.Profile.Connections))
+	for index, connection := range profile.Profile.Connections {
+		endpoint := analyticsgen.TargetConnectionEndpoint{
+			Host: optionalAuthoringString(connection.Endpoint.Host), Database: optionalAuthoringString(connection.Endpoint.Database),
+			ObjectScope: optionalAuthoringString(connection.Endpoint.ObjectScope), SourceIdentity: optionalAuthoringString(connection.Endpoint.SourceIdentity),
+			TlsMode: optionalAuthoringString(connection.Endpoint.TLSMode),
+		}
+		if connection.Endpoint.Port != 0 {
+			port := int32(connection.Endpoint.Port)
+			endpoint.Port = &port
+		}
+		if len(connection.Endpoint.Options) > 0 {
+			options := make(map[string]string, len(connection.Endpoint.Options))
+			for key, value := range connection.Endpoint.Options {
+				options[key] = value
+			}
+			endpoint.Options = &options
+		}
+		intent := analyticsgen.DevelopmentProfileConnectionIntent{
+			LogicalConnection: connection.ID.String(), ConnectorKind: connection.ConnectorKind,
+			AuthenticationMode: analyticsgen.TargetConnectionAuthenticationModeNone, Endpoint: endpoint,
+		}
+		if variable := connection.Credentials.EnvironmentVariable; variable != "" {
+			intent.AuthenticationMode = analyticsgen.TargetConnectionAuthenticationModeExternalBundle
+			intent.CredentialReference = &analyticsgen.TargetConnectionCredentialReference{ProjectId: projectID, Environment: environment, SecretPath: "/", SecretKey: variable}
+		}
+		connections[index] = intent
+	}
+	return connections
+}
+
+func optionalAuthoringString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
 func devCommand(ctx context.Context) *cobra.Command {
 	client := capabilityAPIClient{
 		httpClient:        authoringRefreshingHTTPClient(http.DefaultClient),
@@ -46,12 +162,12 @@ func devCommand(ctx context.Context) *cobra.Command {
 		projectDeliveryPlanOperations{client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: projectcli.NewCandidateCheckpointStore(candidateCheckpointPath())},
 	)
 	command := dispatchLocalDevCommand(ctx, remote, localdocker.Resolve, runLocalDevRuntime)
-	addLocalDevLifecycleCommands(ctx, command, localdocker.Resolve, newLocalRuntimeController)
+	addLocalDevLifecycleCommands(ctx, command, localdocker.Resolve, newLocalRuntimeController, readApplicationDevelopmentProfileStatus)
 	return command
 }
 
 type localDockerResolver func(context.Context, localdocker.Options) (localdocker.Endpoint, error)
-type localDevRuntime func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error
+type localDevRuntime func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error
 
 // dispatchLocalDevCommand makes explicit --target the only route to the
 // existing remote workflow. Bare dev is decided here, before target profiles,
@@ -63,9 +179,13 @@ func dispatchLocalDevCommand(
 	start localDevRuntime,
 ) *cobra.Command {
 	remoteRun := command.RunE
-	var dockerContext, dockerHost string
+	var dockerContext, dockerHost, profileFile, profileName string
+	var allowUpstreamRead bool
 	command.Flags().StringVar(&dockerContext, "docker-context", "", "explicit local Docker context")
 	command.Flags().StringVar(&dockerHost, "docker-host", "", "explicit local Docker Unix socket")
+	command.Flags().StringVar(&profileFile, "profile-file", "", "explicit local development profile file")
+	command.Flags().StringVar(&profileName, "profile", "", "local development profile name")
+	command.Flags().BoolVar(&allowUpstreamRead, "allow-upstream-read", false, "consent to profile connection tests and approved upstream reads")
 	command.RunE = func(command *cobra.Command, args []string) error {
 		if command.Flags().Changed("target") {
 			target, err := command.Flags().GetString("target")
@@ -77,6 +197,9 @@ func dispatchLocalDevCommand(
 			}
 			if command.Flags().Changed("docker-context") || command.Flags().Changed("docker-host") {
 				return fmt.Errorf("Docker endpoint flags cannot be combined with remote --target")
+			}
+			if command.Flags().Changed("profile-file") || command.Flags().Changed("profile") || command.Flags().Changed("allow-upstream-read") {
+				return fmt.Errorf("local profile flags cannot be combined with remote --target")
 			}
 			return remoteRun(command, args)
 		}
@@ -100,7 +223,7 @@ func dispatchLocalDevCommand(
 		if err != nil {
 			return err
 		}
-		return start(ctx, endpoint, command, args)
+		return start(ctx, endpoint, command, args, remoteRun)
 	}
 	return command
 }
@@ -109,17 +232,43 @@ func runLocalDevRuntime(
 	ctx context.Context,
 	endpoint localdocker.Endpoint,
 	command *cobra.Command,
-	_ []string,
+	args []string,
+	remoteRun func(*cobra.Command, []string) error,
 ) error {
-	controller, err := newLocalRuntimeController(endpoint, command)
+	profile, err := prepareLocalDevelopmentProfile(command, args)
 	if err != nil {
 		return err
 	}
-	once, err := command.Flags().GetBool("once")
+	if err := reportLocalDevelopmentProfile(command, profile); err != nil {
+		return err
+	}
+	allowUpstreamRead, err := command.Flags().GetBool("allow-upstream-read")
 	if err != nil {
 		return err
 	}
-	return runAttachedLocalRuntime(ctx, controller, once)
+	if len(profile.Profile.Connections) > 0 && !allowUpstreamRead {
+		return errors.New("development profile connection testing can contact upstream systems; review the summary and pass --allow-upstream-read to consent")
+	}
+	controller, err := newLocalRuntimeControllerForProfile(endpoint, command, profile.Credentials, localruntime.DevelopmentProfileIdentity{
+		Name: profile.Profile.ProfileName, GraphDigest: profile.GraphDigest, ProfileDigest: profile.Profile.ProfileDigest,
+	})
+	if err != nil {
+		return err
+	}
+	if remoteRun == nil {
+		return fmt.Errorf("local development synchronization is not configured")
+	}
+	return controller.RunAction(ctx, func(actionContext context.Context, state localruntime.State) error {
+		if strings.TrimSpace(state.Session.TargetName) == "" {
+			return fmt.Errorf("local runtime did not establish an authoring target")
+		}
+		if err := command.Flags().Set("target", state.Session.TargetName); err != nil {
+			return err
+		}
+		actionContext = context.WithValue(actionContext, localDevelopmentSessionContextKey{}, localDevelopmentSession{profile: profile, state: state})
+		command.SetContext(actionContext)
+		return remoteRun(command, args)
+	})
 }
 
 func (factory projectDevRemoteFactory) Remote(
@@ -138,10 +287,61 @@ func (factory projectDevRemoteFactory) Remote(
 	nativeTransport.principalClient = accessgen.NewGenClient(generic)
 	nativeTransport.canonicalOrigin = credentials.CanonicalOrigin
 	transport := newProjectDevSynchronizationTransport(nativeTransport)
-	return projectdevloop.NewTransportRemote(
+	remote, err := projectdevloop.NewTransportRemote(
 		transport,
 		uploadConcurrency,
 	)
+	if err != nil {
+		return nil, err
+	}
+	local, localDevelopment := ctx.Value(localDevelopmentSessionContextKey{}).(localDevelopmentSession)
+	if !localDevelopment {
+		return remote, nil
+	}
+	return &profileApplyingDevRemote{remote: remote, client: analyticsgen.NewGenClient(generic), local: local}, nil
+}
+
+// DevelopmentSession supplies the durable local pointer only for the local
+// runtime path. The canonical checkout ID is also the worktree identity; the
+// local runtime owner is used solely as the authenticated owner component.
+func (factory projectDevRemoteFactory) DevelopmentSession(ctx context.Context, credentials cliapi.Credentials) (*projectcli.DevSessionBinding, error) {
+	local, ok := ctx.Value(localDevelopmentSessionContextKey{}).(localDevelopmentSession)
+	if !ok {
+		return nil, nil
+	}
+	if factory.client == nil {
+		return nil, errors.New("development session client is unavailable")
+	}
+	transport, err := factory.client.Transport(ctx, credentials)
+	if err != nil {
+		return nil, err
+	}
+	principalResponse, err := accessgen.NewGenClient(transport).GetCurrentPrincipal(ctx, accessgen.GenGetCurrentPrincipalClientRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("resolve development session owner: %w", err)
+	}
+	ownerID := strings.TrimSpace(principalResponse.Body.Id)
+	checkoutID := strings.TrimSpace(local.state.Checkout.ID)
+	targetID := strings.TrimSpace(local.state.Authority.InstanceID)
+	environment := strings.TrimSpace(local.state.Authority.Environment)
+	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(credentials.ProjectID))
+	if err != nil || ownerID == "" || checkoutID == "" || targetID == "" || environment == "" {
+		return nil, fmt.Errorf("local development session identity is incomplete")
+	}
+	key := developmentsession.Key{OwnerID: ownerID, CheckoutID: checkoutID, WorktreeID: checkoutID, ProjectID: projectID, TargetID: targetID, Environment: environment}
+	httpClient := http.DefaultClient
+	if provider, ok := factory.client.(interface{ HTTPClient() *http.Client }); ok && provider.HTTPClient() != nil {
+		httpClient = provider.HTTPClient()
+	}
+	origin := strings.TrimRight(strings.TrimSpace(credentials.CanonicalOrigin), "/")
+	if origin == "" {
+		origin = strings.TrimRight(strings.TrimSpace(credentials.Target), "/")
+	}
+	store, err := developmenthttpstore.New(httpClient, origin, credentials.Token, key)
+	if err != nil {
+		return nil, err
+	}
+	return &projectcli.DevSessionBinding{Store: store, Key: key}, nil
 }
 
 func newProjectDevSynchronizationTransport(native *candidateSynchronizationTransport) projectdevloop.SynchronizationTransport {

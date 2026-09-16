@@ -17,20 +17,20 @@ spec:
         TRY_CAST(revenue AS DOUBLE) AS revenue
       FROM source."warehouse.fct_orders"
   entities:
-    order:
+    - name: order
       type: primary
       fields: [order_id]
-    customer:
+    - name: customer
       type: foreign
       fields: [customer_id]
   grain:
     entity: order
   fields:
-    order_id: {datatype: String, description: Stable warehouse order identifier.}
-    customer_id: {datatype: String, description: Customer attached to the order.}
-    order_date: {datatype: Date, description: Order calendar date.}
-    order_status: {datatype: String, description: dbt-normalized order state.}
-    revenue: {datatype: Float, description: dbt-aggregated order revenue.}
+    - {name: order_id, datatype: String, description: Stable warehouse order identifier.}
+    - {name: customer_id, datatype: String, description: Customer attached to the order.}
+    - {name: order_date, datatype: Date, description: Order calendar date.}
+    - {name: order_status, datatype: String, description: dbt-normalized order state.}
+    - {name: revenue, datatype: Float, description: dbt-aggregated order revenue.}
   checks:
     - {id: orders_order_id_not_null, type: non_null, field: order_id, severity: error}
     - {id: orders_customer_id_not_null, type: non_null, field: customer_id, severity: error}

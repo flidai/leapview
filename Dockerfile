@@ -87,6 +87,7 @@ COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/
 # Every PostgreSQL sqlc package is generated in sourcegen and excluded from the
 # build context, so copy each package into the build stage explicitly.
 COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
+COPY --from=sourcegen /src/internal/project/developmentsession/postgres/internal/db ./internal/project/developmentsession/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/postgres/internal/db ./internal/access/postgres/internal/db
 COPY --from=sourcegen /src/internal/admin/product/postgres/internal/db ./internal/admin/product/postgres/internal/db
 COPY --from=sourcegen /src/internal/agent/postgres/internal/db ./internal/agent/postgres/internal/db

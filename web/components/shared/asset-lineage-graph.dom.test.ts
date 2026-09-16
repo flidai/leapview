@@ -104,6 +104,28 @@ test('asset lineage graph carries React Flow layout styles inside shadow hosts',
   }
 })
 
+test('asset lineage selection clears from the background and Escape', async () => {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    const graph = page.locator('lineage-test-host').locator('lv-asset-lineage-graph')
+    await graph.locator('.react-flow__node').first().waitFor()
+    expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(1)
+    expect(await graph.locator('.asset-lineage-clear-button').count()).toBe(0)
+
+    await graph.locator('.react-flow__renderer').dispatchEvent('click')
+    expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(0)
+
+    await graph.locator('.react-flow__node').filter({ hasText: 'orders' }).click()
+    expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(1)
+    await graph.locator('.asset-lineage-node-selected').press('Escape')
+    expect(await graph.locator('.asset-lineage-node-selected').count()).toBe(0)
+
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   return `
     <!doctype html>

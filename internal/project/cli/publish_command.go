@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -16,6 +17,9 @@ type PublishOptions struct {
 	Checkpoint  CandidateCheckpoint
 	CandidateID string
 	Format      string
+	// IdempotencyKey is supplied by a retained deployment operation. Empty
+	// preserves the standalone publish command's fresh-attempt behavior.
+	IdempotencyKey string
 }
 
 type PublishResult struct {
@@ -29,10 +33,103 @@ type PublishResult struct {
 	TargetRevision int64  `json:"targetRevision,omitempty"`
 }
 
+// DeploymentStatusError lets the application adapter return a structured
+// non-success outcome (pending approval, failure, or indeterminate) while
+// retaining the selected operation and immutable identities in output.
+type DeploymentStatusError struct {
+	Result DeploymentOperationResult
+}
+
+func (e *DeploymentStatusError) Error() string {
+	if e == nil {
+		return "deployment did not commit activation"
+	}
+	if e.Result.NextAction != "" {
+		return fmt.Sprintf("deployment operation %s: %s (%s)", e.Result.Handle, e.Result.Outcome, e.Result.NextAction)
+	}
+	return fmt.Sprintf("deployment operation %s: %s", e.Result.Handle, e.Result.Outcome)
+}
+
+// DeploymentSelectionError is a structured non-mutating failure for missing,
+// ambiguous, or target-mismatched operation selection.
+type DeploymentSelectionError struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Code          string `json:"code"`
+	Handle        string `json:"handle,omitempty"`
+	Detail        string `json:"detail"`
+}
+
+func (e *DeploymentSelectionError) Error() string {
+	if e == nil {
+		return "deployment operation selection failed"
+	}
+	return fmt.Sprintf("deployment operation selection failed (%s): %s", e.Code, e.Detail)
+}
+
+func WriteDeploymentSelectionError(out io.Writer, format, code, handle, detail string) error {
+	selection := DeploymentSelectionError{SchemaVersion: 1, Code: code, Handle: strings.TrimSpace(handle), Detail: strings.TrimSpace(detail)}
+	if format == "json" {
+		return json.NewEncoder(out).Encode(selection)
+	}
+	fmt.Fprintf(out, "selection-error %s %s\n", selection.Code, selection.Detail)
+	return nil
+}
+
+// DeploymentOperationResult is the stable structured deployment result. An
+// active result is successful only after target publication evidence is
+// committed; all other outcomes are returned as non-zero command results.
+type DeploymentOperationResult struct {
+	SchemaVersion             int                        `json:"schemaVersion"`
+	Handle                    string                     `json:"handle"`
+	CreatedAt                 string                     `json:"createdAt"`
+	TargetOrigin              string                     `json:"targetOrigin"`
+	TargetID                  string                     `json:"targetId,omitempty"`
+	ProjectID                 string                     `json:"projectId"`
+	Environment               string                     `json:"environment"`
+	SourceRevision            string                     `json:"sourceRevision,omitempty"`
+	SourceRepository          string                     `json:"sourceRepository,omitempty"`
+	SourceRef                 string                     `json:"sourceRef,omitempty"`
+	SourceChangeID            string                     `json:"sourceChangeId,omitempty"`
+	SourceDigest              string                     `json:"sourceDigest,omitempty"`
+	SourceAttestationDigest   string                     `json:"sourceAttestationDigest,omitempty"`
+	ProvenanceDigest          string                     `json:"provenanceDigest,omitempty"`
+	PlanID                    string                     `json:"planId,omitempty"`
+	PlanDigest                string                     `json:"planDigest,omitempty"`
+	PlanStatus                string                     `json:"planStatus,omitempty"`
+	PlanExpiresAt             string                     `json:"planExpiresAt,omitempty"`
+	PlanEvidence              DeliveryPlanEvidenceResult `json:"planEvidence,omitempty"`
+	GovernanceDigest          string                     `json:"governanceDigest,omitempty"`
+	BaseGenerationID          string                     `json:"baseGenerationId,omitempty"`
+	BaseTargetRevision        int64                      `json:"baseTargetRevision,omitempty"`
+	ExecutionDigest           string                     `json:"executionDigest,omitempty"`
+	EvidenceDigest            string                     `json:"evidenceDigest,omitempty"`
+	BuildID                   string                     `json:"buildId,omitempty"`
+	BuildRevision             int64                      `json:"buildRevision,omitempty"`
+	CandidateID               string                     `json:"candidateId,omitempty"`
+	CandidateRevision         int64                      `json:"candidateRevision,omitempty"`
+	SealID                    string                     `json:"sealId,omitempty"`
+	PublicationID             string                     `json:"publicationId,omitempty"`
+	GenerationID              string                     `json:"generationId,omitempty"`
+	PublicationTargetRevision int64                      `json:"publicationTargetRevision,omitempty"`
+	Outcome                   DeploymentOperationOutcome `json:"outcome"`
+	PublicationStatus         string                     `json:"publicationStatus,omitempty"`
+	FailureCode               string                     `json:"failureCode,omitempty"`
+	FailureDetail             string                     `json:"failureDetail,omitempty"`
+	StatusURL                 string                     `json:"statusUrl,omitempty"`
+	NextAction                string                     `json:"nextAction,omitempty"`
+}
+
 // PublishOperations is the Project-owned port for requesting policy-governed
 // publication of an exact candidate.
 type PublishOperations interface {
 	Publish(context.Context, PublishOptions, io.Writer) error
+}
+
+// PublishResultOperations is an optional richer adapter used by deploy. The
+// legacy PublishOperations port remains available for callers that only need
+// the canonical command output.
+type PublishResultOperations interface {
+	PublishResult(context.Context, PublishOptions) (PublishResult, error)
 }
 
 // PublishCommand publishes one exact sealed candidate returned by build. The

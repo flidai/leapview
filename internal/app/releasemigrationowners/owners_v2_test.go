@@ -72,6 +72,36 @@ func TestConcreteOwnersResolveAuthoritativeCapabilities(t *testing.T) {
 	}
 }
 
+func TestAuthorityV2ComposesOnlyConcreteOwnerEvidence(t *testing.T) {
+	fixture := newOwnerFixture(t)
+	authority, err := NewAuthorityV2(fixture.releases, fixture.targets, fixture.capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := authority.Resolve(t.Context(), fixture.selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := authority.Resolve(t.Context(), fixture.selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDigest, err := first.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := second.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDigest != secondDigest {
+		t.Fatalf("authoritative v2 digest changed: %s != %s", firstDigest, secondDigest)
+	}
+	if _, err := NewAuthorityV2(nil, fixture.targets, fixture.capabilities); !errors.Is(err, ErrOwnerUnavailable) {
+		t.Fatalf("nil artifact authority error = %v", err)
+	}
+}
+
 func TestConcreteOwnersCannotReuseCapabilitiesForAnotherArtifactPair(t *testing.T) {
 	fixture := newOwnerFixture(t)
 	secondPredecessor := admission("second-predecessor", '8', '3')

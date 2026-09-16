@@ -116,8 +116,7 @@ model DashboardSpec {
   semanticModel: DashboardResourceID;
   layout?: DashboardLayoutDefaults;
   filters: DashboardFilter[];
-  @apigen.propertyNames(DashboardObjectIdentifier)
-  visuals: Record<DashboardVisual>;
+  visuals: NamedDashboardVisual[];
   pages: DashboardPage[];
   includes?: DashboardIncludes;
 }
@@ -1162,6 +1161,11 @@ model DashboardVisual {
   dataBudget?: DashboardDataBudget;
   calculations?: DashboardCalculation[];
   interactions?: DashboardInteraction[];
+}
+
+/** A visual declared in a Dashboard document carries its list identity. */
+model NamedDashboardVisual extends DashboardVisual {
+  id: DashboardObjectIdentifier;
 }
 
 enum DashboardInteractionType {

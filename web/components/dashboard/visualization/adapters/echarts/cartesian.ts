@@ -37,16 +37,22 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const primaryY = comboAxisField(spec, 'primary') ?? spec.y[0]!
   const xRef = horizontal ? primaryY : spec.x
   const xType = axisType(envelope, xRef, horizontal ? 'value' : 'category')
-  const xAxis = axis(envelope, xRef, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x])
+  const stack = stackingMode(spec)
+  const xAxis = withContinuousAxisPadding(axis(envelope, xRef, xType, context, horizontal ? 'primary_y' : 'x', horizontal ? spec.y : [spec.x]), spec.mark, stack !== 'percent')
   const yRef = horizontal ? spec.x : primaryY
   const yType = axisType(envelope, yRef, horizontal ? 'category' : 'value')
-  const yAxis = axis(envelope, yRef, yType, context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y)
-  const stack = stackingMode(spec), axes = { grid: cartesianGrid(spec), xAxis, yAxis }
+  const yAxis = withContinuousAxisPadding(axis(envelope, yRef, yType, context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y), spec.mark, stack !== 'percent')
+  const axes = { grid: cartesianGrid(spec), xAxis, yAxis }
   if (stack === 'percent') applyPercentAxis(horizontal ? xAxis : yAxis, context)
   const dataZoom = spec.presentation.dataZoom === true ? [{ type: 'inside' }, { type: 'slider', ...(spec.presentation.legend === 'bottom' ? { bottom: 28 } : {}) }] : undefined
   if (spec.mark === 'histogram') {
     const value = spec.y.find((item) => item.field === 'value') ?? spec.y.at(-1)
-    return { ...axes, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
+    // Histogram bins use long interval labels. Centering the first and last
+    // labels on their endpoint ticks lets their text extend beyond the chart
+    // edge and be clipped in compact cards. Keep authored rotation intact and
+    // align only the category endpoints inward.
+    const histogramXAxis = { ...axes.xAxis, axisLabel: { ...axes.xAxis.axisLabel, alignMinLabel: 'left', alignMaxLabel: 'right' } }
+    return { ...axes, xAxis: histogramXAxis, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
   }
   if (spec.mark === 'waterfall') {
     // The generated shape is [start, metric], while older direct IR may use
@@ -171,7 +177,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   if (split) {
     const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
     const primaryY = comboAxisField(spec, 'primary') ?? spec.y[0]!
-    const primaryAxis = axis(envelope, primaryY, axisType(envelope, primaryY, 'value'), context, 'primary_y', spec.y)
+    const primaryAxis = withContinuousAxisPadding(axis(envelope, primaryY, axisType(envelope, primaryY, 'value'), context, 'primary_y', spec.y), spec.mark, stack !== 'percent')
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
     if (split.scrollLegend) {
       // Crowded category-series cards surrender vertical space to a paged
@@ -181,7 +187,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       primaryAxis.axisLabel = { ...primaryAxis.axisLabel, hideOverlap: true }
     }
     const secondaryY = comboAxisField(spec, 'secondary') ?? spec.y[0]!
-    const secondaryAxis = secondary ? axis(envelope, secondaryY, axisType(envelope, secondaryY, 'value'), context, 'secondary_y', spec.y) : undefined
+    const secondaryAxis = secondary ? withContinuousAxisPadding(axis(envelope, secondaryY, axisType(envelope, secondaryY, 'value'), context, 'secondary_y', spec.y), spec.mark, stack !== 'percent') : undefined
     if (secondaryAxis) configureSecondaryComboAxis(secondaryAxis)
     return {
       dataset: split.datasets, grid: cartesianGrid(spec), ...legendDecoration(spec.presentation.legend, context, split.scrollLegend, spec.presentation, split.series.map((item) => ({ value: String(item.name), name: String(item.name) }))), xAxis: split.categoryAxis,
@@ -235,6 +241,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const categoryAxis = axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x')
     if (horizontal) comboAxes.yAxis = categoryAxis
     else comboAxes.xAxis = categoryAxis
+    comboAxes.xAxis = withContinuousAxisPadding(comboAxes.xAxis, spec.mark, stack !== 'percent')
+    comboAxes.yAxis = withContinuousAxisPadding(comboAxes.yAxis, spec.mark, stack !== 'percent')
   }
   return {
     ...axes,
@@ -337,6 +345,17 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
     containLabel: !titlelessHorizontalBar,
     ...(titlelessHorizontalBar ? { outerBoundsMode: 'same', outerBoundsContain: 'all' } : {}),
   }
+}
+
+function withContinuousAxisPadding(axisOption: EChartsTranslation, mark?: CartesianSpec['mark'], padding?: boolean): EChartsTranslation
+function withContinuousAxisPadding(axisOption: EChartsTranslation[], mark?: CartesianSpec['mark'], padding?: boolean): EChartsTranslation[]
+function withContinuousAxisPadding(axisOption: EChartsTranslation | EChartsTranslation[], mark?: CartesianSpec['mark'], padding = true): EChartsTranslation | EChartsTranslation[] {
+  if (Array.isArray(axisOption)) return axisOption.map((candidate) => withContinuousAxisPadding(candidate, mark, padding))
+  // Bars encode their extent with the rectangle itself. Padding their value
+  // axis shrinks the rectangle and can make an inside label unreadable, while
+  // point/line-like marks need the room for symbols at the data boundary.
+  if (padding && !['bar', 'column', 'waterfall', 'histogram'].includes(mark ?? '') && (axisOption.type === 'value' || axisOption.type === 'time')) axisOption.boundaryGap = ['5%', '5%']
+  return axisOption
 }
 
 function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean; categoryAxis: EChartsTranslation; categoryDomainSeries: EChartsTranslation[] } | undefined {

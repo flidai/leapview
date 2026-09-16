@@ -979,7 +979,7 @@ test('chart documentation renders every executable variation from its YAML', asy
     }, expectedExampleIDs)
     expect(await page.locator('lv-site-visual-example').evaluateAll((examples) => examples.map((example) => example.getAttribute('example-id')))).toEqual(expectedExampleIDs)
     const configurations = await page.locator('.site-docs-article pre code').allTextContents()
-    expect(configurations.some((source) => source.includes('visuals:\n  revenue_line:'))).toBe(true)
+    expect(configurations.some((source) => source.includes('visuals:\n  - id: revenue_line'))).toBe(true)
     expect(configurations.every((source) => !source.includes('shape:'))).toBe(true)
     expect(configurations.some((source) => source.includes('step: true'))).toBe(true)
     const keyFields = await page.locator('.site-visual-key-fields').allTextContents()

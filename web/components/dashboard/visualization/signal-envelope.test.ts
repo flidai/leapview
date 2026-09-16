@@ -67,7 +67,32 @@ test('dashboard visualization signal decoder fails closed on transport and paylo
 test('dashboard visualization signal decoder ignores incomplete unknown visual patches', () => {
   const decoder = new DashboardVisualizationSignalDecoder()
 
-  expect(decoder.decodeAll({ off_page: { status: { kind: 'error', message: 'not on page' } } as any })).toEqual({})
+  expect(decoder.decodeAll({ off_page: { status: { kind: 'error', message: 'not on page' } } as any }, 'serving-1')).toEqual({})
+})
+
+test('dashboard visualization signal decoder rejects delayed results from another serving state', () => {
+  const decoder = new DashboardVisualizationSignalDecoder()
+  const current = visualizationSignal({
+    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
+    datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1]], completeness: 'complete' }],
+  })
+  const delayed = { ...current, servingStateID: 'candidate:old' }
+
+  expect(decoder.decodeAll({ map: current }, 'serving-1').map).toBeDefined()
+  expect(decoder.decodeAll({ map: delayed }, 'serving-1')).toEqual({})
+})
+
+test('dashboard visualization signal decoder clears retained data when the pinned view changes', () => {
+  const decoder = new DashboardVisualizationSignalDecoder()
+  const old = visualizationSignal({
+    specRevision: 'spec-1', dataRevision: 1, generation: 1, kind: 'inline',
+    datasets: [{ id: 'primary', specRevision: 'spec-1', dataRevision: 1, generation: 1, columns: ['value'], rows: [[1]], completeness: 'complete' }],
+  })
+  const next = { ...old, servingStateID: 'candidate:next' }
+
+  expect(decoder.decodeAll({ map: old }, 'serving-1').map).toBeDefined()
+  expect(decoder.decodeAll({ map: old }, 'candidate:next')).toEqual({})
+  expect(decoder.decodeAll({ map: next }, 'candidate:next').map).toBeDefined()
 })
 
 function visualizationSignal(state: Record<string, unknown>): DashboardVisualizationSignal {

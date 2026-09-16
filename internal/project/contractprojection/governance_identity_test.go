@@ -10,7 +10,7 @@ import (
 func governedSourceProjection(t *testing.T, field string) Source {
 	t.Helper()
 	var input contracts.Source
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{"id":` + field + `,"key":{"datatype":"Integer"}}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders"},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[{"name":"id",` + field[1:] + `,{"name":"key","datatype":"Integer"}]}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

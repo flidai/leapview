@@ -84,10 +84,35 @@ The evaluator emits exactly one decision:
   path safely.
 
 This FAI-518 preflight is the eligibility boundary for the later FAI-519
-transition execution work. It is pure and read-only: it does not inspect live
-PostgreSQL, run Goose or River migrations, contact a provider, acquire a
-fence, select an image, or mutate persistent state. FAI-519 must revalidate the
-same immutable evidence at its execution boundary.
+transition execution work. The read-only Go entrypoint accepts exact owner
+references rather than a caller-assembled evaluator input. It resolves the
+predecessor and candidate from the immutable OCI-admission authority, the
+target identity and compatibility projections from their migration owners,
+the matching release policy from its policy owner, and an exact recovery-set
+identity from PostgreSQL. The PostgreSQL recovery-frontier adapter accepts only
+a published set whose exact passed validation attempt, result digest, evidence
+envelope, frontier digest, and target binding all agree. Missing, ambiguous,
+mutable, stale, or mismatched owner results fail before evaluation. The
+application-level production composition supplies the concrete OCI-admission,
+release-policy, target, migration-capability, and RecoverySet authorities; it
+does not accept caller-provided projections.
+
+The resolver then calls the existing pure evaluator and returns its canonical
+evidence bytes and domain-separated digest; it does not define another evidence
+format. Owner adapters must not substitute project release rows, serving
+artifact digests, mutable image tags, or the latest recovery set for the
+required OCI admission, release policy, and exact frontier authorities. Run the
+bounded PostgreSQL-backed resolver qualification with:
+
+```sh
+task qualify:ubdr:release-transition-preflight
+```
+
+The entrypoint remains read-only: it does not run Goose or River migrations,
+contact a recovery provider, acquire an execution fence, switch an image, or
+mutate release or recovery state. FAI-519 must revalidate the same immutable
+evidence at its execution boundary. Preflight evidence does not execute a
+release transition.
 
 The release-owned PostgreSQL policy authority stores one immutable policy for
 each exact predecessor/candidate artifact-digest pair. Policy publication is a
@@ -216,8 +241,35 @@ record, missing capability, target mismatch, digest substitution, or
 unsupported owner state prevents the adapter from emitting an envelope.
 Compatibility differences remain explicit and fail the aggregate transition
 closed; the adapters do not infer or execute a migration.
-
 This provides authoritative migration compatibility resolution. It does not execute a release transition.
+
+### Authoritative production preflight composition
+
+The production preflight entrypoint accepts only exact predecessor and
+candidate OCI references, a deployment-target ID, and a published RecoverySet
+frontier reference. Its constructor requires the concrete PostgreSQL release,
+deployment-target, migration-capability, and RecoverySet repositories. It has
+no interface or request field for caller-created artifact, release-policy,
+migration-compatibility, subsystem-capability, target, or frontier
+projections.
+
+For each request, the release authority resolves both unrevoked OCI admissions
+and their exact pair policy. The deployment authority resolves the exact
+target revision. The migration authority then obtains all four independently
+bound `migration-compatibility/v2` owner envelopes from authenticated
+per-artifact capabilities and validates their canonical aggregate. Finally,
+the RecoverySet authority resolves the exact published, passed, target-bound
+frontier in one read-only snapshot. Only after those owner checks does the
+existing evaluator produce its unchanged canonical transition-preflight
+evidence.
+
+The v2 admission bindings are verified before the existing preflight artifact
+identity digests are derived. The historical caller-constructible
+`migration-compatibility/v1` projection is not accepted, wrapped, or
+reinterpreted by this path. PhysicalPool incompatibility remains fail-closed
+when mapped into the existing persistent-domain decision model.
+
+Preflight evidence does not execute a release transition.
 
 The DuckLake compatibility value is the owner-produced verdict over the exact
 predecessor and candidate tuples recorded in the evidence. The preflight does

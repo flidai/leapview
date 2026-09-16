@@ -27,7 +27,7 @@ func TestParseVisualExamplesUsesMarkedYAMLAsSource(t *testing.T) {
 		"{{< visual id=\"line_basic\" >}}\n\n" +
 		"```yaml visual-example=line_basic\n" +
 		"visuals:\n" +
-		"  line_basic:\n" +
+		"  - id: line_basic\n" +
 		"    title: Revenue\n" +
 		"    type: line\n" +
 		"    presentation:\n" +
@@ -771,32 +771,32 @@ func TestParseVisualExamplesRejectsBrokenContracts(t *testing.T) {
 		},
 		{
 			name: "missing shortcode",
-			body: "```yaml visual-example=line_basic\nvisuals:\n  line_basic:\n    title: Line\n    type: line\n    presentation:\n      type: cartesian\n    query:\n      type: aggregate\n      dimensions: [month]\n      metrics: [revenue]\n```",
+			body: "```yaml visual-example=line_basic\nvisuals:\n  - id: line_basic\n    title: Line\n    type: line\n    presentation:\n      type: cartesian\n    query:\n      type: aggregate\n      dimensions: [month]\n      metrics: [revenue]\n```",
 			want: `visual example "line_basic" has no matching shortcode`,
 		},
 		{
 			name: "multiple visuals",
-			body: "{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  line_basic: {type: line}\n  other: {type: line}\n```",
+			body: "{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  - {id: line_basic, type: line}\n  - {id: other, type: line}\n```",
 			want: `must contain exactly one visual`,
 		},
 		{
 			name: "key mismatch",
-			body: "{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  other: {type: line}\n```",
-			want: `must use visual key "line_basic"`,
+			body: "{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  - {id: other, type: line}\n```",
+			want: `must use visual id "line_basic"`,
 		},
 		{
 			name: "duplicate shortcode",
-			body: "{{< visual id=\"line_basic\" >}}\n{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  line_basic: {type: line}\n```",
+			body: "{{< visual id=\"line_basic\" >}}\n{{< visual id=\"line_basic\" >}}\n```yaml visual-example=line_basic\nvisuals:\n  - {id: line_basic, type: line}\n```",
 			want: `duplicate visual shortcode "line_basic"`,
 		},
 		{
 			name: "missing type",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  - id: total\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `type`,
 		},
 		{
 			name: "legacy kind",
-			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  total:\n    kind: kpi\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
+			body: "{{< visual id=\"total\" >}}\n```yaml visual-example=total\nvisuals:\n  - id: total\n    kind: kpi\n    shape: single_value\n    query:\n      metrics: [revenue]\n```",
 			want: `kind`,
 		},
 	}

@@ -12,7 +12,7 @@ Use an ordered dimension and one metric to fill the area between the series and 
 
 ```yaml visual-example=revenue
 visuals:
-  revenue:
+  - id: revenue
     title: Revenue by month
     description: Tracks monthly revenue over the selected period.
     type: area
@@ -44,7 +44,7 @@ Use a second ordered dimension for status and set `presentation.stacking: normal
 
 ```yaml visual-example=revenue_area_status
 visuals:
-  revenue_area_status:
+  - id: revenue_area_status
     title: Stacked revenue area
     type: area
     presentation:
@@ -71,7 +71,7 @@ Enable `presentation.smooth` to interpolate the boundary, hide symbols to reduce
 
 ```yaml visual-example=revenue_area_smooth
 visuals:
-  revenue_area_smooth:
+  - id: revenue_area_smooth
     title: Smooth revenue area
     type: area
     presentation:

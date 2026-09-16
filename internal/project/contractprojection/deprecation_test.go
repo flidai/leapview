@@ -22,37 +22,37 @@ func TestSourceDeprecationContext(t *testing.T) {
 		{
 			name:    "missing replacement",
 			version: "1.0.0",
-			fields:  `"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}}`,
+			fields:  `{"name":"legacy","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}}`,
 			wantErr: `field "legacy" replacement "current" does not exist`,
 		},
 		{
 			name:    "self replacement",
 			version: "1.0.0",
-			fields:  `"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Do not use","replacement":"legacy"}}`,
+			fields:  `{"name":"legacy","datatype":"String","deprecation":{"since":"1.0.0","reason":"Do not use","replacement":"legacy"}}`,
 			wantErr: `field "legacy" cannot replace itself`,
 		},
 		{
 			name:    "two node cycle",
 			version: "1.0.0",
-			fields:  `"a":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},"b":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use a","replacement":"a"}}`,
+			fields:  `{"name":"a","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},{"name":"b","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use a","replacement":"a"}}`,
 			wantErr: `replacement cycle: a -> b -> a`,
 		},
 		{
 			name:    "multi node cycle",
 			version: "1.0.0",
-			fields:  `"a":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},"b":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use c","replacement":"c"}},"c":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use a","replacement":"a"}}`,
+			fields:  `{"name":"a","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},{"name":"b","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use c","replacement":"c"}},{"name":"c","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use a","replacement":"a"}}`,
 			wantErr: `replacement cycle: a -> b -> c -> a`,
 		},
 		{
 			name:    "deprecation after contract version",
 			version: "1.9.0",
-			fields:  `"legacy":{"datatype":"String","deprecation":{"since":"2.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}`,
+			fields:  `{"name":"legacy","datatype":"String","deprecation":{"since":"2.0.0","reason":"Use current","replacement":"current"}},{"name":"current","datatype":"String"}`,
 			wantErr: `field "legacy" deprecation since "2.0.0" is later than contract version "1.9.0"`,
 		},
 		{
 			name:    "valid replacement chain",
 			version: "1.2.0",
-			fields:  `"a":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},"b":{"datatype":"String","deprecation":{"since":"1.1.0","reason":"Use c","replacement":"c"}},"c":{"datatype":"String"}`,
+			fields:  `{"name":"a","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use b","replacement":"b"}},{"name":"b","datatype":"String","deprecation":{"since":"1.1.0","reason":"Use c","replacement":"c"}},{"name":"c","datatype":"String"}`,
 		},
 	}
 
@@ -80,7 +80,7 @@ func TestSourceDeprecationContext(t *testing.T) {
 }
 
 func TestSourcePublicationReplayPreservesHistoricalDeprecationContext(t *testing.T) {
-	projection, err := projectDeprecationSource(t, "1.2.0", `"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}`)
+	projection, err := projectDeprecationSource(t, "1.2.0", `{"name":"legacy","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},{"name":"current","datatype":"String"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,14 +106,14 @@ func TestSourcePublicationReplayPreservesHistoricalDeprecationContext(t *testing
 }
 
 func TestModelDeprecationUsesContextualValidation(t *testing.T) {
-	_, err := projectDeprecationModel(t, `"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}}`)
+	_, err := projectDeprecationModel(t, `{"name":"legacy","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}}`)
 	if err == nil || !strings.Contains(err.Error(), `field "legacy" replacement "current" does not exist`) {
 		t.Fatalf("ProjectModel() error = %v, want missing replacement", err)
 	}
 }
 
 func TestModelPublicationReplayPreservesHistoricalDeprecationContext(t *testing.T) {
-	projection, err := projectDeprecationModel(t, `"legacy":{"datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},"current":{"datatype":"String"}`)
+	projection, err := projectDeprecationModel(t, `{"name":"legacy","datatype":"String","deprecation":{"since":"1.0.0","reason":"Use current","replacement":"current"}},{"name":"current","datatype":"String"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func projectDeprecationModel(t *testing.T, fields string) (Model, error) {
 		return Model{}, err
 	}
 	var input contracts.Model
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders","contract":{"version":"1.0.0","compatibility":"backward"}},"spec":{"definition":{"type":"direct","source":"orders"},"entities":{"row":{"type":"primary","fields":["legacy"]}},"grain":{"entity":"row"},"fields":{` + fields + `}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Model","metadata":{"id":"model:orders","name":"orders","contract":{"version":"1.0.0","compatibility":"backward"}},"spec":{"definition":{"type":"direct","source":"orders"},"entities":[{"name":"row","type":"primary","fields":["legacy"]}],"grain":{"entity":"row"},"fields":[` + fields + `]}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func projectDeprecationModel(t *testing.T, fields string) (Model, error) {
 func projectDeprecationSource(t *testing.T, version, fields string) (Source, error) {
 	t.Helper()
 	var input contracts.Source
-	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"` + version + `","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":{` + fields + `}}}`
+	raw := `{"apiVersion":"leapview.dev/v1","kind":"Source","metadata":{"id":"source:orders","name":"orders","contract":{"version":"` + version + `","compatibility":"backward"}},"spec":{"connection":"warehouse","location":{"type":"path","path":"orders.csv","format":"csv"},"schema":{"mode":"strict"},"fields":[` + fields + `]}}`
 	if err := json.Unmarshal([]byte(raw), &input); err != nil {
 		t.Fatal(err)
 	}

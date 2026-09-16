@@ -2,12 +2,15 @@ package cli
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/app/cli/localdocker"
 	"github.com/flidai/leapview/internal/app/cli/localruntime"
+	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -68,7 +71,7 @@ func TestDevStatusRejectsInvalidFormatBeforeDockerResolution(t *testing.T) {
 		return localdocker.Endpoint{}, nil
 	}, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) {
 		return &fakeLocalRuntimeLifecycle{}, nil
-	})
+	}, nil)
 	parent.SetArgs([]string{"status", "--format", "xml"})
 	require.ErrorContains(t, parent.Execute(), "must be text or json")
 	require.Zero(t, resolveCalls)
@@ -82,7 +85,7 @@ func TestDevLogsRejectsInvalidTailBeforeDockerResolution(t *testing.T) {
 		return localdocker.Endpoint{}, nil
 	}, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) {
 		return &fakeLocalRuntimeLifecycle{}, nil
-	})
+	}, nil)
 	parent.SetArgs([]string{"logs", "--tail", "0"})
 	require.ErrorContains(t, parent.Execute(), "between 1 and 10000")
 	require.Zero(t, resolveCalls)
@@ -95,7 +98,7 @@ func TestDevStatusReportsExactCheckoutAndAttachments(t *testing.T) {
 		ComposeProject: "leapview-checkout", OwnerID: "lvowner_checkout", URL: "http://127.0.0.1:8080", Services: map[string]string{"postgres": "running"},
 		Attachments: []localruntime.AttachmentStatus{{ID: "attachment-one", PID: 42, HeartbeatAt: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)}},
 	}}
-	addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil })
+	addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil }, nil)
 	var output strings.Builder
 	parent.SetOut(&output)
 	parent.SetArgs([]string{"status"})
@@ -106,6 +109,63 @@ func TestDevStatusReportsExactCheckoutAndAttachments(t *testing.T) {
 	require.Contains(t, output.String(), "Service postgres: running")
 }
 
+func TestDevStatusReportsRedactedDurableProfileApplication(t *testing.T) {
+	parent := &cobra.Command{Use: "dev"}
+	runtime := &fakeLocalRuntimeLifecycle{status: localruntime.LifecycleStatus{
+		Exists: true, RuntimeStatus: "applied", Phase: "ready", CheckoutRoot: "/checkout", CheckoutID: "checkout-one",
+		TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one", Attachments: []localruntime.AttachmentStatus{},
+	}}
+	reader := func(_ context.Context, status localruntime.LifecycleStatus) (*localruntime.DevelopmentProfileStatus, error) {
+		require.Equal(t, "local-checkout", status.TargetName)
+		return &localruntime.DevelopmentProfileStatus{
+			ApplicationID: "profile-one", Status: "incomplete", ProfileName: "local",
+			RequiredConnections: 3, AppliedConnections: 1,
+			IncompleteConnections: []string{"connection:inventory", "connection:commerce"},
+			UpdatedAt:             "2026-09-15T12:00:00Z",
+		}, nil
+	}
+	addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil }, reader)
+	var output strings.Builder
+	parent.SetOut(&output)
+	parent.SetArgs([]string{"status"})
+	require.NoError(t, parent.Execute())
+	require.Contains(t, output.String(), "profile-one (incomplete, profile local")
+	require.Contains(t, output.String(), "1/3 applied")
+	require.Contains(t, output.String(), "Last completed profile application: none")
+	require.Contains(t, output.String(), "connection:inventory")
+	require.NotContains(t, output.String(), "credential")
+}
+
+func TestDevelopmentProfileStatusUsesExactRetainedLocalLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, "Bearer short-lived", request.Header.Get("Authorization"))
+		require.Contains(t, request.URL.Path, "/projects/project:one/targets/target-local/development-profile-application")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"applicationId":"profile-one","status":"incomplete","profileName":"local","requiredConnectionCount":2,"appliedConnectionCount":1,"incompleteConnections":["connection:b"],"sourceDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","graphDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","profileDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","revision":4,"updatedAt":"2026-09-15T12:00:00Z"}`))
+	}))
+	defer server.Close()
+	resolver := &fakeAuthoringResolver{profile: cliapi.TargetProfile{Origin: server.URL, InstanceID: "target-local", ProjectID: "project:one"}}
+	status, err := readDevelopmentProfileStatusWith(t.Context(), localruntime.LifecycleStatus{
+		TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one", URL: server.URL,
+	}, resolver, server.Client())
+	require.NoError(t, err)
+	require.Equal(t, "local-checkout", resolver.name)
+	require.Equal(t, "profile-one", status.ApplicationID)
+	require.Equal(t, []string{"connection:b"}, status.IncompleteConnections)
+}
+
+func TestDevelopmentProfileStatusRejectsRetainedLoginIdentityMismatchBeforeRequest(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
+	defer server.Close()
+	resolver := &fakeAuthoringResolver{profile: cliapi.TargetProfile{Origin: server.URL, InstanceID: "other-target", ProjectID: "project:one"}}
+	_, err := readDevelopmentProfileStatusWith(t.Context(), localruntime.LifecycleStatus{
+		TargetName: "local-checkout", TargetID: "target-local", ProjectID: "project:one", URL: server.URL,
+	}, resolver, server.Client())
+	require.ErrorContains(t, err, "identity disagrees")
+	require.Zero(t, requests)
+}
+
 func TestDevResetPlansThenRequiresExactConfirmation(t *testing.T) {
 	parent := &cobra.Command{Use: "dev"}
 	confirmation := "sha256:" + strings.Repeat("a", 64)
@@ -113,7 +173,7 @@ func TestDevResetPlansThenRequiresExactConfirmation(t *testing.T) {
 		CheckoutRoot: "/checkout", CheckoutID: "sha256:checkout", Confirmation: confirmation,
 		Resources: []localruntime.OwnedResource{{Kind: "volume", ID: "volume-one"}},
 	}}
-	addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil })
+	addLocalDevLifecycleCommands(t.Context(), parent, localLifecycleTestResolver, func(localdocker.Endpoint, *cobra.Command) (localRuntimeLifecycle, error) { return runtime, nil }, nil)
 	var output strings.Builder
 	parent.SetOut(&output)
 	parent.SetArgs([]string{"reset"})

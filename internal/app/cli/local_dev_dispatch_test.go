@@ -21,7 +21,7 @@ func TestBareDevSelectsLocalBeforeAmbientTargetResolution(t *testing.T) {
 			require.Empty(t, options.ExplicitHost)
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error {
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
 			localCalls++
 			return nil
 		},
@@ -33,6 +33,25 @@ func TestBareDevSelectsLocalBeforeAmbientTargetResolution(t *testing.T) {
 	require.Equal(t, 1, localCalls)
 }
 
+func TestBareDevHandsExistingCandidateSynchronizationToLocalRuntime(t *testing.T) {
+	var remoteCalls int
+	command := dispatchLocalDevCommand(
+		t.Context(), remoteDevCommandForDispatchTest(&remoteCalls),
+		func(context.Context, localdocker.Options) (localdocker.Endpoint, error) {
+			return localdocker.Endpoint{}, nil
+		},
+		func(_ context.Context, _ localdocker.Endpoint, command *cobra.Command, args []string, remoteRun func(*cobra.Command, []string) error) error {
+			require.NotNil(t, remoteRun)
+			require.Equal(t, []string{"project"}, args)
+			require.Zero(t, remoteCalls)
+			return remoteRun(command, args)
+		},
+	)
+	command.SetArgs([]string{"project"})
+	require.NoError(t, command.Execute())
+	require.Equal(t, 1, remoteCalls)
+}
+
 func TestExplicitTargetUsesRemoteWithoutDockerResolution(t *testing.T) {
 	var remoteCalls, resolveCalls, localCalls int
 	command := dispatchLocalDevCommand(
@@ -41,7 +60,7 @@ func TestExplicitTargetUsesRemoteWithoutDockerResolution(t *testing.T) {
 			resolveCalls++
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error {
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
 			localCalls++
 			return nil
 		},
@@ -61,7 +80,9 @@ func TestDevRejectsConflictingLocalAndRemoteSelectionBeforeEitherPath(t *testing
 			resolveCalls++
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error { return nil },
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
+			return nil
+		},
 	)
 	command.SetArgs([]string{"--target", "staging", "--docker-context", "desktop-linux"})
 	err := command.Execute()
@@ -78,7 +99,9 @@ func TestBareDevRejectsRemoteCredentialsBeforeDockerResolution(t *testing.T) {
 			resolveCalls++
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error { return nil },
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
+			return nil
+		},
 	)
 	command.SetArgs([]string{"--token", "secret"})
 	err := command.Execute()
@@ -96,7 +119,9 @@ func TestBareDevPassesExplicitDockerSelectionToResolver(t *testing.T) {
 			got = options
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error { return nil },
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
+			return nil
+		},
 	)
 	command.SetArgs([]string{"--docker-host", "unix:///var/run/docker.sock"})
 	require.NoError(t, command.Execute())
@@ -128,7 +153,9 @@ func TestExplicitEmptyRemoteTargetFailsClosed(t *testing.T) {
 			t.Fatal("Docker resolution must not run")
 			return localdocker.Endpoint{}, nil
 		},
-		func(context.Context, localdocker.Endpoint, *cobra.Command, []string) error { return nil },
+		func(context.Context, localdocker.Endpoint, *cobra.Command, []string, func(*cobra.Command, []string) error) error {
+			return nil
+		},
 	)
 	command.SetArgs([]string{"--target", strings.Repeat(" ", 2)})
 	require.ErrorContains(t, command.Execute(), "must not be empty")

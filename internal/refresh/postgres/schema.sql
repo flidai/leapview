@@ -72,6 +72,23 @@ END; $$;
 DROP TRIGGER IF EXISTS schedule_guard ON refresh.schedule_revision;
 CREATE TRIGGER schedule_guard BEFORE UPDATE ON refresh.schedule_revision FOR EACH ROW EXECUTE FUNCTION refresh.guard_schedule_update();
 
+-- Pipeline monitoring includes the next scheduled run, which can move
+-- without creating a refresh run. Wake listeners after those commits too.
+CREATE OR REPLACE FUNCTION refresh.notify_schedule_change() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, refresh AS $$
+BEGIN
+    IF TG_OP = 'INSERT' OR NEW.next_run_at IS DISTINCT FROM OLD.next_run_at
+       OR NEW.closed_at IS DISTINCT FROM OLD.closed_at
+       OR NEW.enabled IS DISTINCT FROM OLD.enabled THEN
+        PERFORM pg_notify('leapview_refresh_changed', json_build_object('projectId', NEW.project_id, 'environment', NEW.environment)::text);
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS schedule_notify_change ON refresh.schedule_revision;
+CREATE TRIGGER schedule_notify_change
+AFTER INSERT OR UPDATE OF next_run_at, closed_at, enabled ON refresh.schedule_revision
+FOR EACH ROW EXECUTE FUNCTION refresh.notify_schedule_change();
+
 CREATE OR REPLACE FUNCTION refresh.close_omitted_schedules(
     p_project_id text,
     p_environment text,
@@ -185,6 +202,20 @@ BEGIN
 END; $$;
 DROP TRIGGER IF EXISTS run_insert_guard ON refresh.run;
 CREATE TRIGGER run_insert_guard BEFORE INSERT ON refresh.run FOR EACH ROW EXECUTE FUNCTION refresh.guard_run_insert();
+
+-- PostgreSQL delivers this invalidation only after the enclosing transaction
+-- commits. The payload carries no data; consumers reread authorized state.
+CREATE OR REPLACE FUNCTION refresh.notify_root_run_change() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, refresh AS $$
+BEGIN
+    IF NEW.parent_run_id IS NULL AND (TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM OLD.status) THEN
+        PERFORM pg_notify('leapview_refresh_changed', json_build_object('projectId', NEW.project_id, 'environment', NEW.environment)::text);
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS run_notify_change ON refresh.run;
+CREATE TRIGGER run_notify_change AFTER INSERT OR UPDATE OF status ON refresh.run
+FOR EACH ROW EXECUTE FUNCTION refresh.notify_root_run_change();
 
 -- Every committed root run must have one canonical platform job.  Dependency
 -- children intentionally remain jobless: the root job owns their tree.  A
@@ -689,6 +720,8 @@ BEGIN
 	REVOKE ALL ON ALL TABLES IN SCHEMA refresh FROM PUBLIC;
 	REVOKE ALL ON ALL SEQUENCES IN SCHEMA refresh FROM PUBLIC;
 	REVOKE ALL ON FUNCTION refresh.maintenance(integer) FROM PUBLIC;
+	REVOKE ALL ON FUNCTION refresh.notify_root_run_change() FROM PUBLIC;
+	REVOKE ALL ON FUNCTION refresh.notify_schedule_change() FROM PUBLIC;
 	REVOKE ALL ON FUNCTION refresh.fail_child_runs(text,text) FROM PUBLIC;
 	REVOKE ALL ON FUNCTION refresh.complete_child_runs(text) FROM PUBLIC;
 	REVOKE ALL ON FUNCTION refresh.close_omitted_schedules(text,text,text,text[],text[]) FROM PUBLIC;

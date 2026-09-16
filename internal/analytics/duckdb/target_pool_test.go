@@ -282,6 +282,24 @@ func TestTargetRuntimePoolHealthAndCloseAreIdempotentAndPropagateOnlyInternally(
 	}
 }
 
+func TestTargetRuntimePoolCloseCancelsInFlightHealthCheck(t *testing.T) {
+	session := &blockingTargetSession{started: make(chan struct{}), done: make(chan struct{})}
+	pool := &targetRuntimePool{session: session, healthStatement: "SELECT 1"}
+	health := make(chan error, 1)
+	go func() { health <- pool.HealthCheck(context.Background()) }()
+	<-session.started
+
+	closed := make(chan error, 1)
+	go func() { closed <- pool.Close() }()
+	select {
+	case err := <-closed:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked behind an in-flight health check")
+	}
+	require.ErrorIs(t, <-health, context.Canceled)
+}
+
 func TestIsolatedTargetRuntimeOpenerCreatesPrivateSingleConnectionSession(t *testing.T) {
 	open := NewIsolatedTargetRuntimeOpener()
 	session, err := open(context.Background())
@@ -300,6 +318,23 @@ type recordingTargetSession struct {
 	err        error
 	closed     bool
 	closeCalls int
+}
+
+type blockingTargetSession struct {
+	started chan struct{}
+	done    chan struct{}
+}
+
+func (session *blockingTargetSession) ExecContext(ctx context.Context, _ string, _ ...any) (sql.Result, error) {
+	close(session.started)
+	<-ctx.Done()
+	close(session.done)
+	return nil, ctx.Err()
+}
+
+func (session *blockingTargetSession) Close() error {
+	<-session.done
+	return nil
 }
 
 func (session *recordingTargetSession) ExecContext(

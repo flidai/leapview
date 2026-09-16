@@ -3,6 +3,7 @@ import { createServer, type Server } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { join, normalize } from 'node:path'
 import { chromium, type Browser } from '@playwright/test'
+import { escapeHTML, testDocument } from './app-shell.dom.fixture'
 
 let server: Server
 let baseURL = ''
@@ -589,6 +590,69 @@ test('collapsed main sidebar keeps a compact gutter and peeks from its top-left 
   }
 })
 
+test('collapsed asset detail chrome can draw rules across its gutter without shifting content', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/upgraded-compact-shell`)
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'true'))
+    await page.reload()
+    await page.waitForFunction(() => {
+      const sidebar = (document.querySelector('lv-app-shell') as HTMLElement)?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      return sidebar?.hasAttribute('data-collapsed') && Math.round(sidebar.getBoundingClientRect().width) === 44
+    })
+    const geometry = await page.locator('lv-app-shell').evaluate(async (shell: HTMLElement) => {
+      const route = shell.querySelector('[slot="page"]')!
+      const asset = document.createElement('lv-project-asset-page')
+      asset.setAttribute('slot', 'page')
+      route.replaceWith(asset)
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const main = shell.shadowRoot!.querySelector('main')!
+      const sidebar = shell.shadowRoot!.querySelector('lv-sidebar')!
+      const box = (element: Element) => element.getBoundingClientRect()
+      return {
+        sidebarWidth: Math.round(box(sidebar).width),
+        mainLeft: Math.round(box(main).left),
+        mainRight: Math.round(box(main).right),
+        mainPaddingLeft: getComputedStyle(main).paddingLeft,
+        assetLeft: Math.round(box(asset).left),
+        assetRight: Math.round(box(asset).right),
+        ruleGutterInherited: getComputedStyle(asset).getPropertyValue('--lv-chrome-rule-gutter') === getComputedStyle(main).getPropertyValue('--lv-chrome-rule-gutter'),
+      }
+    })
+    expect(geometry).toEqual({
+      sidebarWidth: 44,
+      mainLeft: 0,
+      mainRight: 1320,
+      mainPaddingLeft: '44px',
+      assetLeft: 44,
+      assetRight: 1320,
+      ruleGutterInherited: true,
+    })
+    await page.locator('lv-sidebar .collapsed-trigger').click()
+    const expanded = await page.locator('lv-app-shell').evaluate((shell: HTMLElement) => {
+      const main = shell.shadowRoot!.querySelector('main')!
+      return { left: Math.round(main.getBoundingClientRect().left), paddingLeft: getComputedStyle(main).paddingLeft }
+    })
+    expect(expanded.left).toBeGreaterThan(200)
+    expect(expanded.paddingLeft).toBe('0px')
+
+    await page.setViewportSize({ width: 553, height: 793 })
+    const mobile = await page.locator('lv-app-shell').evaluate((shell: HTMLElement) => {
+      const main = shell.shadowRoot!.querySelector('main')!
+      const asset = shell.querySelector('lv-project-asset-page')!
+      return {
+        mainLeft: Math.round(main.getBoundingClientRect().left),
+        mainRight: Math.round(main.getBoundingClientRect().right),
+        paddingLeft: getComputedStyle(main).paddingLeft,
+        assetLeft: Math.round(asset.getBoundingClientRect().left),
+      }
+    })
+    expect(mobile).toEqual({ mainLeft: 0, mainRight: 553, paddingLeft: '44px', assetLeft: 44 })
+  } finally {
+    await page.close()
+  }
+})
+
 test('collapsed main sidebar keeps peeking across navigation while the pointer remains inside it', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
@@ -733,9 +797,10 @@ test('mobile navigation opens in an accessible drawer', async () => {
     })
     await page.waitForFunction(() => {
       const shell = document.querySelector('lv-app-shell') as HTMLElement
-      const sidebar = (shell.shadowRoot as ShadowRoot)?.querySelector('lv-sidebar') as HTMLElement
-      const nav = (sidebar.shadowRoot as ShadowRoot)?.querySelector('nav') as HTMLElement
-      return getComputedStyle(nav).visibility === 'visible'
+      const sidebar = shell.shadowRoot?.querySelector('lv-sidebar') as HTMLElement
+      const nav = sidebar.shadowRoot?.querySelector('nav') as HTMLElement
+      const box = nav.getBoundingClientRect()
+      return getComputedStyle(nav).visibility === 'visible' && Math.round(box.left) === 0 && Math.round(box.width) === window.innerWidth
     })
 
     const openState = await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -743,8 +808,14 @@ test('mobile navigation opens in an accessible drawer', async () => {
       const root = (sidebar.shadowRoot as ShadowRoot)
       const nav = root.querySelector('nav') as HTMLElement
       const menuButton = root.querySelector('.mobile-menu-button') as HTMLButtonElement
-      const backdrop = root.querySelector('.mobile-backdrop') as HTMLButtonElement
       const drawerHeader = root.querySelector('.mobile-drawer-header') as HTMLElement
+      const closeButton = root.querySelector('.mobile-close-button') as HTMLButtonElement
+      const title = root.querySelector('.mobile-drawer-title') as HTMLElement
+      const modeSwitcher = root.querySelector('.mobile-area-switcher') as HTMLElement
+      const navBox = nav.getBoundingClientRect()
+      const closeBox = closeButton.getBoundingClientRect()
+      const titleBox = title.getBoundingClientRect()
+      const switcherBox = modeSwitcher.getBoundingClientRect()
       const visible = (target: Element) => {
         const box = target.getBoundingClientRect()
         const style = getComputedStyle(target)
@@ -758,11 +829,13 @@ test('mobile navigation opens in an accessible drawer', async () => {
         expanded: menuButton.getAttribute('aria-expanded'),
         navVisibility: getComputedStyle(nav).visibility,
         navInert: nav.inert,
-        backdropVisibility: getComputedStyle(backdrop).visibility,
-        backdropPointerEvents: getComputedStyle(backdrop).pointerEvents,
+        navBounds: { left: Math.round(navBox.left) || 0, right: Math.round(navBox.right), width: Math.round(navBox.width) },
+        headerOrder: closeBox.right < titleBox.left && titleBox.right < switcherBox.left,
+        switcherInHeader: drawerHeader.contains(modeSwitcher),
+        switcherWidth: Math.round(switcherBox.width),
+        visibleModeLabels: Array.from(modeSwitcher.querySelectorAll('.area-label')).filter(visible).length,
         navBackground: getComputedStyle(nav).backgroundColor,
         headerBorderBottomWidth: getComputedStyle(drawerHeader).borderBottomWidth,
-        navBoxShadow: getComputedStyle(nav).boxShadow,
         closeControlCount: root.querySelectorAll('button[aria-label="Close navigation"]:not([inert])').length,
         visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter(visible).length,
         globalSearchCount: root.querySelectorAll('.mobile-product-search').length,
@@ -780,20 +853,53 @@ test('mobile navigation opens in an accessible drawer', async () => {
     expect(openState.expanded).toBe('true')
     expect(openState.navVisibility).toBe('visible')
     expect(openState.navInert).toBe(false)
-    expect(openState.backdropVisibility).toBe('visible')
-    expect(openState.backdropPointerEvents).toBe('auto')
+    expect(openState.navBounds).toEqual({ left: 0, right: 553, width: 553 })
+    expect(openState.headerOrder).toBe(true)
+    expect(openState.switcherInHeader).toBe(true)
+    expect(openState.switcherWidth).toBeLessThanOrEqual(64)
+    expect(openState.visibleModeLabels).toBe(0)
     expect(openState.navBackground).not.toBe('rgba(0, 0, 0, 0)')
     expect(openState.headerBorderBottomWidth).not.toBe('0px')
-    expect(openState.navBoxShadow).not.toBe('none')
     expect(openState.closeControlCount).toBe(1)
     expect(openState.visibleAreaSwitcherCount).toBe(1)
     expect(openState.globalSearchCount).toBe(1)
     expect(openState.localSearchCount).toBe(0)
     expect(openState.mobileSettings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
 
+    await page.locator('lv-sidebar .mobile-product-search').click()
+    await page.locator('lv-product-search dialog[open]').waitFor()
+    const searchState = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const nav = sidebar.shadowRoot?.querySelector('nav') as HTMLElement
+      return {
+        sidebarOpen: sidebar.hasAttribute('data-mobile-open'),
+        navInert: nav.inert,
+        searchOpen: (element.shadowRoot.querySelector('lv-product-search') as any).open,
+      }
+    })
+    expect(searchState).toEqual({ sidebarOpen: true, navInert: false, searchOpen: true })
+    await page.keyboard.press('Escape')
+    await page.locator('lv-product-search dialog[open]').waitFor({ state: 'hidden' })
+    expect(await page.locator('lv-sidebar').getAttribute('data-mobile-open')).not.toBeNull()
+
+    await page.setViewportSize({ width: 320, height: 793 })
+    const narrow = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as TestDomElement
+      const root = sidebar.shadowRoot as ShadowRoot
+      const nav = root.querySelector('nav') as HTMLElement
+      const box = nav.getBoundingClientRect()
+      return {
+        left: Math.round(box.left) || 0,
+        right: Math.round(box.right),
+        width: Math.round(box.width),
+        horizontalOverflow: nav.scrollWidth > nav.clientWidth,
+      }
+    })
+    expect(narrow).toEqual({ left: 0, right: 320, width: 320, horizontalOverflow: false })
+
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
-      const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as TestDomElement
-      ;((sidebar.shadowRoot as ShadowRoot).querySelector('.mobile-backdrop') as HTMLElement).click()
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as TestDomElement
+      ;((sidebar.shadowRoot as ShadowRoot).querySelector('.mobile-close-button') as HTMLButtonElement).click()
       await sidebar.updateComplete
       await new Promise((resolve) => requestAnimationFrame(resolve))
     })
@@ -1416,8 +1522,8 @@ test('sidebar switches between Insights and Develop and remembers the last area 
       { label: 'Insights', current: 'false', href: '/' },
       { label: 'Develop', current: 'page', href: '/sidebar-active-nav' },
     ])
-    expect(developState.items).toEqual(['Sources', 'Models', 'Semantic models', 'Pipelines', 'Connections'])
-    expect(developState.visibleGroupLabels).toEqual([])
+    expect(developState.items).toEqual(['Sources', 'Models', 'Semantic models', 'Dashboards', 'Pipelines', 'Connections', 'Runs'])
+    expect(developState.visibleGroupLabels).toEqual(['Catalog', 'Operations'])
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
@@ -1474,7 +1580,7 @@ test('sidebar remembers the active area route on direct shell loads', async () =
   }
 })
 
-test('insights and develop navigation expose the stable route contract without subtitles', async () => {
+test('insights and develop navigation expose the stable route contract with grouped catalog and operations', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {
     await page.goto(`${baseURL}/sidebar-active-nav`)
@@ -1488,11 +1594,12 @@ test('insights and develop navigation expose the stable route contract without s
       }))
       return {
         insights: links('Insights'),
-        develop: links('Develop'),
+        develop: [...links('Catalog'), ...links('Operations')],
         subtitles: Array.from(root.querySelectorAll('.nav-group-label')).filter((label: Element) => {
           const style = getComputedStyle(label)
           return style.display !== 'none' && style.visibility !== 'hidden'
         }).map((label: Element) => label.textContent?.trim()),
+        subtitleColors: Array.from(root.querySelectorAll('.nav-group-label')).map((label: Element) => getComputedStyle(label).color),
       }
     })
     const developState = await navigationState()
@@ -1501,14 +1608,17 @@ test('insights and develop navigation expose the stable route contract without s
       { label: 'Sources', href: '/sources', icon: expect.any(String) },
       { label: 'Models', href: '/models', icon: expect.any(String) },
       { label: 'Semantic models', href: '/semantic-models', icon: expect.any(String) },
+      { label: 'Dashboards', href: '/dashboards', icon: expect.any(String) },
       { label: 'Pipelines', href: '/pipelines', icon: expect.any(String) },
       { label: 'Connections', href: '/connections', icon: expect.any(String) },
+      { label: 'Runs', href: '/runs', icon: expect.any(String) },
     ])
     expect(developState.develop[0].icon).not.toBe(developState.develop[1].icon)
     expect(developState.develop[1].icon).toContain('M2.97 12.92')
     expect(developState.develop[2].icon).toContain('M6 12h12')
     expect(developState.develop[1].icon).not.toBe(developState.develop[2].icon)
-    expect(developState.subtitles).toEqual([])
+    expect(developState.subtitles).toEqual(['Catalog', 'Operations'])
+    expect(developState.subtitleColors).toEqual(['rgb(87, 96, 106)', 'rgb(87, 96, 106)'])
 
     await page.goto(`${baseURL}/`)
     await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
@@ -1649,6 +1759,25 @@ test('mobile admin sidebar uses the same compact rail without a page header', as
       headerWidth: 44,
       collapseControlCount: 0,
     })
+
+    await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as TestDomElement
+      ;((sidebar.shadowRoot as ShadowRoot).querySelector('.mobile-menu-button') as HTMLButtonElement).click()
+      await sidebar.updateComplete
+    })
+    const open = await page.locator('lv-app-shell').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const root = sidebar.shadowRoot!
+      const nav = root.querySelector('nav') as HTMLElement
+      const close = root.querySelector('.mobile-close-button') as HTMLButtonElement
+      const title = root.querySelector('.mobile-drawer-title') as HTMLElement
+      return {
+        width: Math.round(nav.getBoundingClientRect().width),
+        closeBeforeTitle: close.getBoundingClientRect().right < title.getBoundingClientRect().left,
+        closeInHeader: root.querySelector('.mobile-drawer-header')?.contains(close),
+      }
+    })
+    expect(open).toEqual({ width: 553, closeBeforeTitle: true, closeInHeader: true })
   } finally {
     await page.close()
   }
@@ -1846,141 +1975,6 @@ function signalShellDocument(dashboard = false): string {
   `
 }
 
-function testDocument(includeShellScript: boolean, compact = false, history = false, nav = false, admin = false): string {
-  const chromeConfig = compact || history || nav || admin ? {
-    sidebar: {
-      productName: 'LeapView',
-      active: admin ? 'principals' : history ? 'chat' : 'sources',
-      admin,
-      area: admin ? undefined : history ? 'insights' : 'develop',
-      areas: admin ? undefined : [
-        { id: 'insights', label: 'Insights', href: '/', icon: 'insights' },
-        { id: 'develop', label: 'Develop', href: '/sources', icon: 'code' },
-      ],
-      dashboardId: '',
-      dashboardTitle: '',
-      pageTitle: '',
-      modelId: '',
-      modelTitle: '',
-      compact,
-      userName: admin ? 'Ada Lovelace' : 'Current User',
-      userAvatarUrl: admin ? '/profile/avatars/ada/avatar-digest' : undefined,
-      userRole: admin ? 'Platform admin' : 'Member',
-      userSettingsHref: '/admin/profile',
-      primaryAction: admin ? { label: 'Back to app', href: '/', icon: 'back' } : history ? { label: 'New chat', href: '/chats/new', icon: 'plus' } : undefined,
-      history: history ? {
-        label: 'Chats',
-        emptyText: 'No conversations yet.',
-        items: [
-          { id: 'c1', title: 'Revenue check', href: '/chats/c1', active: true, pending: true },
-          { id: 'c2', title: 'Inventory status', href: '/chats/c2' },
-          { id: 'c3', title: 'Pinned title loading', href: '/chats/c3', pending: true, pinned: true },
-        ],
-      } : undefined,
-      groups: admin ? [
-        {
-          label: 'Personal',
-          items: [
-            { id: 'profile', label: 'Profile', href: '/admin/profile', icon: 'user' },
-            { id: 'security', label: 'Security & sessions', href: '/admin/security', icon: 'activity' },
-            { id: 'api-tokens', label: 'API tokens', href: '/admin/api-tokens', icon: 'data' },
-          ],
-        },
-        {
-          label: 'Product',
-          items: [
-            { id: 'general', label: 'General', href: '/admin/general', icon: 'settings' },
-            { id: 'projects-admin', label: 'Projects', href: '/admin/projects', icon: 'catalog' },
-          ],
-        },
-        {
-          label: 'Access',
-          items: [
-            { id: 'principals', label: 'Principals', href: '/admin/principals', icon: 'users' },
-            { id: 'groups', label: 'Groups', href: '/admin/groups', icon: 'users-round' },
-            { id: 'service-accounts', label: 'Service accounts', href: '/admin/service-accounts', icon: 'bot' },
-            { id: 'authentication', label: 'Authentication', href: '/admin/authentication', icon: 'system' },
-          ],
-        },
-        {
-          label: 'Data & sharing',
-          items: [
-            { id: 'storage', label: 'Storage', href: '/admin/storage', icon: 'database' },
-            { id: 'publications', label: 'Publications', href: '/admin/publications', icon: 'globe' },
-          ],
-        },
-        {
-          label: 'Operations',
-          items: [
-            { id: 'agent', label: 'Agent', href: '/admin/agent', icon: 'bot' },
-            { id: 'queries', label: 'Query history', href: '/admin/queries', icon: 'history' },
-            { id: 'audit', label: 'Audit log', href: '/admin/audit', icon: 'activity' },
-            { id: 'system', label: 'System', href: '/admin/system', icon: 'system' },
-          ],
-        },
-      ] : history ? [{
-        label: 'Insights',
-        items: [
-          { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },
-          { id: 'data-explorer', label: 'Data Explorer', href: '/explore', icon: 'database' },
-          { id: 'chat', label: 'Chats', href: '/chats', icon: 'chat' },
-        ],
-      }] : nav ? [{
-        label: 'Develop',
-        items: [
-          { id: 'sources', label: 'Sources', href: '/sources', icon: 'database' },
-          { id: 'models', label: 'Models', href: '/models', icon: 'boxes' },
-          { id: 'semantic-models', label: 'Semantic models', href: '/semantic-models', icon: 'waypoints' },
-          { id: 'pipelines', label: 'Pipelines', href: '/pipelines', icon: 'workflow' },
-          { id: 'connections', label: 'Connections', href: '/connections', icon: 'data' },
-        ],
-      }] : [],
-    },
-  } : null
-  const signals = chromeConfig ? ` data-signals="${escapeHTML(JSON.stringify({ chrome: chromeConfig }))}"` : ''
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <link rel="stylesheet" href="/static/app.css">
-        <style>
-          :root {
-            --control-bgColor-hover: #eff2f5;
-            --lv-border-transparent: 1px solid transparent;
-            --lv-border-muted: 1px solid #d8dee4;
-            --lv-border-default: 1px solid #d0d7de;
-            --lv-bg-accent-muted: #ddf4ff;
-            --lv-fg-default: #24292f;
-            --lv-fg-accent: #0969da;
-            --lv-shadow-floating-sm: 0 1px 2px rgb(0 0 0 / 8%);
-            --lv-radius-default: 6px;
-            --base-size-2: 2px;
-            --base-size-4: 4px;
-            --base-size-12: 12px;
-            --base-size-36: 36px;
-            --lv-border-width: 1px;
-            --lv-fg-muted: #57606a;
-            --lv-shadow-floating: 0 8px 24px rgb(0 0 0 / 12%);
-            --spinner-size-small: 16px;
-            --spinner-size-medium: 32px;
-            --spinner-size-large: 64px;
-            --base-duration-1000: 1000ms;
-            --base-easing-linear: linear;
-          }
-        </style>
-      </head>
-      <body>
-        <main class="min-h-svh bg-app text-fg-default"${signals}>
-          <lv-app-shell>
-            <lv-route-page slot="page"></lv-route-page>
-          </lv-app-shell>
-        </main>
-        ${includeShellScript ? '<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/tmp/app-shell-under-test.js"></script>' : ''}
-      </body>
-    </html>
-  `
-}
-
 async function sidebarAreaState(page: import('@playwright/test').Page) {
   return page.locator('lv-app-shell').evaluate((element: any) => {
     const sidebar = (element.shadowRoot as ShadowRoot).querySelector('lv-sidebar') as HTMLElement
@@ -2070,12 +2064,4 @@ async function sidebarAlignment(page: import('@playwright/test').Page) {
       footerTextLeft: left(root.querySelector('.footer .user-text')),
     }
   })
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
 }

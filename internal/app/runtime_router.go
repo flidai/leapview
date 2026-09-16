@@ -17,6 +17,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -41,6 +42,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -77,6 +79,8 @@ type capabilityRoutes struct {
 
 type runtimeServices struct {
 	analyticsModule                *analyticsmodule.Module
+	profileApplications            connectionbinding.ProfileApplicationStore
+	developmentSessions            developmentsessionmodule.Store
 	metrics                        QueryMetrics
 	workloads                      workloadControl
 	broker                         *pagestream.Broker
@@ -90,6 +94,9 @@ type runtimeServices struct {
 	runtimeHostModule              *runtimehostmodule.Module
 	projectID                      projectgraph.ResourceID
 	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
+	targetID                       string
+	checkoutID                     string
+	worktreeID                     string
 }
 
 type dashboardAppearanceReader interface {
@@ -294,17 +301,19 @@ type capabilityAssemblyInputs struct {
 	// AgentPersistence is the graph-owned native agent authority. The router
 	// passes it through opaquely to agentmodule.Build; production must provide
 	// the complete native authority.
-	AgentPersistence  *agentmodule.Persistence
-	AccessModule      *accessmodule.Module
-	Agent             *agentmodule.Service
-	ManagedDataModule *manageddatamodule.Module
-	AnalyticsModule   *analyticsmodule.Module
-	Authoring         *dashboardmodule.AuthoringApplication
-	DashboardAssets   dashboardmodule.Assets
-	Product           *adminmodule.ProductService
-	ProductStatus     adminmodule.ProductStatus
-	ProjectCatalog    *projectcatalog.Service
-	ProjectGraph      projecthttp.GraphReader
+	AgentPersistence    *agentmodule.Persistence
+	AccessModule        *accessmodule.Module
+	Agent               *agentmodule.Service
+	ManagedDataModule   *manageddatamodule.Module
+	AnalyticsModule     *analyticsmodule.Module
+	ProfileApplications connectionbinding.ProfileApplicationStore
+	DevelopmentSessions developmentsessionmodule.Store
+	Authoring           *dashboardmodule.AuthoringApplication
+	DashboardAssets     dashboardmodule.Assets
+	Product             *adminmodule.ProductService
+	ProductStatus       adminmodule.ProductStatus
+	ProjectCatalog      *projectcatalog.Service
+	ProjectGraph        projecthttp.GraphReader
 }
 
 type workflowAssemblyInputs struct {
@@ -334,7 +343,12 @@ type runtimeAssemblyInputs struct {
 	// Production selects the fail-closed native module admission path. It is
 	// intentionally separate from SealedServing, which is also used by local
 	// evaluation fixtures to exercise sealed-runtime behavior.
-	Production bool
+	Production               bool
+	LocalCheckoutID          string
+	LocalRuntimeID           string
+	DevelopmentProfileName   string
+	DevelopmentGraphDigest   string
+	DevelopmentProfileDigest string
 	// DeliveryTargetReader is the durable target-owned active-generation
 	// pointer. Sealed production serving must consult it before the legacy
 	// serving-state scope table when deciding whether bootstrap is still open.
@@ -702,6 +716,14 @@ func buildApplicationSurfaces(
 	persistence.servingStateRepo = servingStateRepo
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
+	runtime.profileApplications = capabilities.ProfileApplications
+	runtime.developmentSessions = capabilities.DevelopmentSessions
+	runtime.targetID = runtimeConfig.InstanceID
+	runtime.checkoutID = runtimeConfig.LocalCheckoutID
+	// LocalCheckoutID is the canonical checkout/worktree identity supplied by
+	// the local runtime controller. LocalRuntimeID is an owner/runtime identity
+	// and must never be used as a worktree scope.
+	runtime.worktreeID = runtimeConfig.LocalCheckoutID
 	routes.dashboardAssets = capabilities.DashboardAssets
 	routes.dashboardAuthoring = capabilities.Authoring
 	routes.releaseModule = capabilities.ReleaseModule
@@ -854,6 +876,7 @@ func buildApplicationSurfaces(
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
+		routes.projectBrowser.RunMonitor = routes.refreshModule
 	}
 	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)
@@ -901,6 +924,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
+	var developmentProfileAPI analyticsmodule.DevelopmentProfileApplicationAPIConfig
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
@@ -961,6 +985,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		connectionAdministration = administration
+		developmentProfileAPI, err = buildDevelopmentProfileAPI(
+			routes.accessModule,
+			runtime.analyticsModule,
+			runtime.profileApplications,
+			runtime.resolveProjectID,
+			storage.instanceID,
+			runtimeConfig,
+			administration)
+		if err != nil {
+			return err
+		}
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.ConnectionAdministration = connectionAdministration
@@ -1076,6 +1111,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return principal.ID, ok
 			},
 		},
+		DevelopmentProfiles: developmentProfileAPI,
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {

@@ -33,22 +33,35 @@ type Runner interface {
 }
 
 type Options struct {
-	CheckoutRoot                string
-	RuntimePackage              string
-	StateRoot                   string
-	DockerBin                   string
-	Endpoint                    Endpoint
-	ResolveProjectAuthority     func() (ProjectAuthority, error)
-	BuildIdentity               buildinfo.Identity
-	Runner                      Runner
-	HTTPClient                  *http.Client
-	EstablishSessions           func(context.Context, SessionRequest) (SessionResult, error)
-	ResetSessions               func(context.Context, SessionRequest) error
-	Stdout                      io.Writer
-	Sleep                       func(context.Context, time.Duration) error
-	Now                         func() time.Time
+	CheckoutRoot            string
+	RuntimePackage          string
+	StateRoot               string
+	DockerBin               string
+	Endpoint                Endpoint
+	ResolveProjectAuthority func() (ProjectAuthority, error)
+	BuildIdentity           buildinfo.Identity
+	Runner                  Runner
+	HTTPClient              *http.Client
+	EstablishSessions       func(context.Context, SessionRequest) (SessionResult, error)
+	ResetSessions           func(context.Context, SessionRequest) error
+	Stdout                  io.Writer
+	Sleep                   func(context.Context, time.Duration) error
+	Now                     func() time.Time
+	// DevelopmentCredentials is the exact profile-selected set of connector
+	// bundle environment variables. No ambient process variables are copied.
+	DevelopmentCredentials map[string]string
+	// DevelopmentProfile is the exact non-secret profile/graph identity that
+	// every attachment to this runtime must share. Credential values remain in
+	// the separate private environment file.
+	DevelopmentProfile          DevelopmentProfileIdentity
 	AttachmentHeartbeatInterval time.Duration
 	AttachmentStaleAfter        time.Duration
+}
+
+type DevelopmentProfileIdentity struct {
+	Name          string
+	GraphDigest   string
+	ProfileDigest string
 }
 
 type State struct {
@@ -133,17 +146,35 @@ type AttachmentStatus struct {
 }
 
 type LifecycleStatus struct {
-	Exists         bool               `json:"exists"`
-	RuntimeStatus  string             `json:"runtimeStatus,omitempty"`
-	Phase          string             `json:"phase,omitempty"`
-	CheckoutRoot   string             `json:"checkoutRoot"`
-	CheckoutID     string             `json:"checkoutId"`
-	StateRoot      string             `json:"stateRoot,omitempty"`
-	ComposeProject string             `json:"composeProject,omitempty"`
-	OwnerID        string             `json:"ownerId,omitempty"`
-	URL            string             `json:"url,omitempty"`
-	Services       map[string]string  `json:"services,omitempty"`
-	Attachments    []AttachmentStatus `json:"attachments"`
+	Exists             bool                      `json:"exists"`
+	RuntimeStatus      string                    `json:"runtimeStatus,omitempty"`
+	Phase              string                    `json:"phase,omitempty"`
+	CheckoutRoot       string                    `json:"checkoutRoot"`
+	CheckoutID         string                    `json:"checkoutId"`
+	StateRoot          string                    `json:"stateRoot,omitempty"`
+	ComposeProject     string                    `json:"composeProject,omitempty"`
+	OwnerID            string                    `json:"ownerId,omitempty"`
+	URL                string                    `json:"url,omitempty"`
+	TargetName         string                    `json:"targetName,omitempty"`
+	TargetID           string                    `json:"targetId,omitempty"`
+	ProjectID          string                    `json:"projectId,omitempty"`
+	Services           map[string]string         `json:"services,omitempty"`
+	Attachments        []AttachmentStatus        `json:"attachments"`
+	DevelopmentProfile *DevelopmentProfileStatus `json:"developmentProfile,omitempty"`
+}
+
+// DevelopmentProfileStatus is the deliberately redacted portion of the
+// target-owned profile-application checkpoint shown by `dev status`.
+type DevelopmentProfileStatus struct {
+	ApplicationID              string   `json:"applicationId"`
+	Status                     string   `json:"status"`
+	ProfileName                string   `json:"profileName"`
+	LastCompletedApplicationID string   `json:"lastCompletedApplicationId,omitempty"`
+	LastCompletedAt            string   `json:"lastCompletedAt,omitempty"`
+	RequiredConnections        int32    `json:"requiredConnections"`
+	AppliedConnections         int32    `json:"appliedConnections"`
+	IncompleteConnections      []string `json:"incompleteConnections"`
+	UpdatedAt                  string   `json:"updatedAt"`
 }
 
 type OwnedResource struct {

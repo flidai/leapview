@@ -15,9 +15,7 @@ const root = join(projectRoot, '.tmp/dashboard-page-test')
 
 test('dashboard fixtures satisfy the fail-closed visualization contract', () => {
   for (const [id, envelope] of Object.entries(testVisualizationEnvelopes())) {
-    if (!validateVisualizationEnvelope(envelope)) {
-      throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
-    }
+    if (!validateVisualizationEnvelope(envelope)) throw new Error(`${id}: ${JSON.stringify((validateVisualizationEnvelope as typeof validateVisualizationEnvelope & { errors?: unknown }).errors)}`)
   }
 })
 
@@ -35,9 +33,13 @@ test('dashboard header exposes favorite and contextual actions without crowding 
       const favorite = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-favorite') as HTMLButtonElement
       const trigger = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-options-trigger') as HTMLButtonElement
       const initialFavoriteLabel = favorite.getAttribute('aria-label')
+      element.style.cssText += '--button-star-iconColor:rgb(234,197,79);--lv-fg-warning:rgb(154,103,0)'
       favorite.click()
       trigger.click()
       await element.updateComplete
+      const favoriteColors = [getComputedStyle(favorite).color]
+      element.style.setProperty('--button-star-iconColor', 'rgb(227, 179, 65)')
+      favoriteColors.push(getComputedStyle(favorite).color)
       const link = (element.shadowRoot as ShadowRoot).querySelector('.dashboard-options-menu a') as HTMLAnchorElement
       const open = trigger.getAttribute('aria-expanded')
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -49,6 +51,7 @@ test('dashboard header exposes favorite and contextual actions without crowding 
         initialFavoriteLabel,
         favoriteLabel: favorite.getAttribute('aria-label'),
         favoritePressed: favorite.getAttribute('aria-pressed'),
+        favoriteColors,
         storedFavorites: JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]'),
         triggerLabel: trigger.getAttribute('aria-label'),
         triggerHasPopup: trigger.getAttribute('aria-haspopup'),
@@ -66,6 +69,7 @@ test('dashboard header exposes favorite and contextual actions without crowding 
       initialFavoriteLabel: 'Add Executive Sales Dashboard to favorites',
       favoriteLabel: 'Remove Executive Sales Dashboard from favorites',
       favoritePressed: 'true',
+      favoriteColors: ['rgb(234, 197, 79)', 'rgb(227, 179, 65)'],
       storedFavorites: ['executive-sales'],
       triggerLabel: 'Dashboard options',
       triggerHasPopup: 'menu',
@@ -1146,11 +1150,13 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
       await table.updateComplete
       const scrollport = (table.shadowRoot as ShadowRoot).querySelector('.table-scrollport') as HTMLElement
       const request = new Promise((resolve, reject) => {
-        const timeout = window.setTimeout(() => reject(new Error('window request was not emitted')), 1_000)
-        dashboard.addEventListener('lv-visualization-window-request', (event: Event) => {
+        const timeout = window.setTimeout(() => reject(new Error('scrolled window request was not emitted')), 1_000)
+        dashboard.addEventListener('lv-visualization-window-request', function onRequest(event: Event) {
+          if ((event as CustomEvent).detail.start < 50) return
           window.clearTimeout(timeout)
+          dashboard.removeEventListener('lv-visualization-window-request', onRequest)
           resolve((event as CustomEvent).detail)
-        }, { once: true })
+        })
       })
       scrollport.scrollTop = 100 * 28
       scrollport.dispatchEvent(new Event('scroll'))
@@ -1163,16 +1169,14 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
         loadingVisible: (table.shadowRoot as ShadowRoot).textContent?.includes('loading'),
       }
     })
-    expect(result.detail).toMatchObject({
-      visualID: 'orders', specRevision: `sha256:${'3'.repeat(64)}`, dataRevision: 1,
-      resetVersion: 0, limit: 50,
+    expect(result).toMatchObject({
+      detail: { visualID: 'orders', specRevision: `sha256:${'3'.repeat(64)}`, dataRevision: 1, resetVersion: 0, limit: 50 },
+      totalRows: 250, loadingVisible: true,
     })
     expect(result.detail.requestSeq).toBeGreaterThan(0)
     expect(result.detail.start).toBeGreaterThanOrEqual(50)
     expect(['all', 'a', 'b', 'c']).toContain(result.detail.blockID)
     expect(result.renderedRows).toBeLessThan(40)
-    expect(result.totalRows).toBe(250)
-    expect(result.loadingVisible).toBe(true)
   } finally { await page.close() }
 })
 
@@ -1372,7 +1376,7 @@ test('table resize handles expose keyboard increments and accessible labels', as
 test('dashboard refresh progress is owned by the latest stream generation', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(baseURL, { waitUntil: 'networkidle' })
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.title === 'Executive Sales Dashboard')
     const states = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')

@@ -43,6 +43,30 @@ func TestTwoAttachmentsDetachWithoutStoppingUntilLastExit(t *testing.T) {
 	require.Equal(t, 1, countCommands(runner.commands, " stop --timeout"))
 }
 
+func TestProfileRuntimeSupportsLifecycleOperationsAfterStartup(t *testing.T) {
+	checkout, packageRoot, stateRoot := t.TempDir(), testRuntimePackage(t), t.TempDir()
+	endpoint := &fakeEndpoint{host: "unix:///var/run/docker.sock", server: "daemon-1", fingerprint: "sha256:endpoint"}
+	runner := &fakeRunner{artifacts: testQualificationArtifacts(t)}
+	options := testControllerOptions(checkout, packageRoot, stateRoot, endpoint, runner)
+	options.DevelopmentProfile = DevelopmentProfileIdentity{
+		Name: "local", GraphDigest: "sha256:" + strings.Repeat("a", 64), ProfileDigest: "sha256:" + strings.Repeat("b", 64),
+	}
+	controller, err := New(options)
+	require.NoError(t, err)
+	_, err = controller.Start(t.Context())
+	require.NoError(t, err)
+	attachment, _, err := controller.Attach(t.Context())
+	require.NoError(t, err)
+	status, err := controller.Status(t.Context())
+	require.NoError(t, err)
+	require.Len(t, status.Attachments, 1)
+	_, err = controller.Detach(t.Context(), attachment)
+	require.NoError(t, err)
+	require.NoError(t, controller.Stop(t.Context()))
+	_, err = controller.PlanReset(t.Context())
+	require.NoError(t, err)
+}
+
 func TestStopAndResetRefuseFreshAttachmentsWithoutDockerMutation(t *testing.T) {
 	controller, runner, _ := startedLifecycleController(t)
 	attachment, _, err := controller.Attach(t.Context())
@@ -377,6 +401,23 @@ func TestRunAttachmentStopsOnLastContextCancellation(t *testing.T) {
 	err := controller.Run(ctx, false)
 	require.True(t, errors.Is(err, context.Canceled) || err == nil)
 	require.Equal(t, 1, countCommands(runner.commands, " stop --timeout"))
+}
+
+func TestRunActionUsesEstablishedSessionAndDetachesAfterSynchronization(t *testing.T) {
+	controller, runner, _ := startedLifecycleController(t)
+	var observed State
+	err := controller.RunAction(t.Context(), func(ctx context.Context, state State) error {
+		require.NoError(t, ctx.Err())
+		observed = state
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, observed.Session.TargetName)
+	require.NotEmpty(t, observed.Session.SessionID)
+	require.Equal(t, 1, countCommands(runner.commands, " stop --timeout"))
+	status, statusErr := controller.Status(t.Context())
+	require.NoError(t, statusErr)
+	require.Empty(t, status.Attachments)
 }
 
 func startedLifecycleController(t *testing.T) (*Controller, *fakeRunner, *time.Time) {

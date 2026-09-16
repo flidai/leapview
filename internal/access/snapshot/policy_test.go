@@ -254,6 +254,19 @@ func TestAuthorizationSnapshotRoleBindingCapturesDefensiveCapabilityBundle(t *te
 	require.Equal(t, access.CapabilityProjectAdmin, snapshot.RoleBindings()[0].Capabilities[0])
 }
 
+func TestAuthorizationSnapshotPreservesLegacyRoleBindingNameWhitespace(t *testing.T) {
+	project := testGraph(t)
+	binding := RoleBinding{
+		ID: "binding_admin", Name: " Legacy administrator ",
+		Subject: mustSubject(t, access.SubjectKindPrincipal, "alice"), Role: access.ProjectRoleAdmin,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(testIdentity(), project, []RoleBinding{binding}, nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, snapshot.ValidateBound())
+	require.Equal(t, binding.Name, snapshot.RoleBindings()[0].Name)
+}
+
 func TestAuthorizationSnapshotRejectsRoleBundleDrift(t *testing.T) {
 	project := testGraph(t)
 	bundle := access.ProjectRoleCapabilities(access.ProjectRoleViewer)

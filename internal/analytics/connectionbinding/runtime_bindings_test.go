@@ -176,6 +176,132 @@ func TestRuntimeBindingLeaserInspectsDurableEvidenceWithoutPoolAcquisition(t *te
 	require.Empty(t, directory.acquired)
 }
 
+func TestRuntimeBindingLeaserProfileApplicationAdmissionGatesAcquireAndInspect(t *testing.T) {
+	application := profileApplicationFixture(t, ProfileApplicationApplied)
+	store := newMemoryProfileApplicationStore()
+	saveProfileApplication(t, store, application)
+	checker, err := NewProfileApplicationAdmissionChecker(store)
+	require.NoError(t, err)
+	binding := profileAdmissionTargetBinding(t)
+
+	newLeaser := func(directory *recordingValidatedPoolDirectory) *RuntimeBindingLeaser {
+		leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+			Bindings: &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: binding}},
+			Pools:    directory, Authorize: func(context.Context, string, TargetBinding) error { return nil },
+			ProfileApplicationAdmission: checker,
+			CheckoutID:                  "checkout-1", RuntimeID: "runtime-1", ProfileName: "local",
+			GraphDigest: application.GraphDigest, ProfileDigest: application.ProfileDigest,
+		})
+		require.NoError(t, err)
+		return leaser
+	}
+	request := RuntimeBindingRequest{
+		Actor: "author-1", Identity: servingIdentity("project-1", "dev", "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind}},
+	}
+
+	directory := &recordingValidatedPoolDirectory{}
+	leaser := newLeaser(directory)
+	leases, err := leaser.Acquire(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, leases.Evidence(), 1)
+	require.Len(t, directory.acquired, 1)
+	leases.Release()
+
+	directory = &recordingValidatedPoolDirectory{}
+	leaser = newLeaser(directory)
+	evidence, err := leaser.Inspect(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, evidence, 1)
+	require.Empty(t, directory.acquired)
+}
+
+func TestRuntimeBindingLeaserProfileApplicationAdmissionRejectsProfileAndEvidenceDriftBeforeAcquire(t *testing.T) {
+	application := profileApplicationFixture(t, ProfileApplicationApplied)
+	store := newMemoryProfileApplicationStore()
+	saveProfileApplication(t, store, application)
+	checker, err := NewProfileApplicationAdmissionChecker(store)
+	require.NoError(t, err)
+	binding := profileAdmissionTargetBinding(t)
+	request := RuntimeBindingRequest{
+		Actor: "author-1", Identity: servingIdentity("project-1", "dev", "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind}},
+	}
+
+	tests := []struct {
+		name       string
+		configure  func(*RuntimeBindingLeaserConfig)
+		newBinding func(TargetBinding) TargetBinding
+	}{
+		{name: "profile", configure: func(config *RuntimeBindingLeaserConfig) { config.ProfileDigest = profileApplicationDigest('e') }},
+		{name: "evidence", newBinding: func(binding TargetBinding) TargetBinding { binding.ValidatedVersion = "provider-drift"; return binding }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := &recordingValidatedPoolDirectory{}
+			currentBinding := binding
+			if test.newBinding != nil {
+				currentBinding = test.newBinding(currentBinding)
+			}
+			config := RuntimeBindingLeaserConfig{
+				Bindings: &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{currentBinding.ConnectionID: currentBinding}},
+				Pools:    directory, Authorize: func(context.Context, string, TargetBinding) error { return nil },
+				ProfileApplicationAdmission: checker,
+				CheckoutID:                  "checkout-1", RuntimeID: "runtime-1", ProfileName: "local",
+				GraphDigest: application.GraphDigest, ProfileDigest: application.ProfileDigest,
+			}
+			if test.configure != nil {
+				test.configure(&config)
+			}
+			leaser, err := NewRuntimeBindingLeaser(config)
+			require.NoError(t, err)
+			_, err = leaser.Acquire(t.Context(), request)
+			require.ErrorIs(t, err, ErrProfileApplicationNotAdmitted)
+			require.Empty(t, directory.acquired)
+
+			_, err = leaser.Inspect(t.Context(), request)
+			require.ErrorIs(t, err, ErrProfileApplicationNotAdmitted)
+			require.Empty(t, directory.acquired)
+		})
+	}
+}
+
+func TestRuntimeBindingLeaserProductionBehaviorIsUnchangedWithoutProfileAdmission(t *testing.T) {
+	binding := profileAdmissionTargetBinding(t)
+	directory := &recordingValidatedPoolDirectory{}
+	leaser, err := NewRuntimeBindingLeaser(RuntimeBindingLeaserConfig{
+		Bindings: &runtimeBindingCatalog{bindings: map[projectgraph.ResourceID]TargetBinding{binding.ConnectionID: binding}},
+		Pools:    directory, Authorize: func(context.Context, string, TargetBinding) error { return nil },
+		// Local-only identities are ignored when the optional checker is nil.
+		CheckoutID: "not-configured", RuntimeID: "not-configured", ProfileName: "not-configured",
+		GraphDigest: "not-a-digest", ProfileDigest: "not-a-digest",
+	})
+	require.NoError(t, err)
+	leases, err := leaser.Acquire(t.Context(), RuntimeBindingRequest{
+		Actor: "author-1", Identity: servingIdentity("project-1", "dev", "generation-1"), TargetID: binding.TargetID,
+		Requirements: []Requirement{{ConnectionID: binding.ConnectionID, ConnectorKind: binding.ConnectorKind}},
+	})
+	require.NoError(t, err)
+	require.Len(t, directory.acquired, 1)
+	leases.Release()
+}
+
+func profileAdmissionTargetBinding(t *testing.T) TargetBinding {
+	t.Helper()
+	binding, err := NewTargetBinding(TargetBindingInput{
+		ID: "binding-a", TargetID: "target-local", ConnectionID: "connection-a", ConnectorKind: "postgres",
+		AuthenticationMode: AuthenticationExternalBundle, Scope: BindingScope{ProjectID: "project-1", Environment: "dev"},
+		Endpoint:            EndpointConfig{Host: "127.0.0.1", Port: 5432, Database: "analytics", TLSMode: "disable"},
+		CredentialReference: CredentialReference{ProjectID: "project-1", Environment: "dev", SecretPath: "/", SecretKey: "LEAPVIEW_DEV_CONNECTION_A"},
+		Enabled:             true, Now: time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC),
+	})
+	require.NoError(t, err)
+	binding, err = binding.MarkValidated("provider-a", binding.UpdatedAt.Add(time.Minute))
+	require.NoError(t, err)
+	binding.Revision = 4
+	return binding
+}
+
 func TestRuntimeBindingLeaserInspectFailsClosedForAuthorizationScopeAndCompatibility(t *testing.T) {
 	binding := validTargetBinding(t)
 	validated, err := binding.MarkValidated("provider-v1", binding.UpdatedAt.Add(time.Minute))

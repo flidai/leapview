@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { CheckCircle2, Circle, Clock3, XCircle } from 'lucide'
-import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal, RecordTableSignal } from '../../generated/signals'
+import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal, PipelineRunMonitorSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -14,9 +14,6 @@ import '../shared/entity-list'
 const pipelineRunStatuses = ['queued', 'running', 'prepared', 'succeeded', 'failed', 'cancelled', 'superseded'] as const
 
 class LeapViewPipelinesPage extends DatastarLit(LitElement) {
-  @state() private runQuery = ''
-  @state() private runStatus = 'all'
-  @state() private runTrigger = 'all'
   @state() private selectedRunID = ''
   @state() private terminalFailure: BrowserCommandFailure | null = null
 
@@ -44,7 +41,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       overflow: hidden;
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -79,44 +76,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 
     .metric.tone-danger .metric-value { color: var(--lv-fg-danger); }
     .metric.tone-accent .metric-value { color: var(--lv-fg-accent, var(--lv-fg-default)); }
-
-    .tabs {
-      display: flex;
-      gap: var(--base-size-16);
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .tabs a {
-      position: relative;
-      display: inline-flex;
-      min-height: var(--control-medium-size);
-      align-items: center;
-      color: var(--lv-fg-muted);
-      text-decoration: none;
-      font: var(--lv-type-body);
-    }
-
-    .tabs a:hover,
-    .tabs a:focus-visible,
-    .tabs a.active {
-      color: var(--lv-fg-default);
-    }
-
-    .tabs a:focus-visible {
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .tabs a.active::after {
-      position: absolute;
-      right: 0;
-      bottom: -1px;
-      left: 0;
-      height: 2px;
-      border-radius: 2px 2px 0 0;
-      background: var(--lv-fg-accent, var(--lv-fg-default));
-      content: '';
-    }
 
     .runs {
       display: grid;
@@ -171,6 +130,26 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
     }
+
+    .run-toolbar button, .run-toolbar a, .run-pagination a {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--control-medium-size);
+      box-sizing: border-box;
+      padding: 0 var(--base-size-12);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body);
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .run-pagination { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .run-pagination-actions { display: flex; gap: var(--base-size-8); }
+    .run-detail-actions { display: flex; gap: var(--base-size-8); flex-wrap: wrap; }
+    .run-detail-actions a, .run-detail-actions button { border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); color: var(--lv-fg-default); padding: var(--base-size-8) var(--base-size-12); text-decoration: none; cursor: pointer; font: var(--lv-type-body); }
 
     .run-table {
       min-width: 0;
@@ -274,12 +253,14 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 
     @media (max-width: 880px) {
       .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .metric:nth-child(3) { border-left: 0; border-top: var(--lv-border-muted); }
-      .metric:nth-child(4) { border-top: var(--lv-border-muted); }
+      .metric:nth-child(3) { grid-column: 1 / -1; border-left: 0; border-top: var(--lv-border-muted); }
     }
 
     @media (max-width: 720px) {
       .page { padding: var(--base-size-12); }
+      .metrics { grid-template-columns: minmax(0, 1fr); }
+      .metric + .metric { border-left: 0; border-top: var(--lv-border-muted); }
+      .metric:nth-child(3) { grid-column: auto; }
       .run-toolbar input { width: 100%; }
     }
   `]
@@ -318,21 +299,8 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       : null
     return html`
       <section class="page" aria-label="LeapView pipelines">
-        ${renderPageHeader(page.title, page.description, page.environment ? `Environment · ${page.environment}` : '')}
+        ${renderPageHeader(page.title, page.description, page.environment ? `Environment · ${page.environment}${page.activeTab === 'runs' ? ' · Live updates' : ''}` : '')}
         ${this.renderCommandFeedback()}
-        <div class="metrics" aria-label="Pipeline health summary">
-          ${page.metrics.map((metric) => html`
-            <div class=${`metric tone-${metric.tone || 'muted'}`}>
-              <span class="metric-label">${metric.label}</span>
-              <strong class="metric-value">${metric.value}</strong>
-              ${metric.detail ? html`<span class="metric-detail">${metric.detail}</span>` : nothing}
-            </div>
-          `)}
-        </div>
-        <nav class="tabs" aria-label="Pipeline monitor views">
-          <a class=${page.activeTab === 'pipelines' ? 'active' : ''} href="/pipelines?view=pipelines" aria-current=${page.activeTab === 'pipelines' ? 'page' : nothing}>Pipelines</a>
-          <a class=${page.activeTab === 'runs' ? 'active' : ''} href="/pipelines?view=runs" aria-current=${page.activeTab === 'runs' ? 'page' : nothing}>Run history</a>
-        </nav>
         ${page.activeTab === 'runs' ? this.renderRuns(page) : this.renderPipelines(page)}
       </section>
       ${selectedRun ? this.renderRunDetail(selectedRun) : nothing}
@@ -387,16 +355,29 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   private renderRuns(page: PipelinePageSignal) {
     return html`
       <div class="runs">
-        <div class="run-toolbar" aria-label="Run history filters">
-          <input type="search" placeholder="Search pipeline or run ID" aria-label="Search pipeline runs" .value=${this.runQuery} @input=${(event: Event) => { this.runQuery = (event.currentTarget as HTMLInputElement).value }}>
-          <select aria-label="Filter runs by status" .value=${this.runStatus} @change=${(event: Event) => { this.runStatus = (event.currentTarget as HTMLSelectElement).value }}>
-            <option value="all">All statuses</option>
+        <form class="run-toolbar" method="get" action="/runs" aria-label="Run history filters">
+          <input type="search" name="q" placeholder="Search pipeline or run ID" aria-label="Search pipeline runs" .value=${page.runMonitor?.query || ''}>
+          <select name="range" aria-label="Filter runs by time range" .value=${page.runMonitor?.range || '24h'} @change=${this.submitRunFilters}>
+            <option value="24h">Last 24 hours</option><option value="7d">Last 7 days</option><option value="30d">Last 30 days</option><option value="all">All time</option>
+          </select>
+          <select name="status" aria-label="Filter runs by status" .value=${page.runMonitor?.status || ''} @change=${this.submitRunFilters}>
+            <option value="">All statuses</option>
             ${pipelineRunStatuses.map((status) => html`<option value=${status}>${capitalize(status)}</option>`)}
           </select>
-          <select aria-label="Filter runs by trigger" .value=${this.runTrigger} @change=${(event: Event) => { this.runTrigger = (event.currentTarget as HTMLSelectElement).value }}>
-            <option value="all">All triggers</option>
+          <select name="trigger" aria-label="Filter runs by trigger" .value=${page.runMonitor?.trigger || ''} @change=${this.submitRunFilters}>
+            <option value="">All triggers</option>
             ${['manual', 'schedule'].map((trigger) => html`<option value=${trigger}>${capitalize(trigger)}</option>`)}
           </select>
+          <button type="submit">Search</button><a href="/runs">Clear filters</a>
+        </form>
+        <div class="metrics" aria-label="Pipeline health summary">
+          ${page.metrics.map((metric) => html`
+            <div class=${`metric tone-${metric.tone || 'muted'}`}>
+              <span class="metric-label">${metric.label}</span>
+              <strong class="metric-value">${metric.value}</strong>
+              ${metric.detail ? html`<span class="metric-detail">${metric.detail}</span>` : nothing}
+            </div>
+          `)}
         </div>
         <div class="run-table">
           <lv-entity-list
@@ -405,46 +386,56 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
             row-action="detail"
             min-width="1050px"
             list-label="Pipeline run history"
-            empty-text="No pipeline runs have been recorded yet."
+            empty-text="No runs match these filters."
             .showToolbar=${false}
-            .items=${this.filteredRunItems(page.runsTable)}
+            .items=${this.runItems(page.runsTable)}
             .columns=${[
               { id: 'status', label: 'Status', width: '120px', render: 'status' },
-              { id: 'name', label: 'Pipeline', width: '200px' },
-              { id: 'started', label: 'Started', width: '170px' },
+              { id: 'name', label: 'Run ID', width: '180px' },
+              { id: 'started', label: 'Started', width: '155px' },
+              { id: 'pipeline', label: 'Pipeline', width: '180px' },
               { id: 'duration', label: 'Duration', width: '90px' },
               { id: 'trigger', label: 'Trigger', width: '100px' },
-              { id: 'triggeredBy', label: 'Triggered by', width: '130px' },
+              { id: 'error', label: 'Error', width: '230px' },
               { id: 'actions', label: '', width: '90px', sortable: false, render: 'actions' },
             ]}
             @lv-entity-list-row-action=${this.handleRunAction}
           ></lv-entity-list>
         </div>
+        ${page.runMonitor ? this.renderRunPagination(page.runMonitor) : nothing}
       </div>
     `
   }
 
-  private filteredRunItems(table: RecordTableSignal): EntityListItem[] {
-    const query = this.runQuery.trim().toLowerCase()
+  private submitRunFilters = (event: Event): void => { (event.currentTarget as HTMLSelectElement).form?.requestSubmit() }
+
+  private renderRunPagination(monitor: PipelineRunMonitorSignal) {
+    const start = monitor.total > (monitor.page - 1) * monitor.pageSize ? (monitor.page - 1) * monitor.pageSize + 1 : 0
+    const end = Math.min(monitor.total, monitor.page * monitor.pageSize)
+    return html`<nav class="run-pagination" aria-label="Run pages">
+      <span>Showing ${start}–${end} of ${monitor.total} runs</span>
+      <div class="run-pagination-actions">
+        ${monitor.page > 1 ? html`<a href=${runMonitorPageHref(monitor, monitor.page - 1)}>Previous</a>` : nothing}
+        ${end < monitor.total ? html`<a href=${runMonitorPageHref(monitor, monitor.page + 1)}>Next</a>` : nothing}
+      </div>
+    </nav>`
+  }
+
+  private runItems(table: RecordTableSignal): EntityListItem[] {
     return table.rows
-      .filter((row) => {
-        if (query && !String(row.pipeline_search || '').includes(query)) return false
-        if (this.runStatus !== 'all' && row.status_value !== this.runStatus) return false
-        if (this.runTrigger !== 'all' && row.trigger_value !== this.runTrigger) return false
-        return true
-      })
       .map((row) => ({
         id: String(row.run_id || row.id || ''),
-        title: runDetailValue(row, 'pipeline'),
-        description: firstRunListValue(row.run_id, row.run, row.id),
+        title: firstRunListValue(row.run, row.run_id, row.id),
+        description: formatRunDetailDate(row.created_at),
         href: runDetailValue(row, 'pipeline_href') === '—' ? '#' : runDetailValue(row, 'pipeline_href'),
         icon: 'none',
         columns: {
           status: capitalize(runDetailValue(row, 'status_value')),
-          started: runDetailValue(row, 'started'),
+          started: formatRunListDate(row.started_at),
+          pipeline: runDetailValue(row, 'pipeline'),
           duration: runDetailValue(row, 'duration'),
           trigger: runDetailValue(row, 'trigger'),
-          triggeredBy: runDetailValue(row, 'triggered_by'),
+          error: runDetailValue(row, 'error'),
         },
         columnTitles: {
           started: formatRunDetailDate(row.started_at),
@@ -518,7 +509,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   private renderRunDetail(row: Record<string, unknown>) {
     const status = runDetailValue(row, 'status_value')
     const pipeline = runDetailValue(row, 'pipeline')
-    const project = runDetailValue(row, 'project')
     const error = runDetailValue(row, 'error')
     const pipelineHref = runDetailValue(row, 'pipeline_href')
     return html`
@@ -533,8 +523,18 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
           ${runStatusIcon(status)}
           <span>${capitalize(status)}</span>
         </div>
-        <p slot="subtitle" class="run-detail-subtitle">${pipeline} · ${project}</p>
+        <p slot="subtitle" class="run-detail-subtitle">${pipeline} · ${runDetailValue(row, 'environment')}</p>
         <div class="run-detail-body">
+          ${error !== '—' ? html`
+            <section class="run-detail-section" aria-label="Run error">
+              <h2>Error</h2>
+              <pre class="run-detail-error"><code>${error}</code></pre>
+            </section>
+          ` : nothing}
+          <div class="run-detail-actions">
+            ${pipelineHref !== '—' ? html`<a href=${pipelineHref}>View pipeline</a>` : nothing}
+            ${this.canRunAgain(row) ? html`<button type="button" @click=${() => this.runAgain(row)}>Run again</button>` : nothing}
+          </div>
           <section class="run-detail-section" aria-label="Run identity">
             <h2>Run identity</h2>
             <div class="run-detail-facts">
@@ -542,9 +542,8 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
               ${pipelineHref !== '—'
                 ? html`<div class="run-detail-fact"><span>Pipeline</span><a href=${pipelineHref}>${pipeline}</a></div>`
                 : runDetailFact('Pipeline', pipeline)}
-              ${runDetailFact('Project', project)}
               ${runDetailFact('Environment', runDetailValue(row, 'environment'))}
-              ${runDetailFact('Semantic model', runDetailValue(row, 'semantic_model'), true)}
+              ${runDetailValue(row, 'semantic_model') !== '—' ? html`<div class="run-detail-fact"><span>Semantic model</span><a href=${`/semantic-models/${encodeURIComponent(runDetailValue(row, 'semantic_model'))}/details`}>${runDetailValue(row, 'semantic_model')}</a></div>` : nothing}
             </div>
           </section>
           <section class="run-detail-section" aria-label="Lifecycle">
@@ -568,15 +567,20 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
               ${runDetailFact('Target generation', runDetailValue(row, 'target_generation'), true)}
             </div>
           </section>
-          ${error !== '—' ? html`
-            <section class="run-detail-section" aria-label="Run error">
-              <h2>Error</h2>
-              <pre class="run-detail-error"><code>${error}</code></pre>
-            </section>
-          ` : nothing}
         </div>
       </lv-drawer>
     `
+  }
+
+  private canRunAgain(row: Record<string, unknown>): boolean {
+    const pipeline = this.page?.pipelines.find((item) => item.pipelineId === String(row.pipeline_id))
+    const status = String(row.status_value || '')
+    return Boolean(pipeline?.canRun && !pipeline.running && !['queued', 'running', 'prepared'].includes(status))
+  }
+
+  private runAgain(row: Record<string, unknown>): void {
+    const pipeline = this.page?.pipelines.find((item) => item.pipelineId === String(row.pipeline_id))
+    if (pipeline && this.canRunAgain(row)) this.emitCommand('run', pipeline, String(row.run_id || ''))
   }
 
   private emitCommand(action: 'run' | 'retry' | 'cancel', pipeline: PipelineListItemSignal, runId: string): void {
@@ -603,6 +607,11 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 function commandLoadingLabel(action: string): string {
   if (action === 'cancel') return 'Cancelling pipeline run…'
   return 'Queuing pipeline run…'
+}
+
+function runMonitorPageHref(monitor: PipelineRunMonitorSignal, page: number): string {
+  const params = new URLSearchParams({ q: monitor.query, range: monitor.range, status: monitor.status, trigger: monitor.trigger, page: String(page) })
+  return `/runs?${params}`
 }
 
 customElements.define('lv-pipelines-page', LeapViewPipelinesPage)
@@ -645,6 +654,13 @@ function formatRunDetailDate(value: unknown): string {
   if (!normalized) return '—'
   const date = new Date(normalized)
   return Number.isNaN(date.getTime()) ? normalized : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(date)
+}
+
+function formatRunListDate(value: unknown): string {
+  const normalized = value == null || value === '' || value === '-' ? '' : String(value)
+  if (!normalized) return 'Not started'
+  const date = new Date(normalized)
+  return Number.isNaN(date.getTime()) ? normalized : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date)
 }
 
 function runStatusTone(status: string): 'success' | 'danger' | 'attention' | 'muted' {
