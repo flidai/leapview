@@ -171,8 +171,15 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       go_binary="$(find /root /usr /opt -type f -path '*/bin/go' -perm -111 -print -quit 2>/dev/null || true)"
     fi
     [[ -n "$go_binary" ]]
-    git -C "$repo" fetch --quiet origin "$latest_revision"
+    next_binary="$repo/.tmp/leapview-dev.next"
+    backup_binary="$repo/.tmp/leapview-dev.previous"
     latest_worktree="/tmp/leapview-runtime-$latest_revision"
+    next_revision=""
+    if [[ -x "$next_binary" ]]; then
+      next_revision="$("$next_binary" version --json | jq -r '.revision // empty')"
+    fi
+    if [[ "$next_revision" != "$latest_revision" ]]; then
+    git -C "$repo" fetch --quiet origin "$latest_revision"
     if [[ -e "$latest_worktree" ]]; then
       git -C "$repo" worktree remove --force "$latest_worktree"
     fi
@@ -186,10 +193,9 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
     runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
     build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    next_binary="$repo/.tmp/leapview-dev.next"
-    backup_binary="$repo/.tmp/leapview-dev.previous"
     build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
     (cd "$latest_worktree" && "$go_binary" build -trimpath -ldflags "$build_ldflags" -o "$next_binary" ./cmd/leapview)
+    fi
     [[ "$("$next_binary" version --json | jq -er '.revision')" == "$latest_revision" ]]
     cp -p "$leapview_binary" "$backup_binary"
     install -m 0755 "$next_binary" "$leapview_binary"
@@ -208,12 +214,18 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       sleep 2
     done
     if [[ "$updated" != true ]]; then
+      echo 'latest runtime readiness response:' >&2
+      curl --silent --show-error --max-time 10 http://127.0.0.1:8132/readyz >&2 || true
+      echo >&2
+      journalctl --unit leapview-demo-current.service --since '-3 minutes' --no-pager --lines 120 >&2 || true
       install -m 0755 "$backup_binary" "$leapview_binary"
       systemctl restart leapview-demo-current.service
       echo 'latest runtime failed readiness; previous healthy binary restored' >&2
       exit 1
     fi
-    git -C "$repo" worktree remove --force "$latest_worktree"
+    if [[ -e "$latest_worktree" ]]; then
+      git -C "$repo" worktree remove --force "$latest_worktree"
+    fi
   fi
   echo "active runtime revision: $("$leapview_binary" version --json | jq -r '.revision')"
   echo 'public demo readiness: ready'
