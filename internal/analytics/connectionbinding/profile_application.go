@@ -38,10 +38,6 @@ const (
 	ProfileApplicationApplying   ProfileApplicationStatus = "applying"
 	ProfileApplicationIncomplete ProfileApplicationStatus = "incomplete"
 	ProfileApplicationApplied    ProfileApplicationStatus = "applied"
-
-	ApplicationApplying   = ProfileApplicationApplying
-	ApplicationIncomplete = ProfileApplicationIncomplete
-	ApplicationApplied    = ProfileApplicationApplied
 )
 
 // ProfileApplicationID identifies one retained application attempt. It is
@@ -57,8 +53,6 @@ type ProfileApplicationScope struct {
 	ProjectID   projectgraph.ResourceID `json:"projectId"`
 	Environment string                  `json:"environment"`
 }
-
-type ProfileApplicationLookup = ProfileApplicationScope
 
 // ProfileApplicationConnection is exact non-secret binding intent plus
 // protected credential-version evidence. Expected connections are immutable
@@ -80,8 +74,6 @@ type ProfileApplicationRequiredConnection struct {
 	ConnectionID  projectgraph.ResourceID `json:"connectionId"`
 	ConnectorKind string                  `json:"connectorKind"`
 }
-
-type ProfileApplicationConnectionIntent = ProfileApplicationRequiredConnection
 
 // DevelopmentProfileDigestConnection is the non-secret, execution-relevant
 // profile intent shared by local profile loading and runtime application. Human

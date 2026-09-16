@@ -36,7 +36,6 @@ const (
 
 var (
 	ErrDeploymentOperationNotFound       = errors.New("deployment operation not found")
-	ErrDeploymentOperationAmbiguous      = errors.New("deployment operation selection is ambiguous")
 	ErrDeploymentOperationTargetMismatch = errors.New("deployment operation target identity mismatch")
 )
 
