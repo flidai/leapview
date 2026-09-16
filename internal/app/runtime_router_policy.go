@@ -384,6 +384,13 @@ func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subj
 }
 
 func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
+	if capability == access.CapabilityResourceUse &&
+		!access.SupportsCapability(resource.Kind(), capability) &&
+		access.SupportsCapability(resource.Kind(), access.CapabilityResourceRead) {
+		// Building a plan requires use authority for executable resources and
+		// read authority for dashboards, which are consumed but not executable.
+		return access.CapabilityResourceRead
+	}
 	if capability == access.CapabilityResourcePublish &&
 		!access.SupportsCapability(resource.Kind(), capability) &&
 		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {

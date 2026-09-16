@@ -15,7 +15,9 @@ CREATE TYPE public.river_job_state AS ENUM (
 
 CREATE TABLE public.river_job (
     id           bigint NOT NULL,
+    kind         text NOT NULL,
     state        public.river_job_state NOT NULL,
     attempt      smallint NOT NULL,
-    attempted_by text[]
+    attempted_by text[],
+    max_attempts smallint NOT NULL
 );

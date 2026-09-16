@@ -112,12 +112,8 @@ async function runWorkload(path) {
       const value = filterValues[index % filterValues.length]
       if (index > 0) {
         const resetGeneration = await dashboardGeneration(page)
-        await filter.click()
-        const resetOptions = page.getByRole('dialog', { name: 'State filter options', exact: true })
-        await resetOptions.getByRole('checkbox', { name: 'All State', exact: true }).check()
+        await page.getByRole('button', { name: 'Clear State', exact: true }).click()
         await waitForDashboardGeneration(page, resetGeneration, 30_000)
-        await page.keyboard.press('Escape')
-        await resetOptions.waitFor({ state: 'hidden', timeout: 30_000 })
       }
       const generation = await dashboardGeneration(page)
       const startedAt = performance.now()
