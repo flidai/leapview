@@ -563,8 +563,9 @@ activate_source_root() {
   local source_root="$1"
   local candidate_key="$2-$(date -u +%Y%m%d%H%M%S)"
   local verify_path="${3:-}"
+  local expected_revision="${4:-}"
   local plan plan_id build build_error candidate_id publication publication_id publication_status
-  local generation_id approval_result approval_id approval_revision operator_snapshot active=false
+  local generation_id approval_result approval_id approval_revision operator_snapshot planned_revision active=false
 
   plan="$("$leapview_binary" plan \
     --source-root "$source_root" \
@@ -575,6 +576,16 @@ activate_source_root() {
     --format json)"
   plan_id="$(jq -er '.planId' <<<"$plan")"
   [[ "$(jq -r '.status' <<<"$plan")" == planned ]]
+  if [[ -n "$expected_revision" ]]; then
+    planned_revision="$(jq -er '
+      first(.evidence.plannedInputs[] | select(.id == "connection:finance_files")) | .revision
+    ' <<<"$plan")"
+    [[ "$planned_revision" == "$expected_revision" ]] || {
+      echo "finance revision mismatch: planned $planned_revision, staged $expected_revision" >&2
+      return 1
+    }
+    echo "finance revision pinned: $planned_revision"
+  fi
   build_error="$repo/.tmp/cfo-build-$plan_id.err"
   if ! build="$("$leapview_binary" build "$plan_id" --token "$publisher_token" --format json 2>"$build_error")"; then
     cat "$build_error" >&2
@@ -666,26 +677,32 @@ if ! "$leapview_binary" api call createTargetConnectionBinding \
     exit 1
   }
 fi
+binding_health="$("$leapview_binary" api call testTargetConnectionBinding \
+  --target https://demo.leapview.dev \
+  --token "$approver_token" \
+  --path "project=$project_id" \
+  --path "target=$target_id" \
+  --path 'connection=connection:finance_files' \
+  --idempotency-key "demo-finance-files-test-$(date -u +%Y%m%d%H%M%S)")"
+[[ "$(jq -r '.health' <<<"$binding_health")" == healthy ]]
+echo 'finance target binding: healthy'
 
-# Managed-data uploads require the connection to exist in the active graph.
-# Admit a bridge generation containing only its metadata, then stage finance
-# data. Because that bridge has no finance source, the final CFO candidate
-# resolves and pins the newly staged revision rather than an older base pin.
-transition_source_root="$(mktemp -d "$repo/.tmp/cfo-transition.XXXXXX")"
-cp -a "$repo/dashboards/." "$transition_source_root/"
-cp -p "$cfo_source_root/connections/finance.yaml" \
-  "$transition_source_root/connections/finance.yaml"
-activate_source_root "$transition_source_root" hosted-demo-cfo-connection
-
-"$leapview_binary" data sync \
+# The project-wide publisher role now authorizes staging data for the new
+# graph resource directly. Keeping finance absent from the active Olist base
+# is essential: candidate planning will then select this newest ready revision.
+finance_sync="$("$leapview_binary" data sync \
   --source-root "$cfo_source_root" \
   --connection finance_files \
   --from "$cfo_data_path" \
   --target https://demo.leapview.dev \
   --project-id "$project_id" \
-  --token "$publisher_token"
+  --token "$publisher_token" \
+  --format json)"
+finance_revision="$(jq -er '.revisionId' <<<"$finance_sync")"
+echo "finance revision staged: $finance_revision"
 activate_source_root "$cfo_source_root" hosted-demo-cfo \
-  /dashboards/dashboard:cfo-command-center/pages/overview
+  /dashboards/dashboard:cfo-command-center/pages/overview \
+  "$finance_revision"
 
 for cfo_page in overview statement liquidity drivers; do
   cfo_status="$(curl --silent --show-error \
