@@ -206,6 +206,12 @@ else
     file /usr/local/lib/ollama/llama-server
   fi
   ldd /usr/local/lib/ollama/llama-server || true
+  if ! runuser --user ollama -- /usr/local/lib/ollama/llama-server --version; then
+    stat --format='%A %U:%G %n' /usr/local /usr/local/lib /usr/local/lib/ollama \
+      /usr/local/lib/ollama/llama-server >&2
+    echo 'the Ollama service account cannot execute the CPU runner' >&2
+    exit 1
+  fi
   install -d -m 0750 -o ollama -g ollama /var/lib/ollama
   cat >/etc/systemd/system/ollama.service <<'OLLAMA_SERVICE'
 [Unit]
