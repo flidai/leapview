@@ -22,7 +22,18 @@ const modeLabels = {
   light_tritanopia: 'Light tritanopia',
   dark_tritanopia: 'Dark tritanopia',
 };
-let lastAppliedEvent = 0;
+let transitionFrame = 0;
+
+function pauseThemeTransitions() {
+  root.classList.add('is-theme-switching');
+  if (transitionFrame) cancelAnimationFrame(transitionFrame);
+  transitionFrame = requestAnimationFrame(() => {
+    transitionFrame = requestAnimationFrame(() => {
+      root.classList.remove('is-theme-switching');
+      transitionFrame = 0;
+    });
+  });
+}
 
 window.addEventListener('unhandledrejection', (event) => {
   const reason = event.reason;
@@ -48,6 +59,7 @@ function setMode(mode, options = {}) {
   const next = Object.hasOwn(themes, mode) ? mode : 'system';
   const theme = themes[next];
   const resolved = theme.colorMode === 'auto' ? (media?.matches ? 'dark' : 'light') : theme.colorMode;
+  pauseThemeTransitions();
   root.dataset.colorMode = theme.colorMode;
   root.dataset.themePreference = next;
   root.dataset.lightTheme = theme.lightTheme;
@@ -71,11 +83,7 @@ function setMode(mode, options = {}) {
   }
 
   if (options.notify !== false) {
-    const eventID = ++lastAppliedEvent;
-    requestAnimationFrame(() => {
-      if (eventID !== lastAppliedEvent) return;
-      document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: next, resolvedMode: resolved } }));
-    });
+    document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: next, resolvedMode: resolved } }));
   }
 }
 

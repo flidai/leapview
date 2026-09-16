@@ -3,6 +3,14 @@ import { Menu, Monitor, Moon, Search, Sun, X } from 'lucide'
 import { DatastarLit } from '../../web/components/shared/datastar-lit'
 import { lucideIcon } from '../../web/components/shared/lucide-icons'
 
+const siteHeader = document.querySelector<HTMLElement>('.site-header')
+if (siteHeader) {
+  const updateHeaderBackdrop = () => siteHeader.classList.toggle('is-scrolled', window.scrollY > 8)
+  updateHeaderBackdrop()
+  window.addEventListener('scroll', updateHeaderBackdrop, { passive: true })
+  window.addEventListener('pageshow', updateHeaderBackdrop)
+}
+
 type ThemeMode = 'system' | 'light' | 'dark'
 
 const nextThemeMode: Record<ThemeMode, ThemeMode> = {
@@ -34,8 +42,9 @@ class SiteThemeToggle extends LitElement {
       width: var(--site-interactive-target-size);
       height: var(--site-interactive-target-size);
       place-items: center;
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
       background: var(--lv-bg-control);
       color: var(--lv-fg-muted);
       cursor: pointer;
@@ -44,9 +53,14 @@ class SiteThemeToggle extends LitElement {
 
     button:hover,
     button:focus-visible {
-      border-color: var(--lv-button-border-hover);
       background: var(--lv-button-bg-hover);
       color: var(--lv-fg-default);
+    }
+
+    button span {
+      display: grid;
+      place-items: center;
+      line-height: 0;
     }
 
     button:focus-visible {
@@ -73,9 +87,9 @@ class SiteThemeToggle extends LitElement {
     const nextMode = nextThemeMode[this.themeMode]
     const label = `${themeLabels[this.themeMode]}. Switch to ${themeLabels[nextMode]}.`
     return html`<button type="button" data-theme-toggle data-theme-mode=${this.themeMode} aria-label=${label} title=${label} @click=${this.toggleTheme}>
-      <span data-theme-icon="system" ?hidden=${this.themeMode !== 'system'}>${lucideIcon(Monitor)}</span>
-      <span data-theme-icon="light" ?hidden=${this.themeMode !== 'light'}>${lucideIcon(Sun)}</span>
-      <span data-theme-icon="dark" ?hidden=${this.themeMode !== 'dark'}>${lucideIcon(Moon)}</span>
+      <span data-theme-icon="system" ?hidden=${this.themeMode !== 'system'}>${lucideIcon(Monitor, { size: 20 })}</span>
+      <span data-theme-icon="light" ?hidden=${this.themeMode !== 'light'}>${lucideIcon(Sun, { size: 20 })}</span>
+      <span data-theme-icon="dark" ?hidden=${this.themeMode !== 'dark'}>${lucideIcon(Moon, { size: 20 })}</span>
     </button>`
   }
 
@@ -187,7 +201,6 @@ class SiteMobileMenu extends LitElement {
       <nav id="site-mobile-navigation" aria-label="Site navigation" ?hidden=${!this.open}>
         <a href="/docs" @click=${this.close}>Docs</a>
         <a href="/docs/search" @click=${this.close}>Search</a>
-        <a href="/visuals" @click=${this.close}>Visuals</a>
         ${this.showcase ? html`<a href="/showcase" @click=${this.close}>Live demo</a>` : null}
       </nav>`
   }

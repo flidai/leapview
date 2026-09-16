@@ -29,19 +29,16 @@ var markdownRenderer = goldmark.New(
 )
 
 type siteDocument struct {
-	slug               string
-	title              string
-	breadcrumb         string
-	breadcrumbRoot     string
-	breadcrumbRootHref string
-	summary            string
-	markdown           string
-	sectionID          string
-	groupID            string
-	source             string
-	navigationTitle    string
-	documentType       string
-	generated          bool
+	slug            string
+	title           string
+	summary         string
+	markdown        string
+	sectionID       string
+	groupID         string
+	source          string
+	navigationTitle string
+	documentType    string
+	generated       bool
 }
 
 type siteCatalogDocument struct {
@@ -141,39 +138,20 @@ func (loaded *loadedDocumentation) add(section siteCatalogSection, group siteCat
 	if _, exists := loaded.bySlug[document.Slug]; exists {
 		panic(fmt.Sprintf("duplicate documentation slug %q", document.Slug))
 	}
-	rootTitle, rootHref := section.Title, section.Href
-	if group.ID != "" {
-		rootTitle, rootHref = group.Title, group.Href
-	}
-	if rootHref == "/docs/"+document.Slug {
-		rootTitle, rootHref = "Documentation", "/docs"
-	}
 	entry := siteDocument{
-		slug:               document.Slug,
-		title:              document.Title,
-		breadcrumb:         firstNonEmpty(document.Breadcrumb, document.Title),
-		breadcrumbRoot:     rootTitle,
-		breadcrumbRootHref: rootHref,
-		summary:            document.Summary,
-		markdown:           string(markdown),
-		sectionID:          section.ID,
-		groupID:            group.ID,
-		source:             document.Source,
-		navigationTitle:    document.NavigationTitle,
-		documentType:       document.Type,
-		generated:          document.Generated,
+		slug:            document.Slug,
+		title:           document.Title,
+		summary:         document.Summary,
+		markdown:        string(markdown),
+		sectionID:       section.ID,
+		groupID:         group.ID,
+		source:          document.Source,
+		navigationTitle: document.NavigationTitle,
+		documentType:    document.Type,
+		generated:       document.Generated,
 	}
 	loaded.documents = append(loaded.documents, entry)
 	loaded.bySlug[entry.slug] = entry
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func documentsInCatalogGroup(sectionID, groupID string, skipFirst bool) []siteDocument {
@@ -295,9 +273,22 @@ func siteDocsArticle(document siteDocument) g.Node {
 	return h.Article(
 		h.ID("main-content"),
 		h.Class("site-docs-article"),
-		h.Div(h.Class("site-docs-article-actions"), g.El("lv-site-markdown-copy", g.Attr("markdown", document.markdown))),
+		siteDocsPageActions(document),
 		g.Raw(renderedHTML),
 		siteDocsArticleFooter(document),
+	)
+}
+
+func siteDocsPageActions(document siteDocument) g.Node {
+	sourceLabel, sourceHref := documentationSourceLink(document)
+	return h.Div(h.Class("site-docs-article-actions"),
+		g.El("lv-site-docs-page-actions",
+			g.Attr("markdown", document.markdown),
+			g.Attr("markdown-href", documentationMarkdownLink(document)),
+			g.Attr("source-href", sourceHref),
+			g.Attr("source-label", sourceLabel),
+			g.Attr("issue-href", documentationIssueLink(document)),
+		),
 	)
 }
 
@@ -396,17 +387,12 @@ func renderSiteNode(node g.Node) string {
 }
 
 func siteDocsArticleFooter(document siteDocument) g.Node {
-	sourceLabel, sourceHref := documentationSourceLink(document)
+	pagination := siteDocsPagination(document)
+	if pagination == nil {
+		return nil
+	}
 	return h.Footer(h.Class("site-docs-article-footer"),
-		siteDocsPagination(document),
-		h.Section(h.Class("site-docs-page-meta"), g.Attr("aria-labelledby", "site-docs-about-this-page"),
-			h.H2(h.ID("site-docs-about-this-page"), g.Text("About this page")),
-			h.Ul(
-				h.Li(h.A(h.Href(documentationIssueLink(document)), g.Attr("rel", "external"), g.Text("Report content issue"))),
-				h.Li(h.A(h.Href(documentationMarkdownLink(document)), g.Attr("rel", "external"), g.Text("See this page as Markdown"))),
-				h.Li(h.A(h.Href(sourceHref), g.Attr("rel", "external"), g.Text(sourceLabel))),
-			),
-		),
+		pagination,
 	)
 }
 
@@ -458,16 +444,16 @@ func siteDocsPaginationCard(document *siteDocument, direction string) g.Node {
 	)
 }
 
+func documentationMarkdownLink(document siteDocument) string {
+	return "https://raw.githubusercontent.com/flidai/leapview/main/docs/" + document.source
+}
+
 func documentationIssueLink(document siteDocument) string {
 	query := url.Values{}
 	query.Set("title", "Docs: "+document.title)
 	query.Set("labels", "documentation")
 	query.Set("body", "Page: /docs/"+document.slug+"\n\nDescribe the content issue or suggested improvement.")
 	return "https://github.com/flidai/leapview/issues/new?" + query.Encode()
-}
-
-func documentationMarkdownLink(document siteDocument) string {
-	return "https://raw.githubusercontent.com/flidai/leapview/main/docs/" + document.source
 }
 
 func documentationSourceLink(document siteDocument) (string, string) {

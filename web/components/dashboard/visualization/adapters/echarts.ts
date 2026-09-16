@@ -85,7 +85,7 @@ export const adapter: RendererAdapter = {
   async mount(container, envelope, context) {
     const echarts = await import('echarts')
     const frame = createEChartsRendererFrame(container)
-    const chart = echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
+    const chart = echarts.getInstanceByDom(frame) ?? echarts.init(frame, undefined, { renderer: 'canvas', devicePixelRatio: context.devicePixelRatio })
     const handle = new EChartsHandle(container, frame, chart, categoryColorRegistryFor(container))
     try {
       handle.mount(envelope, context)
