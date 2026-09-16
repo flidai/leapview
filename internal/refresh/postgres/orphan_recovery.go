@@ -30,15 +30,10 @@ func expiredJobRun(runID string, jobID *string, status string, attempts, fence i
 	return ExpiredJobRun{RunID: runID, JobID: *jobID, Status: status, AttemptCount: attempts, FenceGeneration: fence, LeaseOwner: owner}, nil
 }
 
-// ListExpiredJobRuns returns only active refresh runs whose product lease is
-// already expired. Callers must lock and recheck each row before recovery.
-func (r *Repository) ListExpiredJobRuns(ctx context.Context, limit int) ([]ExpiredJobRun, error) {
-	return r.ListExpiredJobRunsAfter(ctx, limit, time.Time{}, "")
-}
-
-// ListExpiredJobRunsAfter returns a stable page after the supplied keyset
-// cursor. Rejected candidates can therefore be skipped without starving
-// newer eligible refresh orphans.
+// ListExpiredJobRunsAfter returns a stable page of active refresh runs whose
+// product lease is already expired. Rejected candidates can therefore be
+// skipped without starving newer eligible refresh orphans. Callers must lock
+// and recheck each row before recovery.
 func (r *Repository) ListExpiredJobRunsAfter(ctx context.Context, limit int, afterLeaseExpiresAt time.Time, afterRunID string) ([]ExpiredJobRun, error) {
 	if err := r.requireDB(); err != nil {
 		return nil, err
