@@ -643,24 +643,16 @@ operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
   --token "$publisher_token" \
   --path "project=$project_id")"
 target_id="$(jq -er '.targetId' <<<"$operator_snapshot")"
-managed_template="$("$leapview_binary" api call getTargetConnectionBinding \
-  --target https://demo.leapview.dev \
-  --token "$publisher_token" \
-  --path "project=$project_id" \
-  --path "target=$target_id" \
-  --path 'connection=connection:olist')"
-managed_binding="$(jq -cer '
-  {
-    id: "demo-finance-files",
-    logicalConnection: "connection:finance_files",
-    configuration: {
-      connectorKind: .connectorKind,
-      authenticationMode: .authenticationMode,
-      endpoint: .endpoint
-    },
-    enabled: true
-  }
-' <<<"$managed_template")"
+managed_binding='{
+  "id":"demo-finance-files",
+  "logicalConnection":"connection:finance_files",
+  "configuration":{
+    "connectorKind":"managed",
+    "authenticationMode":"none",
+    "endpoint":{}
+  },
+  "enabled":true
+}'
 binding_error="$repo/.tmp/cfo-binding.err"
 if ! "$leapview_binary" api call createTargetConnectionBinding \
   --target https://demo.leapview.dev \
