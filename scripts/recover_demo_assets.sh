@@ -363,7 +363,25 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)"
     echo "demo dashboard status before publication: $demo_dashboard_status"
     if [[ "$demo_dashboard_status" != 200 && "$requires_publication" != true ]]; then
-      journalctl --unit leapview-demo-current.service --since '-10 minutes' --no-pager --lines 160 >&2 || true
+      operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path "project=$project_id")"
+      printf 'delivery operator snapshot: %s\n' "$(jq -c '{projectId,environment,targetId,targetRevision,activeGeneration,degraded,degradedReasons}' <<<"$operator_snapshot")"
+      active_generation="$(jq -er '.activeGeneration' <<<"$operator_snapshot")"
+      generation_status="$("$leapview_binary" api call getDeliveryGenerationStatus \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path "project=$project_id" \
+        --path "generation=$active_generation")"
+      printf 'active generation status: %s\n' "$(jq -c . <<<"$generation_status")"
+      dashboard_api_error="$repo/.tmp/demo-dashboard-api.err"
+      if ! "$leapview_binary" api call getDashboard \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path 'dashboard=visual-showcase' >/dev/null 2>"$dashboard_api_error"; then
+        sed -n '1,20p' "$dashboard_api_error" >&2
+      fi
       exit 1
     fi
   fi
