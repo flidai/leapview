@@ -154,7 +154,10 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       const afterShiftEnter = received.length
 
       textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
       const afterEnter = received.length
+      await element.updateComplete
+      const immediatelyDisabled = button.disabled
 
       element.pending = true
       await element.updateComplete
@@ -176,15 +179,21 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       }
 
       element.pending = false
+      await element.updateComplete
+      element.setDraft('Follow-up question')
+      await element.updateComplete
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }))
+      const afterPendingCycle = received.length
+
       element.disabled = true
       await element.updateComplete
       const textareaDisabled = textarea.disabled
       const disabledButton = button.disabled
 
-      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, pendingDisabled, spinnerState, textareaDisabled, disabledButton }
+      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, immediatelyDisabled, pendingDisabled, spinnerState, afterPendingCycle, textareaDisabled, disabledButton }
     })
 
-    expect(events.received).toEqual(['Revenue trend'])
+    expect(events.received).toEqual(['Revenue trend', 'Follow-up question'])
     expect(events.enabledAfterInput).toBe(true)
 	expect(events.singleLineHeight).toBe(46)
     expect(events.multilineHeight).toBeGreaterThan(events.singleLineHeight)
@@ -192,6 +201,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     expect(events.multilineOverflowY).toBe('hidden')
     expect(events.afterShiftEnter).toBe(0)
     expect(events.afterEnter).toBe(1)
+    expect(events.immediatelyDisabled).toBe(true)
     expect(events.pendingDisabled).toBe(true)
     expect(events.spinnerState).toEqual({
       size: 'small',
@@ -202,6 +212,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       animationDuration: '1s',
       animationTiming: 'linear',
     })
+    expect(events.afterPendingCycle).toBe(2)
     expect(events.textareaDisabled).toBe(true)
     expect(events.disabledButton).toBe(true)
   } finally {

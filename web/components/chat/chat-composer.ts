@@ -45,6 +45,7 @@ class ChatComposer extends LitElement {
 	@state() private mentionIndex = 0
 	@state() private mentionSearchPending = false
 	@state() private acceptedSuggestions: ChatContextReference[] = []
+	@state() private submitLocked = false
   private lastSearchQuery: string | null = null
   private latestSearchRequestId = 0
 	private acceptedSuggestionQuery = ''
@@ -52,18 +53,24 @@ class ChatComposer extends LitElement {
   private resizeObserver?: ResizeObserver
   private observedWidth = -1
 	private acceptedRunInitialized = false
+	private observedSubmitPending = false
 
   static styles = chatComposerStyles
 
 	protected willUpdate(changed: Map<string, unknown>) {
 		if (!changed.has('acceptedRunId')) return
 		if (this.acceptedRunInitialized && this.acceptedRunId && this.acceptedRunId !== changed.get('acceptedRunId')) {
+			this.releaseSubmitLock()
 			this.consumeAcceptedTurn()
 		}
 		this.acceptedRunInitialized = true
 	}
 
   updated(changed: Map<string, unknown>) {
+		if (changed.has('pending')) {
+			if (this.pending) this.observedSubmitPending = true
+			else if (this.observedSubmitPending) this.releaseSubmitLock()
+		}
     if (changed.has('value')) {
 		if (this.value) this.draft = this.value
 		void this.updateComplete.then(() => this.resizeTextarea())
@@ -123,11 +130,12 @@ class ChatComposer extends LitElement {
   }
 
   render() {
+		const submitting = this.pending || this.submitLocked
 		const blocked = this.disabled || this.pending
 		const isEditing = this.editing || Boolean(this.editMessageId.trim())
 		const showStop = this.running
 		const stopDisabled = !this.runId.trim()
-		const continueDisabled = this.disabled || this.pending || this.running || isEditing || this.draft.trim() !== ''
+		const continueDisabled = this.disabled || submitting || this.running || isEditing || this.draft.trim() !== ''
 		const activeMention = this.activeMention()
 		const mentionGroups = this.mentionSuggestionGroups()
 		const mentions = [...mentionGroups.pinned, ...mentionGroups.global]
@@ -217,11 +225,11 @@ class ChatComposer extends LitElement {
               <button
 						class=${['send-button', isEditing ? 'is-editing' : ''].filter(Boolean).join(' ')}
                 type="submit"
-				  aria-label=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
-				  title=${this.pending ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
-                ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
+				  aria-label=${submitting ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
+				  title=${submitting ? 'Sending' : isEditing ? 'Save & send' : 'Send'}
+				?disabled=${this.disabled || submitting || this.draft.trim() === ''}
               >
-							${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
+							${submitting ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
 							${isEditing ? html`<span>Save &amp; send</span>` : null}
               </button>
             `}
@@ -314,9 +322,10 @@ class ChatComposer extends LitElement {
 
 	private dispatchSubmit() {
     const input = this.draft.trim()
-    if (this.disabled || this.pending || input === '') return
+		if (this.disabled || this.pending || this.submitLocked || input === '') return
 		const editMessageId = this.editMessageId.trim()
 		if (this.editing && !editMessageId) return
+		this.submitLocked = true
 		emitDomainEvent(this, domainEvents.chatSubmit, {
 			input,
 			references: this.references,
@@ -335,11 +344,17 @@ class ChatComposer extends LitElement {
 	}
 
 	private continueResponse = (): void => {
-		if (this.disabled || this.pending || this.running || !this.canContinue || this.editing || this.editMessageId.trim() || this.draft.trim() !== '') return
+		if (this.disabled || this.pending || this.submitLocked || this.running || !this.canContinue || this.editing || this.editMessageId.trim() || this.draft.trim() !== '') return
+		this.submitLocked = true
 		emitDomainEvent(this, domainEvents.chatSubmit, {
 			input: continueResponsePrompt,
 			references: this.references,
 		})
+	}
+
+	private releaseSubmitLock(): void {
+		this.observedSubmitPending = false
+		this.submitLocked = false
 	}
 
 	private cancelEdit = (): void => {

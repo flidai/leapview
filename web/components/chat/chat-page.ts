@@ -6,6 +6,7 @@ import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
+import '../shared/loading-spinner'
 import '../dashboard/visual-modal'
 import './chat-thread'
 import { agentIcon } from './agent-icon'
@@ -101,6 +102,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       overflow: auto;
       background: var(--lv-bg-app);
     }
+
+		.loading-state {
+			display: grid;
+			min-height: 100svh;
+			place-content: center;
+			justify-items: center;
+			gap: var(--lv-space-sm);
+			color: var(--lv-fg-muted);
+			font: var(--lv-type-body);
+		}
 
     .list-main .body {
       min-height: auto;
@@ -339,10 +350,13 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   `
 
   updated(): void {
-    checkSignalContract('chat page', this.page, {
+		const page = this.page
+		const agent = this.hydratedAgent
+		if (!page || !agent) return
+    checkSignalContract('chat page', page, {
       title: 'required',
     })
-    checkSignalContract('chat agent', this.agent, {
+    checkSignalContract('chat agent', agent, {
       transcript: 'required',
       status: 'required',
       composer: 'required',
@@ -397,6 +411,10 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     return this.signal<ChatSignal>('agent', emptyAgent)
   }
 
+	get hydratedAgent(): ChatSignal | null {
+		return this.signal<ChatSignal | null>('agent', null)
+	}
+
   get visuals(): Record<string, VisualizationEnvelope> {
     return this.signal<Record<string, VisualizationEnvelope>>('visuals', {})
   }
@@ -422,7 +440,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
   render() {
     const page = this.page
-    const agent = this.agent ?? emptyAgent
+		const agent = this.hydratedAgent
+		if (!page || !agent) {
+			return html`
+				<div class="loading-state" data-chat-loading role="status" aria-live="polite">
+					<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>
+					<span>Loading conversation…</span>
+				</div>
+			`
+		}
     const status = agent.status ?? emptyAgent.status
     const composer = agent.composer ?? emptyAgent.composer
     const view = page?.view ?? 'conversation'

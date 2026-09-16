@@ -68,6 +68,11 @@ beforeAll(async () => {
       response.end(testDocument('list', 'new', false))
       return
     }
+    if (url.pathname === '/loading') {
+      response.setHeader('content-type', 'text/html')
+      response.end(loadingTestDocument())
+      return
+    }
     if (url.pathname.startsWith('/chats/')) {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument())
@@ -328,6 +333,25 @@ test('new chat submits Enter and navigates from the command signal before the an
   }
 })
 
+test('chat page shows a neutral loading state before Datastar signals hydrate', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/loading`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page'))
+    const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        text: element.shadowRoot?.textContent ?? '',
+        loading: element.shadowRoot?.querySelector('[data-chat-loading]')?.textContent?.trim() ?? '',
+      }
+    })
+    expect(state.loading).toBe('Loading conversation…')
+    expect(state.text).not.toContain('Agent is not configured.')
+  } finally {
+    await page.close()
+  }
+})
+
 test('active chat shows a submitted turn immediately and replaces it with durable state', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -557,6 +581,21 @@ function testDocument(view = 'conversation', scenario: 'active' | 'new' = 'activ
       <body>
         <main data-signals="${escapeHTML(JSON.stringify({ page, agent, visuals: {}, tables: {} }))}">
           <lv-chat-page${submitCommand}></lv-chat-page>
+        </main>
+        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
+        <script type="module" src="/chat-page-under-test.js"></script>
+      </body>
+    </html>
+  `
+}
+
+function loadingTestDocument(): string {
+  return `
+    <!doctype html>
+    <html>
+      <body>
+        <main>
+          <lv-chat-page></lv-chat-page>
         </main>
         <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
         <script type="module" src="/chat-page-under-test.js"></script>
