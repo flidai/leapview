@@ -685,8 +685,9 @@ test -d "$cfo_source_root"
 # graph before consulting project-wide roles, which makes any added resource
 # impossible to deploy. Build the narrow, tested authorization correction on
 # top of the exact main revision until the fix is released normally.
-delivery_hotfix_marker="$repo/.tmp/leapview-dev.project-role-authorization-v4"
-hotfix_binary="$repo/.tmp/leapview-dev.project-role-authorization-v4"
+ui_revision=78fca0321f28330bbb4dfd7e527da57ce3f96291
+delivery_hotfix_marker="$repo/.tmp/leapview-dev.project-role-authorization-chat-v5"
+hotfix_binary="$repo/.tmp/leapview-dev.project-role-authorization-chat-v5"
 if [[ ! -s "$delivery_hotfix_marker" && -x "$hotfix_binary" ]] && \
    [[ "$("$hotfix_binary" version --json | jq -r '.revision // empty')" == "$latest_revision" ]]; then
   install -m 0755 "$hotfix_binary" "$leapview_binary"
@@ -701,11 +702,12 @@ if [[ ! -s "$delivery_hotfix_marker" && -x "$hotfix_binary" ]] && \
   printf '%s\n' "$latest_revision" >"$delivery_hotfix_marker"
 fi
 if [[ ! -s "$delivery_hotfix_marker" ]]; then
-  hotfix_worktree="/tmp/leapview-delivery-hotfix-$latest_revision"
+  hotfix_worktree="/tmp/leapview-delivery-hotfix-$ui_revision"
   if [[ -e "$hotfix_worktree" ]]; then
     git -C "$repo" worktree remove --force "$hotfix_worktree" 2>/dev/null || true
   fi
-  git -C "$repo" worktree add --quiet --detach "$hotfix_worktree" "$latest_revision"
+  git -C "$repo" fetch --quiet origin "$ui_revision"
+  git -C "$repo" worktree add --quiet --detach "$hotfix_worktree" "$ui_revision"
   while IFS= read -r generated_file; do
     [[ -f "$repo/$generated_file" ]] || continue
     mkdir -p "$hotfix_worktree/$(dirname "$generated_file")"
@@ -725,6 +727,9 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
     cp -p "$repo/$generated_file" "$hotfix_worktree/$generated_file"
   done < <(git -C "$repo" ls-files -o -i --exclude-standard -- docs)
   test -s "$hotfix_worktree/docs/search-index.json"
+  bun_binary=/root/.bun/bin/bun
+  test -x "$bun_binary"
+  (cd "$hotfix_worktree" && "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
   runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
   build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
