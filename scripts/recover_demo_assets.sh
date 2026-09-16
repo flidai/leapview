@@ -555,19 +555,18 @@ target_bindings="$("$leapview_binary" api call listTargetConnectionBindings \
   --path "target=$target_id")"
 if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
   <<<"$target_bindings" >/dev/null; then
-  managed_binding="$(jq -cer '
-    first(.items[] | select(.logicalConnection == "connection:olist")) |
+  managed_binding="$(jq -cn '
     {
       id: "demo-finance-files",
       logicalConnection: "connection:finance_files",
       configuration: {
-        connectorKind: .connectorKind,
-        authenticationMode: .authenticationMode,
-        endpoint: .endpoint
+        connectorKind: "managed",
+        authenticationMode: "none",
+        endpoint: {}
       },
       enabled: true
     }
-  ' <<<"$target_bindings")"
+  ')"
   "$leapview_binary" api call createTargetConnectionBinding \
     --target https://demo.leapview.dev \
     --token "$publisher_token" \
