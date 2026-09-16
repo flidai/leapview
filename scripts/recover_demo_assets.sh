@@ -685,9 +685,17 @@ if ! "$leapview_binary" api call createTargetConnectionBinding \
     exit 1
   }
 fi
-# The project-wide publisher role now authorizes staging data for the new
-# graph resource directly. Keeping finance absent from the active Olist base
-# is essential: candidate planning will then select this newest ready revision.
+# Make the finance resource visible to the managed-data API without creating a
+# managed revision pin. HTTP is an authored connection, so this bridge has no
+# source data; the final managed candidate will still resolve the staged pin.
+transition_source_root="$(mktemp -d "$repo/.tmp/cfo-transition.XXXXXX")"
+cp -a "$repo/dashboards/." "$transition_source_root/"
+cp -p "$cfo_source_root/connections/finance.yaml" \
+  "$transition_source_root/connections/finance.yaml"
+sed -i 's/type: managed/type: http/' \
+  "$transition_source_root/connections/finance.yaml"
+activate_source_root "$transition_source_root" hosted-demo-cfo-connection
+
 finance_sync="$("$leapview_binary" data sync \
   --source-root "$cfo_source_root" \
   --connection finance_files \
