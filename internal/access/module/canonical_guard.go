@@ -52,6 +52,13 @@ func ConnectionAuthorizerFromSnapshot(
 			if err := subject.Validate(); err != nil {
 				return false, err
 			}
+		}
+		// Project roles authorize the complete project graph, including creation
+		// of a managed-data collection before its connection is activated.
+		if snapshot.RoleAllowsCapability(leased, subjects, capability) {
+			return true, nil
+		}
+		for _, subject := range subjects {
 			allowed, err := leased.Allows(subject, resource, capability)
 			if err != nil {
 				return false, err

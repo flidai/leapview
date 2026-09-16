@@ -59,6 +59,29 @@ func TestConnectionAuthorizerFromSnapshotFailsClosedWithoutProviders(t *testing.
 	require.False(t, allowed)
 }
 
+func TestConnectionAuthorizerFromSnapshotProjectRoleAllowsNewConnection(t *testing.T) {
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "connection_orders", Kind: projectgraph.KindConnection, Name: "orders"},
+	}, nil)
+	require.NoError(t, err)
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	require.NoError(t, err)
+	alice := mustSubjectForTest(t, access.SubjectKindPrincipal, "alice")
+	leased, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, project, []accesssnapshot.RoleBinding{{
+		ID: "binding_admin", Subject: alice, Role: access.ProjectRoleAdmin,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin),
+	}}, nil, nil)
+	require.NoError(t, err)
+	provider := ConnectionAuthorizerFromSnapshot(
+		func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) { return leased, nil },
+		func(context.Context, string) ([]access.SubjectRef, error) { return []access.SubjectRef{alice}, nil },
+	)
+
+	allowed, err := provider(context.Background(), "alice", "project_demo", "connection_finance", access.CapabilityResourceEdit)
+	require.NoError(t, err)
+	require.True(t, allowed)
+}
+
 func mustSubjectForTest(t *testing.T, kind access.SubjectKind, id string) access.SubjectRef {
 	t.Helper()
 	subject, err := access.NewSubjectRef(kind, id)
