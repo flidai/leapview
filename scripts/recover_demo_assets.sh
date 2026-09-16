@@ -200,6 +200,8 @@ login_status="$(curl --silent --show-error \
   --output "$repo/.tmp/recovery-login-result.html" \
   --write-out '%{http_code}' \
   --request POST \
+  --header 'Origin: https://demo.leapview.dev' \
+  --header 'Referer: https://demo.leapview.dev/login' \
   --header 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode "gorilla.csrf.Token=$login_csrf" \
   --data-urlencode "email=$approver_email" \
@@ -229,6 +231,8 @@ curl --fail --silent --show-error \
   --cookie "$approver_cookies" \
   --cookie-jar "$approver_cookies" \
   --request POST \
+  --header 'Origin: https://demo.leapview.dev' \
+  --header "Referer: $verification_uri_complete" \
   --header 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode "gorilla.csrf.Token=$csrf_token" \
   --data-urlencode "user_code=$user_code" \
