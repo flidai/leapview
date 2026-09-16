@@ -636,27 +636,74 @@ PATH="$(dirname "$go_binary"):/root/.bun/bin:/usr/local/bin:/usr/bin:/bin" \
   "$go_binary" run ./internal/app/tools/bootstrapfinance --shared-cache --out "$cfo_data_root"
 cfo_data_path="$(cd -P "$cfo_data_root" && pwd)"
 
-# Managed-data uploads and connection metadata are authorized against the
-# active graph. Reuse the target's existing managed slot for this atomic
-# project replacement; the logical name is immaterial to the CFO models.
-cfo_deploy_root="$(mktemp -d "$repo/.tmp/cfo-hosted.XXXXXX")"
-cp -a "$cfo_source_root/." "$cfo_deploy_root/"
-sed -i \
-  -e 's/id: connection:finance_files/id: connection:olist/' \
-  -e 's/name: finance_files/name: olist/' \
-  "$cfo_deploy_root/connections/finance.yaml"
-sed -i 's/connection: finance_files/connection: olist/' \
-  "$cfo_deploy_root/sources/finance.financials.yaml"
+# Create the target binding from the already validated managed-file shape.
+# The project administrator owns this project-scoped operation.
+operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
+  --target https://demo.leapview.dev \
+  --token "$publisher_token" \
+  --path "project=$project_id")"
+target_id="$(jq -er '.targetId' <<<"$operator_snapshot")"
+target_bindings="$("$leapview_binary" api call listTargetConnectionBindings \
+  --target https://demo.leapview.dev \
+  --token "$approver_token" \
+  --path "project=$project_id" \
+  --path "target=$target_id")"
+if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
+  <<<"$target_bindings" >/dev/null; then
+  managed_binding="$(jq -cer '
+    first(.items[] | select(.logicalConnection == "connection:olist")) |
+    {
+      id: "demo-finance-files",
+      logicalConnection: "connection:finance_files",
+      configuration: {
+        connectorKind: .connectorKind,
+        authenticationMode: .authenticationMode,
+        endpoint: .endpoint
+      },
+      enabled: true
+    }
+  ' <<<"$target_bindings")"
+  "$leapview_binary" api call createTargetConnectionBinding \
+    --target https://demo.leapview.dev \
+    --token "$approver_token" \
+    --path "project=$project_id" \
+    --path "target=$target_id" \
+    --body-json "$managed_binding" \
+    --idempotency-key 'demo-finance-files-binding-v2' >/dev/null
+fi
+
+# Managed-data uploads require the connection to exist in the active graph.
+# Admit a bridge generation containing only its metadata, then stage finance
+# data. Because that bridge has no finance source, the final CFO candidate
+# resolves and pins the newly staged revision rather than an older base pin.
+transition_source_root="$(mktemp -d "$repo/.tmp/cfo-transition.XXXXXX")"
+cp -a "$repo/dashboards/." "$transition_source_root/"
+cp -p "$cfo_source_root/connections/finance.yaml" \
+  "$transition_source_root/connections/finance.yaml"
+activate_source_root "$transition_source_root" hosted-demo-cfo-connection
 
 "$leapview_binary" data sync \
-  --source-root "$cfo_deploy_root" \
-  --connection olist \
+  --source-root "$cfo_source_root" \
+  --connection finance_files \
   --from "$cfo_data_path" \
   --target https://demo.leapview.dev \
   --project-id "$project_id" \
   --token "$publisher_token"
-activate_source_root "$cfo_deploy_root" hosted-demo-cfo \
+activate_source_root "$cfo_source_root" hosted-demo-cfo \
   /dashboards/dashboard:cfo-command-center/pages/overview
+
+for cfo_page in overview statement liquidity drivers; do
+  cfo_status="$(curl --silent --show-error \
+    --cookie "$demo_cookies" \
+    --output /dev/null \
+    --write-out '%{http_code}' \
+    "https://demo.leapview.dev/dashboards/dashboard:cfo-command-center/pages/$cfo_page")"
+  [[ "$cfo_status" == 200 ]] || {
+    echo "CFO page $cfo_page returned HTTP $cfo_status" >&2
+    exit 1
+  }
+  echo "CFO page $cfo_page: HTTP 200"
+done
 unset publisher_token approver_token
 echo 'public CFO demo readiness: ready'
 exit 0
