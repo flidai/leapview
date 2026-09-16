@@ -643,33 +643,36 @@ operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
   --token "$publisher_token" \
   --path "project=$project_id")"
 target_id="$(jq -er '.targetId' <<<"$operator_snapshot")"
-target_bindings="$("$leapview_binary" api call listTargetConnectionBindings \
+managed_template="$("$leapview_binary" api call getTargetConnectionBinding \
   --target https://demo.leapview.dev \
   --token "$publisher_token" \
   --path "project=$project_id" \
-  --path "target=$target_id")"
-if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
-  <<<"$target_bindings" >/dev/null; then
-  managed_binding="$(jq -cer '
-    first(.items[] | select(.logicalConnection == "connection:olist")) |
-    {
-      id: "demo-finance-files",
-      logicalConnection: "connection:finance_files",
-      configuration: {
-        connectorKind: .connectorKind,
-        authenticationMode: .authenticationMode,
-        endpoint: .endpoint
-      },
-      enabled: true
-    }
-  ' <<<"$target_bindings")"
-  "$leapview_binary" api call createTargetConnectionBinding \
-    --target https://demo.leapview.dev \
-    --token "$approver_token" \
-    --path "project=$project_id" \
-    --path "target=$target_id" \
-    --body-json "$managed_binding" \
-    --idempotency-key 'demo-finance-files-binding-v2' >/dev/null
+  --path "target=$target_id" \
+  --path 'connection=connection:olist')"
+managed_binding="$(jq -cer '
+  {
+    id: "demo-finance-files",
+    logicalConnection: "connection:finance_files",
+    configuration: {
+      connectorKind: .connectorKind,
+      authenticationMode: .authenticationMode,
+      endpoint: .endpoint
+    },
+    enabled: true
+  }
+' <<<"$managed_template")"
+binding_error="$repo/.tmp/cfo-binding.err"
+if ! "$leapview_binary" api call createTargetConnectionBinding \
+  --target https://demo.leapview.dev \
+  --token "$approver_token" \
+  --path "project=$project_id" \
+  --path "target=$target_id" \
+  --body-json "$managed_binding" \
+  --idempotency-key 'demo-finance-files-binding-v2' >/dev/null 2>"$binding_error"; then
+  grep -Eq 'already exists|CONNECTION_BINDING_CONFLICT' "$binding_error" || {
+    cat "$binding_error" >&2
+    exit 1
+  }
 fi
 
 # Managed-data uploads require the connection to exist in the active graph.
