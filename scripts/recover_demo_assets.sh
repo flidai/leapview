@@ -470,6 +470,11 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       sleep 2
     done
     if [[ "$ui_ready" != true ]]; then
+      echo 'chat UI readiness response:' >&2
+      curl --silent --show-error --max-time 10 http://127.0.0.1:8132/readyz >&2 || true
+      echo >&2
+      systemctl status leapview-demo-current.service --no-pager --lines 40 >&2 || true
+      journalctl --unit leapview-demo-current.service --since '-5 minutes' --no-pager --lines 160 >&2 || true
       install -m 0755 "$previous_binary" "$leapview_binary"
       systemctl restart leapview-demo-current.service
       echo 'chat UI runtime failed readiness; previous healthy binary restored' >&2
