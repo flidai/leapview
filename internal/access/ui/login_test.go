@@ -24,8 +24,23 @@ func TestLoginPageUsesProductBranding(t *testing.T) {
 
 func TestLoginBootstrapUsesProductName(t *testing.T) {
 	page := LoginBootstrapSignalsForOptions(LoginPageOptions{})["page"].(LoginPageSignal)
-	if page.Title != "LeapView" || page.Kind != "login" {
+	if page.Title != "LeapView" || page.Kind != "login" || page.ProviderURL != "/auth/azureadv2" {
 		t.Fatalf("login page signal = %#v", page)
+	}
+}
+
+func TestLoginAccountSwitchCarriesProviderSelectionIntoUpdates(t *testing.T) {
+	options := LoginPageOptions{ErrorCode: "forbidden", SelectAccount: true}
+	page := LoginBootstrapSignalsForOptions(options)["page"].(LoginPageSignal)
+	if page.ProviderURL != "/auth/azureadv2?prompt=select_account" {
+		t.Fatalf("provider URL = %q", page.ProviderURL)
+	}
+	var output strings.Builder
+	if err := LoginPage(options).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	if rendered := html.UnescapeString(output.String()); !strings.Contains(rendered, "/updates?error=forbidden&route=login&switch=1") {
+		t.Fatalf("login page did not preserve account selection in updates URL: %s", rendered)
 	}
 }
 

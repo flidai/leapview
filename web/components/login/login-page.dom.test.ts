@@ -22,6 +22,7 @@ beforeAll(async () => {
         ssoAuth: url.searchParams.has('ssoAuth') ? url.searchParams.get('ssoAuth') === 'true' : true,
         mustChangePassword: url.searchParams.get('mustChangePassword') === 'true',
         error: url.searchParams.get('error') === 'invalid_credentials' ? 'The email or password is incorrect.' : '',
+        providerUrl: url.searchParams.get('selectAccount') === 'true' ? '/auth/azureadv2?prompt=select_account' : undefined,
       }))
       return
     }
@@ -329,6 +330,21 @@ test('SSO authentication renders the configured provider contract', async () => 
   }
 })
 
+test('account switch SSO link asks the provider to select an account', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/?localAuth=false&ssoAuth=true&selectAccount=true`)
+    await page.waitForFunction(() => customElements.get('lv-login-page'))
+    await page.locator('lv-login-page').evaluate((element: any) => element.updateComplete)
+
+    const href = await page.locator('lv-login-page').evaluate((element: any) =>
+      (element.shadowRoot.querySelector('.provider') as HTMLAnchorElement | null)?.getAttribute('href'))
+    expect(href).toBe('/auth/azureadv2?prompt=select_account')
+  } finally {
+    await page.close()
+  }
+})
+
 test('change-password authentication renders only the password recovery contract', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
@@ -489,6 +505,7 @@ type TestDocumentOptions = {
   ssoAuth?: boolean
   mustChangePassword?: boolean
   error?: string
+  providerUrl?: string
 }
 
 function testDocument(options: TestDocumentOptions = {}): string {
@@ -499,6 +516,7 @@ function testDocument(options: TestDocumentOptions = {}): string {
     ssoAuth: options.ssoAuth ?? true,
     mustChangePassword: options.mustChangePassword ?? false,
     providerLabel: 'Sign in with Azure Active Directory',
+    providerUrl: options.providerUrl ?? '/auth/azureadv2',
     backgroundModuleSrc: '/static/topology-background.js?v=dev',
   }
   const status = { error: options.error ?? '' }

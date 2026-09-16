@@ -304,7 +304,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
   }
 
   updated(): void {
-    checkSignalContract('login page', this.page, { kind: 'required', title: 'required', providerLabel: 'required' })
+    checkSignalContract('login page', this.page, { kind: 'required', title: 'required', providerLabel: 'required', providerUrl: 'required' })
   }
 
   get page(): LoginPageSignal | null {
@@ -374,7 +374,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
         ` : ''}
         ${!mustChangePassword && localAuth && ssoAuth ? html`<div class="divider" aria-hidden="true">or</div>` : ''}
         ${!mustChangePassword && ssoAuth ? html`
-          <a class="provider" href="/auth/azureadv2">
+          <a class="provider" href=${page?.providerUrl ?? '/auth/azureadv2'}>
             <span class="provider-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
             <span>${page?.providerLabel ?? 'Sign in with Azure Active Directory'}</span>
           </a>
