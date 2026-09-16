@@ -355,6 +355,17 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     unset demo_login_password temporary_password password_reset principal_list demo_csrf
     [[ "$final_login_status" == 302 ]]
     echo 'demo login credential: verified'
+
+    demo_dashboard_status="$(curl --silent --show-error \
+      --cookie "$demo_cookies" \
+      --output "$repo/.tmp/demo-dashboard-result.html" \
+      --write-out '%{http_code}' \
+      https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)"
+    echo "demo dashboard status before publication: $demo_dashboard_status"
+    if [[ "$demo_dashboard_status" != 200 && "$requires_publication" != true ]]; then
+      journalctl --unit leapview-demo-current.service --since '-10 minutes' --no-pager --lines 160 >&2 || true
+      exit 1
+    fi
   fi
 
   echo "active runtime revision: $("$leapview_binary" version --json | jq -r '.revision')"
