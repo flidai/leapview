@@ -360,7 +360,7 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       --cookie "$demo_cookies" \
       --output "$repo/.tmp/demo-dashboard-result.html" \
       --write-out '%{http_code}' \
-      https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)"
+      https://demo.leapview.dev/dashboards/dashboard:visual-showcase/pages/overview)"
     echo "demo dashboard status before publication: $demo_dashboard_status"
     if [[ "$demo_dashboard_status" != 200 && "$requires_publication" != true ]]; then
       operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
@@ -379,7 +379,7 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       if ! "$leapview_binary" api call getDashboard \
         --target https://demo.leapview.dev \
         --token "$publisher_token" \
-        --path 'dashboard=visual-showcase' >/dev/null 2>"$dashboard_api_error"; then
+        --path 'dashboard=dashboard:visual-showcase' >/dev/null 2>"$dashboard_api_error"; then
         sed -n '1,20p' "$dashboard_api_error" >&2
       fi
       exit 1

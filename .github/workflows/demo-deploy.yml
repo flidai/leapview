@@ -125,7 +125,7 @@ jobs:
           {
             echo '### Hosted demo'
             echo
-            echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
-            echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
-            echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
+            echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/dashboard:visual-showcase/pages/overview)'
+            echo '- [Executive Sales](https://demo.leapview.dev/dashboards/dashboard:executive-sales/pages/overview)'
+            echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/dashboard:fulfillment-operations/pages/overview)'
           } >> "$GITHUB_STEP_SUMMARY"
