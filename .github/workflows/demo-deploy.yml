@@ -23,7 +23,9 @@ concurrency:
 jobs:
   recover-assets:
     name: Recover hosted-demo map assets
-    if: github.event_name == 'workflow_dispatch' && inputs.recover_assets
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref != 'refs/heads/main' || inputs.recover_assets)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: leapview-demo
