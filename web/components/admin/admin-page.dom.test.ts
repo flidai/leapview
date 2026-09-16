@@ -47,6 +47,40 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('admin settings never render a blank pane before signals hydrate', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-admin-page'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const admin = document.querySelector('lv-admin-page') as any
+      mergePatch({ page: null })
+      await admin.updateComplete
+      const adminLoading = admin.shadowRoot?.querySelector('[data-admin-loading]')?.textContent?.trim() ?? ''
+
+      mergePatch({
+        page: { kind: 'admin', title: 'Profile', active: 'profile', headerTitle: 'Profile', headerDetail: 'Manage your photo and display name.' },
+        personalSettings: null,
+      })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await admin.updateComplete
+      const personal = admin.shadowRoot?.querySelector('lv-personal-settings') as any
+      await personal.updateComplete
+      return {
+        adminLoading,
+        profileLoading: personal.shadowRoot?.querySelector('[data-profile-loading]')?.textContent?.trim() ?? '',
+      }
+    })
+    expect(state).toEqual({
+      adminLoading: 'Loading settings…',
+      profileLoading: 'Loading profile…',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('publications admin renders lifecycle controls and emits typed commands', async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {

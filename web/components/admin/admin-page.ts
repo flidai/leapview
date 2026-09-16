@@ -12,6 +12,7 @@ import '../shared/code-block'
 import '../shared/drawer'
 import '../shared/entity-list'
 import '../shared/filter-menu'
+import '../shared/loading-spinner'
 import '../shared/record-table'
 import '../shared/user-avatar'
 import './agent-tools'
@@ -83,6 +84,16 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       box-sizing: border-box;
       justify-self: center;
       padding: var(--base-size-16);
+    }
+
+    .loading-state {
+      display: grid;
+      min-height: 100svh;
+      place-content: center;
+      justify-items: center;
+      gap: var(--base-size-8);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body);
     }
 
     .main-storage {
@@ -660,7 +671,14 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
   render() {
     const page = this.page
-    if (!page) return html`<slot></slot>`
+    if (!page) {
+      return html`
+        <div class="loading-state" data-admin-loading role="status" aria-live="polite">
+          <lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>
+          <span>Loading settings…</span>
+        </div>
+      `
+    }
     const mainClass = [
       'main',
       page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',

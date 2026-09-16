@@ -12,6 +12,7 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
+import '../shared/loading-spinner'
 import '../shared/user-avatar'
 
 const emptySettings: PersonalSettingsSignal = {
@@ -91,6 +92,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   static styles = [settingsFieldStyles, css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
     .settings { display: grid; gap: var(--base-size-20); width: 100%; min-width: 0; }
+    .settings-loading { display: grid; min-height: 12rem; place-content: center; justify-items: center; gap: var(--base-size-8); color: var(--lv-fg-muted); }
     section { display: grid; gap: var(--base-size-20); }
     h2, h3, p { margin: 0; }
     h2 { font: var(--lv-type-section-title); }
@@ -272,7 +274,14 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 
   render() {
     const settings = this.settings
-    if (!settings.profile.id) return html`<slot></slot>`
+    if (!settings.profile.id) {
+      return html`
+        <div class="settings-loading" data-profile-loading role="status" aria-live="polite">
+          <lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>
+          <span>Loading profile…</span>
+        </div>
+      `
+    }
     const profileNameDraft = this.observedDisplayName === settings.profile.displayName ? this.profileName : settings.profile.displayName
     const profileNameDirty = profileNameDraft.trim() !== settings.profile.displayName
     const profileNameValid = profileNameDraft.trim().length > 0
