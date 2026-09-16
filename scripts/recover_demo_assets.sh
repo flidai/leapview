@@ -420,8 +420,8 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     fi
   fi
 
-  ui_revision=78fca0321f28330bbb4dfd7e527da57ce3f96291
-  ui_marker="$repo/.tmp/leapview-dev.chat-hydration-v1"
+  ui_revision=c8d3bc9b3085e5612b616143b27a139266a03828
+  ui_marker="$repo/.tmp/leapview-dev.chat-idempotency-v2"
   if [[ "$(cat "$ui_marker" 2>/dev/null || true)" != "$ui_revision" ]]; then
     go_binary="$(command -v go || true)"
     if [[ -z "$go_binary" ]]; then
@@ -430,8 +430,8 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     bun_binary=/root/.bun/bin/bun
     [[ -n "$go_binary" && -x "$bun_binary" ]]
     ui_worktree="/tmp/leapview-chat-ui-$ui_revision"
-    ui_binary="$repo/.tmp/leapview-dev.chat-hydration-v1"
-    previous_binary="$repo/.tmp/leapview-dev.before-chat-hydration"
+    ui_binary="$repo/.tmp/leapview-dev.chat-idempotency-v2"
+    previous_binary="$repo/.tmp/leapview-dev.before-chat-idempotency"
     git -C "$repo" fetch --quiet origin "$ui_revision"
     if [[ -e "$ui_worktree" ]]; then
       git -C "$repo" worktree remove --force "$ui_worktree" 2>/dev/null || true
@@ -745,9 +745,9 @@ test -d "$cfo_source_root"
 # graph before consulting project-wide roles, which makes any added resource
 # impossible to deploy. Build the narrow, tested authorization correction on
 # top of the exact main revision until the fix is released normally.
-ui_revision=78fca0321f28330bbb4dfd7e527da57ce3f96291
-delivery_hotfix_marker="$repo/.tmp/leapview-dev.project-role-authorization-chat-v5"
-hotfix_binary="$repo/.tmp/leapview-dev.project-role-authorization-chat-v5"
+ui_revision=c8d3bc9b3085e5612b616143b27a139266a03828
+delivery_hotfix_marker="$repo/.tmp/leapview-dev.project-role-authorization-chat-v6"
+hotfix_binary="$repo/.tmp/leapview-dev.project-role-authorization-chat-v6"
 if [[ ! -s "$delivery_hotfix_marker" && -x "$hotfix_binary" ]] && \
    [[ "$("$hotfix_binary" version --json | jq -r '.revision // empty')" == "$latest_revision" ]]; then
   install -m 0755 "$hotfix_binary" "$leapview_binary"
