@@ -41,19 +41,20 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			principal, credential, ok = m.auth.Authenticate(r)
 		}
 		if !ok || strings.TrimSpace(principal.ID) == "" {
-			if m.auth != nil && m.auth.hasSessionCookie(r) {
-				http.SetCookie(w, m.auth.expiredSessionCookie())
-				if uitransport.IsHTMLNavigation(r) && !wantsJSON(r) {
-					if target := authenticationReturnTarget(r); target != "" {
-						http.SetCookie(w, m.auth.authReturnCookie(target))
-					}
-					redirect := m.auth.defaultLoginRedirect()
-					if m.auth.localAuth {
-						redirect = "/login?error=session_expired"
-					}
-					http.Redirect(w, r, redirect, http.StatusFound)
-					return
+			if m.auth != nil && uitransport.IsHTMLNavigation(r) && !wantsJSON(r) {
+				hadSession := m.auth.hasSessionCookie(r)
+				if hadSession {
+					http.SetCookie(w, m.auth.expiredSessionCookie())
 				}
+				if target := authenticationReturnTarget(r); target != "" {
+					http.SetCookie(w, m.auth.authReturnCookie(target))
+				}
+				redirect := m.auth.defaultLoginRedirect()
+				if hadSession && m.auth.localAuth {
+					redirect = "/login?error=session_expired"
+				}
+				http.Redirect(w, r, redirect, http.StatusFound)
+				return
 			}
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return

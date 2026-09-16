@@ -175,6 +175,42 @@ func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t
 	}
 }
 
+func TestAuthenticateRedirectsUnauthenticatedBrowserNavigationToLogin(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name, method, accept string
+		wantStatus           int
+		wantLocation         string
+	}{
+		{name: "navigation", method: http.MethodGet, accept: "text/html", wantStatus: http.StatusFound, wantLocation: "/login"},
+		{name: "json", method: http.MethodGet, accept: "application/json", wantStatus: http.StatusUnauthorized},
+		{name: "command", method: http.MethodPost, accept: "text/html", wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(test.method, "/", nil)
+			request.Header.Set("Accept", test.accept)
+			module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("protected handler ran without authentication")
+			})).ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus || recorder.Header().Get("Location") != test.wantLocation {
+				t.Fatalf("response = %d location %q", recorder.Code, recorder.Header().Get("Location"))
+			}
+		})
+	}
+}
+
 func TestAuthenticateInstallsInjectedPrincipalInRequestContext(t *testing.T) {
 	principal := Principal{ID: "principal", Kind: access.PrincipalKindUser}
 	module := browserGuardModule(nil, principal, true)
