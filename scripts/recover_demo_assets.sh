@@ -202,7 +202,9 @@ else
     echo 'the pinned Ollama archive did not install its CPU runner' >&2
     exit 1
   fi
-  file /usr/local/lib/ollama/llama-server
+  if command -v file >/dev/null; then
+    file /usr/local/lib/ollama/llama-server
+  fi
   ldd /usr/local/lib/ollama/llama-server || true
   install -d -m 0750 -o ollama -g ollama /var/lib/ollama
   cat >/etc/systemd/system/ollama.service <<'OLLAMA_SERVICE'
