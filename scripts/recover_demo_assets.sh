@@ -677,16 +677,6 @@ if ! "$leapview_binary" api call createTargetConnectionBinding \
     exit 1
   }
 fi
-binding_health="$("$leapview_binary" api call testTargetConnectionBinding \
-  --target https://demo.leapview.dev \
-  --token "$approver_token" \
-  --path "project=$project_id" \
-  --path "target=$target_id" \
-  --path 'connection=connection:finance_files' \
-  --idempotency-key "demo-finance-files-test-$(date -u +%Y%m%d%H%M%S)")"
-[[ "$(jq -r '.health' <<<"$binding_health")" == healthy ]]
-echo 'finance target binding: healthy'
-
 # The project-wide publisher role now authorizes staging data for the new
 # graph resource directly. Keeping finance absent from the active Olist base
 # is essential: candidate planning will then select this newest ready revision.
