@@ -64,6 +64,7 @@ jobs:
       - name: Install and verify the pinned map package
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_LOGIN_PASSWORD: ${{ secrets.DEMO_LOGIN_PASSWORD }}
         run: ./scripts/recover_demo_assets.sh
 
   deploy:

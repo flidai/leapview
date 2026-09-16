@@ -120,6 +120,17 @@ done <"$scanned_keys"
   exit 1
 }
 
+if [[ -n "${DEMO_LOGIN_PASSWORD:-}" ]]; then
+  printf '%s' "$DEMO_LOGIN_PASSWORD" | ssh \
+    -i "$identity_file" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=yes \
+    -o "UserKnownHostsFile=$pinned_known_hosts" \
+    "root@$demo_host" 'umask 077; cat > /tmp/leapview-demo-login-password'
+  unset DEMO_LOGIN_PASSWORD
+fi
+
 ssh \
   -i "$identity_file" \
   -o BatchMode=yes \
@@ -130,6 +141,8 @@ ssh \
   -o "UserKnownHostsFile=$pinned_known_hosts" \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
+demo_login_password_file=/tmp/leapview-demo-login-password
+trap 'rm -f "$demo_login_password_file"' EXIT
 echo '--- activation recovery inventory ---'
 systemctl is-active leapview-demo-current.service || true
 curl -sS -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:8132/healthz || true
@@ -163,6 +176,7 @@ leapview_binary="$repo/.tmp/leapview-dev"
 test -x "$leapview_binary"
 latest_revision=5d870e7cf5f7e174dce115c416f6cab5e8259dcf
 running_revision="$("$leapview_binary" version --json | jq -er '.revision')"
+requires_publication=false
 if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
   if [[ "$running_revision" != "$latest_revision" ]]; then
     echo "updating runtime from $running_revision to $latest_revision"
@@ -238,9 +252,116 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       git -C "$repo" worktree remove --force "$latest_worktree"
     fi
   fi
+
+  if [[ -s "$demo_login_password_file" ]]; then
+    test -f "$initial_credentials"
+    test -f "$approval_file"
+    publisher_token="$(jq -er '.publisherToken | strings | select(length > 0)' "$initial_credentials")"
+    project_id="$(jq -er '.projectId' "$approval_file")"
+    demo_login_password="$(<"$demo_login_password_file")"
+    rm -f "$demo_login_password_file"
+
+    principal_list="$("$leapview_binary" api call listPrincipals \
+      --target https://demo.leapview.dev \
+      --token "$publisher_token" \
+      --query 'email=demo@leapview.dev')"
+    demo_principal_id="$(jq -r '.items[0].id // empty' <<<"$principal_list")"
+    if [[ -n "$demo_principal_id" ]]; then
+      password_reset="$("$leapview_binary" api call resetPrincipalPassword \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path "principal=$demo_principal_id" \
+        --idempotency-key "demo-login-reset-$(date -u +%Y%m%d%H%M%S)")"
+    else
+      password_reset="$("$leapview_binary" api call createPrincipal \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --body-json '{"email":"demo@leapview.dev","displayName":"LeapView Demo"}' \
+        --idempotency-key 'demo-login-principal-v1')"
+      demo_principal_id="$(jq -er '.principal.id' <<<"$password_reset")"
+    fi
+    temporary_password="$(jq -er '.temporaryPassword | strings | select(length > 0)' <<<"$password_reset")"
+
+    demo_cookies="$repo/.tmp/demo-login.cookies"
+    demo_login_page="$repo/.tmp/demo-login-page.html"
+    rm -f "$demo_cookies"
+    curl --fail --silent --show-error --cookie-jar "$demo_cookies" \
+      https://demo.leapview.dev/login >"$demo_login_page"
+    demo_csrf="$(sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' "$demo_login_page" | head -n 1)"
+    [[ -n "$demo_csrf" ]]
+    login_status="$(curl --silent --show-error \
+      --cookie "$demo_cookies" --cookie-jar "$demo_cookies" \
+      --output "$repo/.tmp/demo-login-result.html" --write-out '%{http_code}' \
+      --request POST \
+      --header 'Origin: https://demo.leapview.dev' \
+      --header 'Referer: https://demo.leapview.dev/login' \
+      --header 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode "gorilla.csrf.Token=$demo_csrf" \
+      --data-urlencode 'email=demo@leapview.dev' \
+      --data-urlencode "password=$temporary_password" \
+      https://demo.leapview.dev/auth/local/login)"
+    [[ "$login_status" == 302 ]]
+
+    curl --fail --silent --show-error \
+      --cookie "$demo_cookies" --cookie-jar "$demo_cookies" \
+      https://demo.leapview.dev/login >"$demo_login_page"
+    demo_csrf="$(sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' "$demo_login_page" | head -n 1)"
+    [[ -n "$demo_csrf" ]]
+    password_status="$(curl --silent --show-error \
+      --cookie "$demo_cookies" --cookie-jar "$demo_cookies" \
+      --output "$repo/.tmp/demo-password-result.html" --write-out '%{http_code}' \
+      --request POST \
+      --header 'Origin: https://demo.leapview.dev' \
+      --header 'Referer: https://demo.leapview.dev/login' \
+      --header 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode "gorilla.csrf.Token=$demo_csrf" \
+      --data-urlencode "currentPassword=$temporary_password" \
+      --data-urlencode "newPassword=$demo_login_password" \
+      https://demo.leapview.dev/auth/local/password)"
+    [[ "$password_status" == 302 ]]
+
+    current_policy="$("$leapview_binary" api call listProjectRoleBindings \
+      --target https://demo.leapview.dev \
+      --token "$publisher_token" \
+      --path "project=$project_id")"
+    policy_revision="$(jq -er '.policyRevision' <<<"$current_policy")"
+    if ! jq -e --arg principal "$demo_principal_id" \
+      'any(.items[]?; .subjectType == "principal" and .subjectId == $principal and .role == "viewer")' \
+      <<<"$current_policy" >/dev/null; then
+      "$leapview_binary" api call createProjectRoleBinding \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path "project=$project_id" \
+        --body-json "{\"id\":\"demo-login-viewer\",\"name\":\"Demo login viewer\",\"subjectType\":\"principal\",\"subjectId\":\"$demo_principal_id\",\"role\":\"viewer\",\"expectedRevision\":$policy_revision}" \
+        --idempotency-key "demo-login-viewer-$demo_principal_id" >/dev/null
+      requires_publication=true
+    fi
+
+    rm -f "$demo_cookies"
+    curl --fail --silent --show-error --cookie-jar "$demo_cookies" \
+      https://demo.leapview.dev/login >"$demo_login_page"
+    demo_csrf="$(sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' "$demo_login_page" | head -n 1)"
+    final_login_status="$(curl --silent --show-error \
+      --cookie "$demo_cookies" --cookie-jar "$demo_cookies" \
+      --output "$repo/.tmp/demo-final-login-result.html" --write-out '%{http_code}' \
+      --request POST \
+      --header 'Origin: https://demo.leapview.dev' \
+      --header 'Referer: https://demo.leapview.dev/login' \
+      --header 'Content-Type: application/x-www-form-urlencoded' \
+      --data-urlencode "gorilla.csrf.Token=$demo_csrf" \
+      --data-urlencode 'email=demo@leapview.dev' \
+      --data-urlencode "password=$demo_login_password" \
+      https://demo.leapview.dev/auth/local/login)"
+    unset demo_login_password temporary_password password_reset principal_list demo_csrf
+    [[ "$final_login_status" == 302 ]]
+    echo 'demo login credential: verified'
+  fi
+
   echo "active runtime revision: $("$leapview_binary" version --json | jq -r '.revision')"
-  echo 'public demo readiness: ready'
-  exit 0
+  if [[ "$requires_publication" != true ]]; then
+    echo 'public demo readiness: ready'
+    exit 0
+  fi
 fi
 test -f "$approval_file"
 test -f "$approver_oauth"
