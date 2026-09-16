@@ -598,7 +598,7 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       --idempotency-key "demo-agent-probe-run-$probe_suffix")"
     agent_run_id="$(jq -er '.id' <<<"$agent_run")"
     agent_run_status="$(jq -er '.status' <<<"$agent_run")"
-    for _ in $(seq 1 60); do
+    for _ in $(seq 1 100); do
       case "$agent_run_status" in
         completed|failed|cancelled) break ;;
       esac
