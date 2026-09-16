@@ -267,6 +267,19 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 	leaseUntil := r.clock().UTC().Add(leaseTTL)
 	fence, err := r.fences.Acquire(ctx, evidence.TargetIdentityDigest, op.OperationID, request.OwnerID, leaseUntil)
 	if err != nil {
+		if errors.Is(err, transitionoperation.ErrAlreadyTerminal) {
+			terminal, getErr := r.operations.Get(ctx, op.OperationID)
+			if getErr != nil {
+				return Result{}, classifyStoreError(getErr)
+			}
+			if identityErr := checkOperationIdentity(terminal, createInput); identityErr != nil {
+				return Result{}, identityErr
+			}
+			if terminal.Status == transitionoperation.StatusCompleted {
+				return Result{Operation: terminal, Evidence: evidence, EvidenceDigest: evidenceDigest}, nil
+			}
+			return Result{Operation: terminal, Evidence: evidence, EvidenceDigest: evidenceDigest}, fmt.Errorf("%w: operation is %s", transitionoperation.ErrAlreadyTerminal, terminal.Status)
+		}
 		if errors.Is(err, transitionoperation.ErrBusy) || errors.Is(err, transitionoperation.ErrConflict) {
 			return Result{}, fmt.Errorf("%w: %v", ErrCompetingOwner, err)
 		}
@@ -341,10 +354,10 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 			return r.failIndeterminate(ctx, op, fence, step.phase, "fence_lost", heartbeatErr, evidence, evidenceDigest, ErrFenceLost)
 		}
 		if effectErr != nil {
-			return r.fail(ctx, op, fence, step.phase, "phase_failed", effectErr, evidence, evidenceDigest, fmt.Errorf("%w: %s: %v", ErrPhaseFailure, step.phase, effectErr))
+			return r.failIndeterminate(ctx, op, fence, step.phase, "phase_failed", effectErr, evidence, evidenceDigest, fmt.Errorf("%w: %s: %v", ErrPhaseFailure, step.phase, effectErr))
 		}
 		if err := validateEffectResult(out, evidence, step.phase); err != nil {
-			return r.fail(ctx, op, fence, step.phase, "state_mismatch", err, evidence, evidenceDigest, err)
+			return r.failIndeterminate(ctx, op, fence, step.phase, "state_mismatch", err, evidence, evidenceDigest, err)
 		}
 		if err := r.fences.Validate(ctx, fence); err != nil {
 			return r.failIndeterminate(ctx, op, fence, step.phase, "fence_lost", err, evidence, evidenceDigest, ErrFenceLost)
@@ -359,7 +372,7 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 		}
 	}
 	if err := r.fences.Validate(ctx, fence); err != nil {
-		return r.fail(ctx, op, fence, PhaseSuccess, "fence_lost", err, evidence, evidenceDigest, ErrFenceLost)
+		return r.failIndeterminate(ctx, op, fence, PhaseSuccess, "fence_lost", err, evidence, evidenceDigest, ErrFenceLost)
 	}
 	successDone, err := r.operations.PhaseCompleted(ctx, op.OperationID, PhaseSuccess)
 	if err != nil {
@@ -368,20 +381,25 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 	if !successDone {
 		op, err = r.record(ctx, op, fence, PhaseSuccess, transitionoperation.PhaseResultSucceeded, []byte(`{"success":true}`))
 		if err != nil {
-			return Result{}, err
+			// The write may have committed even when its response was lost. The
+			// repository resolves a durable success marker after lease expiry.
+			return Result{Operation: op, Evidence: evidence, EvidenceDigest: evidenceDigest}, err
 		}
 	}
 	stopHeartbeat()
 	<-heartbeatDone
 	if heartbeatErr := readHeartbeatError(heartbeatErrors); heartbeatErr != nil {
-		return r.fail(ctx, op, fence, PhaseSuccess, "fence_lost", heartbeatErr, evidence, evidenceDigest, ErrFenceLost)
+		return Result{Operation: op, Evidence: evidence, EvidenceDigest: evidenceDigest}, fmt.Errorf("%w: %v", ErrFenceLost, heartbeatErr)
 	}
 	if err := r.fences.Validate(ctx, fence); err != nil {
-		return r.fail(ctx, op, fence, PhaseSuccess, "fence_lost", err, evidence, evidenceDigest, ErrFenceLost)
+		return Result{Operation: op, Evidence: evidence, EvidenceDigest: evidenceDigest}, fmt.Errorf("%w: %v", ErrFenceLost, err)
 	}
 	op, err = r.operations.Complete(ctx, CompleteInput{OperationID: op.OperationID, OwnerID: request.OwnerID, Fence: fence, Result: []byte(`{"success":true}`)})
 	if err != nil {
-		return Result{}, classifyStoreError(err)
+		if current, getErr := r.operations.Get(ctx, op.OperationID); getErr == nil && current.Status == transitionoperation.StatusCompleted {
+			return Result{Operation: current, Evidence: evidence, EvidenceDigest: evidenceDigest}, nil
+		}
+		return Result{Operation: op, Evidence: evidence, EvidenceDigest: evidenceDigest}, classifyStoreError(err)
 	}
 	return Result{Operation: op, Evidence: evidence, EvidenceDigest: evidenceDigest}, nil
 }

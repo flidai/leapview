@@ -473,7 +473,7 @@ func runForwardFailureMatrix(t *testing.T, pool *pgxpool.Pool, transitions *rele
 			if !errors.Is(err, transitionrunner.ErrPhaseFailure) {
 				t.Fatalf("failure phase %s error = %v", phase, err)
 			}
-			if result.Operation.Status != transitionoperation.StatusFailed {
+			if result.Operation.Status != transitionoperation.StatusIndeterminate {
 				t.Fatalf("failure phase %s status = %q", phase, result.Operation.Status)
 			}
 			if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {

@@ -94,6 +94,49 @@ func TestRunnerMarksFenceLossAfterEffectIndeterminate(t *testing.T) {
 	}
 }
 
+func TestRunnerMarksEffectErrorAfterMutationIndeterminate(t *testing.T) {
+	store := newRunnerStore()
+	mutated := false
+	effects := EffectFuncs{MigrationsFunc: func(context.Context, EffectInput) (EffectResult, error) {
+		mutated = true
+		return EffectResult{}, errors.New("migration committed before response failed")
+	}}
+	runner, err := New(Options{Operations: store, Preflight: newRunnerPreflight(t), Fences: &runnerFence{}, Effects: effects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), Request{OperationID: runnerOperationID, OwnerID: "owner", IdempotencyKey: "effect-error"})
+	if !mutated || !errors.Is(err, ErrPhaseFailure) || result.Operation.Status != transitionoperation.StatusIndeterminate {
+		t.Fatalf("mutated=%t err=%v status=%s", mutated, err, result.Operation.Status)
+	}
+}
+
+func TestRunnerMarksFenceLossBeforeSuccessIndeterminate(t *testing.T) {
+	store := newRunnerStore()
+	fence := &runnerFence{failValidationAt: 12, validateErr: errors.New("lost before success")}
+	runner, err := New(Options{Operations: store, Preflight: newRunnerPreflight(t), Fences: fence, Effects: &runnerEffects{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), Request{OperationID: runnerOperationID, OwnerID: "owner", IdempotencyKey: "success-fence"})
+	if !errors.Is(err, ErrFenceLost) || result.Operation.Status != transitionoperation.StatusIndeterminate || store.failure == nil || store.failure.Phase != PhaseSuccess {
+		t.Fatalf("err=%v status=%s failure=%#v", err, result.Operation.Status, store.failure)
+	}
+}
+
+func TestRunnerDoesNotOverwriteRecordedSuccessOnFinalFenceLoss(t *testing.T) {
+	store := newRunnerStore()
+	fence := &runnerFence{failValidationAt: 13, validateErr: errors.New("lost after success marker")}
+	runner, err := New(Options{Operations: store, Preflight: newRunnerPreflight(t), Fences: fence, Effects: &runnerEffects{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runner.Run(context.Background(), Request{OperationID: runnerOperationID, OwnerID: "owner", IdempotencyKey: "final-fence"})
+	if !errors.Is(err, ErrFenceLost) || !store.completed[PhaseSuccess] || store.failure != nil {
+		t.Fatalf("err=%v successRecorded=%t failure=%#v", err, store.completed[PhaseSuccess], store.failure)
+	}
+}
+
 func TestRunnerMarksFenceLossWhileRecordingEffectIndeterminate(t *testing.T) {
 	store := newRunnerStore()
 	store.recordErrPhase = PhaseMigrations
@@ -179,6 +222,35 @@ func TestRunnerRejectsCompetingOwner(t *testing.T) {
 	}
 }
 
+func TestRunnerReturnsCompletionWhenAcquireRacesWithCompletion(t *testing.T) {
+	store := newRunnerStore()
+	effects := &runnerEffects{}
+	fence := &runnerFence{acquireErr: transitionoperation.ErrAlreadyTerminal, onAcquire: func() {
+		store.op.Status = transitionoperation.StatusCompleted
+	}}
+	runner, err := New(Options{Operations: store, Preflight: newRunnerPreflight(t), Fences: fence, Effects: effects})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), Request{OperationID: runnerOperationID, OwnerID: "owner", IdempotencyKey: "completed-race"})
+	if err != nil || result.Operation.Status != transitionoperation.StatusCompleted || len(effects.calls) != 0 {
+		t.Fatalf("err=%v status=%s effects=%v", err, result.Operation.Status, effects.calls)
+	}
+}
+
+func TestRunnerReadsBackCompletionAfterLostResponse(t *testing.T) {
+	store := newRunnerStore()
+	store.completeErrAfterCommit = errors.New("completion response lost")
+	runner, err := New(Options{Operations: store, Preflight: newRunnerPreflight(t), Fences: &runnerFence{}, Effects: &runnerEffects{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.Run(context.Background(), Request{OperationID: runnerOperationID, OwnerID: "owner", IdempotencyKey: "complete-response"})
+	if err != nil || result.Operation.Status != transitionoperation.StatusCompleted {
+		t.Fatalf("err=%v status=%s", err, result.Operation.Status)
+	}
+}
+
 func TestRunnerResumesExactCompletedSubphases(t *testing.T) {
 	store := newRunnerStore()
 	store.completed[PhasePreflight] = true
@@ -230,12 +302,16 @@ func (p *runnerPreflightSequence) ResolveAndEvaluate(context.Context, transition
 type runnerFence struct {
 	validateErr      error
 	acquireErr       error
+	onAcquire        func()
 	failValidationAt int64
 	calls            atomic.Int64
 	renewCalls       atomic.Int64
 }
 
 func (f *runnerFence) Acquire(context.Context, string, string, string, time.Time) (transitionoperation.Fence, error) {
+	if f.onAcquire != nil {
+		f.onAcquire()
+	}
 	if f.acquireErr != nil {
 		return transitionoperation.Fence{}, f.acquireErr
 	}
@@ -293,11 +369,12 @@ func (e *runnerEffects) PostValidate(_ context.Context, in EffectInput) (EffectR
 }
 
 type runnerStore struct {
-	op             transitionoperation.Operation
-	completed      map[Phase]bool
-	failure        *FailureInput
-	recordErrPhase Phase
-	recordErr      error
+	op                     transitionoperation.Operation
+	completed              map[Phase]bool
+	failure                *FailureInput
+	recordErrPhase         Phase
+	recordErr              error
+	completeErrAfterCommit error
 }
 
 func newRunnerStore() *runnerStore { return &runnerStore{completed: map[Phase]bool{}} }
@@ -325,6 +402,9 @@ func (s *runnerStore) RecordPhase(_ context.Context, in PhaseRecordInput) (trans
 }
 func (s *runnerStore) Complete(context.Context, CompleteInput) (transitionoperation.Operation, error) {
 	s.op.Status = transitionoperation.StatusCompleted
+	if s.completeErrAfterCommit != nil {
+		return transitionoperation.Operation{}, s.completeErrAfterCommit
+	}
 	return s.op, nil
 }
 func (s *runnerStore) Fail(_ context.Context, in FailureInput) (transitionoperation.Operation, error) {

@@ -400,3 +400,9 @@ SET status = $1, terminal_at = clock_timestamp(), owner_id = '',
     lease_expires_at = NULL, updated_at = clock_timestamp()
 WHERE operation_id = $2::uuid AND owner_id = $3 AND fencing_generation = $4
   AND lease_expires_at > clock_timestamp();
+
+-- name: CompleteRecordedTransitionOperation :execrows
+UPDATE release.release_transition_operation
+SET status = 'completed', terminal_at = clock_timestamp(), owner_id = '',
+    lease_expires_at = NULL, updated_at = clock_timestamp()
+WHERE operation_id = $1::uuid AND status = 'running';

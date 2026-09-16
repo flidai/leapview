@@ -173,8 +173,26 @@ func (r *Repository) AcquireTransitionTx(ctx context.Context, tx Tx, input trans
 		if parseErr != nil {
 			return transitionoperation.Operation{}, transitionoperation.ErrConflict
 		}
-		_, err = q.MarkTransitionIndeterminate(ctx, expiredID)
-		if err != nil {
+		expiredRow, lockErr := lockTransitionByID(ctx, tx, *fence.OperationID)
+		if lockErr != nil {
+			return transitionoperation.Operation{}, lockErr
+		}
+		expired, readErr := readTransitionOperation(ctx, tx, expiredRow)
+		if readErr != nil {
+			return transitionoperation.Operation{}, readErr
+		}
+		if recordedTransitionSuccess(expired) {
+			// Every effect and the success marker are durable. The final completion
+			// write may have failed after that marker; finish it under both locks.
+			var affected int64
+			affected, err = q.CompleteRecordedTransitionOperation(ctx, expiredID)
+			if err != nil {
+				return transitionoperation.Operation{}, err
+			}
+			if affected != 1 {
+				return transitionoperation.Operation{}, transitionoperation.ErrConflict
+			}
+		} else if _, err = q.MarkTransitionIndeterminate(ctx, expiredID); err != nil {
 			return transitionoperation.Operation{}, err
 		}
 		if *fence.OperationID == row.OperationID && row.Status == string(transitionoperation.StatusRunning) {
@@ -210,6 +228,19 @@ func (r *Repository) AcquireTransitionTx(ctx context.Context, tx Tx, input trans
 		return transitionoperation.Operation{}, err
 	}
 	return readTransitionOperation(ctx, tx, row)
+}
+
+func recordedTransitionSuccess(op transitionoperation.Operation) bool {
+	phases := transitionoperation.PhaseNames()
+	if op.Status != transitionoperation.StatusRunning || op.CurrentPhase != transitionoperation.PhaseSuccess || len(op.PhaseResults) != len(phases) {
+		return false
+	}
+	for i, phase := range phases {
+		if op.PhaseResults[i].Phase != phase || op.PhaseResults[i].Status != transitionoperation.PhaseResultSucceeded {
+			return false
+		}
+	}
+	return true
 }
 
 func validateTransitionInput(input transitionoperation.CreateInput) error {

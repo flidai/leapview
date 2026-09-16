@@ -178,6 +178,45 @@ func TestTransitionOperationPersistsMonotonicPhasesAndCompletion(t *testing.T) {
 	}
 }
 
+func TestTransitionOperationFinalizesRecordedSuccessAfterLeaseExpiry(t *testing.T) {
+	p := testDB(t)
+	repo := NewTransitionRepository(p)
+	op, err := repo.Create(t.Context(), transitionInput(t, "recorded-success-expiry", digest("a")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	op, err = repo.Claim(t.Context(), op.OperationID, "original-owner", time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range transitionoperation.PhaseNames() {
+		op, err = repo.RecordTransitionPhase(t.Context(), op.Fence, transitionoperation.PhaseResult{Phase: phase, Status: transitionoperation.PhaseResultSucceeded, Result: []byte(fmt.Sprintf(`{"phase":%q}`, phase))})
+		if err != nil {
+			t.Fatalf("record %s: %v", phase, err)
+		}
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE release.release_transition_fence SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE target_identity_digest = $1`, op.TargetIdentityDigest); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := repo.Claim(t.Context(), op.OperationID, "retry-owner", time.Now().UTC().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Status != transitionoperation.StatusCompleted || len(replayed.PhaseResults) != len(transitionoperation.PhaseNames()) {
+		t.Fatalf("replayed status=%s results=%d", replayed.Status, len(replayed.PhaseResults))
+	}
+	if _, err := repo.Acquire(t.Context(), op.TargetIdentityDigest, op.OperationID, "retry-owner", time.Now().UTC().Add(time.Minute)); !errors.Is(err, transitionoperation.ErrAlreadyTerminal) {
+		t.Fatalf("adapter acquire after completion = %v", err)
+	}
+	next, err := repo.Create(t.Context(), transitionInput(t, "after-recorded-success", op.TargetIdentityDigest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Claim(t.Context(), next.OperationID, "next-owner", time.Now().UTC().Add(time.Minute)); err != nil {
+		t.Fatalf("next transition after recovered completion: %v", err)
+	}
+}
+
 func TestTransitionOperationRecordsIndeterminateAfterLeaseExpiry(t *testing.T) {
 	p := testDB(t)
 	repo := NewTransitionRepository(p)

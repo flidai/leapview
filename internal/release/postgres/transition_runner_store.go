@@ -191,8 +191,8 @@ func (r *TransitionRepository) Acquire(ctx context.Context, targetIdentityDigest
 	if err != nil {
 		return transitionoperation.Fence{}, err
 	}
-	if claimed.Status == transitionoperation.StatusIndeterminate {
-		return transitionoperation.Fence{}, transitionoperation.ErrIndeterminate
+	if claimed.Status.Terminal() {
+		return transitionoperation.Fence{}, transitionoperation.ErrAlreadyTerminal
 	}
 	return claimed.Fence, nil
 }
