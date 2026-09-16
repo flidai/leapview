@@ -913,10 +913,7 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 
 func TestQualificationDiskUsageCommandRejectsMissingRoot(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing")
-	output, err := exec.CommandContext(
-		t.Context(), "sh", "-ec", qualificationDiskUsageCommand,
-		"qualification-disk-usage", missing,
-	).CombinedOutput()
+	output, err := exec.CommandContext(t.Context(), "sh", "-ec", qualificationDiskUsageCommand, "qualification-disk-usage", missing).CombinedOutput()
 	if err == nil || strings.TrimSpace(string(output)) == "0" {
 		t.Fatalf("missing disk root command error = %v, output = %q; want non-zero failure", err, output)
 	}
