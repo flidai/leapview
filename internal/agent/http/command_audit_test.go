@@ -259,7 +259,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	draftRequest := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
 	draftRequest.Header.Set(uicommand.HeaderOperationID, strings.Join([]string{createAgentConversationOperation.APIGenOperationID(), createAgentRunOperation.APIGenOperationID()}, ","))
 	draftResponse := httptest.NewRecorder()
-	handler.startDraftChatTurn(draftResponse, draftRequest, service, scope, "client-1", "hello", nil, false)
+	handler.startDraftChatTurn(draftResponse, draftRequest, service, scope, "client-1", "hello", "", nil, false)
 	if draftResponse.Code != http.StatusOK {
 		t.Fatalf("draft chat status = %d body=%s", draftResponse.Code, draftResponse.Body.String())
 	}
@@ -288,6 +288,54 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	handler.runChatTurn(activeResponse, activeRequest, service, scope, "client-2", conversation.ID, "again", nil, true)
 	if len(audits) != 1 || audits[0].OperationID != createAgentRunOperation.APIGenOperationID() || audits[0].TargetID != conversation.ID {
 		t.Fatalf("active chat audits = %#v", audits)
+	}
+}
+
+func TestAgentChatDraftRetryReusesConversationAndRun(t *testing.T) {
+	service, principalID := commandAuditService(t)
+	enqueued := 0
+	handler := NewHandler(Options{
+		Service: service,
+		EnqueueChatRun: func(context.Context, agent.Scope, *agent.StartedPrompt, string) error {
+			enqueued++
+			return nil
+		},
+		BuildAuditIntent: func(_ context.Context, input CommandAuditInput) (*access.AuditIntent, error) {
+			return commandAuditTestIntent(input), nil
+		},
+	})
+	scope := agent.Scope{PrincipalID: principalID}
+	requestID := uuid.Must(uuid.NewV7()).String()
+	var conversationID string
+	for attempt := range 2 {
+		request := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+		request.Header.Set(uicommand.HeaderOperationID, strings.Join([]string{createAgentConversationOperation.APIGenOperationID(), createAgentRunOperation.APIGenOperationID()}, ","))
+		response := httptest.NewRecorder()
+		handler.startDraftChatTurn(response, request, service, scope, "client-retry", "same prompt", requestID, nil, false)
+		if response.Code != http.StatusOK {
+			t.Fatalf("draft retry %d status = %d body=%s", attempt, response.Code, response.Body.String())
+		}
+		body := response.Body.String()
+		if attempt == 0 {
+			conversations, err := service.ListConversations(t.Context(), scope)
+			if err != nil || len(conversations) != 1 {
+				t.Fatalf("first draft conversations = %#v, err=%v", conversations, err)
+			}
+			conversationID = conversations[0].ID
+		}
+		if !strings.Contains(body, `"activeConversationId":"`+conversationID+`"`) {
+			t.Fatalf("draft retry %d omitted original conversation %q: %s", attempt, conversationID, body)
+		}
+	}
+	conversations, err := service.ListConversations(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 1 || conversations[0].ID != conversationID {
+		t.Fatalf("draft retry created duplicate conversations: %#v", conversations)
+	}
+	if enqueued != 1 {
+		t.Fatalf("draft retry enqueued %d runs, want 1", enqueued)
 	}
 }
 

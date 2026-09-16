@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -239,6 +241,35 @@ func (s *Service) CreateConversation(ctx context.Context, scope Scope, title str
 		Title:        title,
 		MetadataJSON: `{}`,
 	})
+}
+
+// CreateConversationOnce binds a browser submit identity to one durable
+// conversation. A transport retry returns the original row rather than
+// creating another empty conversation.
+func (s *Service) CreateConversationOnce(ctx context.Context, scope Scope, title, requestID string) (Conversation, bool, error) {
+	if s.repo == nil {
+		return Conversation{}, false, fmt.Errorf("agent store is required")
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		conversation, err := s.CreateConversation(ctx, scope, title)
+		return conversation, err == nil, err
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		"createAgentConversation", scope.ProjectID, scope.PrincipalID, requestID,
+	}, "\x00")))
+	id := "agentconv_" + hex.EncodeToString(sum[:12])
+	conversation, err := s.repo.CreateConversation(ctx, ConversationInput{
+		ID: id, PrincipalID: scope.PrincipalID, Title: title, MetadataJSON: `{}`,
+	})
+	if err == nil {
+		return conversation, true, nil
+	}
+	existing, getErr := s.repo.GetConversation(ctx, scope.PrincipalID, id)
+	if getErr == nil {
+		return existing, false, nil
+	}
+	return Conversation{}, false, err
 }
 
 func (s *Service) ListConversations(ctx context.Context, scope Scope) ([]Conversation, error) {

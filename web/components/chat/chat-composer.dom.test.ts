@@ -10,6 +10,7 @@ let baseURL = ''
 let browser: Browser
 
 const root = join(process.cwd(), '.tmp/chat-composer-test')
+const uuidv7Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 
 beforeAll(async () => {
   server = createServer(async (request, response) => {
@@ -288,7 +289,7 @@ test('composer exposes stop only after a run is accepted and protects an unsent 
         disabledWithDraft: true,
         titleWithDraft: 'Clear your draft to continue the previous response',
         enabledWithoutDraft: true,
-        submits: [{ input: 'Continue your previous response from where you stopped.', references: [] }],
+        submits: [{ input: 'Continue your previous response from where you stopped.', requestId: expect.stringMatching(uuidv7Pattern), references: [] }],
         draftBeforeContinue: 'Keep this new question',
         draftAfterContinue: '',
       },
@@ -423,7 +424,7 @@ test('composer presents edit mode, targets the selected message, and cancels saf
 
     expect(result).toEqual({
       editState: { banner: 'Editing message Cancel', sendLabel: 'Save & send', cancel: 'Cancel' },
-      submitted: { input: 'Rewrite this answer', references: [], editMessageId: 'user-1' },
+      submitted: { input: 'Rewrite this answer', requestId: expect.stringMatching(uuidv7Pattern), references: [], editMessageId: 'user-1' },
       afterCancel: { editMessageId: '', editing: false, draft: '', hasBanner: false, cancelCount: 1 },
     })
   } finally {
@@ -481,6 +482,7 @@ test('composer searches for and attaches typed @ references with spaces', async 
       draftAfterReference: 'Compare',
       submitted: {
         input: 'Compare this with last month',
+        requestId: expect.stringMatching(uuidv7Pattern),
         references: [{
           reference: { kind: 'visual', id: 'executive-sales.orders_chart' },
           name: 'Orders',

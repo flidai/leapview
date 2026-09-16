@@ -165,7 +165,12 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 	if title == "" {
 		title = agent.ConversationDefaultTitle
 	}
-	id := newID("agentconv")
+	id := strings.TrimSpace(input.ID)
+	if id == "" {
+		id = newID("agentconv")
+	} else if id != input.ID || !strings.HasPrefix(id, "agentconv_") {
+		return agent.Conversation{}, fmt.Errorf("invalid agent conversation id")
+	}
 	intent, hasIntent := agent.AuditIntentFromContext(ctx)
 	if !hasIntent {
 		row, err := r.q.CreateAgentConversation(ctx, platformdb.CreateAgentConversationParams{

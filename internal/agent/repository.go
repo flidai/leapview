@@ -231,6 +231,7 @@ type Event struct {
 }
 
 type ConversationInput struct {
+	ID           string
 	PrincipalID  string
 	Title        string
 	MetadataJSON string

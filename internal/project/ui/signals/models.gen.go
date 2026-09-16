@@ -209,6 +209,7 @@ type ChromeSignal struct {
 
 type ComposerSignal struct {
 	EditMessageID *string `json:"editMessageId,omitempty" yaml:"editMessageId,omitempty"`
+	RequestID     *string `json:"requestId,omitempty" yaml:"requestId,omitempty"`
 	Disabled      bool    `json:"disabled" yaml:"disabled"`
 	Placeholder   string  `json:"placeholder" yaml:"placeholder"`
 	Value         string  `json:"value" yaml:"value"`

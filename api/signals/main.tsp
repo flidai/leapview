@@ -963,6 +963,7 @@ model ChromeSignal {
 
 model ComposerSignal {
   `editMessageId`?: string;
+  `requestId`?: string;
   `disabled`: boolean;
   `placeholder`: string;
   `value`: string;

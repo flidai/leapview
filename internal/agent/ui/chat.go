@@ -34,7 +34,7 @@ func ChatPage(projectID, csrfToken, view string, state ChatViewState, providers 
 			g.Attr("view", view),
 			g.Attr("data-indicator", "agentTurnPending"),
 			g.Attr("data-on:lv-chat-stop", uiactions.CommandPost(agentgen.GenUIActionCancelAgentRun(), "/chats/stop", "agent", "agentContext")),
-			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agentContext.references = evt.detail.references; "+turnCommand),
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agent.composer.editMessageId = evt.detail.editMessageId || ''; $agent.composer.requestId = evt.detail.requestId || ''; $agentContext.references = evt.detail.references; "+turnCommand),
 		),
 	})
 }

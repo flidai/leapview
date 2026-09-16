@@ -2,6 +2,7 @@ import { LitElement, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { AtSign, Search, Send, Square, X } from 'lucide'
 import { domainEvents, emitDomainEvent } from '../shared/events'
+import { commandIdentity } from '../shared/command'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 import { chatComposerStyles } from './chat-composer-styles'
@@ -328,6 +329,7 @@ class ChatComposer extends LitElement {
 		this.submitLocked = true
 		emitDomainEvent(this, domainEvents.chatSubmit, {
 			input,
+			requestId: commandIdentity(),
 			references: this.references,
 			...(editMessageId ? { editMessageId } : {}),
 		})
@@ -348,6 +350,7 @@ class ChatComposer extends LitElement {
 		this.submitLocked = true
 		emitDomainEvent(this, domainEvents.chatSubmit, {
 			input: continueResponsePrompt,
+			requestId: commandIdentity(),
 			references: this.references,
 		})
 	}

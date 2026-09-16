@@ -57,6 +57,7 @@ type chatTurnCommandAgentSignal struct {
 type chatTurnCommandComposerSignal struct {
 	Value         string `json:"value"`
 	EditMessageID string `json:"editMessageId"`
+	RequestID     string `json:"requestId"`
 }
 
 type ChatTurnEmitter func(ui.ChatViewState) error
@@ -159,15 +160,20 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	activeConversationID := strings.TrimSpace(signals.Agent.ActiveConversationID)
+	requestID := strings.TrimSpace(signals.Agent.Composer.RequestID)
+	if requestID != "" {
+		r.Header.Set("X-Request-ID", requestID)
+		r.Header.Set("Idempotency-Key", requestID)
+	}
 	if activeConversationID == "" {
 		if strings.TrimSpace(signals.Agent.Composer.EditMessageID) != "" {
 			nethttp.Error(w, "editing requires an existing conversation", nethttp.StatusBadRequest)
 			return
 		}
-		h.startDraftChatTurn(w, r, service, scope, clientID, input, turnContext, embedded)
+		h.startDraftChatTurn(w, r, service, scope, clientID, input, requestID, turnContext, embedded)
 		return
 	}
-	h.runChatTurn(w, r, service, scope, clientID, activeConversationID, input, turnContext, embedded, strings.TrimSpace(signals.Agent.Composer.EditMessageID))
+	h.runChatTurn(w, r, service, scope, clientID, activeConversationID, input, turnContext, embedded, strings.TrimSpace(signals.Agent.Composer.EditMessageID), requestID)
 }
 
 // ChatStop cancels the run represented by the browser's current status. The
@@ -399,12 +405,15 @@ func (h *Handler) layout(r *nethttp.Request) webpage.Provider {
 	return h.options.Layout(r)
 }
 
-func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, service *agent.Service, scope agent.Scope, clientID, input string, turnContext *agent.TurnContext, embedded bool) {
+func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, service *agent.Service, scope agent.Scope, clientID, input, requestID string, turnContext *agent.TurnContext, embedded bool) {
 	if !embedded && h.options.EnqueueChatRun == nil {
 		nethttp.Error(w, "durable chat turn queue is not configured", nethttp.StatusServiceUnavailable)
 		return
 	}
-	identity := uiRequestIdentity(r, input)
+	identity := strings.TrimSpace(requestID)
+	if identity == "" {
+		identity = uiRequestIdentity(r, input)
+	}
 	workflow := []uicommand.Binding{
 		agentgen.GenUIActionCreateAgentConversation(),
 		agentgen.GenUIActionCreateAgentRun(),
@@ -420,7 +429,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 	} else {
 		createCtx = withIntent.Context()
 	}
-	conversation, err := service.CreateConversation(createCtx, scope, "New conversation")
+	conversation, created, err := service.CreateConversationOnce(createCtx, scope, "New conversation", identity)
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
@@ -431,6 +440,7 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		ConversationID: conversation.ID,
 		Input:          input,
 		Context:        turnContext,
+		RequestID:      identity,
 	}
 	var started *agent.StartedPrompt
 	runCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), workflow, conversation.ID, input, identity)
@@ -448,6 +458,12 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		started, err = service.StartPrompt(runCtx, prompt)
 	} else {
 		started, err = service.StartDurablePrompt(runCtx, prompt, agent.PromptDispatch{ChatClientID: clientID})
+	}
+	if !created && agent.IsBusy(err) {
+		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+			"agent": map[string]any{"activeConversationId": conversation.ID},
+		})
+		return
 	}
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
@@ -487,8 +503,12 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 
 func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, service *agent.Service, scope agent.Scope, clientID, activeConversationID, input string, turnContext *agent.TurnContext, embedded bool, editMessageIDs ...string) {
 	editMessageID := ""
+	requestID := ""
 	if len(editMessageIDs) > 0 {
 		editMessageID = editMessageIDs[0]
+	}
+	if len(editMessageIDs) > 1 {
+		requestID = editMessageIDs[1]
 	}
 	conversationID := strings.TrimSpace(activeConversationID)
 	state, err := service.ConversationTranscriptState(r.Context(), scope, conversationID)
@@ -499,7 +519,10 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 	transcript := state.Transcript
 	streamArtifacts := state.Artifacts
 	updates := pagestream.NewSignalStream(w, r)
-	identity := uiRequestIdentity(r, input)
+	identity := strings.TrimSpace(requestID)
+	if identity == "" {
+		identity = uiRequestIdentity(r, input)
+	}
 	runCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), nil, conversationID, input, identity)
 	if invocationErr != nil {
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(invocationErr), false), embedded))
@@ -517,6 +540,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		EditMessageID:  editMessageID,
 		Input:          input,
 		Context:        turnContext,
+		RequestID:      identity,
 	}
 	// Chat page turns use the durable workflow just like the first turn in a
 	// new conversation. Keeping the provider execution off this Datastar
