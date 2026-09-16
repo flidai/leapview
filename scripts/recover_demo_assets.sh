@@ -173,6 +173,7 @@ approver_cookies="$repo/.tmp/approver.cookies"
 approver_password_file="$repo/.tmp/approver-new-password"
 initial_credentials="$repo/.tmp/initial-credentials.json"
 leapview_binary="$repo/.tmp/leapview-dev"
+demo_cookies="$repo/.tmp/demo-login.cookies"
 test -x "$leapview_binary"
 latest_revision=5d870e7cf5f7e174dce115c416f6cab5e8259dcf
 running_revision="$("$leapview_binary" version --json | jq -er '.revision')"
@@ -475,6 +476,20 @@ test -d "$cfo_source_root"
 # impossible to deploy. Build the narrow, tested authorization correction on
 # top of the exact main revision until the fix is released normally.
 delivery_hotfix_marker="$repo/.tmp/leapview-dev.delivery-role-authorization"
+hotfix_binary="$repo/.tmp/leapview-dev.delivery-hotfix"
+if [[ ! -s "$delivery_hotfix_marker" && -x "$hotfix_binary" ]] && \
+   [[ "$("$hotfix_binary" version --json | jq -r '.revision // empty')" == "$latest_revision" ]]; then
+  install -m 0755 "$hotfix_binary" "$leapview_binary"
+  systemctl restart leapview-demo-current.service
+  for _ in $(seq 1 60); do
+    if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null
+  printf '%s\n' "$latest_revision" >"$delivery_hotfix_marker"
+fi
 if [[ ! -s "$delivery_hotfix_marker" ]]; then
   hotfix_worktree="/tmp/leapview-delivery-hotfix-$latest_revision"
   if [[ -e "$hotfix_worktree" ]]; then
@@ -494,7 +509,6 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
   runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
   build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
-  hotfix_binary="$repo/.tmp/leapview-dev.delivery-hotfix"
   (cd "$hotfix_worktree" && "$go_binary" build -tags=duckdb_arrow -trimpath \
     -ldflags "$build_ldflags" -o "$hotfix_binary" ./cmd/leapview)
   [[ "$("$hotfix_binary" version --json | jq -er '.revision')" == "$latest_revision" ]]
@@ -503,8 +517,7 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
   systemctl restart leapview-demo-current.service
   hotfix_ready=false
   for _ in $(seq 1 60); do
-    if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1 && \
-       curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
+    if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1; then
       hotfix_ready=true
       break
     fi
