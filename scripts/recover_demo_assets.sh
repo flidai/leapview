@@ -175,7 +175,7 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     backup_binary="$repo/.tmp/leapview-dev.previous"
     latest_worktree="/tmp/leapview-runtime-$latest_revision"
     next_revision=""
-    next_tag_marker="$repo/.tmp/leapview-dev.next.duckdb-arrow"
+    next_tag_marker="$repo/.tmp/leapview-dev.next.complete-assets"
     if [[ -x "$next_binary" && -f "$next_tag_marker" ]]; then
       next_revision="$("$next_binary" version --json | jq -r '.revision // empty')"
     fi
@@ -196,6 +196,12 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
     fi
     runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
+    while IFS= read -r generated_file; do
+      [[ -f "$repo/$generated_file" ]] || continue
+      mkdir -p "$latest_worktree/$(dirname "$generated_file")"
+      cp -p "$repo/$generated_file" "$latest_worktree/$generated_file"
+    done < <(git -C "$repo" ls-files -o -i --exclude-standard -- docs)
+    test -s "$latest_worktree/docs/search-index.json"
     build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
     (cd "$latest_worktree" && "$go_binary" build -tags=duckdb_arrow -trimpath -ldflags "$build_ldflags" -o "$next_binary" ./cmd/leapview)
