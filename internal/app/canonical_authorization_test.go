@@ -176,6 +176,20 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if allowed, err := deliverySnapshotAllows(snapshot, subjects, []access.ResourceRef{unknown}, access.CapabilityResourcePublish); err == nil || allowed {
 		t.Fatalf("unknown resource did not fail closed: allowed=%t err=%v", allowed, err)
 	}
+	readGrant, err := access.NewCanonicalGrant(graph, subject, resourceA, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "grant_dashboard_read", Canonical: readGrant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, []access.ResourceRef{resourceA}, access.CapabilityResourceUse); err != nil || !allowed {
+		t.Fatalf("dashboard read did not authorize delivery build: allowed=%t err=%v", allowed, err)
+	}
+	if allowed, err := deliverySnapshotAllows(readSnapshot, subjects, []access.ResourceRef{resourceB}, access.CapabilityResourceUse); err != nil || allowed {
+		t.Fatalf("dashboard read on A authorized delivery build for B: allowed=%t err=%v", allowed, err)
+	}
 
 	roleSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_deployer", Subject: subject, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)}}, nil, nil)
 	if err != nil {

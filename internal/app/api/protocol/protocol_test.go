@@ -597,6 +597,9 @@ func TestPostgresProtocolReclaimsAllowlistedLeaseAndFencesStaleOwner(t *testing.
 	firstResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() { firstResult <- invoke() }()
 	<-firstEntered
+	// Keep the takeover trigger short while giving the replacement owner enough
+	// time to commit its response on a loaded PostgreSQL runner.
+	p.lease = 5 * time.Second
 	second := invoke()
 	if second.Code != http.StatusCreated || second.Body.String() != `{"owner":"new"}` {
 		t.Fatalf("reclaimed response = %d %s", second.Code, second.Body.String())
