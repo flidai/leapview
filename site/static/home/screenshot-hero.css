@@ -247,6 +247,12 @@
   @media (min-width: 1101px) and (max-width: 1299px) {
     .product-stage { margin-top: clamp(-112px, calc(-3.5vw - 58.5px), -97px); }
   }
+  @media (min-width: 1024px) and (max-width: 1439px) {
+    .product-stage { width: min(1057px, calc(54vw + 62px)); }
+  }
+  @media (min-width: 1440px) {
+    .product-stage { width: min(1057px, calc(50vw + 120px)); }
+  }
   @media (min-width: 1600px) {
     .product-stage { margin-top: -128px; }
   }

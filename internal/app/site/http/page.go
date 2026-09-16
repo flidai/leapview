@@ -31,7 +31,9 @@ func sitePage(metadata sitePageMetadata) g.Node {
 	for _, stylesheet := range []string{"screenshot-hero", "mission", "orbit", "project-explorer", "layers", "enterprise", "involved"} {
 		head = append(head, h.Link(h.Rel("stylesheet"), h.Href("/static/home/"+stylesheet+".css")))
 	}
-	head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-dark.png"), g.Attr("as", "image")))
+	for _, theme := range []string{"dark", "light"} {
+		head = append(head, h.Link(h.Rel("preload"), h.Href("/static/product-dashboard-"+theme+".png"), g.Attr("as", "image")))
+	}
 	for _, script := range []string{"home", "layers", "project-explorer", "orbit"} {
 		head = append(head, h.Script(h.Type("module"), h.Src("/static/home/"+script+".js")))
 	}

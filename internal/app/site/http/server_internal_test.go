@@ -666,6 +666,7 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`<lv-site-flow-background class="site-flow-field" draw-in aria-hidden="true"></lv-site-flow-background>`,
 		`Metrics your whole team can build on.`,
 		`/static/product-dashboard-dark.png`,
+		`/static/product-dashboard-light.png`,
 		`id="mission"`,
 		`id="layers"`,
 		`id="project-explorer"`,

@@ -7,6 +7,8 @@
   );
   --site-header-inline-space: var(--base-size-16);
   --site-header-gap: var(--base-size-16);
+  --site-header-fill: transparent;
+  --site-header-edge: none;
   --site-reading-width: calc(
     var(--base-size-128) + var(--base-size-128) + var(--base-size-128) +
       var(--base-size-128)
@@ -57,6 +59,14 @@
 
 * {
   box-sizing: border-box;
+}
+
+html.is-theme-switching,
+html.is-theme-switching *,
+html.is-theme-switching *::before,
+html.is-theme-switching *::after {
+  transition-delay: 0s !important;
+  transition-duration: 0s !important;
 }
 
 html {

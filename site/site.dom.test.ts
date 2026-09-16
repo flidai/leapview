@@ -219,6 +219,33 @@ test('analytics code walkthrough stays still for reduced motion', async () => {
   }
 })
 
+test('reduced motion presents every integration in a visible static grid', async () => {
+  const context = await browser.newContext({ reducedMotion: 'reduce' })
+  const page = await context.newPage()
+  try {
+    await page.goto(baseURL)
+    for (const width of [320, 701, 768, 1024, 1101, 1280, 1440]) {
+      await page.setViewportSize({ width, height: 900 })
+      const integrations = await page.locator('.orbit-node').evaluateAll((nodes) => nodes.map((node) => {
+        const icon = node.querySelector('.orbit-icon')!.getBoundingClientRect()
+        const label = node.querySelector('.orbit-label')!
+        const labelBounds = label.getBoundingClientRect()
+        const labelStyle = getComputedStyle(label)
+        return {
+          iconVisible: icon.left >= 0 && icon.right <= innerWidth,
+          labelVisible: labelStyle.visibility === 'visible' && Number(labelStyle.opacity) === 1,
+          labelContained: labelBounds.left >= 0 && labelBounds.right <= innerWidth,
+        }
+      }))
+      expect(integrations).toHaveLength(17)
+      expect(integrations.every(({ iconVisible, labelVisible, labelContained }) => iconVisible && labelVisible && labelContained)).toBe(true)
+    }
+  } finally {
+    await page.close()
+    await context.close()
+  }
+})
+
 test('homepage hero fits the first screen and mission copy stays readable', async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   try {
@@ -231,8 +258,8 @@ test('homepage hero fits the first screen and mission copy stays readable', asyn
       missionFont: getComputedStyle(document.querySelector('.mission-copy')!).fontFamily,
       siteFont: getComputedStyle(document.querySelector('.site-header')!).fontFamily,
     }))
-    expect(desktop.heroBottom).toBeGreaterThan(1000)
-    expect(desktop.heroBottom).toBeLessThan(1110)
+    expect(desktop.heroBottom).toBeGreaterThan(880)
+    expect(desktop.heroBottom).toBeLessThan(930)
     expect(desktop.titleTop).toBeGreaterThan(175)
     expect(desktop.titleTop).toBeLessThan(215)
     expect(desktop.screenshotTop).toBeGreaterThan(380)
@@ -278,6 +305,29 @@ test('homepage hero ends at the screenshot on wide screens', async () => {
       expect(wide.screenshotRight).toBeLessThan(width - 20)
       expect(wide.screenshotLeft - wide.copyLeft).toBeGreaterThan(400)
       expect(wide.screenshotLeft - wide.copyLeft).toBeLessThan(430)
+    }
+  } finally {
+    await page.close()
+  }
+})
+
+test('desktop homepage preview stays inside scaled display viewports', async () => {
+  const page = await browser.newPage({ viewport: { width: 1024, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    for (const width of [1024, 1100, 1101, 1280, 1366, 1440, 1536, 1600, 1800]) {
+      await page.setViewportSize({ width, height: 800 })
+      const layout = await page.evaluate(() => {
+        const frame = document.querySelector('.product-frame')!.getBoundingClientRect()
+        return {
+          frameLeft: frame.left,
+          frameRight: frame.right,
+          pageWidth: document.documentElement.scrollWidth,
+        }
+      })
+      expect(layout.frameLeft).toBeGreaterThanOrEqual(0)
+      expect(layout.frameRight).toBeLessThanOrEqual(width - 15)
+      expect(layout.pageWidth).toBeLessThanOrEqual(width)
     }
   } finally {
     await page.close()
@@ -334,9 +384,10 @@ test('homepage flow field draws in and respects reduced motion', async () => {
       return Boolean(canvas && canvas.width > 0)
     })
     const first = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    await page.waitForTimeout(120)
-    const second = await flow.evaluate((host) => (host.shadowRoot?.querySelector('canvas') as HTMLCanvasElement).toDataURL())
-    expect(second).not.toBe(first)
+    await page.waitForFunction((initialFrame) => {
+      const canvas = document.querySelector('lv-site-flow-background')?.shadowRoot?.querySelector('canvas') as HTMLCanvasElement | null
+      return Boolean(canvas && canvas.toDataURL() !== initialFrame)
+    }, first)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     expect(await flow.evaluate((host) => host.getBoundingClientRect().height)).toBeLessThanOrEqual(992)
   } finally {
@@ -601,6 +652,41 @@ test('site theme control updates the homepage screenshot and colors', async () =
       return document.querySelector<HTMLElement>('.site-header')?.style.getPropertyValue('--site-header-fill').includes(getComputedStyle(section).backgroundColor)
     })
     expect(await page.locator('.site-header').evaluate((element) => element.style.getPropertyValue('--site-header-fill'))).not.toBe(darkHeaderFill)
+  } finally {
+    await page.close()
+  }
+})
+
+test('homepage theme changes render atomically without color transitions', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-color-mode', 'dark'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => document.querySelector('#product-image')?.getAttribute('src') === '/static/product-dashboard-dark.png')
+
+    const state = await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: 'light' } }))
+      const home = document.querySelector<HTMLElement>('.site-home')!
+      const frame = document.querySelector<HTMLElement>('.product-frame')!
+      return {
+        switching: document.documentElement.classList.contains('is-theme-switching'),
+        light: home.classList.contains('is-light'),
+        background: getComputedStyle(home).backgroundColor,
+        color: getComputedStyle(home).color,
+        frameBackground: getComputedStyle(frame).backgroundColor,
+        image: document.querySelector<HTMLImageElement>('#product-image')?.getAttribute('src'),
+      }
+    })
+
+    expect(state).toEqual({
+      switching: true,
+      light: true,
+      background: 'rgb(255, 255, 255)',
+      color: 'rgb(31, 35, 40)',
+      frameBackground: 'rgb(255, 255, 255)',
+      image: '/static/product-dashboard-light.png',
+    })
+    await page.waitForFunction(() => !document.documentElement.classList.contains('is-theme-switching'))
   } finally {
     await page.close()
   }
