@@ -526,6 +526,12 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
     | git -C "$hotfix_worktree" apply
   (cd "$hotfix_worktree" && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 \
     "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
+  while IFS= read -r generated_file; do
+    [[ -f "$repo/$generated_file" ]] || continue
+    mkdir -p "$hotfix_worktree/$(dirname "$generated_file")"
+    cp -p "$repo/$generated_file" "$hotfix_worktree/$generated_file"
+  done < <(git -C "$repo" ls-files -o -i --exclude-standard -- docs)
+  test -s "$hotfix_worktree/docs/search-index.json"
   runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
   build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
