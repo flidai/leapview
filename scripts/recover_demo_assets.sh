@@ -193,6 +193,7 @@ else
     tar --zstd --extract --file "$ollama_archive" --directory /usr/local
     rm -f "$ollama_archive"
   fi
+  chmod -R a+rX /usr/local/lib/ollama
   if ! id ollama >/dev/null 2>&1; then
     useradd --system --create-home --home-dir /var/lib/ollama --shell /usr/sbin/nologin ollama
   fi
