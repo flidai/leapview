@@ -444,7 +444,8 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     done < <(git -C "$repo" ls-files -o -i --exclude-standard -- api internal static web/generated docs)
     (cd "$ui_worktree" && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 \
       "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
-    (cd "$ui_worktree" && "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
+    (cd "$ui_worktree" && export PATH="$(dirname "$bun_binary"):$PATH" && \
+      "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
     while IFS= read -r generated_file; do
       [[ -f "$ui_worktree/$generated_file" ]] || continue
       mkdir -p "$repo/$(dirname "$generated_file")"
@@ -788,7 +789,8 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
   test -s "$hotfix_worktree/docs/search-index.json"
   bun_binary=/root/.bun/bin/bun
   test -x "$bun_binary"
-  (cd "$hotfix_worktree" && "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
+  (cd "$hotfix_worktree" && export PATH="$(dirname "$bun_binary"):$PATH" && \
+    "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
   while IFS= read -r generated_file; do
     [[ -f "$hotfix_worktree/$generated_file" ]] || continue
     mkdir -p "$repo/$(dirname "$generated_file")"
