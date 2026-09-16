@@ -540,6 +540,43 @@ PATH="$(dirname "$go_binary"):/root/.bun/bin:/usr/local/bin:/usr/bin:/bin" \
   "$go_binary" run ./internal/app/tools/bootstrapfinance --shared-cache --out "$cfo_data_root"
 cfo_data_path="$(cd -P "$cfo_data_root" && pwd)"
 
+# Plans bind every logical connection to target-owned runtime configuration.
+# Clone the already validated managed-file binding shape for the CFO logical
+# connection before asking the target to admit the bridge generation.
+operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
+  --target https://demo.leapview.dev \
+  --token "$publisher_token" \
+  --path "project=$project_id")"
+target_id="$(jq -er '.targetId' <<<"$operator_snapshot")"
+target_bindings="$("$leapview_binary" api call listTargetConnectionBindings \
+  --target https://demo.leapview.dev \
+  --token "$publisher_token" \
+  --path "project=$project_id" \
+  --path "target=$target_id")"
+if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
+  <<<"$target_bindings" >/dev/null; then
+  managed_binding="$(jq -cer '
+    first(.items[] | select(.logicalConnection == "connection:olist")) |
+    {
+      id: "demo-finance-files",
+      logicalConnection: "connection:finance_files",
+      configuration: {
+        connectorKind: .connectorKind,
+        authenticationMode: .authenticationMode,
+        endpoint: .endpoint
+      },
+      enabled: true
+    }
+  ' <<<"$target_bindings")"
+  "$leapview_binary" api call createTargetConnectionBinding \
+    --target https://demo.leapview.dev \
+    --token "$publisher_token" \
+    --path "project=$project_id" \
+    --path "target=$target_id" \
+    --body-json "$managed_binding" \
+    --idempotency-key 'demo-finance-files-binding-v1' >/dev/null
+fi
+
 # Managed-data uploads are authorized against the active graph. Activate a
 # short-lived bridge generation that retains Olist while introducing the
 # finance connection, then upload the finance revision before sealing CFO.
