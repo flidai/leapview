@@ -474,7 +474,7 @@ activate_source_root() {
   local source_root="$1"
   local candidate_key="$2-$(date -u +%Y%m%d%H%M%S)"
   local verify_path="${3:-}"
-  local plan plan_id build candidate_id publication publication_id publication_status
+  local plan plan_id build build_error candidate_id publication publication_id publication_status
   local generation_id approval_result approval_id approval_revision operator_snapshot active=false
 
   plan="$("$leapview_binary" plan \
@@ -486,7 +486,14 @@ activate_source_root() {
     --format json)"
   plan_id="$(jq -er '.planId' <<<"$plan")"
   [[ "$(jq -r '.status' <<<"$plan")" == planned ]]
-  build="$("$leapview_binary" build "$plan_id" --token "$publisher_token" --format json)"
+  build_error="$repo/.tmp/cfo-build-$plan_id.err"
+  if ! build="$("$leapview_binary" build "$plan_id" --token "$publisher_token" --format json 2>"$build_error")"; then
+    cat "$build_error" >&2
+    echo '--- candidate build service diagnostics ---' >&2
+    journalctl --unit leapview-demo-current.service --since '-3 minutes' \
+      --no-pager --lines 160 >&2 || true
+    return 1
+  fi
   [[ "$(jq -r '.status' <<<"$build")" == sealed ]]
   candidate_id="$(jq -er '.candidateId' <<<"$build")"
   publication="$("$leapview_binary" publish "$candidate_id" --token "$publisher_token" --format json)"
