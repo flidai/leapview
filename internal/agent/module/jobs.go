@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/agent"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
@@ -19,6 +20,11 @@ type RunJob struct {
 	ChatClientID                     string
 }
 
+// Agent runs can include several provider/tool turns. Keep their commit fence
+// comfortably above a single provider request so a valid long response does
+// not become stale before it can be saved.
+const agentRunExecutionLeaseTimeout = 10 * time.Minute
+
 func boundedResumeError(err error) error {
 	if err == nil {
 		return fmt.Errorf("durable prompt resume failed")
@@ -30,7 +36,7 @@ func boundedResumeError(err error) error {
 
 func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 	execution := m.runExecution
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: execution.JobKind, Run: func(ctx context.Context, job jobs.Job) error {
+	return []jobs.Handler{jobs.HandlerFunc{JobKind: execution.JobKind, ExecutionLeaseTimeout: agentRunExecutionLeaseTimeout, Run: func(ctx context.Context, job jobs.Job) error {
 		var payload RunJob
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return err
@@ -82,7 +88,7 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 			if store, ok := events.(jobs.Repository); ok {
 				claimed, claimErr := store.Get(ctx, job.ID)
 				if claimErr != nil || claimed.Fence() != job.Fence() || claimed.Status != jobs.StatusRunning {
-					return fmt.Errorf("stale durable job claim")
+					return agent.ErrStaleDurableJobClaim
 				}
 			}
 			data, _ := json.Marshal(map[string]any{"runId": payload.Run, "conversationId": payload.Conversation})

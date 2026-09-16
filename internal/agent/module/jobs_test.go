@@ -129,6 +129,18 @@ func TestJobHandlersRedeliveryConvergesTerminalRuns(t *testing.T) {
 	}
 }
 
+func TestAgentRunHandlerPublishesLongExecutionLease(t *testing.T) {
+	f := newModuleJobFixture(t)
+	handler := f.mod.JobHandlers(f.jobs)[0]
+	lease, ok := handler.(interface{ LeaseTimeout() time.Duration })
+	if !ok {
+		t.Fatal("agent run handler does not publish an execution lease")
+	}
+	if got := lease.LeaseTimeout(); got != agentRunExecutionLeaseTimeout {
+		t.Fatalf("agent run execution lease = %s, want %s", got, agentRunExecutionLeaseTimeout)
+	}
+}
+
 func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

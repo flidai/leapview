@@ -1452,7 +1452,7 @@ func (r *Repository) verifyJobTx(ctx context.Context, tx Tx, jobID, runID string
 		return err
 	}
 	if job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != runID || job.Status != jobs.StatusRunning || job.Fence() != fence || !agent.LeaseUnexpired(job.LeaseExpiresAt) {
-		return errors.New("stale durable job claim")
+		return agent.ErrStaleDurableJobClaim
 	}
 	return nil
 }

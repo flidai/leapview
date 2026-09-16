@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"errors"
 
 	"github.com/flidai/leapview/internal/agent"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
@@ -70,6 +71,9 @@ func chatTurnStatusError(err error, stopReason agentcore.StopReason) string {
 	}
 	if agent.IsBusy(err) {
 		return "A turn is already running for this conversation."
+	}
+	if errors.Is(err, agent.ErrStaleDurableJobClaim) {
+		return "This response was interrupted before it could be saved. Please try again."
 	}
 	return err.Error()
 }

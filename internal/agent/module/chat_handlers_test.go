@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/flidai/leapview/internal/agent"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -21,5 +22,12 @@ func TestChatTurnStatusErrorPreservesPromptErrors(t *testing.T) {
 	want := errors.New("provider failed")
 	if got := chatTurnStatusError(want, agentcore.StopReasonMaxTurns); got != want.Error() {
 		t.Fatalf("prompt error status = %q, want %q", got, want)
+	}
+}
+
+func TestChatTurnStatusErrorHidesDurableClaimInternals(t *testing.T) {
+	got := chatTurnStatusError(agent.ErrStaleDurableJobClaim, "")
+	if got != "This response was interrupted before it could be saved. Please try again." {
+		t.Fatalf("stale-claim status = %q", got)
 	}
 }

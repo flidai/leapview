@@ -9,6 +9,11 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
+// ErrStaleDurableJobClaim means a worker no longer owns the durable execution
+// fence required to commit an agent result. It is an internal recovery signal,
+// not user-facing copy.
+var ErrStaleDurableJobClaim = errors.New("stale durable job claim")
+
 // PageByID applies the bounded cursor semantics shared by native repository
 // adapters after they have mapped backend rows into agent records.
 func PageByID[T any](rows []T, page Page, id func(T) string) []T {
@@ -73,7 +78,7 @@ func VerifyRunLease(ctx context.Context, runID, jobID string, fence jobs.Fence, 
 		return err
 	}
 	if !ValidRunLease(job, runID, fence) {
-		return errors.New("stale durable job claim")
+		return ErrStaleDurableJobClaim
 	}
 	return nil
 }

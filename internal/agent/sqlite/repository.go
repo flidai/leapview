@@ -791,7 +791,7 @@ func (r *Repository) FinishRunWorkflow(ctx context.Context, input agent.RunFinis
 	q := r.q.WithTx(tx)
 	if input.JobID != "" {
 		if !validAgentJobClaim(ctx, q, input.JobID, input.RunID, input.JobFence) {
-			return agent.Run{}, false, fmt.Errorf("stale durable job claim")
+			return agent.Run{}, false, agent.ErrStaleDurableJobClaim
 		}
 	}
 	priorStatus, err := q.GetAgentRunStatus(ctx, platformdb.GetAgentRunStatusParams{RunID: input.RunID, ConversationID: input.ConversationID})
@@ -854,7 +854,7 @@ func (r *Repository) CompleteRunWorkflow(ctx context.Context, input agent.RunFin
 	q := r.q.WithTx(tx)
 	if input.JobID != "" {
 		if !validAgentJobClaim(ctx, q, input.JobID, input.RunID, input.JobFence) {
-			return nil, false, fmt.Errorf("stale durable job claim")
+			return nil, false, agent.ErrStaleDurableJobClaim
 		}
 	}
 	priorStatus, err := q.GetAgentRunStatus(ctx, platformdb.GetAgentRunStatusParams{RunID: input.RunID, ConversationID: input.ConversationID})
@@ -991,7 +991,7 @@ func (r *Repository) FinishRun(ctx context.Context, input agent.RunFinish) (agen
 	}
 	if input.JobID != "" {
 		if !validAgentJobClaim(ctx, r.q, input.JobID, input.RunID, input.JobFence) {
-			return agent.Run{}, fmt.Errorf("stale durable job claim")
+			return agent.Run{}, agent.ErrStaleDurableJobClaim
 		}
 	}
 	row, err := r.q.FinishAgentRun(ctx, platformdb.FinishAgentRunParams{
