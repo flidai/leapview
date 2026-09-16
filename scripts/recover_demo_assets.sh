@@ -360,29 +360,11 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       --cookie "$demo_cookies" \
       --output "$repo/.tmp/demo-dashboard-result.html" \
       --write-out '%{http_code}' \
-      https://demo.leapview.dev/dashboards/dashboard:visual-showcase/pages/overview)"
+      https://demo.leapview.dev/dashboards/dashboard:cfo-command-center/pages/overview)"
     echo "demo dashboard status before publication: $demo_dashboard_status"
-    if [[ "$demo_dashboard_status" != 200 && "$requires_publication" != true ]]; then
-      operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
-        --target https://demo.leapview.dev \
-        --token "$publisher_token" \
-        --path "project=$project_id")"
-      printf 'delivery operator snapshot: %s\n' "$(jq -c '{projectId,environment,targetId,targetRevision,activeGeneration,degraded,degradedReasons}' <<<"$operator_snapshot")"
-      active_generation="$(jq -er '.activeGeneration' <<<"$operator_snapshot")"
-      generation_status="$("$leapview_binary" api call getDeliveryGenerationStatus \
-        --target https://demo.leapview.dev \
-        --token "$publisher_token" \
-        --path "project=$project_id" \
-        --path "generation=$active_generation")"
-      printf 'active generation status: %s\n' "$(jq -c . <<<"$generation_status")"
-      dashboard_api_error="$repo/.tmp/demo-dashboard-api.err"
-      if ! "$leapview_binary" api call getDashboard \
-        --target https://demo.leapview.dev \
-        --token "$publisher_token" \
-        --path 'dashboard=dashboard:visual-showcase' >/dev/null 2>"$dashboard_api_error"; then
-        sed -n '1,20p' "$dashboard_api_error" >&2
-      fi
-      exit 1
+    if [[ "$demo_dashboard_status" != 200 ]]; then
+      echo 'CFO Command Center is not active; publishing the complete finance project'
+      requires_publication=true
     fi
   fi
 
@@ -479,12 +461,30 @@ device_oauth="$(curl --fail --silent --show-error \
 approver_token="$(jq -er '.access_token | strings | select(length > 0)' <<<"$device_oauth")"
 unset device_challenge device_code user_code verification_uri_complete csrf_token device_oauth
 cd "$repo"
+go_binary="$(command -v go || true)"
+if [[ -z "$go_binary" ]]; then
+  go_binary="$(find /root /usr /opt -type f -path '*/bin/go' -perm -111 -print -quit 2>/dev/null || true)"
+fi
+[[ -n "$go_binary" ]]
+cfo_source_root="$repo/dashboards/experiments/cfo-demo"
+cfo_data_root="$repo/.data/cfo-demo"
+test -d "$cfo_source_root"
+PATH="$(dirname "$go_binary"):/root/.bun/bin:/usr/local/bin:/usr/bin:/bin" \
+  "$go_binary" run ./internal/app/tools/bootstrapfinance --shared-cache --out "$cfo_data_root"
+cfo_data_path="$(cd -P "$cfo_data_root" && pwd)"
+"$leapview_binary" data sync \
+  --source-root "$cfo_source_root" \
+  --connection finance_files \
+  --from "$cfo_data_path" \
+  --target https://demo.leapview.dev \
+  --project-id "$project_id" \
+  --token "$publisher_token"
 plan="$("$leapview_binary" plan \
-  --source-root "$repo/dashboards" \
+  --source-root "$cfo_source_root" \
   --target https://demo.leapview.dev \
   --project-id "$project_id" \
   --token "$publisher_token" \
-  --candidate-key hosted-demo-recovery-v2 \
+  --candidate-key hosted-demo-cfo-v1 \
   --format json)"
 plan_id="$(jq -er '.planId' <<<"$plan")"
 [[ "$(jq -r '.status' <<<"$plan")" == planned ]]
@@ -517,18 +517,25 @@ if [[ "$publication_status" == pending ]]; then
 else
   [[ "$publication_status" == committed ]]
 fi
-unset publisher_token approver_token
 printf 'publication result: %s\n' "$(jq -c --arg candidate "$candidate_id" --arg generation "$generation_id" '{status,candidate:$candidate,generation:$generation}' <<<"$approval_result")"
 ready=false
 for _ in $(seq 1 120); do
-  if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
+  operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
+    --target https://demo.leapview.dev \
+    --token "$publisher_token" \
+    --path "project=$project_id" 2>/dev/null || true)"
+  if [[ "$(jq -r '.activeGeneration // empty' <<<"$operator_snapshot" 2>/dev/null)" == "$generation_id" ]] && \
+     curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1 && \
+     [[ "$(curl --silent --show-error --cookie "$demo_cookies" --output /dev/null --write-out '%{http_code}' \
+       https://demo.leapview.dev/dashboards/dashboard:cfo-command-center/pages/overview)" == 200 ]]; then
     ready=true
     break
   fi
   sleep 2
 done
 [[ "$ready" == true ]]
-echo 'public demo readiness: ready'
+unset publisher_token approver_token
+echo 'public CFO demo readiness: ready'
 exit 0
 repo=/tmp/leapview-main
 test -d "$repo/.git"
