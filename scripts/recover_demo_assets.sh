@@ -131,6 +131,20 @@ if [[ -n "${DEMO_LOGIN_PASSWORD:-}" ]]; then
   unset DEMO_LOGIN_PASSWORD
 fi
 
+agent_api_key="${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY}"
+if [[ ! "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]; then
+  echo 'DEEPSEEK_API_KEY contains characters that cannot be stored safely in the systemd environment file' >&2
+  exit 1
+fi
+printf '%s' "$agent_api_key" | ssh \
+  -i "$identity_file" \
+  -o BatchMode=yes \
+  -o ConnectTimeout=10 \
+  -o StrictHostKeyChecking=yes \
+  -o "UserKnownHostsFile=$pinned_known_hosts" \
+  "root@$demo_host" 'umask 077; cat > /tmp/leapview-demo-agent-api-key'
+unset agent_api_key DEEPSEEK_API_KEY
+
 ssh \
   -i "$identity_file" \
   -o BatchMode=yes \
@@ -142,7 +156,43 @@ ssh \
   "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
 demo_login_password_file=/tmp/leapview-demo-login-password
-trap 'rm -f "$demo_login_password_file"' EXIT
+agent_api_key_file=/tmp/leapview-demo-agent-api-key
+trap 'rm -f "$demo_login_password_file" "$agent_api_key_file"' EXIT
+
+test -s "$agent_api_key_file"
+agent_api_key="$(<"$agent_api_key_file")"
+rm -f "$agent_api_key_file"
+[[ "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]
+install -d -m 0755 /etc/leapview
+umask 077
+{
+  printf 'LEAPVIEW_AGENT_API_KEY=%s\n' "$agent_api_key"
+  printf 'LEAPVIEW_AGENT_BASE_URL=https://api.deepseek.com\n'
+  printf 'LEAPVIEW_AGENT_MODEL=deepseek-v4-flash\n'
+} >/etc/leapview/demo-agent.env
+unset agent_api_key
+install -d -m 0755 /etc/systemd/system/leapview-demo-current.service.d
+printf '%s\n' \
+  '[Service]' \
+  'EnvironmentFile=/etc/leapview/demo-agent.env' \
+  >/etc/systemd/system/leapview-demo-current.service.d/agent.conf
+chmod 0600 /etc/leapview/demo-agent.env
+chmod 0644 /etc/systemd/system/leapview-demo-current.service.d/agent.conf
+systemctl daemon-reload
+systemctl restart leapview-demo-current.service
+for _ in $(seq 1 60); do
+  if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null
+service_pid="$(systemctl show --property MainPID --value leapview-demo-current.service)"
+[[ "$service_pid" =~ ^[1-9][0-9]*$ ]]
+for variable_name in LEAPVIEW_AGENT_API_KEY LEAPVIEW_AGENT_BASE_URL LEAPVIEW_AGENT_MODEL; do
+  grep -zq "^${variable_name}=" "/proc/$service_pid/environ"
+done
+echo 'agent provider environment: installed'
 echo '--- activation recovery inventory ---'
 systemctl is-active leapview-demo-current.service || true
 curl -sS -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:8132/healthz || true
@@ -376,6 +426,47 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     unset demo_login_password temporary_password password_reset principal_list demo_csrf
     [[ "$final_login_status" == 302 ]]
     echo 'demo login credential: verified'
+
+    probe_suffix="$(date -u +%Y%m%d%H%M%S)"
+    agent_conversation="$($leapview_binary api call createAgentConversation \
+      --target https://demo.leapview.dev \
+      --token "$publisher_token" \
+      --body-json '{"title":"Hosted demo readiness"}' \
+      --idempotency-key "demo-agent-probe-conversation-$probe_suffix")"
+    agent_conversation_id="$(jq -er '.id' <<<"$agent_conversation")"
+    agent_run="$($leapview_binary api call createAgentRun \
+      --target https://demo.leapview.dev \
+      --token "$publisher_token" \
+      --path "conversation=$agent_conversation_id" \
+      --body-json '{"input":"Reply with exactly: ready"}' \
+      --idempotency-key "demo-agent-probe-run-$probe_suffix")"
+    agent_run_id="$(jq -er '.id' <<<"$agent_run")"
+    agent_run_status="$(jq -er '.status' <<<"$agent_run")"
+    for _ in $(seq 1 60); do
+      case "$agent_run_status" in
+        completed|failed|cancelled) break ;;
+      esac
+      sleep 2
+      agent_run="$($leapview_binary api call getAgentRun \
+        --target https://demo.leapview.dev \
+        --token "$publisher_token" \
+        --path "conversation=$agent_conversation_id" \
+        --path "run=$agent_run_id")"
+      agent_run_status="$(jq -er '.status' <<<"$agent_run")"
+    done
+    if [[ "$agent_run_status" != completed ]]; then
+      jq -c '{id, status, model, stopReason, error}' <<<"$agent_run" >&2
+      echo 'agent provider probe did not complete' >&2
+      exit 1
+    fi
+    agent_messages="$($leapview_binary api call listAgentMessages \
+      --target https://demo.leapview.dev \
+      --token "$publisher_token" \
+      --path "conversation=$agent_conversation_id")"
+    jq -e 'any(.items[]?; .role == "assistant" and (.contentText // "" | ascii_downcase | contains("ready")))' \
+      <<<"$agent_messages" >/dev/null
+    unset agent_conversation agent_conversation_id agent_run agent_run_id agent_run_status agent_messages probe_suffix
+    echo 'agent provider probe: completed'
 
     demo_dashboard_status="$(curl --silent --show-error \
       --cookie "$demo_cookies" \

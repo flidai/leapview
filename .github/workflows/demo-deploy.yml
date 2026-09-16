@@ -67,6 +67,7 @@ jobs:
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_LOGIN_PASSWORD: ${{ secrets.DEMO_LOGIN_PASSWORD }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: ./scripts/recover_demo_assets.sh
 
   deploy:
