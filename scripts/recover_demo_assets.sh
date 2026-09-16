@@ -175,10 +175,13 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     backup_binary="$repo/.tmp/leapview-dev.previous"
     latest_worktree="/tmp/leapview-runtime-$latest_revision"
     next_revision=""
-    if [[ -x "$next_binary" ]]; then
+    next_tag_marker="$repo/.tmp/leapview-dev.next.duckdb-arrow"
+    if [[ -x "$next_binary" && -f "$next_tag_marker" ]]; then
       next_revision="$("$next_binary" version --json | jq -r '.revision // empty')"
     fi
     if [[ "$next_revision" != "$latest_revision" ]]; then
+    if [[ ! -d "$latest_worktree/.git" && ! -f "$latest_worktree/.git" ]] || \
+       [[ "$(git -C "$latest_worktree" rev-parse HEAD 2>/dev/null || true)" != "$latest_revision" ]]; then
     git -C "$repo" fetch --quiet origin "$latest_revision"
     if [[ -e "$latest_worktree" ]]; then
       git -C "$repo" worktree remove --force "$latest_worktree"
@@ -191,10 +194,12 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     done < <(git -C "$repo" ls-files -o -i --exclude-standard -- api internal static web/generated)
     (cd "$latest_worktree" && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 \
       "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
+    fi
     runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
     build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
-    (cd "$latest_worktree" && "$go_binary" build -trimpath -ldflags "$build_ldflags" -o "$next_binary" ./cmd/leapview)
+    (cd "$latest_worktree" && "$go_binary" build -tags=duckdb_arrow -trimpath -ldflags "$build_ldflags" -o "$next_binary" ./cmd/leapview)
+    printf '%s\n' "$latest_revision" >"$next_tag_marker"
     fi
     [[ "$("$next_binary" version --json | jq -er '.revision')" == "$latest_revision" ]]
     cp -p "$leapview_binary" "$backup_binary"
