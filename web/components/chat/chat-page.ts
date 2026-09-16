@@ -1,9 +1,10 @@
-import { LitElement, css, html } from 'lit'
+import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { CircleHelp, LayoutDashboard, TrendingUp, type IconNode } from 'lucide'
 import type { AgentContextSignal, AgentReferenceSearchSignal, AgentReferenceSignal, ChatConversationSummary, ChatPageSignal, ChatSignal, ChatTranscriptItemSignal } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
@@ -30,6 +31,7 @@ const promptStarters: Array<{ label: string; prompt: string; icon: IconNode }> =
 
 class LeapViewChatPage extends DatastarLit(LitElement) {
   private redirectedConversationID = ''
+  @state() private terminalFailure: BrowserCommandFailure | null = null
   @state() private references: AgentReferenceSignal[] = []
 	@state() private editMessageId = ''
 	@state() private optimisticTurn: ChatTranscriptItemSignal | null = null
@@ -111,6 +113,21 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 			gap: var(--lv-space-sm);
 			color: var(--lv-fg-muted);
 			font: var(--lv-type-body);
+		}
+
+		.terminal-failure {
+			display: grid;
+			gap: var(--lv-space-xs);
+			border-bottom: var(--lv-border-muted);
+			background: var(--lv-bg-danger-muted, var(--lv-bg-panel));
+			color: var(--lv-fg-danger, var(--lv-fg-default));
+			padding: var(--lv-space-sm) var(--lv-space-lg);
+			font: var(--lv-type-body-compact, var(--lv-type-body));
+		}
+
+		.terminal-failure-guidance {
+			color: var(--lv-fg-muted);
+			font: var(--lv-type-caption);
 		}
 
     .list-main .body {
@@ -349,6 +366,16 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     }
   `
 
+	override connectedCallback(): void {
+		super.connectedCallback()
+		document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+	}
+
+	override disconnectedCallback(): void {
+		document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+		super.disconnectedCallback()
+	}
+
   updated(): void {
 		const page = this.page
 		const agent = this.hydratedAgent
@@ -457,6 +484,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
     const title = conversationTitle(agent)
     return html`
       <div class="route" @lv-chat-submit=${this.showOptimisticTurn}>
+				${this.renderTerminalFailure()}
         <section class=${['main', isList ? 'list-main' : '', isNew ? 'new-main' : ''].filter(Boolean).join(' ')} aria-label="LeapView chats">
           ${isList || isNew ? null : this.renderConversationTitlebar(title)}
           <div class="body">
@@ -467,6 +495,17 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
       </div>
     `
   }
+
+	private renderTerminalFailure() {
+		const failure = this.terminalFailure
+		if (!failure) return nothing
+		return html`
+			<div class="terminal-failure" data-chat-command-failure role="alert" aria-live="assertive">
+				<span data-chat-failure-message>${failure.message}</span>
+				<span class="terminal-failure-guidance">Your previous chat state was kept. Review the question and try again.</span>
+			</div>
+		`
+	}
 
   private renderConversationTitlebar(title: string) {
     return html`
@@ -559,6 +598,7 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
   }
 
 	private showOptimisticTurn = (event: CustomEvent<{ input?: string; references?: AgentReferenceSignal[]; editMessageId?: string }>): void => {
+		this.terminalFailure = null
 		const conversationID = this.agent.activeConversationId?.trim() ?? ''
 		const input = event.detail?.input?.trim() ?? ''
 		if (!conversationID || !input) return
@@ -630,6 +670,15 @@ class LeapViewChatPage extends DatastarLit(LitElement) {
 
 	private cancelEdit = (): void => {
 		this.clearEditMessage()
+	}
+
+	private readonly handleDatastarFetch = (event: Event): void => {
+		if (!ownsBrowserCommandFetch(this, event)) return
+		const failure = browserCommandFailure(event, 'Chat turn')
+		if (!failure) return
+		this.terminalFailure = failure
+		this.clearOptimisticTurn()
+		this.shadowRoot?.querySelector<HTMLElement & { resetSubmitLock(): void }>('lv-chat-composer')?.resetSubmitLock()
 	}
 }
 

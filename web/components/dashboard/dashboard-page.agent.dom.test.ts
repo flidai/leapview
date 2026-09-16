@@ -442,8 +442,10 @@ test('dashboard agent drawer carries page context and explicit visual references
       await new Promise((resolve) => setTimeout(resolve, 0))
       return received[0]
     })
+    expect(submitted.requestId).toMatch(/^[0-9a-f-]{36}$/)
     expect(submitted).toEqual({
       input: 'Why did this decline?',
+      requestId: submitted.requestId,
       references: [{
         reference: { kind: 'visual', id: 'executive-sales.orders_chart' },
         name: 'Orders by status',

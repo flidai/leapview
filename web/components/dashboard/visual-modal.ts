@@ -81,6 +81,11 @@ export class VisualModal extends LitElement {
       background: var(--lv-chart-surface);
     }
 
+    .focus-dialog[data-visual-type='table'] {
+      height: min(var(--lv-focus-table-height), calc(100vh - 56px));
+      min-height: min(320px, calc(100vh - 56px));
+    }
+
     header {
       display: flex;
       min-width: 0;
@@ -281,9 +286,19 @@ export class VisualModal extends LitElement {
   }
 
   private renderFocusDialog(detail: VisualActionDetail) {
+    const tableHeight = detail.visualType === 'table'
+      ? Math.max(320, Math.min(760, 116 + Math.min(detail.rows?.length ?? 0, 14) * 44))
+      : 0
     return html`
       <div class="backdrop" @click=${this.closeFromBackdrop}>
-        <section class="dialog focus-dialog" role="dialog" aria-modal="true" aria-label=${detail.title}>
+        <section
+          class="dialog focus-dialog"
+          data-visual-type=${detail.visualType}
+          style=${detail.visualType === 'table' ? `--lv-focus-table-height: ${tableHeight}px` : ''}
+          role="dialog"
+          aria-modal="true"
+          aria-label=${detail.title}
+        >
           <button class="close focus-close" type="button" aria-label="Close visual modal" @click=${this.close}>${lucideIcon(X)}</button>
           <div class="focus-slot"><slot name="focus-visual"></slot></div>
         </section>

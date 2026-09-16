@@ -164,6 +164,30 @@ test('opening another focused source restores the previous element first', async
   }
 })
 
+test('focused short tables size to their content instead of filling the viewport', async () => {
+  const page = await setupPage()
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 })
+    await dispatchVisualAction(page, 'second', 'focus')
+
+    const bounds = await page.getByRole('dialog').boundingBox()
+    const state = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const dialog = (modal.shadowRoot as ShadowRoot).querySelector<HTMLElement>('.focus-dialog')!
+      return {
+        visualType: dialog.dataset.visualType,
+        requestedHeight: dialog.style.getPropertyValue('--lv-focus-table-height').trim(),
+      }
+    })
+
+    expect(state).toEqual({ visualType: 'table', requestedHeight: '320px' })
+    expect(bounds).not.toBeNull()
+    expect(bounds!.height).toBe(320)
+    expect(bounds!.height).toBeLessThan(1000 - 56)
+  } finally {
+    await page.close()
+  }
+})
+
 test('non-focus visual actions do not move the source element', async () => {
   const page = await setupPage()
   try {

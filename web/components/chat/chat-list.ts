@@ -312,7 +312,7 @@ class LeapViewChatList extends LitElement {
   `
 
   render() {
-    const conversations = Array.isArray(this.conversations) ? this.conversations : []
+    const conversations = uniqueConversations(this.conversations)
     const query = this.search.trim().toLocaleLowerCase()
     const visible = query
       ? conversations.filter((conversation) => conversationTitle(conversation).toLocaleLowerCase().includes(query))
@@ -386,6 +386,16 @@ class LeapViewChatList extends LitElement {
   private onSearchInput = (event: Event): void => {
     this.search = (event.target as HTMLInputElement).value
   }
+}
+
+function uniqueConversations(conversations: ChatConversationSummary[]): ChatConversationSummary[] {
+  const seen = new Set<string>()
+  return conversations.filter((conversation) => {
+    const id = conversation.id.trim()
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
 }
 
 function conversationTitle(conversation: ChatConversationSummary): string {

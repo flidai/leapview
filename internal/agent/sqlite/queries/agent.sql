@@ -184,7 +184,7 @@ FROM agent_runs r
 JOIN agent_conversations c ON c.id = r.conversation_id
 WHERE c.id = sqlc.arg(conversation_id)
   AND c.principal_id = sqlc.arg(principal_id)
-ORDER BY r.started_at DESC;
+ORDER BY r.started_at DESC, r.id DESC;
 
 -- name: FinishAgentRun :one
 UPDATE agent_runs

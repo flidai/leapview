@@ -94,10 +94,12 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 			data, _ := json.Marshal(map[string]any{"runId": payload.Run, "conversationId": payload.Conversation})
 			workflow := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "agent_run.failed:" + payload.Run, ResourceKind: execution.ResourceKind, ResourceID: payload.Run, EventType: "agent_run.failed", Data: data}}
 			transitioned, recoveryErr := m.service.FinalizePersistedRunFailureWithClaim(context.WithoutCancel(ctx), payload.Scope, payload.Conversation, payload.Run, boundedResumeError(err), workflow, job.ID, job.Fence())
-			_ = transitioned // publication is part of FinishRunWorkflow's transaction
 			if recoveryErr != nil {
 				_ = recoveryErr // retain only local diagnostics; never persist storage details
 				return boundedResumeError(err)
+			}
+			if transitioned {
+				m.publishTerminalChatState(context.WithoutCancel(ctx), payload, boundedResumeError(err).Error())
 			}
 			return err
 		}
@@ -128,4 +130,18 @@ func (m *Module) JobHandlers(events jobs.EventAppender) []jobs.Handler {
 		}
 		return err
 	}}}
+}
+
+func (m *Module) publishTerminalChatState(ctx context.Context, payload RunJob, statusErr string) {
+	if m.broker == nil || strings.TrimSpace(payload.ChatClientID) == "" {
+		return
+	}
+	signal := m.chatSignal(ctx, payload.Scope, payload.Conversation, statusErr, false)
+	// The durable transition is the source of truth for the browser lifecycle.
+	// Keep these fields explicit so a minimal signal composition cannot replay
+	// the pre-failure running state on the conversation stream.
+	signal.Agent.Status.Running = false
+	signal.Agent.Status.RunID = nil
+	signal.Agent.Status.CanContinue = nil
+	m.broker.Publish(ChatConversationStreamID(payload.Scope, payload.ChatClientID, payload.Conversation), chatSignalPatch(signal))
 }

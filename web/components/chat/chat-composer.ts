@@ -360,6 +360,14 @@ class ChatComposer extends LitElement {
 		this.submitLocked = false
 	}
 
+	/**
+	 * Releases the local submit guard when the command transport reports a
+	 * terminal failure without a signal patch to drive the normal pending cycle.
+	 */
+	public resetSubmitLock(): void {
+		this.releaseSubmitLock()
+	}
+
 	private cancelEdit = (): void => {
 		const editMessageId = this.editMessageId.trim()
 		if (!this.editing && !editMessageId) return

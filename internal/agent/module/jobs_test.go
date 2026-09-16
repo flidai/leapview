@@ -12,11 +12,13 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
+	"github.com/flidai/leapview/internal/agent/ui"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type moduleJobFixture struct {
@@ -76,8 +78,12 @@ func (f moduleJobFixture) run(t *testing.T, id, status string) (agent.Conversati
 }
 
 func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent.Run) jobs.Job {
+	return f.claimWithClient(t, conv, run, "")
+}
+
+func (f moduleJobFixture) claimWithClient(t *testing.T, conv agent.Conversation, run agent.Run, clientID string) jobs.Job {
 	t.Helper()
-	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID})
+	payload, _ := json.Marshal(RunJob{Scope: f.scope(), Conversation: conv.ID, Run: run.ID, ChatClientID: clientID})
 	job, err := f.jobs.Enqueue(context.Background(), jobs.EnqueueInput{ID: "agent:" + run.ID + ":run", Kind: f.mod.runExecution.JobKind, WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: f.owner.ID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: f.mod.runExecution.ResourceKind, ResourceID: run.ID, Payload: payload})
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +93,44 @@ func (f moduleJobFixture) claim(t *testing.T, conv agent.Conversation, run agent
 		t.Fatalf("claim = %#v ok=%v err=%v", claimed, ok, err)
 	}
 	return claimed
+}
+
+func TestJobHandlerResumeFailurePublishesScopedTerminalChatPatch(t *testing.T) {
+	f := newModuleJobFixture(t)
+	f.mod.broker = pagestream.NewBroker()
+	conv, run := f.run(t, "run_resume_failure_chat", agent.RunStatusRunning)
+	if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE agent_conversations SET transcript_json = ? WHERE id = ?`, "{", conv.ID); err != nil {
+		t.Fatal(err)
+	}
+	job := f.claimWithClient(t, conv, run, "browser-1")
+	streamID := ChatConversationStreamID(f.scope(), "browser-1", conv.ID)
+	updates, unsubscribe, err := f.mod.broker.Subscribe(streamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	if err := f.mod.JobHandlers(f.jobs)[0].Handle(context.Background(), job); err == nil {
+		t.Fatal("resume failure unexpectedly succeeded")
+	}
+	select {
+	case patch := <-updates:
+		signal, ok := patch["agent"].(ui.ChatSignal)
+		if !ok {
+			t.Fatalf("agent patch = %#v, want ui.ChatSignal", patch["agent"])
+		}
+		if signal.Status.Running {
+			t.Fatal("terminal chat patch kept status running")
+		}
+		if signal.Status.RunID != nil {
+			t.Fatalf("terminal chat patch run ID = %v, want nil", signal.Status.RunID)
+		}
+		if signal.Status.Error == nil || *signal.Status.Error != "durable prompt resume failed" {
+			t.Fatalf("terminal chat patch error = %v, want bounded resume error", signal.Status.Error)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for scoped terminal chat patch")
+	}
 }
 
 func TestJobHandlersRedeliveryConvergesTerminalRuns(t *testing.T) {

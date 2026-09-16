@@ -391,6 +391,64 @@ test('active chat shows a submitted turn immediately and replaces it with durabl
   }
 })
 
+test('chat command failure clears optimistic state, unlocks the composer, and gives retry guidance', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-composer'))
+    const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const composer = element.shadowRoot.querySelector('lv-chat-composer') as any
+      await composer.updateComplete
+      const textarea = composer.shadowRoot.querySelector('textarea') as HTMLTextAreaElement
+      textarea.value = 'Retry this question'
+      textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await composer.updateComplete
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, cancelable: true }))
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await element.updateComplete
+      await new Promise<void>(resolve => setTimeout(resolve, 100))
+      const currentComposer = element.shadowRoot.querySelector('lv-chat-composer') as any
+      await currentComposer.updateComplete
+      const pendingBeforeFailure = element.pending
+
+      document.dispatchEvent(new CustomEvent('datastar-fetch', {
+        detail: { type: 'error', el: element, argsRaw: { status: 503 } },
+      }))
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await element.updateComplete
+      const failedComposer = element.shadowRoot.querySelector('lv-chat-composer') as any
+      await failedComposer.updateComplete
+      const thread = element.shadowRoot.querySelector('lv-chat-thread') as any
+      await thread?.updateComplete
+      const result = {
+        pendingBeforeFailure,
+        pendingAfterFailure: element.pending,
+        buttonAfterFailure: (failedComposer.shadowRoot.querySelector('.send-button') as HTMLButtonElement).disabled,
+        failure: element.shadowRoot.querySelector('[data-chat-command-failure]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        optimisticAfterFailure: thread?.transcript?.some((item: any) => item.id?.startsWith('optimistic-')) ?? false,
+        draftAfterFailure: (failedComposer.shadowRoot.querySelector('textarea') as HTMLTextAreaElement).value,
+        retried: false,
+      }
+      element.addEventListener('lv-chat-submit', () => { result.retried = true }, { once: true })
+      ;(failedComposer.shadowRoot.querySelector('.send-button') as HTMLButtonElement).click()
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      return result
+    })
+
+    expect(state.pendingBeforeFailure).toBe(true)
+    expect(state.pendingAfterFailure).toBe(false)
+    expect(state.buttonAfterFailure).toBe(false)
+    expect(state.failure).toContain('temporarily unavailable')
+    expect(state.failure).toContain('try again')
+    expect(state.optimisticAfterFailure).toBe(false)
+    expect(state.draftAfterFailure).toBe('Retry this question')
+    expect(state.retried).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('chat list page renders searchable conversation history', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -491,6 +549,35 @@ test('chat list page renders searchable conversation history', async () => {
       hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
     }))
     expect(scrollState.hasVerticalOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list keeps the first row for duplicate conversation IDs', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
+    const rows = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-chat-list') as any
+      list.conversations = [
+        { id: 'c1', title: 'First title', updatedAt: '2026-01-02T10:00:00Z' },
+        { id: 'c1', title: 'Duplicate title', updatedAt: '2026-01-04T10:00:00Z' },
+        { id: 'c2', title: 'Second title', updatedAt: '2026-01-03T10:00:00Z' },
+      ]
+      await list.updateComplete
+      return Array.from(list.shadowRoot.querySelectorAll('tbody tr')).map((row: any) => ({
+        href: row.querySelector('.primary-link')?.getAttribute('href'),
+        title: row.querySelector('.title')?.textContent?.trim(),
+      }))
+    })
+
+    expect(rows).toEqual([
+      { href: '/chats/c1', title: 'First title' },
+      { href: '/chats/c2', title: 'Second title' },
+    ])
   } finally {
     await page.close()
   }
