@@ -1352,6 +1352,33 @@ func TestQualificationRecoveryUsesCanonicalManagedConnectionID(t *testing.T) {
 	}
 }
 
+func TestQualificationRecoveryRefreshCreationRetriesTransientCutover(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		requests++
+		if got, want := request.Header.Get("Idempotency-Key"), "qualification-refresh-test"; got != want {
+			t.Errorf("idempotency key = %q, want %q", got, want)
+		}
+		w.Header().Set("Content-Type", "application/problem+json")
+		if requests == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"status":503,"code":"REFRESH_UNAVAILABLE","title":"Refresh service is unavailable.","detail":"refresh target fence does not match active serving identity"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"id":"refresh:test"}`)
+	}))
+	defer server.Close()
+
+	refreshID, err := waitForQualificationRefreshCreation(
+		t.Context(), server.Client(), server.URL, "token", "qualification-refresh-test", time.Millisecond,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "refresh:test", refreshID)
+	require.Equal(t, 2, requests)
+}
+
 func TestQualificationRunningWaitRejectsAlreadyTerminalOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
