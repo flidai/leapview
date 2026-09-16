@@ -720,8 +720,8 @@ func TestConversationManagementAllowsDeleteWithOrphanedDurableRun(t *testing.T) 
 		"agent:"+runID+":run", owner.ID, runID, "sha256:"+strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.DeleteConversation(ctx, owner.ID, conversation.ID); err != nil {
-		t.Fatalf("delete conversation with terminal durable job: %v", err)
+	if _, err := repo.BulkDeleteConversations(ctx, owner.ID, []string{conversation.ID}); err != nil {
+		t.Fatalf("bulk delete conversation with terminal durable job: %v", err)
 	}
 }
 

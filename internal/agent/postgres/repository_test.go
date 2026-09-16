@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -129,7 +128,7 @@ func TestPostgreSQL18AgentCRUDScopingAndMessageSequence(t *testing.T) {
 }
 
 func TestPostgreSQL18ConversationManagementLifecycleAndBusyDelete(t *testing.T) {
-	pool, repo := agentPostgresTestRepo(t, "chat_management")
+	_, repo := agentPostgresTestRepo(t, "chat_management")
 	ctx := t.Context()
 	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: "owner", Title: "managed", MetadataJSON: `{}`})
 	if err != nil {
@@ -186,29 +185,9 @@ func TestPostgreSQL18ConversationManagementLifecycleAndBusyDelete(t *testing.T) 
 	if _, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: "owner", ConversationID: stale.ID, RunID: staleRunID, Status: agent.RunStatusRunning, MetadataJSON: `{}`}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `
-		CREATE SCHEMA IF NOT EXISTS jobs;
-		CREATE TABLE IF NOT EXISTS jobs.job_history (
-			id text PRIMARY KEY, kind text NOT NULL, workload_class text NOT NULL,
-			principal_id text NOT NULL, group_ids jsonb NOT NULL, partition_key text NOT NULL,
-			resource_kind text NOT NULL, resource_id text NOT NULL,
-			estimated_memory_bytes bigint NOT NULL, payload jsonb NOT NULL,
-			request_digest text NOT NULL, status text NOT NULL, finished_at timestamptz, error jsonb
-		)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO jobs.job_history (
-			id, kind, workload_class, principal_id, group_ids, partition_key,
-			resource_kind, resource_id, estimated_memory_bytes, payload,
-			request_digest, status, finished_at, error
-		) VALUES ($1, 'agent.run', 'background', 'owner', '[]', 'agent:test',
-			'agent_run', $2, 1, '{}', $3, 'failed', clock_timestamp(), '{}')`,
-		"agent:"+staleRunID+":run", staleRunID, "sha256:"+strings.Repeat("a", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.DeleteConversation(ctx, "owner", stale.ID); err != nil {
-		t.Fatalf("delete conversation with terminal durable job: %v", err)
+	repo.jobs = &fakeJobsAuthority{job: jobs.Job{ID: "agent:" + staleRunID + ":run", Kind: "agent.run", ResourceKind: "agent_run", ResourceID: staleRunID, Status: jobs.StatusFailed}}
+	if _, err := repo.BulkDeleteConversations(ctx, "owner", []string{stale.ID}); err != nil {
+		t.Fatalf("bulk delete conversation with terminal durable job: %v", err)
 	}
 }
 

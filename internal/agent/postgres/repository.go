@@ -652,6 +652,9 @@ func (r *Repository) DeleteConversation(ctx context.Context, principal, id strin
 		if err != nil {
 			return err
 		}
+		if err := r.reconcileTerminalConversationRunsForDelete(ctx, tx, q, principal, id); err != nil {
+			return err
+		}
 		row, err := q.DeleteAgentConversation(ctx, agentdb.DeleteAgentConversationParams{ID: id, PrincipalID: principal})
 		if err != nil {
 			return err
@@ -704,6 +707,9 @@ func (r *Repository) bulkConversationMutation(ctx context.Context, principal str
 			var changed agent.Conversation
 			var domainType string
 			if deleting {
+				if err := r.reconcileTerminalConversationRunsForDelete(ctx, tx, q, principal, id); err != nil {
+					return err
+				}
 				row, err := q.DeleteAgentConversation(ctx, agentdb.DeleteAgentConversationParams{ID: id, PrincipalID: principal})
 				if err != nil {
 					return err
@@ -736,6 +742,65 @@ func (r *Repository) bulkConversationMutation(ctx context.Context, principal str
 		return nil
 	})
 	return out, mapDBError(err)
+}
+
+// reconcileTerminalConversationRunsForDelete repairs the narrow case where a
+// durable agent job reached a terminal state but its matching domain run did
+// not. Inline runs and queued/running durable jobs remain deletion fences.
+// The conversation lock held by the caller makes the repair and delete one
+// atomic mutation from the chat owner's perspective.
+func (r *Repository) reconcileTerminalConversationRunsForDelete(ctx context.Context, tx Tx, q *agentdb.Queries, principal, conversationID string) error {
+	runs, err := q.ListAgentRuns(ctx, agentdb.ListAgentRunsParams{ConversationID: conversationID, PrincipalID: principal})
+	if err != nil {
+		return err
+	}
+	for _, run := range runs {
+		if run.Status != agent.RunStatusPreparing && run.Status != agent.RunStatusRunning {
+			continue
+		}
+		if r.jobs == nil {
+			return agent.ErrConversationBusy
+		}
+		jobID := "agent:" + run.ID + ":run"
+		job, err := r.jobs.GetTx(ctx, tx, jobID)
+		if err != nil {
+			if errors.Is(err, jobs.ErrNotFound) {
+				return agent.ErrConversationBusy
+			}
+			return err
+		}
+		if job.ID != jobID || job.Kind != "agent.run" || job.ResourceKind != "agent_run" || job.ResourceID != run.ID {
+			return agent.ErrConversationBusy
+		}
+		if job.Status == jobs.StatusQueued || job.Status == jobs.StatusRunning {
+			return agent.ErrConversationBusy
+		}
+		status := agent.RunStatusFailed
+		if job.Status == jobs.StatusCancelled {
+			status = agent.RunStatusCanceled
+		} else if job.Status != jobs.StatusSucceeded && job.Status != jobs.StatusFailed {
+			return agent.ErrConversationBusy
+		}
+		runError := run.Error
+		if strings.TrimSpace(runError) == "" && status == agent.RunStatusFailed {
+			runError = "durable agent job ended before the agent run reached a terminal state"
+		}
+		if _, err := q.FinishAgentRun(ctx, agentdb.FinishAgentRunParams{
+			Status:         status,
+			StopReason:     run.StopReason,
+			InputTokens:    run.InputTokens,
+			OutputTokens:   run.OutputTokens,
+			TotalTokens:    run.TotalTokens,
+			Error:          runError,
+			MetadataJson:   []byte(run.RMetadataJson),
+			ID:             run.ID,
+			ConversationID: conversationID,
+			PrincipalID:    principal,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func conversationAuditIntent(intent access.AuditIntent, conversationID string) access.AuditIntent {
