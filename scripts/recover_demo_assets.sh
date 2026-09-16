@@ -646,6 +646,14 @@ activate_source_root() {
 PATH="$(dirname "$go_binary"):/root/.bun/bin:/usr/local/bin:/usr/bin:/bin" \
   "$go_binary" run ./internal/app/tools/bootstrapfinance --shared-cache --out "$cfo_data_root"
 cfo_data_path="$(cd -P "$cfo_data_root" && pwd)"
+# Avoid replaying a historical upload idempotency record owned by a different
+# principal. A trailing blank line is CSV-equivalent but produces a fresh,
+# deployment-owned immutable revision digest.
+cfo_upload_root="$(mktemp -d "$repo/.tmp/cfo-upload.XXXXXX")"
+install -m 0644 "$cfo_data_path/financial-sample.csv" \
+  "$cfo_upload_root/financial-sample.csv"
+printf '\n' >>"$cfo_upload_root/financial-sample.csv"
+cfo_data_path="$cfo_upload_root"
 
 # Create the target binding from the already validated managed-file shape.
 # The project administrator owns this project-scoped operation.
