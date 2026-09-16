@@ -178,8 +178,8 @@ else
   ollama_version=v0.34.1
   ollama_archive=/tmp/ollama-linux-amd64.tar.zst
   ollama_archive_sha256=f361dc3992ec07e4ad429f4bb2d10d4663ba2c295f9a9a688c7d52f4ba650034
-  ollama_model=qwen3:4b
-  ollama_model_digest=359d7dd4bcdab3d86b87d73ac27966f4dbb9f5efdfcc75d34a8764a09474fae7
+  ollama_model=qwen3:0.6b
+  ollama_model_digest=7df6b6e09427a769808717c0a93cadc4ae99ed4eb8bf5ca557c90846becea435
   if [[ ! -x /usr/local/bin/ollama ]] || \
      [[ "$(/usr/local/bin/ollama --version 2>/dev/null || true)" != *"${ollama_version#v}"* ]]; then
     if ! command -v zstd >/dev/null; then
