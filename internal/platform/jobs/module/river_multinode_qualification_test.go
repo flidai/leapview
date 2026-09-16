@@ -2,9 +2,11 @@ package module
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,8 +14,12 @@ import (
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
 
@@ -33,6 +39,32 @@ type riverMultiNodeRecorder struct {
 	started         map[string]chan riverMultiNodeInvocation
 	release         chan struct{}
 	takeoverRelease chan struct{}
+}
+
+type refreshOrphanTestHandler struct {
+	recovery *refreshmodule.PostgresJobsAdapter
+	refresh  *refreshpostgres.Repository
+	lease    time.Duration
+	started  chan riverMultiNodeInvocation
+}
+
+func (h *refreshOrphanTestHandler) Kind() string                { return refreshPipelineKind }
+func (h *refreshOrphanTestHandler) LeaseTimeout() time.Duration { return h.lease }
+func (h *refreshOrphanTestHandler) RecoverOrphanedJobs(ctx context.Context) error {
+	return h.recovery.RecoverExpiredRefreshJobs(ctx, 100)
+}
+func (h *refreshOrphanTestHandler) Handle(ctx context.Context, job jobs.Job) error {
+	claimed, err := h.recovery.ClaimRiverJob(ctx, job, h.lease)
+	if err != nil {
+		return err
+	}
+	if err := h.refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		return h.refresh.CompleteRunTreeTx(ctx, tx, claimed.RunID, claimed.LeaseOwner, claimed.LeaseRevision, json.RawMessage(`{"recovered":true}`))
+	}); err != nil {
+		return err
+	}
+	h.started <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
+	return nil
 }
 
 func newRiverMultiNodeRecorder() *riverMultiNodeRecorder {
@@ -305,6 +337,226 @@ func TestApprovalActivationOrphanIsReclaimedByReplacementNode(t *testing.T) {
 	case unexpected := <-longRunningStarted:
 		t.Fatalf("long-running orphan was reclaimed at the two-minute candidate horizon: %#v", unexpected)
 	default:
+	}
+}
+
+func TestRefreshPipelineOrphanIsReclaimedWithoutTouchingLiveOrLongJobs(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "river_refresh_pipeline_orphan")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	poolA, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(poolA.Close)
+	poolB, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(poolB.Close)
+	if err := migrations.ApplyRiver(ctx, poolA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := poolA.Exec(ctx, jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := poolA.Exec(ctx, refreshpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	repositoryA, repositoryB := jobpostgres.NewRepository(poolA), jobpostgres.NewRepository(poolB)
+	refreshA, refreshB := refreshpostgres.New(poolA), refreshpostgres.New(poolB)
+	nodeA := buildRiverMultiNodeModule(t, repositoryA, riverMultiNodeOwnerA)
+	nodeB := buildRiverMultiNodeModule(t, repositoryB, riverMultiNodeOwnerB)
+	started := make(chan riverMultiNodeInvocation, 2)
+	lease := 100 * time.Millisecond
+	refreshHandlerA := &refreshOrphanTestHandler{recovery: refreshmodule.NewPostgresJobsAdapter(repositoryA, refreshA), refresh: refreshA, lease: lease, started: started}
+	refreshHandlerB := &refreshOrphanTestHandler{recovery: refreshmodule.NewPostgresJobsAdapter(repositoryB, refreshB), refresh: refreshB, lease: lease, started: started}
+	longStarted := make(chan riverMultiNodeInvocation, 1)
+	longHandler := jobs.HandlerFunc{JobKind: "release.finalize", Run: func(_ context.Context, job jobs.Job) error {
+		longStarted <- riverMultiNodeInvocation{owner: job.LeaseOwner, attempt: job.Attempts}
+		return nil
+	}}
+	if err := nodeA.RegisterHandlers([]jobs.Handler{refreshHandlerA, longHandler}); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeB.RegisterHandlers([]jobs.Handler{refreshHandlerB, longHandler}); err != nil {
+		t.Fatal(err)
+	}
+
+	dead := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-dead-job", "refresh-dead-run", "project-dead", lease, false, false)
+	establishDivergentRefreshOrphan(t, ctx, refreshHandlerA.recovery, poolA, dead, lease)
+	healthy := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-live-job", "refresh-live-run", "project-live", lease, true, true)
+	liveLease := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-current-job", "refresh-current-run", "project-current", time.Hour, false, true)
+	changed := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-changed-job", "refresh-changed-run", "project-changed", lease, true, true)
+	if _, err := poolA.Exec(ctx, `UPDATE public.river_job SET state='cancelled',finalized_at=clock_timestamp() WHERE id=(SELECT river_job_id FROM jobs.job_history WHERE id=$1)`, changed.ID); err != nil {
+		t.Fatal(err)
+	}
+	releaseHealthy, head, err := repositoryA.AcquirePartition(ctx, healthy)
+	if err != nil || !head {
+		t.Fatalf("hold healthy refresh partition: head=%v err=%v", head, err)
+	}
+	t.Cleanup(releaseHealthy)
+	longRunning := enqueueTestJob(t, nodeA, "river-refresh-long-running", "release-refresh-long")
+	markRiverMultiNodeOrphan(t, ctx, poolA, longRunning.ID)
+
+	tx, err := poolB.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rescued, err := repositoryB.RescueExpiredRefreshJobTx(ctx, tx, longRunning.ID, "not-a-refresh-run", riverMultiNodeOwnerA, 1)
+	_ = tx.Rollback(ctx)
+	if err != nil || rescued {
+		t.Fatalf("wrong-kind orphan rescue = %v, %v; want false, nil", rescued, err)
+	}
+	if err := nodeA.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = nodeA.Stop(context.Background()) })
+	invocation := waitRiverMultiNodeInvocation(t, ctx, started)
+	if invocation.owner != riverMultiNodeOwnerA || invocation.attempt != 3 {
+		t.Fatalf("refresh recovery invocation = %#v, want attempt 3 on replacement node", invocation)
+	}
+	recovered := waitRiverMultiNodeProduct(t, ctx, nodeA, dead.ID, jobs.StatusSucceeded)
+	if recovered.Attempts != 3 {
+		t.Fatalf("recovered refresh product attempts = %d, want 3", recovered.Attempts)
+	}
+	assertRiverMultiNodeEvidence(t, ctx, poolB, dead.ID, rivertype.JobStateCompleted, 3, 1)
+	var runStatus string
+	var runAttempts int
+	if err := poolB.QueryRow(ctx, `SELECT status,attempt_count FROM refresh.run WHERE run_id=$1`, dead.ResourceID).Scan(&runStatus, &runAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != "succeeded" || runAttempts != 2 {
+		t.Fatalf("recovered refresh run = %s/%d, want succeeded/2", runStatus, runAttempts)
+	}
+	var operationalRows, productRows int
+	if err := poolB.QueryRow(ctx, `SELECT count(*) FROM public.river_job r JOIN jobs.job_history h ON h.river_job_id=r.id WHERE h.resource_kind='refresh_run' AND h.resource_id=$1`, dead.ResourceID).Scan(&operationalRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := poolB.QueryRow(ctx, `SELECT count(*) FROM jobs.job_history WHERE resource_kind='refresh_run' AND resource_id=$1`, dead.ResourceID).Scan(&productRows); err != nil {
+		t.Fatal(err)
+	}
+	if operationalRows != 1 || productRows != 1 {
+		t.Fatalf("refresh intent rows = River %d/product %d, want one of each", operationalRows, productRows)
+	}
+
+	for _, untouched := range []jobs.Job{healthy, liveLease, longRunning} {
+		assertRiverMultiNodeEvidence(t, ctx, poolB, untouched.ID, rivertype.JobStateRunning, 1, 1)
+		current, err := nodeB.Get(ctx, untouched.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Status != jobs.StatusRunning || current.Attempts != 1 {
+			t.Fatalf("protected job %s = %s/%d, want running/1", untouched.ID, current.Status, current.Attempts)
+		}
+	}
+	assertRiverMultiNodeEvidence(t, ctx, poolB, changed.ID, rivertype.JobStateCancelled, 1, 1)
+	changedProduct, err := nodeB.Get(ctx, changed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedProduct.Status != jobs.StatusRunning || changedProduct.Attempts != 1 {
+		t.Fatalf("concurrently changed refresh product = %s/%d, want untouched running/1", changedProduct.Status, changedProduct.Attempts)
+	}
+	select {
+	case unexpected := <-longStarted:
+		t.Fatalf("24-hour worker was reclaimed by refresh recovery: %#v", unexpected)
+	default:
+	}
+}
+
+func createRefreshOrphanFixture(t *testing.T, ctx context.Context, node *Module, refresh *refreshpostgres.Repository, pool *pgxpool.Pool, jobID, runID, projectID string, lease time.Duration, expire, claim bool) jobs.Job {
+	t.Helper()
+	input := testJobInput(jobID, runID)
+	input.Kind, input.WorkloadClass = refreshPipelineKind, "background"
+	input.PartitionKey, input.ResourceKind = "refresh:"+projectID+":production", "refresh_run"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	plan, err := projectpipelineplan.New(projectpipelineplan.Plan{ID: "plan-" + runID, PipelineID: "pipeline-1", ProjectID: projectID, Environment: "production", SemanticModelID: "semantic-1", ServingGenerationID: "generation-1", ArtifactDigest: digest, SelectionDigest: digest, MaterializationScope: []string{"model-1"}, ModelExecutionOrder: []string{"model-1"}, InvocationSource: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Payload, err = json.Marshal(map[string]any{"pipelinePlan": &plan, "input": json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := node.Enqueue(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO refresh.run(run_id,project_id,environment,generation_id,pipeline_id,semantic_model_id,target_type,target_id,trigger_type,invocation_source,plan_digest,artifact_digest,principal_id,job_id) VALUES($1,$2,'production','generation-1','pipeline-1','semantic-1','refresh_pipeline','pipeline-1','manual','manual',$3,$3,$4,$5)`, runID, projectID, digest, input.PrincipalID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if claim {
+		if _, err := refresh.ClaimAttempt(ctx, runID, riverMultiNodeOwnerA, 1, lease); err != nil {
+			t.Fatal(err)
+		}
+		if expire {
+			waitForExpiredRefreshLease(t, ctx, pool, runID)
+		}
+	}
+	markRiverMultiNodeOrphan(t, ctx, pool, job.ID)
+	return job
+}
+
+func establishDivergentRefreshOrphan(t *testing.T, ctx context.Context, adapter *refreshmodule.PostgresJobsAdapter, pool *pgxpool.Pool, job jobs.Job, lease time.Duration) {
+	t.Helper()
+	var riverID int64
+	if err := pool.QueryRow(ctx, `SELECT river_job_id FROM jobs.job_history WHERE id=$1`, job.ID).Scan(&riverID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE public.river_job SET state='retryable' WHERE id=$1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+	firstJob := &river.Job[jobpostgres.RefreshPipelineArgs]{JobRow: &rivertype.JobRow{ID: riverID, Attempt: 1, State: rivertype.JobStateRunning, AttemptedBy: []string{riverMultiNodeOwnerA}}}
+	firstCtx := jobpostgres.ContextWithRiverExecution(ctx, firstJob, riverMultiNodeOwnerA, lease)
+	firstHistory, err := adapter.Jobs.Get(firstCtx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstHistory.LeaseOwner, firstHistory.LeaseGeneration = riverMultiNodeOwnerA, 1
+	if _, err := adapter.ClaimRiverJob(firstCtx, firstHistory, lease); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("rescued pre-claim attempt error = %v, want conflict", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE public.river_job SET state='running',attempt=2,attempted_by=array_append(attempted_by,$2) WHERE id=$1`, riverID, riverMultiNodeOwnerB); err != nil {
+		t.Fatal(err)
+	}
+	riverJob := &river.Job[jobpostgres.RefreshPipelineArgs]{JobRow: &rivertype.JobRow{ID: riverID, Attempt: 2, State: rivertype.JobStateRunning, AttemptedBy: []string{riverMultiNodeOwnerA, riverMultiNodeOwnerB}}}
+	executionCtx := jobpostgres.ContextWithRiverExecution(ctx, riverJob, riverMultiNodeOwnerB, lease)
+	history, err := adapter.Jobs.MarkRunning(executionCtx, job.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history.LeaseOwner, history.LeaseGeneration = riverMultiNodeOwnerB, 2
+	if _, err := adapter.ClaimRiverJob(executionCtx, history, lease); err != nil {
+		t.Fatal(err)
+	}
+	var attempts, fence int
+	if err := pool.QueryRow(ctx, `SELECT attempt_count,fence_generation FROM refresh.run WHERE run_id=$1`, job.ResourceID).Scan(&attempts, &fence); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || fence != 2 {
+		t.Fatalf("pre-claim handoff evidence = attempts %d/fence %d, want 1/2", attempts, fence)
+	}
+	waitForExpiredRefreshLease(t, ctx, pool, job.ResourceID)
+}
+
+func waitForExpiredRefreshLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var expired bool
+		if err := pool.QueryRow(ctx, `SELECT r.lease_expires_at <= clock_timestamp() AND EXISTS (SELECT 1 FROM refresh.attempt a WHERE a.run_id=r.run_id AND a.attempt_number=r.attempt_count AND a.lease_expires_at <= clock_timestamp()) FROM refresh.run r WHERE r.run_id=$1`, runID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refresh lease for %s did not expire", runID)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
