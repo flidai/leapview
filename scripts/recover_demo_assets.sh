@@ -420,8 +420,8 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     fi
   fi
 
-  ui_revision=b2a5333c423f24adbbe0a25931559bd0a3c7104c
-  ui_marker="$repo/.tmp/leapview-dev.fast-qwen-v5"
+  ui_revision=a3a0b4e34a5d9e83109833fbab44fd4831c64221
+  ui_marker="$repo/.tmp/leapview-dev.agent-lease-v6"
   if [[ "$(cat "$ui_marker" 2>/dev/null || true)" != "$ui_revision" ]]; then
     go_binary="$(command -v go || true)"
     if [[ -z "$go_binary" ]]; then
@@ -430,7 +430,7 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     bun_binary=/root/.bun/bin/bun
     [[ -n "$go_binary" && -x "$bun_binary" ]]
     ui_worktree="/tmp/leapview-chat-ui-$ui_revision"
-    ui_binary="$repo/.tmp/leapview-dev.fast-qwen-v5"
+    ui_binary="$repo/.tmp/leapview-dev.agent-lease-v6"
     previous_binary="$repo/.tmp/leapview-dev.before-settings-loading"
     git -C "$repo" fetch --quiet origin "$ui_revision"
     if [[ -e "$ui_worktree" ]]; then
@@ -745,9 +745,9 @@ test -d "$cfo_source_root"
 # graph before consulting project-wide roles, which makes any added resource
 # impossible to deploy. Build the narrow, tested authorization correction on
 # top of the exact main revision until the fix is released normally.
-ui_revision=b2a5333c423f24adbbe0a25931559bd0a3c7104c
-delivery_hotfix_marker="$repo/.tmp/leapview-dev.fast-qwen-v9"
-hotfix_binary="$repo/.tmp/leapview-dev.fast-qwen-v9"
+ui_revision=a3a0b4e34a5d9e83109833fbab44fd4831c64221
+delivery_hotfix_marker="$repo/.tmp/leapview-dev.agent-lease-v10"
+hotfix_binary="$repo/.tmp/leapview-dev.agent-lease-v10"
 if [[ ! -s "$delivery_hotfix_marker" && -x "$hotfix_binary" ]] && \
    [[ "$("$hotfix_binary" version --json | jq -r '.revision // empty')" == "$latest_revision" ]]; then
   install -m 0755 "$hotfix_binary" "$leapview_binary"
