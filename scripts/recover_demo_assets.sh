@@ -420,6 +420,65 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
     fi
   fi
 
+  ui_revision=78fca0321f28330bbb4dfd7e527da57ce3f96291
+  ui_marker="$repo/.tmp/leapview-dev.chat-hydration-v1"
+  if [[ "$(cat "$ui_marker" 2>/dev/null || true)" != "$ui_revision" ]]; then
+    go_binary="$(command -v go || true)"
+    if [[ -z "$go_binary" ]]; then
+      go_binary="$(find /root /usr /opt -type f -path '*/bin/go' -perm -111 -print -quit 2>/dev/null || true)"
+    fi
+    bun_binary=/root/.bun/bin/bun
+    [[ -n "$go_binary" && -x "$bun_binary" ]]
+    ui_worktree="/tmp/leapview-chat-ui-$ui_revision"
+    ui_binary="$repo/.tmp/leapview-dev.chat-hydration-v1"
+    previous_binary="$repo/.tmp/leapview-dev.before-chat-hydration"
+    git -C "$repo" fetch --quiet origin "$ui_revision"
+    if [[ -e "$ui_worktree" ]]; then
+      git -C "$repo" worktree remove --force "$ui_worktree" 2>/dev/null || true
+    fi
+    git -C "$repo" worktree add --quiet --detach "$ui_worktree" "$ui_revision"
+    while IFS= read -r generated_file; do
+      [[ -f "$repo/$generated_file" ]] || continue
+      mkdir -p "$ui_worktree/$(dirname "$generated_file")"
+      cp -p "$repo/$generated_file" "$ui_worktree/$generated_file"
+    done < <(git -C "$repo" ls-files -o -i --exclude-standard -- api internal static web/generated docs)
+    (cd "$ui_worktree" && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 \
+      "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
+    (cd "$ui_worktree" && "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
+    while IFS= read -r generated_file; do
+      [[ -f "$ui_worktree/$generated_file" ]] || continue
+      mkdir -p "$repo/$(dirname "$generated_file")"
+      cp -p "$ui_worktree/$generated_file" "$repo/$generated_file"
+    done < <(git -C "$ui_worktree" ls-files -o -i --exclude-standard -- static)
+    grep -Fq 'Loading conversation' "$repo/static/chat-page.js"
+    runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
+    build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
+    (cd "$ui_worktree" && "$go_binary" build -tags=duckdb_arrow -trimpath \
+      -ldflags "$build_ldflags" -o "$ui_binary" ./cmd/leapview)
+    cp -p "$leapview_binary" "$previous_binary"
+    install -m 0755 "$ui_binary" "$leapview_binary"
+    systemctl restart leapview-demo-current.service
+    ui_ready=false
+    for _ in $(seq 1 60); do
+      if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1 && \
+         curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
+        ui_ready=true
+        break
+      fi
+      sleep 2
+    done
+    if [[ "$ui_ready" != true ]]; then
+      install -m 0755 "$previous_binary" "$leapview_binary"
+      systemctl restart leapview-demo-current.service
+      echo 'chat UI runtime failed readiness; previous healthy binary restored' >&2
+      exit 1
+    fi
+    printf '%s\n' "$ui_revision" >"$ui_marker"
+    git -C "$repo" worktree remove --force "$ui_worktree"
+    echo "chat UI revision deployed: $ui_revision"
+  fi
+
   if [[ -s "$demo_login_password_file" ]]; then
     test -f "$initial_credentials"
     test -f "$approval_file"
