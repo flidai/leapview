@@ -645,7 +645,7 @@ operator_snapshot="$("$leapview_binary" api call getDeliveryOperatorSnapshot \
 target_id="$(jq -er '.targetId' <<<"$operator_snapshot")"
 target_bindings="$("$leapview_binary" api call listTargetConnectionBindings \
   --target https://demo.leapview.dev \
-  --token "$approver_token" \
+  --token "$publisher_token" \
   --path "project=$project_id" \
   --path "target=$target_id")"
 if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
