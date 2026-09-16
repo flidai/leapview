@@ -685,14 +685,20 @@ if ! "$leapview_binary" api call createTargetConnectionBinding \
     exit 1
   }
 fi
-finance_sync="$("$leapview_binary" data sync \
+finance_sync_error="$repo/.tmp/cfo-finance-sync.err"
+if ! finance_sync="$("$leapview_binary" data sync \
   --source-root "$cfo_source_root" \
   --connection finance_files \
   --from "$cfo_data_path" \
   --target https://demo.leapview.dev \
   --project-id "$project_id" \
   --token "$approver_token" \
-  --format json)"
+  --format json 2>"$finance_sync_error")"; then
+  cat "$finance_sync_error" >&2
+  journalctl --unit leapview-demo-current.service --since '-3 minutes' \
+    --no-pager --lines 200 >&2 || true
+  exit 1
+fi
 finance_revision="$(jq -er '.revisionId' <<<"$finance_sync")"
 echo "finance revision staged: $finance_revision"
 activate_source_root "$cfo_source_root" hosted-demo-cfo \
