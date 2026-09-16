@@ -177,6 +177,13 @@ if curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >
       git -C "$repo" worktree remove --force "$latest_worktree"
     fi
     git -C "$repo" worktree add --quiet --detach "$latest_worktree" "$latest_revision"
+    while IFS= read -r generated_file; do
+      [[ -f "$repo/$generated_file" ]] || continue
+      mkdir -p "$latest_worktree/$(dirname "$generated_file")"
+      cp -p "$repo/$generated_file" "$latest_worktree/$generated_file"
+    done < <(git -C "$repo" ls-files -o -i --exclude-standard -- api internal static web/generated)
+    (cd "$latest_worktree" && GODEBUG=http2client=0 GOTOOLCHAIN=go1.26.7 \
+      "$go_binary" run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote)
     runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
     build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     next_binary="$repo/.tmp/leapview-dev.next"
