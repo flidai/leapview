@@ -156,12 +156,14 @@ repo=/tmp/leapview-main
 approval_file="$repo/.tmp/approval.out"
 approver_oauth="$repo/.tmp/approver-oauth.json"
 approver_identity="$repo/.tmp/approver.json"
+approver_cookies="$repo/.tmp/approver.cookies"
 initial_credentials="$repo/.tmp/initial-credentials.json"
 leapview_binary="$repo/.tmp/leapview-dev"
 test -x "$leapview_binary"
 test -f "$approval_file"
 test -f "$approver_oauth"
 test -f "$approver_identity"
+test -f "$approver_cookies"
 test -f "$initial_credentials"
 publisher_token="$(jq -er '.publisherToken | strings | select(length > 0)' "$initial_credentials")"
 approver_principal_id="$(jq -er 'if (.principal | type) == "object" then (.principal.id // .principal.principalId) else .principal end' "$approver_identity")"
@@ -181,19 +183,43 @@ if ! "$leapview_binary" api call createProjectRoleBinding \
   grep -q 'subject/role already bound' "$role_binding_error" || { cat "$role_binding_error" >&2; exit 1; }
 fi
 unset publisher_token
-approver_refresh_token="$(jq -er '.refresh_token | strings | select(length > 0)' "$approver_oauth")"
-refreshed_oauth="$(curl --fail --silent --show-error \
+device_challenge="$(curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode 'grant_type=refresh_token' \
   --data-urlencode 'client_id=leapview-cli' \
+  --data-urlencode "project_id=$project_id" \
   --data-urlencode 'scope=PROJECT_ADMIN' \
-  --data-urlencode "refresh_token=$approver_refresh_token" \
+  https://demo.leapview.dev/oauth/device/code)"
+device_code="$(jq -er '.device_code' <<<"$device_challenge")"
+user_code="$(jq -er '.user_code' <<<"$device_challenge")"
+verification_uri_complete="$(jq -er '.verification_uri_complete' <<<"$device_challenge")"
+device_page="$repo/.tmp/recovery-device-page.html"
+curl --fail --silent --show-error \
+  --cookie "$approver_cookies" \
+  --cookie-jar "$approver_cookies" \
+  "$verification_uri_complete" >"$device_page"
+csrf_token="$(sed -n 's/.*name="gorilla.csrf.Token" value="\([^"]*\)".*/\1/p' "$device_page" | head -n 1)"
+[[ -n "$csrf_token" ]] || { echo 'approver browser session is not active' >&2; exit 1; }
+device_result="$repo/.tmp/recovery-device-result.html"
+curl --fail --silent --show-error \
+  --cookie "$approver_cookies" \
+  --cookie-jar "$approver_cookies" \
+  --request POST \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode "gorilla.csrf.Token=$csrf_token" \
+  --data-urlencode "user_code=$user_code" \
+  --data-urlencode 'decision=approve' \
+  https://demo.leapview.dev/device >"$device_result"
+grep -q 'CLI authorized' "$device_result"
+device_oauth="$(curl --fail --silent --show-error \
+  --request POST \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'client_id=leapview-cli' \
+  --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+  --data-urlencode "device_code=$device_code" \
   https://demo.leapview.dev/oauth/token)"
-approver_token="$(jq -er '.access_token | strings | select(length > 0)' <<<"$refreshed_oauth")"
-printf '%s\n' "$refreshed_oauth" >"$approver_oauth"
-chmod 0600 "$approver_oauth"
-unset approver_refresh_token refreshed_oauth
+approver_token="$(jq -er '.access_token | strings | select(length > 0)' <<<"$device_oauth")"
+unset device_challenge device_code user_code verification_uri_complete csrf_token device_oauth
 publication_id="$(jq -er '.deploymentId' "$approval_file")"
 approval_id="$(jq -er '.id' "$approval_file")"
 approval_revision="$(jq -er '.revision' "$approval_file")"
