@@ -569,7 +569,7 @@ if ! jq -e 'any(.items[]?; .logicalConnection == "connection:finance_files")' \
   ')"
   "$leapview_binary" api call createTargetConnectionBinding \
     --target https://demo.leapview.dev \
-    --token "$publisher_token" \
+    --token "$approver_token" \
     --path "project=$project_id" \
     --path "target=$target_id" \
     --body-json "$managed_binding" \
