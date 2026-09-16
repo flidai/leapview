@@ -196,6 +196,14 @@ else
   if ! id ollama >/dev/null 2>&1; then
     useradd --system --create-home --home-dir /var/lib/ollama --shell /usr/sbin/nologin ollama
   fi
+  if [[ ! -x /usr/local/lib/ollama/llama-server ]]; then
+    echo 'Ollama CPU runner inventory:' >&2
+    find /usr/local/lib/ollama -maxdepth 3 -printf '%y %m %p -> %l\n' >&2 || true
+    echo 'the pinned Ollama archive did not install its CPU runner' >&2
+    exit 1
+  fi
+  file /usr/local/lib/ollama/llama-server
+  ldd /usr/local/lib/ollama/llama-server || true
   install -d -m 0750 -o ollama -g ollama /var/lib/ollama
   cat >/etc/systemd/system/ollama.service <<'OLLAMA_SERVICE'
 [Unit]
