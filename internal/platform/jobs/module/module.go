@@ -148,10 +148,9 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	riverConfig := &river.Config{
 		ID: strings.TrimSpace(m.config.OwnerID), Logger: logger, MaxAttempts: jobpostgres.MaxAttempts,
 		Queues: map[string]river.QueueConfig{"control": {MaxWorkers: 2}, "background": {MaxWorkers: 4}}, Workers: workers,
-		// River's rescuer first applies this client-wide candidate horizon, then
-		// each worker's Timeout. Disable the fallback and publish the prior
-		// effective rescue horizon per long-running worker; approval activation
-		// alone publishes the bounded horizon needed for prompt orphan recovery.
+		// River couples each worker's Timeout to execution and rescue. Disable the
+		// fallback and publish the prior effective horizon per worker; approval
+		// activation alone keeps the bounded horizon needed for prompt recovery.
 		JobTimeout: noDefaultRiverJobTimeout, RescueStuckJobsAfter: approvalActivationRescueAfter,
 	}
 	if m.config.PollInterval > 0 {
@@ -378,7 +377,9 @@ func (m *Module) riverWorkerTiming(handler jobs.Handler) (riverWorkerTiming, err
 	if !ok || timeoutHandler.LeaseTimeout() <= 0 || timeoutHandler.LeaseTimeout() > approvalActivationRescueAfter {
 		return riverWorkerTiming{}, errors.New("approval activation handler requires a bounded execution lease")
 	}
-	return riverWorkerTiming{executionTimeout: timeoutHandler.LeaseTimeout(), rescueAfter: approvalActivationRescueAfter}, nil
+	// River couples worker execution and rescue to one timeout. Use the bounded
+	// rescue horizon here, never the shorter renewable capability lease.
+	return riverWorkerTiming{executionTimeout: approvalActivationRescueAfter, rescueAfter: approvalActivationRescueAfter}, nil
 }
 
 func workTyped[T river.JobArgs](ctx context.Context, m *Module, job *river.Job[T], kind string, args jobpostgres.ExecutionArgs) error {

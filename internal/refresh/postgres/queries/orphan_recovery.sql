@@ -1,11 +1,15 @@
 -- Refresh-owned lease evidence used by the narrow River orphan reclaimer.
 
 -- name: ListExpiredRefreshJobRuns :many
-SELECT run_id, job_id, status, attempt_count, fence_generation, lease_owner
+SELECT run_id, job_id, status, attempt_count, fence_generation, lease_owner,
+       COALESCE(lease_expires_at, 'epoch'::timestamptz) AS lease_expires_at
 FROM refresh.run
 WHERE job_id IS NOT NULL
   AND status IN ('running', 'prepared')
   AND lease_expires_at <= clock_timestamp()
+  AND (sqlc.arg(after_lease_expires_at)::timestamptz = 'epoch'::timestamptz
+       OR (lease_expires_at, run_id) >
+          (sqlc.arg(after_lease_expires_at)::timestamptz, sqlc.arg(after_run_id)::text))
 ORDER BY lease_expires_at, run_id
 LIMIT sqlc.arg(page_limit);
 

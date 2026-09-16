@@ -385,6 +385,7 @@ func TestRefreshPipelineOrphanIsReclaimedWithoutTouchingLiveOrLongJobs(t *testin
 		t.Fatal(err)
 	}
 
+	seedRefreshRecoveryPageSaturation(t, ctx, poolA)
 	dead := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-dead-job", "refresh-dead-run", "project-dead", lease, false, false)
 	establishDivergentRefreshOrphan(t, ctx, refreshHandlerA.recovery, poolA, dead, lease)
 	healthy := createRefreshOrphanFixture(t, ctx, nodeA, refreshA, poolA, "refresh-live-job", "refresh-live-run", "project-live", lease, true, true)
@@ -465,6 +466,22 @@ func TestRefreshPipelineOrphanIsReclaimedWithoutTouchingLiveOrLongJobs(t *testin
 		t.Fatalf("24-hour worker was reclaimed by refresh recovery: %#v", unexpected)
 	default:
 	}
+}
+
+func seedRefreshRecoveryPageSaturation(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	const marker = "refresh-page-saturation"
+	run := func(query string, args ...any) {
+		if _, err := pool.Exec(ctx, query, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(`INSERT INTO public.river_job(state,attempt,max_attempts,attempted_at,finalized_at,scheduled_at,attempted_by,args,kind) SELECT 'cancelled',1,3,clock_timestamp()-interval '10 minutes',clock_timestamp()-interval '10 minutes',clock_timestamp()-interval '10 minutes',ARRAY['page-saturation-dead'],jsonb_build_object('page_saturation',$1::text),'refresh_pipeline' FROM generate_series(1,101)`, marker)
+	run(`INSERT INTO jobs.job_history(id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest,river_job_id) SELECT 'refresh-page-saturated-job-'||r.id,'refresh_pipeline','background','system','[]','refresh:page-saturation:production','refresh_run','refresh-page-saturated-run-'||r.id,1,'{}','sha256:'||repeat('a',64),r.id FROM public.river_job r WHERE r.kind='refresh_pipeline' AND r.args->>'page_saturation'=$1`, marker)
+	run(`INSERT INTO refresh.run(run_id,project_id,environment,generation_id,pipeline_id,semantic_model_id,target_type,target_id,trigger_type,invocation_source,plan_digest,artifact_digest,principal_id,job_id) SELECT 'refresh-page-saturated-run-'||r.id,'page-saturation','production','generation-1','pipeline-1','semantic-1','refresh_pipeline','pipeline-1','manual','manual','sha256:'||repeat('a',64),'sha256:'||repeat('a',64),'system',h.id FROM public.river_job r JOIN jobs.job_history h ON h.river_job_id=r.id WHERE r.kind='refresh_pipeline' AND r.args->>'page_saturation'=$1`, marker)
+	run(`UPDATE refresh.run SET status='running',attempt_count=1,fence_generation=1,lease_owner='page-saturation-dead',lease_expires_at=clock_timestamp()+interval '100 milliseconds',started_at=clock_timestamp() WHERE project_id='page-saturation'; INSERT INTO refresh.attempt(run_id,attempt_number,fence_generation,owner_id,lease_expires_at) SELECT run_id,1,1,'page-saturation-dead',lease_expires_at FROM refresh.run WHERE project_id='page-saturation'`)
+	time.Sleep(200 * time.Millisecond)
+	run(`UPDATE jobs.job_history SET status='running',attempt_count=1,started_at=clock_timestamp()-interval '10 minutes' WHERE partition_key='refresh:page-saturation:production'`)
 }
 
 func createRefreshOrphanFixture(t *testing.T, ctx context.Context, node *Module, refresh *refreshpostgres.Repository, pool *pgxpool.Pool, jobID, runID, projectID string, lease time.Duration, expire, claim bool) jobs.Job {

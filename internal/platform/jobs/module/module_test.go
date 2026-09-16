@@ -65,8 +65,8 @@ func TestHandlerExecutionLeaseTimeoutOverridesModuleFallback(t *testing.T) {
 	approval, err := m.riverWorkerTiming(jobs.HandlerFunc{
 		JobKind: approvalActivationKind, ExecutionLeaseTimeout: time.Minute,
 	})
-	if err != nil || approval.executionTimeout != time.Minute || approval.rescueAfter != approvalActivationRescueAfter {
-		t.Fatalf("approval worker timing = %#v, %v; want 1m execution and 2m rescue", approval, err)
+	if err != nil || approval.executionTimeout != approvalActivationRescueAfter || approval.rescueAfter != approvalActivationRescueAfter {
+		t.Fatalf("approval worker timing = %#v, %v; want 2m execution/rescue independent of 1m lease", approval, err)
 	}
 	if _, err := m.riverWorkerTiming(jobs.HandlerFunc{JobKind: approvalActivationKind}); err == nil {
 		t.Fatal("approval worker without a bounded execution lease was accepted")

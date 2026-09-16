@@ -60,34 +60,45 @@ func (a *PostgresJobsAdapter) RecoverExpiredRefreshJobs(ctx context.Context, lim
 	if !a.Configured() {
 		return errors.New("canonical PostgreSQL refresh jobs recovery is unavailable")
 	}
-	candidates, err := a.Refresh.ListExpiredJobRuns(ctx, limit)
-	if err != nil {
-		return err
-	}
-	for _, candidate := range candidates {
-		history, err := a.Jobs.Get(ctx, candidate.JobID)
+	var after time.Time
+	var afterID string
+	for {
+		candidates, err := a.Refresh.ListExpiredJobRunsAfter(ctx, limit, after, afterID)
 		if err != nil {
 			return err
 		}
-		release, head, err := a.Jobs.AcquirePartition(ctx, history)
-		if err != nil {
-			return err
+		if len(candidates) == 0 {
+			return nil
 		}
-		if !head {
-			continue
-		}
-		err = a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
-			locked, eligible, err := a.Refresh.LockExpiredJobRunTx(ctx, tx, candidate.RunID, candidate.JobID)
-			if err != nil || !eligible {
+		after = candidates[len(candidates)-1].LeaseExpiresAt
+		afterID = candidates[len(candidates)-1].RunID
+		for _, candidate := range candidates {
+			history, err := a.Jobs.Get(ctx, candidate.JobID)
+			if err != nil {
 				return err
 			}
-			_, err = a.Jobs.RescueExpiredRefreshJobTx(ctx, tx, locked.JobID, locked.RunID, locked.LeaseOwner, int(locked.FenceGeneration))
-			return err
-		})
-		release()
-		if err != nil {
-			return err
+			release, head, err := a.Jobs.AcquirePartition(ctx, history)
+			if err != nil {
+				return err
+			}
+			if !head {
+				continue
+			}
+			err = a.Refresh.InTx(ctx, func(tx refreshpostgres.Tx) error {
+				locked, eligible, err := a.Refresh.LockExpiredJobRunTx(ctx, tx, candidate.RunID, candidate.JobID)
+				if err != nil || !eligible {
+					return err
+				}
+				_, err = a.Jobs.RescueExpiredRefreshJobTx(ctx, tx, locked.JobID, locked.RunID, locked.LeaseOwner, int(locked.FenceGeneration))
+				return err
+			})
+			release()
+			if err != nil {
+				return err
+			}
+		}
+		if len(candidates) < limit {
+			return nil
 		}
 	}
-	return nil
 }
