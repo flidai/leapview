@@ -348,6 +348,12 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
 		resourceCapability := deliveryResourceCapability(resource, capability)
+		// Project roles are graph-wide by definition. Evaluate their immutable
+		// capability bundle before validating a concrete resource against the
+		// active graph so an authorized deployment can introduce a new node.
+		if accesssnapshot.RoleAllowsCapability(snapshot, subjects, resourceCapability) {
+			continue
+		}
 		if handled, roleAllowed := projectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
 			if !roleAllowed {
 				return false, nil

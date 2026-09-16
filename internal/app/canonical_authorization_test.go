@@ -184,6 +184,9 @@ func TestDeliveryAuthorizationRequiresEveryAffectedResource(t *testing.T) {
 	if !accesssnapshot.RoleAllowsCapability(roleSnapshot, subjects, access.CapabilityResourcePublish) {
 		t.Fatal("explicit deployer role did not authorize publish")
 	}
+	if allowed, err := deliverySnapshotAllows(roleSnapshot, subjects, []access.ResourceRef{unknown}, access.CapabilityResourcePublish); err != nil || !allowed {
+		t.Fatalf("project-wide deployer role did not authorize a newly added dashboard: allowed=%t err=%v", allowed, err)
+	}
 	viewerSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{ID: "role_viewer", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
