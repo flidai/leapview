@@ -5,6 +5,12 @@ on:
     workflows: [Main artifacts]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      recover_assets:
+        description: Install and verify the pinned map bundle on the existing demo host
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -15,13 +21,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  recover-assets:
+    name: Recover hosted-demo map assets
+    if: github.event_name == 'workflow_dispatch' && inputs.recover_assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: leapview-demo
+
+    steps:
+      - name: Check out the recovery revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Fetch Hetzner infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
+
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+
+      - name: Resolve temporary runner access
+        run: |
+          set -euo pipefail
+          runner_ip="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
+          echo "DEMO_RUNNER_IP=$runner_ip" >> "$GITHUB_ENV"
+
+      - name: Install and verify the pinned map package
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+        run: ./scripts/recover_demo_assets.sh
+
   deploy:
     name: Deploy Olist showcase
     if: >-
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main' &&
+       !inputs.recover_assets)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: leapview-demo
