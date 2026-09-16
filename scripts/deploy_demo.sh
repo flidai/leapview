@@ -45,7 +45,7 @@ exchange_workload_token() {
     --data-urlencode "client_secret=$client_secret" \
     --data-urlencode "project_id=$project_id" \
     --data-urlencode "scope=$scope" \
-    --data-urlencode 'lifetime_seconds=3600' \
+    --data-urlencode 'lifetime_seconds=1800' \
     "$demo_target/oauth/token")"
   token="$(jq -er '.access_token | strings | select(length > 0)' <<<"$response")"
   printf '%s' "$token"

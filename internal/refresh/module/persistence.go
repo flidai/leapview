@@ -35,6 +35,7 @@ type Persistence struct {
 // cancellation contracts so a configured module never discovers a missing
 // operation through a runtime type assertion.
 type RunPersistence interface {
+	MonitorRuns(context.Context, refreshrun.ReadScope, refreshrun.MonitorFilter) (refreshrun.MonitorPage, error)
 	refreshrun.WorkflowRepository
 	refreshrun.RunRepository
 	refreshrun.RunTreeRepository

@@ -259,6 +259,9 @@ func (*testRunPersistence) CreateRunTree(context.Context, refreshrun.RunTreeInpu
 func (*testRunPersistence) ListRuns(context.Context, refreshrun.ReadScope, refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
 	return nil, nil
 }
+func (*testRunPersistence) MonitorRuns(context.Context, refreshrun.ReadScope, refreshrun.MonitorFilter) (refreshrun.MonitorPage, error) {
+	return refreshrun.MonitorPage{}, nil
+}
 func (*testRunPersistence) ListChildRuns(context.Context, refreshrun.ReadScope, string) ([]refreshrun.RunRecord, error) {
 	return nil, nil
 }

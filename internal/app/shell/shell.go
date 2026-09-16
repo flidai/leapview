@@ -169,7 +169,7 @@ func productAreas() []Area {
 
 func areaForActive(active string) string {
 	switch strings.TrimSpace(active) {
-	case "sources", "models", "semantic-models", "dashboard-catalog", "connections", "pipelines", "develop":
+	case "sources", "models", "semantic-models", "dashboard-catalog", "connections", "pipelines", "runs", "develop":
 		return "develop"
 	case "data-explorer", "explore":
 		return "insights"
@@ -179,13 +179,10 @@ func areaForActive(active string) string {
 }
 
 func areaNavigation(area string) []Group {
-	items := insightsNavigation()
-	label := "Insights"
 	if area == "develop" {
-		items = developNavigation()
-		label = "Develop"
+		return developNavigation()
 	}
-	return []Group{{Label: label, Items: items}}
+	return []Group{{Label: "Insights", Items: insightsNavigation()}}
 }
 
 func insightsNavigation() []Item {
@@ -196,14 +193,19 @@ func insightsNavigation() []Item {
 	}
 }
 
-func developNavigation() []Item {
-	return []Item{
-		{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"},
-		{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
-		{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
-		{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"},
-		{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
-		{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
+func developNavigation() []Group {
+	return []Group{
+		{Label: "Catalog", Items: []Item{
+			{ID: "sources", Label: "Sources", Href: "/sources", Icon: "database"},
+			{ID: "models", Label: "Models", Href: "/models", Icon: "boxes"},
+			{ID: "semantic-models", Label: "Semantic models", Href: "/semantic-models", Icon: "waypoints"},
+			{ID: "dashboard-catalog", Label: "Dashboards", Href: "/dashboards", Icon: "dashboard"},
+			{ID: "pipelines", Label: "Pipelines", Href: "/pipelines", Icon: "workflow"},
+			{ID: "connections", Label: "Connections", Href: "/connections", Icon: "data"},
+		}},
+		{Label: "Operations", Items: []Item{
+			{ID: "runs", Label: "Runs", Href: "/runs", Icon: "activity"},
+		}},
 	}
 }
 

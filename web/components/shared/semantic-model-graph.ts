@@ -6,6 +6,7 @@ import { RotateCcw, Table2, type IconNode } from 'lucide'
 import '@xyflow/react/dist/style.css'
 import {
   Background,
+  BaseEdge,
   Controls,
   EdgeLabelRenderer,
   getBezierPath,
@@ -19,6 +20,7 @@ import {
   useNodesState,
 } from '@xyflow/react'
 import { fieldTypeIcon } from './field-type-icon'
+import { FIELD_HEIGHT, HEADER_HEIGHT, NODE_WIDTH, semanticModelGraphStyles } from './semantic-model-graph.styles'
 import type {
   SemanticModelGraphEdgeSignal,
   SemanticModelGraphFieldSignal,
@@ -29,11 +31,13 @@ import type {
 type DatasetNodeData = SemanticModelGraphNodeSignal & Record<string, unknown> & {
   selected: boolean
   dimmed: boolean
+  hiddenFieldCount: number
+  highlightedFields: string[]
   onSelect: (id: string) => void
 }
 
 type DatasetEdgeData = SemanticModelGraphEdgeSignal & Record<string, unknown> & {
-  selected: boolean
+  emphasized: boolean
   sourceMarker: string
   targetMarker: string
 }
@@ -42,14 +46,11 @@ type NodePosition = { x: number; y: number }
 type DatasetNode = Node<DatasetNodeData, 'dataset'>
 type DatasetEdge = Edge<DatasetEdgeData, 'relationship'>
 
-const NODE_WIDTH = 280
-const HEADER_HEIGHT = 40
-const BADGE_HEIGHT = 30
-const FIELD_HEIGHT = 28
 const NODE_GAP_X = 380
-const NODE_GAP_Y = 92
+const NODE_GAP_Y = 56
 const NODE_OFFSET_X = 72
 const NODE_OFFSET_Y = 42
+const TARGET_COLUMN_HEIGHT = 1_200
 
 class SemanticModelGraphElement extends LitElement {
   @property({ type: Object }) graph: SemanticModelGraphSignal | null = null
@@ -134,18 +135,33 @@ function SemanticModelGraphFlow({
   onLayoutChange: (positions: Map<string, NodePosition>) => void
   onLayoutReset: () => void
 }) {
-  const [selectedID, setSelectedID] = React.useState<string | undefined>(() => selectedNodeID(graph.nodes))
+  const [selectedID, setSelectedID] = React.useState<string | undefined>()
+  const [selectedEdgeID, setSelectedEdgeID] = React.useState<string | undefined>()
+  const [hoveredEdgeID, setHoveredEdgeID] = React.useState<string | undefined>()
+  const [showAllFields, setShowAllFields] = React.useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState<DatasetNode>([])
+  const displayGraph = React.useMemo(() => relationshipFocusedGraph(graph, showAllFields), [graph, showAllFields])
+  const fieldCounts = React.useMemo(() => new Map(graph.nodes.map((node) => [node.id, node.fields.length])), [graph.nodes])
+  const automaticPositions = React.useMemo(() => datasetNodePositions(displayGraph, fieldCounts), [displayGraph, fieldCounts])
 
   const selectedEdges = React.useMemo(() => relatedEdgeIDs(graph.edges, selectedID), [graph.edges, selectedID])
+  const activeEdgeID = selectedEdgeID ?? hoveredEdgeID
+  const activeEdge = React.useMemo(() => graph.edges.find((edge) => edge.id === activeEdgeID), [activeEdgeID, graph.edges])
+  const highlightedFields = React.useMemo(() => relationshipFieldsByNode(activeEdge), [activeEdge])
 
   React.useEffect(() => {
-    setSelectedID((current) => selectedNodeID(graph.nodes, current))
+    setSelectedID((current) => retainedSelectedNodeID(graph.nodes, current))
+    setSelectedEdgeID((current) => current && graph.edges.some((edge) => edge.id === current) ? current : undefined)
   }, [graph.nodes, layoutKey])
 
+  const selectNode = React.useCallback((id: string) => {
+    setSelectedEdgeID(undefined)
+    setSelectedID(id)
+  }, [])
+
   React.useEffect(() => {
-    setNodes(graph.nodes.map((node) => toFlowNode(node, graph, selectedID, selectedEdges, manualPositions, setSelectedID)))
-  }, [graph, layoutKey, manualPositions, setNodes])
+    setNodes(displayGraph.nodes.map((node) => toFlowNode(node, displayGraph, fieldCounts.get(node.id) ?? node.fields.length, selectedID, selectedEdges, activeEdge, highlightedFields, automaticPositions, manualPositions, selectNode)))
+  }, [displayGraph, fieldCounts, layoutKey, automaticPositions, manualPositions, selectNode, setNodes])
 
   React.useEffect(() => {
     setNodes((currentNodes) => currentNodes.map((node) => ({
@@ -153,12 +169,13 @@ function SemanticModelGraphFlow({
       data: {
         ...node.data,
         selected: node.id === selectedID,
-        dimmed: nodeDimmed(node.id, graph.edges, selectedID, selectedEdges),
+        dimmed: nodeDimmed(node.id, graph.edges, selectedID, selectedEdges, activeEdge),
+        highlightedFields: highlightedFields.get(node.id) ?? [],
       },
     })))
-  }, [graph.edges, selectedID, selectedEdges, setNodes])
+  }, [graph.edges, selectedID, selectedEdges, activeEdge, highlightedFields, setNodes])
 
-  const edges = React.useMemo(() => graph.edges.map((edge) => toFlowEdge(edge, selectedEdges)), [graph.edges, selectedEdges])
+  const edges = React.useMemo(() => graph.edges.map((edge) => toFlowEdge(edge, selectedID, selectedEdges, activeEdgeID)), [graph.edges, selectedID, selectedEdges, activeEdgeID])
 
   const saveDraggedLayout = React.useCallback((_event: unknown, node: DatasetNode) => {
     const next = new Map(nodes.map((current) => [current.id, current.position] as [string, NodePosition]))
@@ -168,18 +185,61 @@ function SemanticModelGraphFlow({
 
   const resetLayout = React.useCallback(() => {
     onLayoutReset()
-    setNodes(graph.nodes.map((node) => toFlowNode(node, graph, selectedID, selectedEdges, new Map(), setSelectedID)))
-  }, [graph, onLayoutReset, selectedEdges, selectedID, setNodes])
+    setNodes(displayGraph.nodes.map((node) => toFlowNode(node, displayGraph, fieldCounts.get(node.id) ?? node.fields.length, selectedID, selectedEdges, activeEdge, highlightedFields, automaticPositions, new Map(), selectNode)))
+  }, [displayGraph, fieldCounts, onLayoutReset, selectedEdges, selectedID, activeEdge, highlightedFields, automaticPositions, selectNode, setNodes])
+
+  const clearSelection = React.useCallback(() => {
+    setSelectedID(undefined)
+    setSelectedEdgeID(undefined)
+    setHoveredEdgeID(undefined)
+  }, [])
+
+  const handleGraphClick = React.useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (!(target instanceof Element)) return
+    if (target.closest('.react-flow__node, button')) return
+    clearSelection()
+  }, [clearSelection])
+
+  const handleGraphKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      clearSelection()
+      return
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const target = event.target
+    if (!(target instanceof Element)) return
+    const edgeID = target.closest('.react-flow__edge')?.getAttribute('data-id')
+    if (!edgeID) return
+    event.preventDefault()
+    setSelectedID(undefined)
+    setSelectedEdgeID((current) => current === edgeID ? undefined : edgeID)
+  }, [clearSelection])
 
   return React.createElement(
     'div',
-    { className: 'semantic-model-graph-layout' },
+    {
+      className: 'semantic-model-graph-layout',
+      tabIndex: 0,
+      'aria-label': 'Semantic model relationship graph',
+      onClick: handleGraphClick,
+      onKeyDown: handleGraphKeyDown,
+    },
     React.createElement(ReactFlow<DatasetNode, DatasetEdge>, {
-      key: layoutKey,
+      key: `${layoutKey}:${showAllFields ? 'all' : 'relationships'}`,
       nodes,
       edges,
       onNodesChange,
       onNodeDragStop: saveDraggedLayout,
+      onPaneClick: clearSelection,
+      onEdgeMouseEnter: (_event, edge) => setHoveredEdgeID(edge.id),
+      onEdgeMouseLeave: (_event, edge) => setHoveredEdgeID((current) => current === edge.id ? undefined : current),
+      onEdgeClick: (event, edge) => {
+        event.stopPropagation()
+        setSelectedID(undefined)
+        setSelectedEdgeID((current) => current === edge.id ? undefined : edge.id)
+      },
       nodeTypes: { dataset: DatasetNodeComponent },
       edgeTypes: { relationship: RelationshipEdge },
       fitView: true,
@@ -195,7 +255,25 @@ function SemanticModelGraphFlow({
       children: [
         React.createElement(Background, { key: 'background', gap: 20, size: 1 }),
         React.createElement(Controls, { key: 'controls', showInteractive: false }),
-        React.createElement(Panel, { key: 'layout-panel', position: 'top-right' },
+        activeEdge ? React.createElement(RelationshipInspector, { key: 'relationship-inspector', edge: activeEdge, graph }) : null,
+        React.createElement(Panel, { key: 'layout-panel', position: 'top-right', className: 'semantic-model-layout-actions' },
+          React.createElement(
+            'div',
+            { className: 'semantic-model-fields-control', role: 'group', 'aria-label': 'Fields shown' },
+            React.createElement('span', { className: 'semantic-model-fields-label' }, 'Fields:'),
+            React.createElement('button', {
+              className: 'semantic-model-fields-option',
+              type: 'button',
+              'aria-pressed': !showAllFields,
+              onClick: () => setShowAllFields(false),
+            }, 'Related'),
+            React.createElement('button', {
+              className: 'semantic-model-fields-option',
+              type: 'button',
+              'aria-pressed': showAllFields,
+              onClick: () => setShowAllFields(true),
+            }, 'All'),
+          ),
           React.createElement(
             'button',
             {
@@ -213,9 +291,9 @@ function SemanticModelGraphFlow({
   )
 }
 
-function selectedNodeID(nodes: SemanticModelGraphNodeSignal[], current?: string): string | undefined {
+function retainedSelectedNodeID(nodes: SemanticModelGraphNodeSignal[], current?: string): string | undefined {
   if (current && nodes.some((node) => node.id === current)) return current
-  return nodes[0]?.id
+  return undefined
 }
 
 function relatedEdgeIDs(edges: SemanticModelGraphEdgeSignal[], selected?: string): Set<string> {
@@ -226,12 +304,16 @@ function relatedEdgeIDs(edges: SemanticModelGraphEdgeSignal[], selected?: string
 function toFlowNode(
   node: SemanticModelGraphNodeSignal,
   graph: SemanticModelGraphSignal,
+  totalFieldCount: number,
   selectedID: string | undefined,
   selectedEdges: Set<string>,
+  activeEdge: SemanticModelGraphEdgeSignal | undefined,
+  highlightedFields: Map<string, string[]>,
+  automaticPositions: Map<string, NodePosition>,
   manualPositions: Map<string, NodePosition>,
   onSelect: (id: string) => void,
 ): DatasetNode {
-  const position = manualPositions.get(node.id) ?? datasetNodePosition(node, graph)
+  const position = manualPositions.get(node.id) ?? automaticPositions.get(node.id) ?? { x: NODE_OFFSET_X, y: NODE_OFFSET_Y }
   return {
     id: node.id,
     type: 'dataset',
@@ -241,30 +323,82 @@ function toFlowNode(
     data: {
       ...node,
       selected: node.id === selectedID,
-      dimmed: nodeDimmed(node.id, graph.edges, selectedID, selectedEdges),
+      dimmed: nodeDimmed(node.id, graph.edges, selectedID, selectedEdges, activeEdge),
+      hiddenFieldCount: Math.max(0, totalFieldCount - node.fields.length),
+      highlightedFields: highlightedFields.get(node.id) ?? [],
       onSelect,
     },
   }
 }
 
-function nodeDimmed(id: string, edges: SemanticModelGraphEdgeSignal[], selectedID: string | undefined, selectedEdges: Set<string>): boolean {
+function nodeDimmed(id: string, edges: SemanticModelGraphEdgeSignal[], selectedID: string | undefined, selectedEdges: Set<string>, activeEdge?: SemanticModelGraphEdgeSignal): boolean {
+  if (activeEdge) return false
   return Boolean(selectedID && id !== selectedID && !edges.some((edge) => selectedEdges.has(edge.id) && (edge.source === id || edge.target === id)))
 }
 
-function datasetNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticModelGraphSignal): { x: number; y: number } {
-  const ranks = datasetNodeRanks(graph)
-  const rank = ranks.get(node.id) ?? 0
-  const rankNodes = graph.nodes
-    .filter((candidate) => (ranks.get(candidate.id) ?? 0) === rank)
-    .sort((left, right) => left.id.localeCompare(right.id))
-  const row = rankNodes.findIndex((candidate) => candidate.id === node.id)
-  const precedingHeight = rankNodes
-    .slice(0, Math.max(0, row))
-    .reduce((height, candidate) => height + nodeHeight(candidate) + NODE_GAP_Y, 0)
+function relationshipFieldsByNode(edge?: SemanticModelGraphEdgeSignal): Map<string, string[]> {
+  if (!edge) return new Map()
+  return new Map([
+    [edge.source, relationshipFieldNames(edge.sourceField)],
+    [edge.target, relationshipFieldNames(edge.targetField)],
+  ])
+}
+
+function relationshipFieldNames(fields: string): string[] {
+  return fields.split(',').map((field) => field.trim()).filter(Boolean)
+}
+
+function relationshipFocusedGraph(graph: SemanticModelGraphSignal, showAllFields: boolean): SemanticModelGraphSignal {
+  if (showAllFields) return graph
   return {
-    x: NODE_OFFSET_X + rank * NODE_GAP_X,
-    y: NODE_OFFSET_Y + precedingHeight,
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      const relationshipFields = node.fields.filter((field) => field.grain || field.join)
+      return {
+        ...node,
+        fields: relationshipFields.length > 0 ? relationshipFields : node.fields.slice(0, 1),
+      }
+    }),
   }
+}
+
+function datasetNodePositions(graph: SemanticModelGraphSignal, fieldCounts: Map<string, number>): Map<string, NodePosition> {
+  const ranks = datasetNodeRanks(graph)
+  const rankValues = [...new Set(ranks.values())].sort((left, right) => left - right)
+  const positions = new Map<string, NodePosition>()
+  let columnOffset = 0
+
+  for (const rank of rankValues) {
+    const rankNodes = graph.nodes
+      .filter((candidate) => (ranks.get(candidate.id) ?? 0) === rank)
+      .sort((left, right) => left.id.localeCompare(right.id))
+    const totalHeight = rankNodes.reduce((height, node) => height + nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length), 0)
+      + Math.max(0, rankNodes.length - 1) * NODE_GAP_Y
+    const columnCount = Math.max(1, Math.min(rankNodes.length, Math.ceil(totalHeight / TARGET_COLUMN_HEIGHT)))
+    const columnHeights = Array.from({ length: columnCount }, () => 0)
+
+    // Greedy height balancing keeps variable-height schemas compact while the
+    // rank bands still enforce the graph's left-to-right dependency order.
+    for (const node of rankNodes) {
+      const column = shortestColumn(columnHeights)
+      positions.set(node.id, {
+        x: NODE_OFFSET_X + (columnOffset + column) * NODE_GAP_X,
+        y: NODE_OFFSET_Y + columnHeights[column],
+      })
+      columnHeights[column] += nodeHeight(node, fieldCounts.get(node.id) ?? node.fields.length) + NODE_GAP_Y
+    }
+    columnOffset += columnCount
+  }
+
+  return positions
+}
+
+function shortestColumn(heights: number[]): number {
+  let shortest = 0
+  for (let index = 1; index < heights.length; index += 1) {
+    if (heights[index] < heights[shortest]) shortest = index
+  }
+  return shortest
 }
 
 function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
@@ -305,12 +439,14 @@ function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> 
   return ranks
 }
 
-function nodeHeight(node: SemanticModelGraphNodeSignal): number {
-  return HEADER_HEIGHT + BADGE_HEIGHT + Math.max(1, node.fields.length) * FIELD_HEIGHT + 12
+function nodeHeight(node: SemanticModelGraphNodeSignal, totalFieldCount = node.fields.length): number {
+  const summaryRows = totalFieldCount > node.fields.length ? 1 : 0
+  return HEADER_HEIGHT + (Math.max(1, node.fields.length) + summaryRows) * FIELD_HEIGHT + 12
 }
 
-function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<string>): DatasetEdge {
-  const selected = selectedEdges.size === 0 || selectedEdges.has(edge.id)
+function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedID: string | undefined, selectedEdges: Set<string>, activeEdgeID?: string): DatasetEdge {
+  const emphasized = edge.id === activeEdgeID || Boolean(selectedID && selectedEdges.has(edge.id))
+  const dimmed = activeEdgeID ? edge.id !== activeEdgeID : Boolean(selectedID && !selectedEdges.has(edge.id))
   const [sourceMarker, targetMarker] = relationshipEndpointMarkers(edge.cardinality)
   return {
     id: edge.id,
@@ -323,11 +459,12 @@ function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<strin
     sourceHandle: `${endpointAnchorField(edge.sourceField)}:source`,
     targetHandle: `${endpointAnchorField(edge.targetField)}:target`,
     interactionWidth: 18,
-    data: { ...edge, selected, sourceMarker, targetMarker },
+    ariaLabel: `${edge.source}.${edge.sourceField} to ${edge.target}.${edge.targetField}, ${cardinalityLabel(edge.cardinality)}`,
+    data: { ...edge, emphasized, sourceMarker, targetMarker },
     style: {
 		stroke: 'var(--lv-fg-muted)',
-      strokeWidth: selected ? 2.2 : 1.4,
-      opacity: selected ? 0.92 : 0.18,
+      strokeWidth: emphasized ? 2.6 : 1.6,
+      opacity: dimmed ? 0.18 : 0.82,
     },
   }
 }
@@ -341,15 +478,16 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
   const data = props.data
   const style = props.style ?? {}
   return React.createElement(React.Fragment, null,
-    React.createElement('path', {
+    React.createElement(BaseEdge, {
       id: props.id,
-      className: 'react-flow__edge-path semantic-model-relationship-path',
-      d: path,
+      className: 'semantic-model-relationship-path',
+      path,
       style,
+      interactionWidth: props.interactionWidth,
     }),
     React.createElement(EdgeLabelRenderer, null,
       React.createElement('div', {
-        className: `semantic-model-edge-label ${data?.selected ? 'selected' : ''}`,
+        className: `semantic-model-edge-label ${data?.emphasized ? 'selected' : ''}`,
         style: {
           transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
         },
@@ -370,6 +508,26 @@ function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
   )
 }
 
+function RelationshipInspector({ edge, graph }: { edge: SemanticModelGraphEdgeSignal; graph: SemanticModelGraphSignal }) {
+  const titles = new Map(graph.nodes.map((node) => [node.id, node.title]))
+  const sourceTitle = titles.get(edge.source) ?? edge.source
+  const targetTitle = titles.get(edge.target) ?? edge.target
+  const source = `${sourceTitle}.${edge.sourceField}`
+  const target = `${targetTitle}.${edge.targetField}`
+  return React.createElement(
+    Panel,
+    { position: 'top-left', className: 'semantic-model-relationship-inspector' },
+    React.createElement('strong', null, 'Relationship'),
+    React.createElement('span', { className: 'semantic-model-relationship-fields' }, `${source} → ${target}`),
+    React.createElement('span', null, `${cardinalityLabel(edge.cardinality)} · Direction: ${sourceTitle} → ${targetTitle}`),
+  )
+}
+
+function cardinalityLabel(cardinality: string): string {
+  const label = cardinality.replaceAll('_', ' ')
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
 function relationshipEndpointMarkers(cardinality: string): [string, string] {
   switch (cardinality) {
     case 'many_to_one':
@@ -384,7 +542,7 @@ function relationshipEndpointMarkers(cardinality: string): [string, string] {
 function graphLayoutKey(graph: SemanticModelGraphSignal, storageKey: string): string {
   const nodePart = graph.nodes.map((node) => `${node.id}:${node.fields.map((field) => field.name).join(',')}`).join('|')
   const edgePart = graph.edges.map((edge) => `${edge.id}:${edge.source}.${edge.sourceField}->${edge.target}.${edge.targetField}:${edge.cardinality}`).join('|')
-  return `leapview:semantic-model-graph:v3:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
+  return `leapview:semantic-model-graph:v4:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
 }
 
 function loadLayout(key: string): Map<string, NodePosition> {
@@ -444,26 +602,20 @@ function DatasetNodeComponent({ data }: { data: DatasetNodeData }) {
 			React.createElement('span', null, data.title),
 		),
 	),
-	React.createElement('div', { className: 'semantic-model-node-badges' },
-		(data.badges ?? []).map((badge) => React.createElement('span', { key: badge, className: 'semantic-model-node-badge' }, badge)),
-		data.grainEntity ? React.createElement('span', { className: 'semantic-model-node-badge semantic-model-node-grain', title: `Grain entity ${data.grainEntity}` }, `grain: ${data.grainEntity}`) : null,
-		(data.entities?.length ?? 0) > 0 ? React.createElement('span', {
-			className: 'semantic-model-node-badge semantic-model-node-entities',
-			title: `Entities: ${data.entities?.map((entity) => `${entity.name} (${entity.type}) [${entity.fields.join(', ')}]`).join('; ')}`,
-		}, `${data.entities?.length ?? 0} ${(data.entities?.length ?? 0) === 1 ? 'entity' : 'entities'}`) : null,
-	),
     React.createElement('div', { className: 'semantic-model-node-fields' },
-      data.fields.map((field, index) => React.createElement(ModelFieldRow, { key: field.name, field, grainEntity: data.grainEntity, index })),
+      data.fields.map((field, index) => React.createElement(ModelFieldRow, { key: field.name, field, grainEntity: data.grainEntity, index, highlighted: data.highlightedFields.includes(field.name) })),
+      data.hiddenFieldCount > 0 ? React.createElement('div', { className: 'semantic-model-hidden-fields' }, `+${data.hiddenFieldCount} more fields`) : null,
     ),
   )
 }
 
-function ModelFieldRow({ field, grainEntity, index }: { field: SemanticModelGraphFieldSignal; grainEntity?: string; index: number }) {
-  const top = HEADER_HEIGHT + BADGE_HEIGHT + index * FIELD_HEIGHT + FIELD_HEIGHT / 2
+function ModelFieldRow({ field, grainEntity, index, highlighted }: { field: SemanticModelGraphFieldSignal; grainEntity?: string; index: number; highlighted: boolean }) {
+  const top = HEADER_HEIGHT + index * FIELD_HEIGHT + FIELD_HEIGHT / 2
   const className = [
     'semantic-model-field',
     field.join ? 'semantic-model-field-join' : '',
     field.grain ? 'semantic-model-field-grain' : '',
+    highlighted ? 'semantic-model-field-highlighted' : '',
   ].filter(Boolean).join(' ')
   const identity = field.entities?.length ? `; entities: ${field.entities.join(', ')}` : ''
   return React.createElement(
@@ -497,355 +649,5 @@ function iconElement(icon: IconNode, className: string) {
   )
 }
 
-const semanticModelGraphStyles = `
-  lv-semantic-model-graph,
-  lv-semantic-model-graph .semantic-model-graph-root,
-  lv-semantic-model-graph .semantic-model-graph-layout {
-    display: block;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
-  }
-
-  lv-semantic-model-graph .semantic-model-graph-layout {
-    background:
-      linear-gradient(var(--lv-bg-page, var(--lv-bg-app)), var(--lv-bg-page, var(--lv-bg-app))),
-      radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--lv-fg-muted), transparent 88%) 1px, transparent 0);
-    background-size: auto, 20px 20px;
-  }
-
-  lv-semantic-model-graph .react-flow {
-    position: relative;
-    overflow: hidden;
-    width: 100%;
-    height: 100%;
-    color: var(--lv-fg-default);
-    background-color: transparent;
-  }
-
-  lv-semantic-model-graph .react-flow__container,
-  lv-semantic-model-graph .react-flow__renderer,
-  lv-semantic-model-graph .react-flow__viewport,
-  lv-semantic-model-graph .react-flow__pane,
-  lv-semantic-model-graph .react-flow__nodes,
-  lv-semantic-model-graph .react-flow .react-flow__edges,
-  lv-semantic-model-graph .react-flow .react-flow__edges svg {
-    position: absolute;
-  }
-
-  lv-semantic-model-graph .react-flow__container,
-  lv-semantic-model-graph .react-flow__viewport {
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    transform-origin: 0 0;
-  }
-
-  lv-semantic-model-graph .react-flow__node {
-    position: absolute;
-    box-sizing: border-box;
-    pointer-events: all;
-    transform-origin: 0 0;
-    user-select: none;
-  }
-
-  lv-semantic-model-graph .react-flow .react-flow__edges svg {
-    overflow: visible;
-    pointer-events: none;
-  }
-
-  lv-semantic-model-graph .react-flow__edge-path,
-  lv-semantic-model-graph .react-flow__connection-path {
-    fill: none;
-  }
-
-  lv-semantic-model-graph .semantic-model-relationship-path {
-    pointer-events: visibleStroke;
-  }
-
-  lv-semantic-model-graph .react-flow__edgelabel-renderer {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    user-select: none;
-  }
-
-  lv-semantic-model-graph .react-flow__background {
-    pointer-events: none;
-    z-index: -1;
-  }
-
-  lv-semantic-model-graph .react-flow__handle {
-    position: absolute;
-    width: 8px;
-    height: 8px;
-    min-width: 8px;
-    min-height: 8px;
-    border: 1px solid var(--lv-bg-panel);
-    border-radius: 50%;
-    background: var(--lv-fg-muted);
-    pointer-events: none;
-  }
-
-  lv-semantic-model-graph .react-flow__handle-left {
-    left: 0;
-    transform: translate(-50%, -50%);
-  }
-
-  lv-semantic-model-graph .react-flow__handle-right {
-    right: 0;
-    transform: translate(50%, -50%);
-  }
-
-  lv-semantic-model-graph .react-flow__panel {
-    position: absolute;
-    z-index: 5;
-    margin: var(--base-size-16);
-  }
-
-  lv-semantic-model-graph .react-flow__panel.left {
-    left: 0;
-  }
-
-  lv-semantic-model-graph .react-flow__panel.bottom {
-    bottom: 0;
-  }
-
-  lv-semantic-model-graph .react-flow__controls {
-    display: flex;
-    flex-direction: column;
-    border: var(--lv-border-default);
-    background: var(--lv-bg-panel);
-    box-shadow: var(--shadow-resting-small, none);
-  }
-
-  lv-semantic-model-graph .react-flow__controls-button {
-    display: flex;
-    width: 26px;
-    height: 26px;
-    align-items: center;
-    justify-content: center;
-    border: 0;
-    border-bottom: var(--lv-border-muted);
-    background: var(--lv-bg-panel);
-    color: var(--lv-fg-default);
-    padding: 4px;
-    cursor: pointer;
-  }
-
-  lv-semantic-model-graph .react-flow__controls-button svg {
-    width: 100%;
-    max-width: 12px;
-    max-height: 12px;
-    fill: currentColor;
-  }
-
-  lv-semantic-model-graph .semantic-model-reset-button {
-    display: inline-flex;
-    width: 28px;
-    height: 28px;
-    align-items: center;
-    justify-content: center;
-    border: var(--lv-border-default);
-    border-radius: var(--lv-radius-tight);
-    background: var(--lv-bg-panel);
-    color: var(--lv-fg-default);
-    padding: 0;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  lv-semantic-model-graph .semantic-model-reset-button:hover,
-  lv-semantic-model-graph .semantic-model-reset-button:focus-visible {
-    background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
-    outline: 0;
-  }
-
-  lv-semantic-model-graph .semantic-model-reset-icon {
-    display: block;
-    width: 14px;
-    height: 14px;
-  }
-
-  lv-semantic-model-graph .react-flow__attribution {
-    display: none;
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-label,
-  lv-semantic-model-graph .semantic-model-edge-endpoint {
-    position: absolute;
-    display: inline-grid;
-    place-items: center;
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-full);
-    background: var(--lv-bg-panel);
-    box-shadow: var(--shadow-resting-small, none);
-    color: var(--lv-fg-default);
-    font: var(--lv-type-caption);
-    line-height: 1;
-    pointer-events: none;
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-label {
-    min-width: 30px;
-    min-height: 20px;
-    padding: 0 var(--base-size-6);
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-label.selected {
-    border-color: var(--lv-fg-muted);
-    color: var(--lv-fg-default);
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-endpoint {
-    width: 20px;
-    height: 20px;
-    border-color: color-mix(in srgb, var(--lv-fg-muted), transparent 35%);
-    color: var(--lv-fg-default);
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-endpoint.source {
-    margin-left: -16px;
-  }
-
-  lv-semantic-model-graph .semantic-model-edge-endpoint.target {
-    margin-left: 16px;
-  }
-
-  lv-semantic-model-graph .semantic-model-node {
-    width: ${NODE_WIDTH}px;
-    overflow: hidden;
-    border: var(--borderWidth-default) solid var(--lv-line-muted);
-    border-radius: var(--borderRadius-default);
-    background: var(--lv-bg-panel);
-    box-shadow: var(--shadow-resting-small, none);
-    color: var(--lv-fg-default);
-    cursor: pointer;
-  }
-
-  lv-semantic-model-graph .semantic-model-node-selected {
-    border-color: var(--lv-fg-muted);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--lv-fg-muted), transparent 35%), var(--shadow-resting-small, none);
-  }
-
-  lv-semantic-model-graph .semantic-model-node-dimmed {
-    opacity: 0.42;
-  }
-
-  lv-semantic-model-graph .semantic-model-node:focus-visible {
-    outline: 2px solid var(--lv-fg-muted);
-    outline-offset: 2px;
-  }
-
-  lv-semantic-model-graph .semantic-model-node-header {
-    display: flex;
-    min-height: ${HEADER_HEIGHT}px;
-    min-width: 0;
-    gap: var(--base-size-8);
-    border-bottom: var(--lv-border-muted);
-    background: var(--lv-bg-panel);
-    padding: 0 var(--base-size-12);
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  lv-semantic-model-graph .semantic-model-node-title {
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-    gap: var(--base-size-6);
-    font: var(--lv-type-body-compact);
-    font-weight: var(--base-text-weight-semibold);
-  }
-
-  lv-semantic-model-graph .semantic-model-node-title span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  lv-semantic-model-graph .semantic-model-node-badges {
-    display: flex;
-    min-height: ${BADGE_HEIGHT}px;
-    align-items: center;
-    gap: var(--base-size-4);
-    overflow: hidden;
-    border-bottom: var(--lv-border-muted);
-    padding: 0 var(--base-size-12);
-  }
-
-  lv-semantic-model-graph .semantic-model-node-badge {
-    flex: 0 0 auto;
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-full);
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
-    line-height: 1;
-    padding: 3px 6px;
-  }
-
-  lv-semantic-model-graph .semantic-dataset-icon {
-    flex: 0 0 auto;
-    color: var(--lv-fg-muted);
-  }
-
-  lv-semantic-model-graph .semantic-model-node-fields {
-    display: grid;
-  }
-
-  lv-semantic-model-graph .semantic-model-field {
-    display: grid;
-    min-height: ${FIELD_HEIGHT}px;
-    grid-template-columns: 18px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--base-size-6);
-    border-bottom: var(--lv-border-muted);
-    box-shadow: inset 0 0 0 0 transparent;
-    padding: 0 var(--lv-space-control);
-  }
-
-  lv-semantic-model-graph .semantic-model-field:last-child {
-    border-bottom: 0;
-  }
-
-  lv-semantic-model-graph .semantic-model-field-join {
-    background: color-mix(in srgb, var(--lv-fg-muted), transparent 90%);
-    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lv-fg-muted), transparent 42%);
-  }
-
-  lv-semantic-model-graph .semantic-model-field-name {
-    overflow: hidden;
-    color: var(--lv-fg-default);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font: var(--lv-type-code-inline);
-  }
-
-  lv-semantic-model-graph .semantic-model-field-grain .semantic-model-field-name {
-    font-weight: var(--base-text-weight-semibold);
-  }
-
-  lv-semantic-model-graph .semantic-model-field-type-icon {
-    display: inline-grid;
-    width: 18px;
-    height: 18px;
-    place-items: center;
-    color: var(--lv-fg-muted);
-  }
-
-  lv-semantic-model-graph .semantic-model-type-icon {
-    display: block;
-    width: 14px;
-    height: 14px;
-  }
-
-  lv-semantic-model-graph .semantic-model-field-grain-marker {
-    color: var(--lv-fg-muted);
-    font: var(--lv-type-caption);
-    line-height: 1;
-  }
-`
 
 if (!customElements.get('lv-semantic-model-graph')) customElements.define('lv-semantic-model-graph', SemanticModelGraphElement)

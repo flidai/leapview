@@ -546,6 +546,23 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	return state, nil
 }
 
+// MonitorRuns reads root pipeline runs across generations for the bound
+// project/environment. The persistence adapter applies filters before paging.
+func (m *Module) MonitorRuns(ctx context.Context, projectID projectgraph.ResourceID, environment string, filter refreshrun.MonitorFilter) (refreshrun.MonitorPage, error) {
+	if err := projectID.Validate(); err != nil {
+		return refreshrun.MonitorPage{}, err
+	}
+	store, err := m.readRuns()
+	if err != nil {
+		return refreshrun.MonitorPage{}, err
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))}
+	if err := scope.Validate(); err != nil {
+		return refreshrun.MonitorPage{}, err
+	}
+	return store.MonitorRuns(ctx, scope, filter)
+}
+
 // ModelRefreshState returns the durable child-run history for one Model.
 // Model runs are targeted explicitly by the refresh service, so the history
 // remains correct when multiple pipelines materialize the same model.
