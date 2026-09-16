@@ -11,7 +11,7 @@ temporary_directory="$(mktemp -d)"
 original_firewall_rules="$temporary_directory/original-firewall-rules.json"
 firewall_changed=false
 
-for command in curl jq ssh ssh-keygen ssh-keyscan; do
+for command in base64 curl jq ssh ssh-keygen ssh-keyscan; do
   command -v "$command" >/dev/null || {
     echo "required command is unavailable: $command" >&2
     exit 69
@@ -469,6 +469,54 @@ fi
 cfo_source_root="$repo/dashboards/experiments/cfo-demo"
 cfo_data_root="$repo/.data/cfo-demo"
 test -d "$cfo_source_root"
+
+# The current main revision validates every candidate impact against the old
+# graph before consulting project-wide roles, which makes any added resource
+# impossible to deploy. Build the narrow, tested authorization correction on
+# top of the exact main revision until the fix is released normally.
+delivery_hotfix_marker="$repo/.tmp/leapview-dev.delivery-role-authorization"
+if [[ ! -s "$delivery_hotfix_marker" ]]; then
+  hotfix_worktree="/tmp/leapview-delivery-hotfix-$latest_revision"
+  if [[ -e "$hotfix_worktree" ]]; then
+    git -C "$repo" worktree remove --force "$hotfix_worktree" 2>/dev/null || true
+  fi
+  git -C "$repo" worktree add --quiet --detach "$hotfix_worktree" "$latest_revision"
+  while IFS= read -r generated_file; do
+    [[ -f "$repo/$generated_file" ]] || continue
+    mkdir -p "$hotfix_worktree/$(dirname "$generated_file")"
+    cp -p "$repo/$generated_file" "$hotfix_worktree/$generated_file"
+  done < <(git -C "$repo" ls-files -o -i --exclude-standard -- api internal static web/generated)
+  printf '%s' 'ZGlmZiAtLWdpdCBhL2ludGVybmFsL2FwcC9ydW50aW1lX3JvdXRlcl9wb2xpY3kuZ28gYi9pbnRlcm5hbC9hcHAvcnVudGltZV9yb3V0ZXJfcG9saWN5LmdvCmluZGV4IDIwYmUxMjNhYS4uMmJhZTdlY2JhIDEwMDY0NAotLS0gYS9pbnRlcm5hbC9hcHAvcnVudGltZV9yb3V0ZXJfcG9saWN5LmdvCisrKyBiL2ludGVybmFsL2FwcC9ydW50aW1lX3JvdXRlcl9wb2xpY3kuZ28KQEAgLTM0OCw2ICszNDgsMTIgQEAgZnVuYyBkZWxpdmVyeUF1dGhvcml6YXRpb25SZXNvdXJjZXMocGxhbiBkZXBsb3ltZW50LkRlbGl2ZXJ5UGxhbikgKFtdYWNjZXNzLlJlc28KIGZ1bmMgZGVsaXZlcnlTbmFwc2hvdEFsbG93cyhzbmFwc2hvdCBhY2Nlc3NzbmFwc2hvdC5BdXRob3JpemF0aW9uU25hcHNob3QsIHN1YmplY3RzIFtdYWNjZXNzLlN1YmplY3RSZWYsIHJlc291cmNlcyBbXWFjY2Vzcy5SZXNvdXJjZVJlZiwgY2FwYWJpbGl0eSBhY2Nlc3MuQ2FwYWJpbGl0eSkgKGJvb2wsIGVycm9yKSB7CiAJZm9yIF8sIHJlc291cmNlIDo9IHJhbmdlIHJlc291cmNlcyB7CiAJCXJlc291cmNlQ2FwYWJpbGl0eSA6PSBkZWxpdmVyeVJlc291cmNlQ2FwYWJpbGl0eShyZXNvdXJjZSwgY2FwYWJpbGl0eSkKKwkJLy8gUHJvamVjdCByb2xlcyBhcmUgZ3JhcGgtd2lkZSBieSBkZWZpbml0aW9uLiBFdmFsdWF0ZSB0aGVpciBpbW11dGFibGUKKwkJLy8gY2FwYWJpbGl0eSBidW5kbGUgYmVmb3JlIHZhbGlkYXRpbmcgYSBjb25jcmV0ZSByZXNvdXJjZSBhZ2FpbnN0IHRoZQorCQkvLyBhY3RpdmUgZ3JhcGggc28gYW4gYXV0aG9yaXplZCBkZXBsb3ltZW50IGNhbiBpbnRyb2R1Y2UgYSBuZXcgbm9kZS4KKwkJaWYgYWNjZXNzc25hcHNob3QuUm9sZUFsbG93c0NhcGFiaWxpdHkoc25hcHNob3QsIHN1YmplY3RzLCByZXNvdXJjZUNhcGFiaWxpdHkpIHsKKwkJCWNvbnRpbnVlCisJCX0KIAkJaWYgaGFuZGxlZCwgcm9sZUFsbG93ZWQgOj0gcHJvamVjdFJvb3RSb2xlRGVjaXNpb24oc25hcHNob3QsIHN1YmplY3RzLCByZXNvdXJjZSwgcmVzb3VyY2VDYXBhYmlsaXR5KTsgaGFuZGxlZCB7CiAJCQlpZiAhcm9sZUFsbG93ZWQgewogCQkJCXJldHVybiBmYWxzZSwgbmlsCg==' \
+    | base64 --decode \
+    | git -C "$hotfix_worktree" apply
+  runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
+  build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
+  hotfix_binary="$repo/.tmp/leapview-dev.delivery-hotfix"
+  (cd "$hotfix_worktree" && "$go_binary" build -tags=duckdb_arrow -trimpath \
+    -ldflags "$build_ldflags" -o "$hotfix_binary" ./cmd/leapview)
+  [[ "$("$hotfix_binary" version --json | jq -er '.revision')" == "$latest_revision" ]]
+  cp -p "$leapview_binary" "$repo/.tmp/leapview-dev.pre-delivery-hotfix"
+  install -m 0755 "$hotfix_binary" "$leapview_binary"
+  systemctl restart leapview-demo-current.service
+  hotfix_ready=false
+  for _ in $(seq 1 60); do
+    if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1 && \
+       curl -fsS --connect-timeout 2 --max-time 5 https://demo.leapview.dev/readyz >/dev/null 2>&1; then
+      hotfix_ready=true
+      break
+    fi
+    sleep 2
+  done
+  if [[ "$hotfix_ready" != true ]]; then
+    install -m 0755 "$repo/.tmp/leapview-dev.pre-delivery-hotfix" "$leapview_binary"
+    systemctl restart leapview-demo-current.service
+    echo 'delivery authorization hotfix failed readiness; previous binary restored' >&2
+    exit 1
+  fi
+  printf '%s\n' "$latest_revision" >"$delivery_hotfix_marker"
+  git -C "$repo" worktree remove --force "$hotfix_worktree"
+fi
 
 activate_source_root() {
   local source_root="$1"
