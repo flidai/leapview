@@ -1,0 +1,213 @@
+apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata:
+  id: dashboard:executive-sales
+  name: executive-sales
+  displayName: Executive Sales
+  description: Revenue, AOV, category, and order volume overview.
+  owner: Analytics
+  tags:
+  - sales
+  - revenue
+spec:
+  appearance:
+    icon: chart-no-axes-combined
+    color: purple
+  semanticModel: sales
+  filters:
+  - id: purchase_date
+    label: Purchase date
+    dimension: purchase_date
+    control:
+      type: dateRange
+    urlParameter: period
+    operators: []
+  - id: state
+    label: State
+    dimension: state
+    control:
+      type: multiSelect
+      maxSelectedValues: 50
+      options:
+        type: distinct
+        dataset: sales_orders
+        limit: 50
+    operators:
+    - in
+    - notIn
+    urlParameter: state
+  - id: category
+    label: Category
+    dimension: category
+    control:
+      type: text
+    operators:
+    - contains
+    - equals
+    - startsWith
+    - notContains
+    urlParameter: category
+  visuals:
+    - id: revenue_kpi
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics:
+        - revenue
+      presentation:
+        type: kpi
+        note: Payment value
+        tone: success
+    - id: aov_kpi
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics:
+        - aov
+      presentation:
+        type: kpi
+        note: Revenue per order
+        tone: warning
+    - id: total_orders
+      type: kpi
+      query:
+        type: aggregate
+        dimensions: []
+        metrics:
+        - order_count
+      presentation:
+        type: kpi
+        note: Filtered order count
+        tone: ink
+    - id: revenue_by_month
+      type: area
+      query:
+        type: aggregate
+        dimensions:
+        - dimension: purchase_date
+          grain: month
+          alias: purchase_month
+        metrics:
+        - revenue
+        sort:
+        - field: purchase_month
+          direction: asc
+        limit: 30
+      title: Revenue by month
+      presentation:
+        type: cartesian
+    - id: category_revenue
+      type: bar
+      query:
+        type: aggregate
+        dimensions:
+        - category
+        metrics:
+        - revenue
+        sort:
+        - field: revenue
+          direction: desc
+        limit: 10
+      title: Top categories by revenue
+      presentation:
+        type: cartesian
+    - id: orders_table
+      type: table
+      query:
+        type: records
+        dataset: sales_orders
+        fields:
+        - order_id
+        - purchase_date
+        - status
+        - category
+        - revenue
+      title: Orders
+      presentation:
+        type: table
+        rowHeight: 32
+        showHeader: true
+        striped: false
+  pages:
+  - id: overview
+    title: Overview
+    components:
+    - id: purchase-date-filter
+      placement:
+        column: 1
+        row: 1
+        columnSpan: 4
+        rowSpan: 2
+      type: filter
+      filter: purchase_date
+    - id: state-filter
+      placement:
+        column: 5
+        row: 1
+        columnSpan: 4
+        rowSpan: 2
+      type: filter
+      filter: state
+    - id: category-filter
+      placement:
+        column: 9
+        row: 1
+        columnSpan: 4
+        rowSpan: 2
+      type: filter
+      filter: category
+    - id: total-orders
+      placement:
+        column: 1
+        row: 3
+        columnSpan: 4
+        rowSpan: 3
+      type: visual
+      visual: total_orders
+    - id: revenue
+      placement:
+        column: 5
+        row: 3
+        columnSpan: 4
+        rowSpan: 3
+      type: visual
+      visual: revenue_kpi
+    - id: aov
+      placement:
+        column: 9
+        row: 3
+        columnSpan: 4
+        rowSpan: 3
+      type: visual
+      visual: aov_kpi
+    - id: revenue-trend
+      placement:
+        column: 1
+        row: 6
+        columnSpan: 12
+        rowSpan: 6
+      type: visual
+      visual: revenue_by_month
+    - id: categories
+      placement:
+        column: 1
+        row: 12
+        columnSpan: 12
+        rowSpan: 6
+      type: visual
+      visual: category_revenue
+    - id: orders_table
+      placement:
+        column: 1
+        row: 18
+        columnSpan: 12
+        rowSpan: 8
+      type: visual
+      visual: orders_table
+  layout:
+    columns: 12
+    rowHeight: 48
+    gap: 16
+    padding: 16
