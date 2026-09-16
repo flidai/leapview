@@ -697,6 +697,19 @@ if ! finance_sync="$("$leapview_binary" data sync \
   cat "$finance_sync_error" >&2
   journalctl --unit leapview-demo-current.service --since '-3 minutes' \
     --no-pager --lines 200 >&2 || true
+  if command -v docker >/dev/null 2>&1; then
+    while IFS= read -r database_container; do
+      [[ -n "$database_container" ]] || continue
+      echo "--- database diagnostics: $database_container ---" >&2
+      docker logs --since 3m "$database_container" 2>&1 | tail -n 120 >&2 || true
+    done < <(docker ps --format '{{.Names}}' | grep -Ei 'postgres|database|db' || true)
+  fi
+  service_pid="$(systemctl show leapview-demo-current.service --property MainPID --value)"
+  postgres_dsn="$(tr '\0' '\n' <"/proc/$service_pid/environ" | sed -n 's/^LEAPVIEW_POSTGRES_CONTROL_URL=//p' | head -n 1)"
+  if [[ -n "$postgres_dsn" ]] && command -v psql >/dev/null 2>&1; then
+    psql "$postgres_dsn" --no-psqlrc --tuples-only --command \
+      "SELECT connection_id, status, created_by FROM managed_data.collection WHERE project_id = '$project_id' ORDER BY connection_id;" >&2 || true
+  fi
   exit 1
 fi
 finance_revision="$(jq -er '.revisionId' <<<"$finance_sync")"
