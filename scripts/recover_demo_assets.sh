@@ -157,6 +157,7 @@ approval_file="$repo/.tmp/approval.out"
 approver_oauth="$repo/.tmp/approver-oauth.json"
 approver_identity="$repo/.tmp/approver.json"
 approver_cookies="$repo/.tmp/approver.cookies"
+approver_password_file="$repo/.tmp/approver-new-password"
 initial_credentials="$repo/.tmp/initial-credentials.json"
 leapview_binary="$repo/.tmp/leapview-dev"
 test -x "$leapview_binary"
@@ -164,6 +165,7 @@ test -f "$approval_file"
 test -f "$approver_oauth"
 test -f "$approver_identity"
 test -f "$approver_cookies"
+test -f "$approver_password_file"
 test -f "$initial_credentials"
 publisher_token="$(jq -er '.publisherToken | strings | select(length > 0)' "$initial_credentials")"
 approver_principal_id="$(jq -er 'if (.principal | type) == "object" then (.principal.id // .principal.principalId) else .principal end' "$approver_identity")"
@@ -183,6 +185,28 @@ if ! "$leapview_binary" api call createProjectRoleBinding \
   grep -q 'subject/role already bound' "$role_binding_error" || { cat "$role_binding_error" >&2; exit 1; }
 fi
 unset publisher_token
+approver_email="$(jq -er '.principal.email | strings | select(length > 0)' "$approver_identity")"
+approver_password="$(<"$approver_password_file")"
+login_page="$repo/.tmp/recovery-login-page.html"
+rm -f "$approver_cookies"
+curl --fail --silent --show-error \
+  --cookie-jar "$approver_cookies" \
+  https://demo.leapview.dev/login >"$login_page"
+login_csrf="$(sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p' "$login_page" | head -n 1)"
+[[ -n "$login_csrf" ]] || { echo 'login CSRF token was unavailable' >&2; exit 1; }
+login_status="$(curl --silent --show-error \
+  --cookie "$approver_cookies" \
+  --cookie-jar "$approver_cookies" \
+  --output "$repo/.tmp/recovery-login-result.html" \
+  --write-out '%{http_code}' \
+  --request POST \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode "gorilla.csrf.Token=$login_csrf" \
+  --data-urlencode "email=$approver_email" \
+  --data-urlencode "password=$approver_password" \
+  https://demo.leapview.dev/auth/local/login)"
+unset approver_email approver_password login_csrf
+[[ "$login_status" == 302 ]] || { echo "approver login returned HTTP $login_status" >&2; exit 1; }
 device_challenge="$(curl --fail --silent --show-error \
   --request POST \
   --header 'Content-Type: application/x-www-form-urlencoded' \
