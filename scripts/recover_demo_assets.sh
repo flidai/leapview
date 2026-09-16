@@ -131,18 +131,20 @@ if [[ -n "${DEMO_LOGIN_PASSWORD:-}" ]]; then
   unset DEMO_LOGIN_PASSWORD
 fi
 
-agent_api_key="${DEEPSEEK_API_KEY:?Set DEEPSEEK_API_KEY}"
-if [[ ! "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]; then
+agent_api_key="${DEEPSEEK_API_KEY:-}"
+if [[ -n "$agent_api_key" && ! "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]; then
   echo 'DEEPSEEK_API_KEY contains characters that cannot be stored safely in the systemd environment file' >&2
   exit 1
 fi
-printf '%s' "$agent_api_key" | ssh \
-  -i "$identity_file" \
-  -o BatchMode=yes \
-  -o ConnectTimeout=10 \
-  -o StrictHostKeyChecking=yes \
-  -o "UserKnownHostsFile=$pinned_known_hosts" \
-  "root@$demo_host" 'umask 077; cat > /tmp/leapview-demo-agent-api-key'
+if [[ -n "$agent_api_key" ]]; then
+  printf '%s' "$agent_api_key" | ssh \
+    -i "$identity_file" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=yes \
+    -o "UserKnownHostsFile=$pinned_known_hosts" \
+    "root@$demo_host" 'umask 077; cat > /tmp/leapview-demo-agent-api-key'
+fi
 unset agent_api_key DEEPSEEK_API_KEY
 
 ssh \
@@ -159,7 +161,17 @@ demo_login_password_file=/tmp/leapview-demo-login-password
 agent_api_key_file=/tmp/leapview-demo-agent-api-key
 trap 'rm -f "$demo_login_password_file" "$agent_api_key_file"' EXIT
 
-test -s "$agent_api_key_file"
+if [[ ! -s "$agent_api_key_file" ]]; then
+  echo '--- local model capacity inventory ---'
+  free -h
+  df -h / /var /tmp
+  command -v ollama || true
+  command -v llama-server || true
+  systemctl list-units --type=service --all --no-legend | grep -Ei 'ollama|llama|model' || true
+  ss -ltnp | grep -E ':(11434|8080|8000)[[:space:]]' || true
+  echo 'DEEPSEEK_API_KEY is unavailable and no provider was configured' >&2
+  exit 1
+fi
 agent_api_key="$(<"$agent_api_key_file")"
 rm -f "$agent_api_key_file"
 [[ "$agent_api_key" =~ ^[A-Za-z0-9._:+/@%=-]+$ ]]
