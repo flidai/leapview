@@ -49,9 +49,9 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	}
 
 	putMinIOObject(t, ctx, client, bucket, "commerce/"+key, parquetFixture(t, 10, 20))
-	credentialJSON := fmt.Sprintf(`{"access_key_id":%q,"secret_access_key":%q,"region":%q,"endpoint":%q,"url_style":"path","use_ssl":false}`,
+	credentialJSON := fmt.Sprintf(`{"access_key_id":%q,"secret_access_key":%q,"region":%q,"endpoint":%q,"url_style":"path","use_ssl":"false"}`,
 		minIOIntegrationUser, minIOIntegrationSecret, region, strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://"))
-	t.Setenv("LEAPVIEW_TEST_MINIO_CREDENTIALS", credentialJSON)
+	t.Setenv("LEAPVIEW_DEV_CONNECTION_MINIO", credentialJSON)
 	model := minIOModel(bucket, key)
 	if err := model.Validate(); err != nil {
 		t.Fatalf("validate scoped MinIO model: %v", err)
@@ -72,7 +72,7 @@ func TestMinIOParquetSourceRefreshContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select development credential resolver: %v", err)
 	}
-	credentialResolver, err := analyticsduckdb.NewDevelopmentEnvironmentCredentialResolver(selection)
+	credentialResolver, err := analyticsduckdb.NewDevelopmentEnvironmentCredentialResolver(selection, []string{"LEAPVIEW_DEV_CONNECTION_MINIO"})
 	if err != nil {
 		t.Fatalf("configure development credential resolver: %v", err)
 	}
@@ -238,7 +238,7 @@ func minIOModel(bucket, key string) *semanticmodel.Model {
 		Name:              "commerce",
 		DefaultConnection: "lake",
 		Connections: map[string]semanticmodel.Connection{
-			"lake": {Kind: "s3", Scope: scope, Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_TEST_MINIO_CREDENTIALS"}},
+			"lake": {Kind: "s3", Scope: scope, Credentials: semanticmodel.ConnectionCredentials{Provider: "env", Secret: "LEAPVIEW_DEV_CONNECTION_MINIO"}},
 		},
 		Sources: map[string]semanticmodel.Source{
 			"orders": {Connection: "lake", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet", EffectivePathLocation: &projectcontracts.PathSourceLocation{Value: &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: projectcontracts.PathSourceLocationBase{Type: "path", Path: "s3://" + bucket + "/commerce/" + key, Format: "parquet"}, Format: "parquet", Options: projectcontracts.DefaultParquetReaderOptions()}}},

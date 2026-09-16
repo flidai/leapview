@@ -31,3 +31,20 @@ func TestApplicationAssetsResolveConfiguredAndGeneratedVersions(t *testing.T) {
 		t.Fatalf("generated Version = %q, want generated-456", got)
 	}
 }
+
+func TestApplicationAssetsDisableContributorDiagnosticsByDefault(t *testing.T) {
+	releasedLocal := applicationAssets(config.Config{}, false)
+	if !releasedLocal.Production() {
+		t.Fatal("released local assets enabled contributor diagnostics by environment name")
+	}
+
+	contributor := applicationAssets(config.Config{ContributorDiagnostics: true}, false)
+	if contributor.Production() {
+		t.Fatal("explicit contributor workflow did not enable contributor diagnostics")
+	}
+
+	production := applicationAssets(config.Config{ContributorDiagnostics: true}, true)
+	if !production.Production() {
+		t.Fatal("production assets enabled contributor diagnostics")
+	}
+}

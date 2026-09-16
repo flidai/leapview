@@ -474,11 +474,10 @@ func targetConnectionBindingResponse(
 		Environment:        binding.Scope.Environment,
 		Endpoint:           targetConnectionEndpointResponse(binding.Endpoint),
 		Enabled:            binding.Enabled, Health: analyticsgen.TargetConnectionHealth(binding.Health),
-		CreatedAt:        binding.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:        binding.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		Revision:         binding.Revision,
-		ValidatedVersion: optionalString(binding.ValidatedVersion),
-		LastValidatedAt:  optionalTime(binding.LastValidatedAt),
+		CreatedAt:       binding.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:       binding.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		Revision:        binding.Revision,
+		LastValidatedAt: optionalTime(binding.LastValidatedAt),
 	}
 	return response
 }
@@ -516,7 +515,6 @@ func targetConnectionHealthResponse(
 		ConnectorKind:     status.ConnectorKind,
 		Environment:       status.Scope.Environment,
 		BindingRevision:   status.BindingRevision,
-		ValidatedVersion:  optionalString(status.ValidatedVersion),
 		Health:            analyticsgen.TargetConnectionHealth(status.Health),
 		DiagnosticCode:    optionalString(status.DiagnosticCode),
 		LastAttemptAt:     optionalTime(status.LastAttemptAt),
@@ -532,15 +530,20 @@ func targetConnectionHealthResponse(
 func writeConnectionBindingError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code, detail := http.StatusInternalServerError, "INTERNAL_ERROR", "Connection operation failed"
 	switch {
-	case errors.Is(err, connectionbinding.ErrInvalidBinding):
+	case errors.Is(err, connectionbinding.ErrInvalidBinding),
+		errors.Is(err, connectionbinding.ErrInvalidProfileApplication):
 		status, code, detail = http.StatusBadRequest, "INVALID_CONNECTION_BINDING", "Connection binding is invalid"
 	case errors.Is(err, connectionbinding.ErrUnauthorizedBinding):
 		status, code, detail = http.StatusForbidden, "FORBIDDEN", "Connection operation is forbidden"
-	case errors.Is(err, connectionbinding.ErrBindingNotFound):
+	case errors.Is(err, connectionbinding.ErrBindingNotFound),
+		errors.Is(err, connectionbinding.ErrProfileApplicationNotFound):
 		status, code, detail = http.StatusNotFound, "CONNECTION_BINDING_NOT_FOUND", "Connection binding was not found"
 	case errors.Is(err, connectionbinding.ErrConfirmationRequired):
 		status, code, detail = http.StatusPreconditionFailed, "CONFIRMATION_REQUIRED", "Dependency confirmation is required"
-	case errors.Is(err, connectionbinding.ErrIncompatibleBinding):
+	case errors.Is(err, connectionbinding.ErrIncompatibleBinding),
+		errors.Is(err, connectionbinding.ErrProfileApplicationConflict),
+		errors.Is(err, connectionbinding.ErrProfileApplicationReplacement),
+		errors.Is(err, connectionbinding.ErrProfileApplicationNotAdmitted):
 		status, code, detail = http.StatusConflict, "CONNECTION_BINDING_CONFLICT", "Connection binding changed concurrently or is incompatible"
 	case errors.Is(err, connectionbinding.ErrDisabledBinding):
 		status, code, detail = http.StatusConflict, "CONNECTION_BINDING_DISABLED", "Connection binding is disabled"
@@ -563,7 +566,16 @@ func writeConnectionBindingCommandFailure(w http.ResponseWriter, r *http.Request
 }
 
 func classifyConnectionBindingCommandFailure(err error) error {
-	if errors.Is(err, context.DeadlineExceeded) {
+	switch {
+	case errors.Is(err, connectionbinding.ErrInvalidProfileApplication):
+		return apigenfailure.Wrap("invalid", err)
+	case errors.Is(err, connectionbinding.ErrProfileApplicationNotFound):
+		return apigenfailure.Wrap("not_found", err)
+	case errors.Is(err, connectionbinding.ErrProfileApplicationConflict),
+		errors.Is(err, connectionbinding.ErrProfileApplicationReplacement),
+		errors.Is(err, connectionbinding.ErrProfileApplicationNotAdmitted):
+		return apigenfailure.Wrap("conflict", err)
+	case errors.Is(err, context.DeadlineExceeded):
 		return apigenfailure.Wrap("provider_unavailable", err)
 	}
 	return err

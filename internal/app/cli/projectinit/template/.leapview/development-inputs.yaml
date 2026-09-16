@@ -1,0 +1,14 @@
+version: 1
+inputs:
+  sample:
+    connection: sample
+    from: data/sample
+    provenance:
+      kind: synthetic
+      generator: leapview-init/v1
+      rows: 12
+      bounded: true
+    files:
+      sales.csv:
+        sha256: b09b718b0967e3d1bed215440e3d46258b0748363ea7ca6120a483cb5464af05
+        sizeBytes: 545

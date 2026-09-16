@@ -115,18 +115,29 @@ func qualificationContainerOperationError(
 type dockerCLIQualificationRuntime struct {
 	process  qualificationProcess
 	executor qualificationCommandExecutor
+	endpoint PinnedDockerEndpoint
 }
 
 func newDockerCLIQualificationRuntime(
 	root string,
 	dockerBin string,
 	executor qualificationCommandExecutor,
+	endpoints ...PinnedDockerEndpoint,
 ) *dockerCLIQualificationRuntime {
+	var endpoint PinnedDockerEndpoint
+	if len(endpoints) > 0 {
+		endpoint = endpoints[0]
+	}
+	environment := os.Environ()
+	if endpoint != nil {
+		environment = endpoint.Environment(environment)
+	}
 	return &dockerCLIQualificationRuntime{
 		process: qualificationProcess{
-			dir: root, executable: dockerBin, environment: os.Environ(),
+			dir: root, executable: dockerBin, environment: environment,
 		},
 		executor: executor,
+		endpoint: endpoint,
 	}
 }
 
@@ -217,6 +228,12 @@ func (runtime *dockerCLIQualificationRuntime) run(
 	stdin io.Reader,
 	arguments ...string,
 ) ([]byte, error) {
+	if runtime.endpoint != nil {
+		if err := runtime.endpoint.Verify(ctx); err != nil {
+			return nil, fmt.Errorf("verify pinned Docker endpoint: %w", err)
+		}
+		arguments = runtime.endpoint.DockerArguments(arguments...)
+	}
 	return runtime.process.Run(ctx, stdin, runtime.executor, arguments...)
 }
 

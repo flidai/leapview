@@ -70,6 +70,18 @@ func TestProjectPublishOperationsEmitVersionedAcceptedJSON(t *testing.T) {
 	}
 }
 
+func TestProjectPublishOperationsRejectPublicationIdentityMismatch(t *testing.T) {
+	operations := projectPublishOperations{client: fixedTransportClient{transport: &publishTransportStub{}}}
+	checkpoint := projectcli.CandidateCheckpoint{
+		TargetOrigin: "https://target.example", TargetID: "target_1", Environment: "production",
+		ProjectID: "finance", CandidateID: "different-candidate", PlanID: "plan_1",
+		PlanDigest: "sha256:" + strings.Repeat("b", 64), ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	if _, err := operations.PublishResult(t.Context(), projectcli.PublishOptions{Credentials: cliapi.Credentials{Target: checkpoint.TargetOrigin, Token: "token"}, Checkpoint: checkpoint}); err == nil || !strings.Contains(err.Error(), "candidate identity") {
+		t.Fatalf("identity mismatch error = %v", err)
+	}
+}
+
 func TestPublicationAttemptsUseFreshHTTPIdempotencyKeys(t *testing.T) {
 	checkpoint := projectcli.CandidateCheckpoint{
 		ProjectID: "finance", CandidateID: "cand_1",

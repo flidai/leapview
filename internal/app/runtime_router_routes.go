@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/observability"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	developmentsessionmodule "github.com/flidai/leapview/internal/project/developmentsession/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -49,16 +50,17 @@ type publicDashboardRouteDependencies struct {
 }
 
 type authenticatedRouteDependencies struct {
-	access         *accessmodule.Module
-	apiProtocol    *apiprotocol.Protocol
-	projectBrowser *projecthttp.BrowserHandler
-	agent          *agentmodule.Module
-	admin          *adminmodule.Module
-	dashboard      *dashboardmodule.Module
-	runtimeHost    *runtimehostmodule.Module
-	pageStreams    *uitransport.PageStream
-	rateLimits     apihttpmiddleware.RateLimitConfig
-	candidates     candidateRouteDependencies
+	access             *accessmodule.Module
+	apiProtocol        *apiprotocol.Protocol
+	projectBrowser     *projecthttp.BrowserHandler
+	agent              *agentmodule.Module
+	admin              *adminmodule.Module
+	dashboard          *dashboardmodule.Module
+	runtimeHost        *runtimehostmodule.Module
+	pageStreams        *uitransport.PageStream
+	rateLimits         apihttpmiddleware.RateLimitConfig
+	candidates         candidateRouteDependencies
+	developmentSession *developmentsessionmodule.Handler
 }
 
 type apiRouteDependencies struct {
@@ -72,6 +74,7 @@ type apiRouteDependencies struct {
 	scimBearerToken       string
 	managedDataTus        http.Handler
 	managedDataBootstrap  accessmodule.APIGenBootstrapAuthorizer
+	developmentSession    *developmentsessionmodule.Handler
 }
 
 type staticRouteDependencies struct {
@@ -164,6 +167,7 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 		candidateReviewGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityResourceEdit, activeProjectResource, next)
 		}
+		mountDevelopmentSessionRoutes(r, dependencies.developmentSession, dependencies.candidates, dependencies.rateLimits.Updates(), candidateProjectGuard)
 		r.Get("/candidates/{candidate}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(dependencies.candidates, w, request)
 		}))
@@ -228,7 +232,18 @@ func mountAPIRoutes(mux *chi.Mux, dependencies apiRouteDependencies, publicProto
 		dependencies.managedData.MountTus(r, dependencies.managedDataTus, func(next http.Handler) http.Handler {
 			return protectManagedDataTransportWithBootstrap(dependencies.access, dependencies.runtimeHost, dependencies.managedData, dependencies.managedDataBootstrap, next)
 		})
+		mountDevelopmentSessionAPIRoutes(r, dependencies.access, dependencies.developmentSession)
 		registerAPIGen(r)
+	})
+}
+
+func mountDevelopmentSessionAPIRoutes(r chi.Router, accessModule *accessmodule.Module, session *developmentsessionmodule.Handler) {
+	if accessModule == nil || session == nil {
+		return
+	}
+	r.Group(func(authenticated chi.Router) {
+		authenticated.Use(accessModule.Authenticate)
+		session.Mount(authenticated)
 	})
 }
 

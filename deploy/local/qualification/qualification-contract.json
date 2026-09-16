@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "contract": "released-authoring-package-qualification",
+  "qualification": "milestone-5-static",
+  "governing": [
+    "../../adr/0021-adopt-a-local-first-analytics-development-workflow.md",
+    "../../adr/specifications/analytics-development-cli-contract.md"
+  ],
+  "archive": {
+    "outerChecksum": "sha256",
+    "innerManifest": "SHA256SUMS",
+    "identity": [
+      "authoring-package.json",
+      "release-identity.json",
+      "image-reference.txt",
+      "local-runtime/runtime-package.json",
+      "leapview version --json"
+    ],
+    "requiredCommands": ["init", "dev", "plan", "build", "publish", "deploy"]
+  },
+  "lifecycle": {
+    "optIn": true,
+    "commands": [
+      "leapview init <temporary-checkout>",
+      "leapview dev --once --no-browser --docker-host <validated-unix-socket>"
+    ],
+    "endpoint": {
+      "required": true,
+      "acceptedTransports": ["unix socket"],
+      "acceptedEndpoints": ["absolute recognized local Engine/Desktop socket"],
+      "rejectedTransports": ["ssh", "tcp", "loopback tunnel", "unknown socket path"],
+      "pinBeforeMutation": true,
+      "effectiveIdentityChecks": ["before init", "after init", "after dev"],
+      "endpointPinnedClaim": "true only after all pre/post identities agree; recognized-path proxy adversarial evidence remains external"
+    },
+    "manualPrerequisite": "device authentication may require a human browser approval"
+  },
+  "evidence": {
+    "scope": "static",
+    "staticResult": "partial",
+    "metadata": [
+      "os",
+      "toolchain",
+      "docker",
+      "compose",
+      "hardware",
+      "fixture",
+      "network",
+      "warmup",
+      "repetitions"
+    ],
+    "repetitions": ["coldUncached", "coldCached", "warmRestart", "editToVisible"],
+    "scenarios": ["semantic", "model", "dashboard", "presentation", "invalid"],
+    "measurementRule": "Only observed command or browser samples may populate samplesMs; planned and unavailable work remains not-run with a reason.",
+    "redactionRule": "Credentials, tokens, cookies, authorization headers, and credential-bearing URLs are never retained."
+  },
+  "status": {
+    "staticArchiveVerification": "implemented harness; evidence exists only after execution against a public released archive",
+    "initAndDevLifecycle": "implemented harness; evidence exists only after explicit execution with prerequisites present",
+    "previewEditToVisibleQualification": "planned",
+    "productionDeployQualification": "planned"
+  }
+}

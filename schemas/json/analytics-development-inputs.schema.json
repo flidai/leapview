@@ -1,0 +1,106 @@
+{
+  "$id": "https://leapview.dev/schemas/analytics-development-inputs.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "inputs": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "files": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "sha256": {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "sizeBytes": {
+                  "maximum": 67108864,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "sha256",
+                "sizeBytes"
+              ],
+              "type": "object"
+            },
+            "maxProperties": 256,
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$",
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "from": {
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$",
+            "type": "string"
+          },
+          "provenance": {
+            "additionalProperties": false,
+            "properties": {
+              "bounded": {
+                "const": true
+              },
+              "generator": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$",
+                "type": "string"
+              },
+              "kind": {
+                "const": "synthetic"
+              },
+              "rows": {
+                "maximum": 1000000,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "generator",
+              "rows",
+              "bounded"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "connection",
+          "from",
+          "provenance",
+          "files"
+        ],
+        "type": "object"
+      },
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+      },
+      "type": "object"
+    },
+    "version": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "inputs"
+  ],
+  "title": "LeapView analytics development inputs",
+  "type": "object",
+  "x-leapview-runtime-validation": [
+    "canonical-project-root",
+    "exact-inventory",
+    "aggregate-size",
+    "regular-files",
+    "sha256"
+  ]
+}

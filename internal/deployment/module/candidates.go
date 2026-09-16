@@ -180,7 +180,7 @@ func (m *Module) resolveNativeCandidate(ctx context.Context, candidateID, expect
 		// The product candidate projection calls this field ArtifactDigest, but
 		// its authoring/CLI contract is the retained source identity. Native
 		// serving-artifact identity remains in the seal and is checked above.
-		ArtifactDigest: plan.SourceDigest, ProvenanceDigest: plan.ProvenanceDigest,
+		ArtifactDigest: plan.SourceDigest, GraphDigest: seal.CompiledGraphDigest, ProvenanceDigest: plan.ProvenanceDigest,
 		Status: status, ExpiresAt: plan.Governance.ExpiresAt.UTC(), CreatedAt: row.CreatedAt.UTC(), UpdatedAt: updatedAt,
 		Revision: row.CandidateRevision,
 	}

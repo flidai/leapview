@@ -48,17 +48,18 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		return nil, validationErr
 	}
 	controlConfig := cfg.PostgresControlPlaneConfig()
+	developmentMigrator := !cfg.Production && strings.TrimSpace(controlConfig.Migrator.URL) != ""
 	var pools *platformpostgres.ControlPlanePools
 	var err error
-	if cfg.Production {
-		pools, err = platformpostgres.OpenServingControlPlane(ctx, controlConfig)
-	} else {
+	if developmentMigrator {
 		pools, err = platformpostgres.OpenControlPlane(ctx, controlConfig)
+	} else {
+		pools, err = platformpostgres.OpenServingControlPlane(ctx, controlConfig)
 	}
 	if err != nil {
 		return nil, err
 	}
-	if pools == nil || pools.Runtime == nil || pools.Maintenance == nil || (!cfg.Production && pools.Migrator == nil) {
+	if pools == nil || pools.Runtime == nil || pools.Maintenance == nil || (developmentMigrator && pools.Migrator == nil) {
 		if pools != nil {
 			pools.Close()
 		}
@@ -78,7 +79,7 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("PostgreSQL control maintenance database %q differs from runtime database %q", maintenanceDatabase, runtimeDatabase)
 	}
-	if !cfg.Production {
+	if developmentMigrator {
 		migratorDatabase, identifyErr := postgresDatabaseName(ctx, pools.Migrator)
 		if identifyErr != nil {
 			pools.Close()

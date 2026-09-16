@@ -75,19 +75,23 @@ func buildProcessDevelopmentTargetResolver(
 	projectID projectgraph.ResourceID,
 	targetID string,
 	environment string,
+	selected []string,
+	versionKey []byte,
 ) (connectionbinding.CredentialResolver, error) {
 	return buildDevelopmentTargetResolver(
-		projectID, targetID, environment, os.Environ(), os.LookupEnv, time.Now,
+		projectID, targetID, environment, selected, versionKey, os.LookupEnv, time.Now,
 	)
 }
 
 type unboundProcessDevelopmentTargetResolver struct {
-	targetID    string
-	environment string
+	targetID         string
+	environment      string
+	allowedVariables []string
+	versionKey       []byte
 }
 
 func (r unboundProcessDevelopmentTargetResolver) resolver(reference connectionbinding.CredentialReference) (connectionbinding.CredentialResolver, error) {
-	resolver, err := buildProcessDevelopmentTargetResolver(reference.ProjectID, r.targetID, r.environment)
+	resolver, err := buildProcessDevelopmentTargetResolver(reference.ProjectID, r.targetID, r.environment, r.allowedVariables, r.versionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -121,26 +125,18 @@ func buildDevelopmentTargetResolver(
 	projectID projectgraph.ResourceID,
 	targetID string,
 	environment string,
-	environ []string,
+	selected []string,
+	versionKey []byte,
 	lookup func(string) (string, bool),
 	now func() time.Time,
 ) (connectionbinding.CredentialResolver, error) {
-	allowedSet := map[string]struct{}{}
-	for _, item := range environ {
-		name, _, _ := strings.Cut(item, "=")
-		if strings.HasPrefix(name, developmentConnectionVariablePrefix) &&
-			len(name) > len(developmentConnectionVariablePrefix) {
-			allowedSet[name] = struct{}{}
-		}
+	allowed, err := normalizeDevelopmentConnectionVariables(selected)
+	if err != nil {
+		return nil, err
 	}
-	if len(allowedSet) == 0 {
+	if len(allowed) == 0 {
 		return nil, nil
 	}
-	allowed := make([]string, 0, len(allowedSet))
-	for name := range allowedSet {
-		allowed = append(allowed, name)
-	}
-	sort.Strings(allowed)
 	selection, err := connectionbinding.NewResolverSelection(connectionbinding.ResolverSelectionInput{
 		TargetID: connectionbinding.TargetID(targetID), ProjectID: projectID, Environment: environment,
 		TargetClass: connectionbinding.TargetDevelopment, Kind: connectionbinding.ResolverEnvironment,
@@ -150,8 +146,50 @@ func buildDevelopmentTargetResolver(
 	}
 	return analyticsenvironment.NewResolver(analyticsenvironment.Config{
 		Selection: selection, AllowedVariables: allowed, LookupEnv: lookup,
-		Now: now, TTL: 15 * time.Minute,
+		VersionKey: versionKey, Now: now, TTL: 15 * time.Minute,
 	})
+}
+
+// normalizeDevelopmentConnectionVariables validates and canonicalizes the
+// selected profile variables. The process environment is deliberately not a
+// source of selection: callers must provide this explicit list.
+func normalizeDevelopmentConnectionVariables(selected []string) ([]string, error) {
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(selected))
+	allowed := make([]string, 0, len(selected))
+	for _, variable := range selected {
+		if !validDevelopmentConnectionVariable(variable) {
+			// Do not include the rejected value: selections may have been
+			// assembled from untrusted profile input and can contain secrets.
+			return nil, fmt.Errorf("%w: development environment credential variable is invalid", connectionbinding.ErrInvalidBinding)
+		}
+		if _, duplicate := seen[variable]; duplicate {
+			continue
+		}
+		seen[variable] = struct{}{}
+		allowed = append(allowed, variable)
+	}
+	sort.Strings(allowed)
+	return allowed, nil
+}
+
+func validDevelopmentConnectionVariable(variable string) bool {
+	if variable == "" || variable != strings.TrimSpace(variable) ||
+		!strings.HasPrefix(variable, developmentConnectionVariablePrefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(variable, developmentConnectionVariablePrefix)
+	if suffix == "" {
+		return false
+	}
+	for _, char := range suffix {
+		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Module) TargetCredentialResolver(
@@ -164,4 +202,15 @@ func (m *Module) TargetCredentialResolver(
 	resolvers := m.targetResolvers
 	resolvers.Environment = development
 	return connectionbinding.SelectResolver(selection, resolvers)
+}
+
+// DevelopmentProfileCredentialResolver returns the already-selected local
+// environment resolver used by runtime pools. It never constructs a second
+// resolver or scans ambient process state, so profile preflight and pool
+// admission compare the same protected provider-version evidence.
+func (m *Module) DevelopmentProfileCredentialResolver() (connectionbinding.CredentialResolver, error) {
+	if m == nil || m.targetClass != connectionbinding.TargetDevelopment || m.targetResolvers.Environment == nil {
+		return nil, connectionbinding.ErrProviderUnavailable
+	}
+	return m.targetResolvers.Environment, nil
 }

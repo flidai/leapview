@@ -234,6 +234,11 @@ sections:
         type: how-to
         summary: Preview a private target candidate and publish that exact revision.
         source: guides/cli/validate-deploy.md
+      - slug: cli/analytics-development
+        title: Analytics development workflow
+        type: how-to
+        summary: Initialize a project, run local or remote development, and deliver with explicit profile and operation boundaries.
+        source: guides/cli/analytics-development.md
       - slug: cli/targets
         title: Targets and environments
         type: how-to

@@ -47285,7 +47285,6 @@ paths:
                     revision: 1
                     targetId: example
                     updatedAt: "2026-01-02T15:04:05Z"
-                    validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -47526,7 +47525,7 @@ paths:
       x-apigen-operation-kind: query
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_MANAGE
       x-leapview-object-scope: project
     post:
       operationId: createTargetConnectionBinding
@@ -47593,7 +47592,6 @@ paths:
                 revision: 1
                 targetId: example
                 updatedAt: "2026-01-02T15:04:05Z"
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -47915,10 +47913,10 @@ paths:
           type: project
         ui:
           action_id: connection.binding.configure
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_MANAGE
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: RESOURCE_MANAGE
       x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}:
     get:
@@ -47981,7 +47979,6 @@ paths:
                 revision: 1
                 targetId: example
                 updatedAt: "2026-01-02T15:04:05Z"
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -48284,7 +48281,6 @@ paths:
                 revision: 1
                 targetId: example
                 updatedAt: "2026-01-02T15:04:05Z"
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -48682,7 +48678,6 @@ paths:
                 revision: 1
                 targetId: example
                 updatedAt: "2026-01-02T15:04:05Z"
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -49051,7 +49046,6 @@ paths:
                 revision: 1
                 targetId: example
                 updatedAt: "2026-01-02T15:04:05Z"
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -49399,7 +49393,6 @@ paths:
                 logicalConnection: example
                 staleAgeSeconds: 1
                 targetId: example
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -50018,7 +50011,6 @@ paths:
                 logicalConnection: example
                 staleAgeSeconds: 1
                 targetId: example
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -50388,7 +50380,6 @@ paths:
                 logicalConnection: example
                 staleAgeSeconds: 1
                 targetId: example
-                validatedVersion: example
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -50696,6 +50687,666 @@ paths:
         mode: privilege
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
+  /api/v1/projects/{project}/targets/{target}/development-profile-application:
+    get:
+      operationId: getDevelopmentProfileApplication
+      summary: Read the local runtime's retained development profile application
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: target
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentProfileApplicationResponse'
+              example:
+                applicationId: example
+                appliedConnectionCount: 1
+                graphDigest: example
+                incompleteConnections:
+                  - example
+                lastCompletedApplicationId: example
+                lastCompletedAt: "2026-01-02T15:04:05Z"
+                profileDigest: example
+                profileName: example
+                requiredConnectionCount: 1
+                revision: 1
+                sourceDigest: example
+                status: applying
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Connections
+      x-apigen-operation-kind: query
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: project
+    post:
+      operationId: applyDevelopmentProfile
+      summary: Apply an exact development profile to the local runtime
+      parameters:
+        - name: project
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        - name: target
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevelopmentProfileApplicationResponse'
+              example:
+                applicationId: example
+                appliedConnectionCount: 1
+                graphDigest: example
+                incompleteConnections:
+                  - example
+                lastCompletedApplicationId: example
+                lastCompletedAt: "2026-01-02T15:04:05Z"
+                profileDigest: example
+                profileName: example
+                requiredConnectionCount: 1
+                revision: 1
+                sourceDigest: example
+                status: applying
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Connections
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevelopmentProfileApplicationRequest'
+            example:
+              applicationId: example
+              connections:
+                - authenticationMode: none
+                  connectorKind: example
+                  credentialReference:
+                    environment: example
+                    projectId: example
+                    secretKey: example
+                    secretPath: example
+                  endpoint:
+                    database: example
+                    host: example
+                    objectScope: example
+                    options:
+                      key: example
+                    port: 1
+                    sourceIdentity: example
+                    tlsMode: example
+                  logicalConnection: example
+              graphDigest: example
+              mode: new
+              profileDigest: example
+              sourceDigest: example
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: applicationId
+                sensitivity: internal
+              - name: connectionCount
+                sensitivity: public
+              - name: mode
+                sensitivity: public
+            retention: security
+            schema:
+              ref: DevelopmentProfileApplicationAuditPayload
+            schema_version: 1
+          required: true
+          success_action: development.profile.applied
+        authz_mode: privilege
+        failures:
+          - code: CONNECTION_BINDING_CONFLICT
+            kind: conflict
+            public_detail: Connection binding changed concurrently or is incompatible.
+            status_code: 409
+          - code: CONNECTION_TEST_FAILED
+            kind: credential_invalid
+            public_detail: Connection validation failed.
+            status_code: 422
+          - code: INVALID_CONNECTION_BINDING
+            kind: invalid
+            public_detail: Connection binding is invalid.
+            status_code: 400
+          - code: CONNECTION_BINDING_NOT_FOUND
+            kind: not_found
+            public_detail: Connection binding was not found.
+            status_code: 404
+          - code: CONNECTION_PROVIDER_UNAVAILABLE
+            kind: provider_unavailable
+            public_detail: Connection provider is unavailable.
+            status_code: 503
+          - code: FORBIDDEN
+            kind: unauthorized
+            public_detail: Connection operation is forbidden.
+            status_code: 403
+        idempotency: required
+        owner: LeapViewAPI.Analytics
+        target:
+          parameter: project
+          type: project
+        privilege: RESOURCE_MANAGE
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_MANAGE
+      x-leapview-object-scope: project
   /api/v1/search:
     get:
       operationId: search
@@ -73116,6 +73767,247 @@ components:
         - revoked
         - expired
       example: pending
+    DevelopmentProfileApplicationAuditPayload:
+      type: object
+      required:
+        - applicationId
+        - mode
+        - connectionCount
+      properties:
+        applicationId:
+          type: string
+          example: example
+        mode:
+          $ref: '#/components/schemas/DevelopmentProfileApplicationMode'
+        connectionCount:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        applicationId: example
+        connectionCount: 1
+        mode: new
+    DevelopmentProfileApplicationMode:
+      type: string
+      enum:
+        - new
+        - resume
+      example: new
+    DevelopmentProfileApplicationRequest:
+      type: object
+      required:
+        - applicationId
+        - mode
+        - sourceDigest
+        - graphDigest
+        - profileDigest
+        - connections
+      properties:
+        applicationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
+          example: example
+        mode:
+          $ref: '#/components/schemas/DevelopmentProfileApplicationMode'
+        sourceDigest:
+          type: string
+          description: The immutable source snapshot observed when a new application
+            begins. Ordinary source edits do not change profile identity.
+          example: example
+        graphDigest:
+          type: string
+          example: example
+        profileDigest:
+          type: string
+          example: example
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevelopmentProfileConnectionIntent'
+          example:
+            - authenticationMode: none
+              connectorKind: example
+              credentialReference:
+                environment: example
+                projectId: example
+                secretKey: example
+                secretPath: example
+              endpoint:
+                database: example
+                host: example
+                objectScope: example
+                options:
+                  key: example
+                port: 1
+                sourceIdentity: example
+                tlsMode: example
+              logicalConnection: example
+      example:
+        applicationId: example
+        connections:
+          - authenticationMode: none
+            connectorKind: example
+            credentialReference:
+              environment: example
+              projectId: example
+              secretKey: example
+              secretPath: example
+            endpoint:
+              database: example
+              host: example
+              objectScope: example
+              options:
+                key: example
+              port: 1
+              sourceIdentity: example
+              tlsMode: example
+            logicalConnection: example
+        graphDigest: example
+        mode: new
+        profileDigest: example
+        sourceDigest: example
+    DevelopmentProfileApplicationResponse:
+      type: object
+      required:
+        - applicationId
+        - status
+        - profileName
+        - requiredConnectionCount
+        - appliedConnectionCount
+        - incompleteConnections
+        - sourceDigest
+        - graphDigest
+        - profileDigest
+        - revision
+        - updatedAt
+      properties:
+        applicationId:
+          type: string
+          example: example
+        status:
+          $ref: '#/components/schemas/DevelopmentProfileApplicationStatus'
+        profileName:
+          type: string
+          example: example
+        lastCompletedApplicationId:
+          type: string
+          description: The completed application retained by this runtime. Absent
+            while its first application is incomplete. In-place replacement is not
+            exposed; use ownership-gated local runtime recreation.
+          example: example
+        lastCompletedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        requiredConnectionCount:
+          type: integer
+          format: int32
+          description: Logical connections required by the retained profile intent.
+            This count contains no credential material.
+          example: 1
+        appliedConnectionCount:
+          type: integer
+          format: int32
+          description: Logical connections whose exact binding and protected credential
+            evidence have been durably applied.
+          example: 1
+        incompleteConnections:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          description: Required logical connection IDs that are not yet durably applied.
+            Credential references and provider versions are never returned.
+          example:
+            - example
+        sourceDigest:
+          type: string
+          example: example
+        graphDigest:
+          type: string
+          example: example
+        profileDigest:
+          type: string
+          example: example
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        applicationId: example
+        appliedConnectionCount: 1
+        graphDigest: example
+        incompleteConnections:
+          - example
+        lastCompletedApplicationId: example
+        lastCompletedAt: "2026-01-02T15:04:05Z"
+        profileDigest: example
+        profileName: example
+        requiredConnectionCount: 1
+        revision: 1
+        sourceDigest: example
+        status: applying
+        updatedAt: "2026-01-02T15:04:05Z"
+    DevelopmentProfileApplicationStatus:
+      type: string
+      enum:
+        - applying
+        - incomplete
+        - applied
+      example: applying
+    DevelopmentProfileConnectionIntent:
+      type: object
+      required:
+        - logicalConnection
+        - connectorKind
+        - authenticationMode
+        - endpoint
+      properties:
+        logicalConnection:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        connectorKind:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$
+          example: example
+        authenticationMode:
+          $ref: '#/components/schemas/TargetConnectionAuthenticationMode'
+        endpoint:
+          $ref: '#/components/schemas/TargetConnectionEndpoint'
+        credentialReference:
+          $ref: '#/components/schemas/TargetConnectionCredentialReference'
+      example:
+        authenticationMode: none
+        connectorKind: example
+        credentialReference:
+          environment: example
+          projectId: example
+          secretKey: example
+          secretPath: example
+        endpoint:
+          database: example
+          host: example
+          objectScope: example
+          options:
+            key: example
+          port: 1
+          sourceIdentity: example
+          tlsMode: example
+        logicalConnection: example
     DeviceAuthorizationApprovalRequest:
       type: object
       required:
@@ -82874,9 +83766,6 @@ components:
           format: int64
           minimum: 1
           example: 1
-        validatedVersion:
-          type: string
-          example: example
         health:
           $ref: '#/components/schemas/TargetConnectionHealth'
         diagnosticCode:
@@ -82912,7 +83801,6 @@ components:
         logicalConnection: example
         staleAgeSeconds: 1
         targetId: example
-        validatedVersion: example
     TargetConnectionBindingListResponse:
       type: object
       required:
@@ -82944,7 +83832,6 @@ components:
               revision: 1
               targetId: example
               updatedAt: "2026-01-02T15:04:05Z"
-              validatedVersion: example
       example:
         items:
           - authenticationMode: none
@@ -82968,7 +83855,6 @@ components:
             revision: 1
             targetId: example
             updatedAt: "2026-01-02T15:04:05Z"
-            validatedVersion: example
     TargetConnectionBindingPlanRequest:
       type: object
       required:
@@ -83041,9 +83927,6 @@ components:
         enabled:
           type: boolean
           example: true
-        validatedVersion:
-          type: string
-          example: example
         health:
           $ref: '#/components/schemas/TargetConnectionHealth'
         lastValidatedAt:
@@ -83087,7 +83970,6 @@ components:
         revision: 1
         targetId: example
         updatedAt: "2026-01-02T15:04:05Z"
-        validatedVersion: example
     TargetConnectionBindingUpdateRequest:
       type: object
       required:

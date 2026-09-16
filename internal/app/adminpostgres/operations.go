@@ -167,8 +167,8 @@ func New(dependencies Dependencies) Operations {
 var ErrNativeMaintenanceUnavailable = errors.New("native PostgreSQL admin maintenance is unavailable outside production")
 
 // ErrNativeAdminUnavailable indicates that a PostgreSQL-native Admin
-// operation was requested outside the production target.
-var ErrNativeAdminUnavailable = errors.New("native PostgreSQL admin operations are unavailable outside production")
+// operation was requested outside production or a validated local target.
+var ErrNativeAdminUnavailable = errors.New("native PostgreSQL admin operations are unavailable outside production or a validated local development target")
 
 // Maintenance executes native PostgreSQL retention. Preview is the default
 // and always rolls back; --apply invokes the committing runner.
