@@ -147,6 +147,26 @@ echo '--- activation recovery inventory ---'
 systemctl is-active leapview-demo-current.service || true
 curl -sS -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:8132/healthz || true
 curl -sS -o /dev/null -w 'ready=%{http_code}\n' http://127.0.0.1:8132/readyz || true
+if ! curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1; then
+  echo '--- failed hotfix startup diagnostics ---' >&2
+  journalctl --unit leapview-demo-current.service --since '-5 minutes' \
+    --no-pager --lines 160 >&2 || true
+  if [[ -x /tmp/leapview-main/.tmp/leapview-dev.pre-delivery-hotfix ]]; then
+    install -m 0755 /tmp/leapview-main/.tmp/leapview-dev.pre-delivery-hotfix \
+      /tmp/leapview-main/.tmp/leapview-dev
+    systemctl restart leapview-demo-current.service
+    for _ in $(seq 1 60); do
+      if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+    done
+    curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:8132/healthz >/dev/null
+  fi
+  rm -f /tmp/leapview-main/.tmp/leapview-dev.delivery-role-authorization \
+    /tmp/leapview-main/.tmp/leapview-dev.delivery-hotfix
+  exit 1
+fi
 find /tmp /root -maxdepth 3 -type f \( -iname '*approv*' -o -iname '*candidate*' -o -iname '*publication*' -o -iname '*credential*' -o -iname '*login*' \) -printf '%p\n' 2>/dev/null | sort | head -n 100
 while IFS= read -r json_file; do
   [[ -f "$json_file" ]] || continue
