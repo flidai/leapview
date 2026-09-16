@@ -34,7 +34,7 @@ func TestQualificationMultiNodeEnvironmentRewritesPostgresURLs(t *testing.T) {
 	values, err := qualificationMultiNodeEnvironment(path)
 	require.NoError(t, err)
 	require.Equal(t, ":8080", values["LEAPVIEW_ADDR"])
-	require.Equal(t, "/var/lib/leapview", values["LEAPVIEW_HOME"])
+	require.Equal(t, "/var/lib/leapview/home", values["LEAPVIEW_HOME"])
 	for _, key := range []string{"LEAPVIEW_POSTGRES_CONTROL_URL", "LEAPVIEW_POSTGRES_DUCKLAKE_URL"} {
 		require.Equal(t, qualificationMultiNodeRootCertificate, mustQualificationURLQuery(t, values[key], "sslrootcert"))
 	}
@@ -98,6 +98,7 @@ func TestQualificationMultiNodeProcessExercisesLossAndRollingRestart(t *testing.
 	}, report)
 	require.NotEmpty(t, runtime.request.Volumes)
 	require.True(t, runtime.request.ReadOnly)
+	require.Equal(t, "/var/lib/leapview/home", runtime.request.Environment["LEAPVIEW_HOME"])
 	require.Equal(t, qualificationMultiNodeRootCertificate, runtime.request.Volumes[1].Target)
 	require.Equal(t, 1, secondary.removed)
 	require.Equal(t, 1, primary.kills)
