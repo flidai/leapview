@@ -447,7 +447,7 @@ device_challenge="$(curl --fail --silent --show-error \
   --header 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'client_id=leapview-cli' \
   --data-urlencode "project_id=$project_id" \
-  --data-urlencode 'scope=PROJECT_ADMIN RESOURCE_READ' \
+  --data-urlencode 'scope=PROJECT_ADMIN RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH' \
   https://demo.leapview.dev/oauth/device/code)"
 device_code="$(jq -er '.device_code' <<<"$device_challenge")"
 user_code="$(jq -er '.user_code' <<<"$device_challenge")"
@@ -691,7 +691,7 @@ finance_sync="$("$leapview_binary" data sync \
   --from "$cfo_data_path" \
   --target https://demo.leapview.dev \
   --project-id "$project_id" \
-  --token "$publisher_token" \
+  --token "$approver_token" \
   --format json)"
 finance_revision="$(jq -er '.revisionId' <<<"$finance_sync")"
 echo "finance revision staged: $finance_revision"
