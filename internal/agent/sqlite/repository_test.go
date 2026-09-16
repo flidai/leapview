@@ -699,6 +699,32 @@ func TestConversationManagementRejectsDeleteWithRunningRun(t *testing.T) {
 	}
 }
 
+func TestConversationManagementAllowsDeleteWithOrphanedDurableRun(t *testing.T) {
+	ctx := context.Background()
+	store, repo := openAgentRepo(t, ctx)
+	owner := createAgentPrincipal(t, ctx, store, "chat-management-orphan@example.com")
+	conversation, err := repo.CreateConversation(ctx, agent.ConversationInput{PrincipalID: owner.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const runID = "management-orphaned-run"
+	if _, err := repo.CreateRun(ctx, agent.RunInput{PrincipalID: owner.ID, ConversationID: conversation.ID, RunID: runID, Status: agent.RunStatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO api_async_jobs (
+			id, job_kind, workload_class, principal_id, group_ids_json,
+			resource_kind, resource_id, estimated_memory_bytes, payload_json,
+			request_digest, status, finished_at, error_json
+		) VALUES (?, 'agent.run', 'background', ?, '[]', 'agent_run', ?, 1, '{}', ?, 'failed', CURRENT_TIMESTAMP, '{}')`,
+		"agent:"+runID+":run", owner.ID, runID, "sha256:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DeleteConversation(ctx, owner.ID, conversation.ID); err != nil {
+		t.Fatalf("delete conversation with terminal durable job: %v", err)
+	}
+}
+
 func TestRepositoryCreateRunRejectsArchivedConversation(t *testing.T) {
 	ctx := context.Background()
 	store, repo := openAgentRepo(t, ctx)

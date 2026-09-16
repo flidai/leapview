@@ -145,6 +145,7 @@ SET search_path = pg_catalog, agent
 AS $$
 DECLARE
     deleted agent.conversations%ROWTYPE;
+    has_active_run boolean := false;
 BEGIN
     SELECT c.* INTO deleted
     FROM agent.conversations AS c
@@ -155,11 +156,37 @@ BEGIN
     IF NOT FOUND THEN
         RETURN;
     END IF;
-    IF EXISTS (
-        SELECT 1 FROM agent.runs
-        WHERE conversation_id = deleted.id
-          AND status IN ('preparing', 'running')
-    ) THEN
+    IF to_regclass('jobs.job_history') IS NULL THEN
+        SELECT EXISTS (
+            SELECT 1 FROM agent.runs AS r
+            WHERE r.conversation_id = deleted.id
+              AND r.status IN ('preparing', 'running')
+        ) INTO has_active_run;
+    ELSE
+        EXECUTE $query$
+            SELECT EXISTS (
+                SELECT 1 FROM agent.runs AS r
+                WHERE r.conversation_id = $1
+                  AND r.status IN ('preparing', 'running')
+                  AND (
+                      NOT EXISTS (
+                          SELECT 1 FROM jobs.job_history AS j
+                          WHERE j.resource_kind = 'agent_run'
+                            AND j.resource_id = r.id
+                            AND j.kind = 'agent.run'
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM jobs.job_history AS j
+                          WHERE j.resource_kind = 'agent_run'
+                            AND j.resource_id = r.id
+                            AND j.kind = 'agent.run'
+                            AND j.status IN ('queued', 'running')
+                      )
+                  )
+            )
+        $query$ INTO has_active_run USING deleted.id;
+    END IF;
+    IF has_active_run THEN
         RAISE EXCEPTION 'conversation has an active run' USING ERRCODE = '55006';
     END IF;
     PERFORM set_config('agent.chat_delete', 'on', true);

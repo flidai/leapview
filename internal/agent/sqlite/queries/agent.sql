@@ -86,9 +86,21 @@ RETURNING *;
 
 -- name: AgentConversationHasActiveRun :one
 SELECT EXISTS (
-  SELECT 1 FROM agent_runs
-  WHERE conversation_id = sqlc.arg(conversation_id)
-    AND status IN ('preparing', 'running')
+  SELECT 1 FROM agent_runs r
+  WHERE r.conversation_id = sqlc.arg(conversation_id)
+    AND r.status IN ('preparing', 'running')
+    AND (
+      NOT EXISTS (
+        SELECT 1 FROM api_async_jobs j
+        WHERE j.resource_kind = 'agent_run' AND j.resource_id = r.id
+          AND j.job_kind = 'agent.run'
+      )
+      OR EXISTS (
+        SELECT 1 FROM api_async_jobs j
+        WHERE j.resource_kind = 'agent_run' AND j.resource_id = r.id
+          AND j.job_kind = 'agent.run' AND j.status IN ('queued', 'running')
+      )
+    )
 );
 
 -- name: UpdateAgentConversationTranscript :one

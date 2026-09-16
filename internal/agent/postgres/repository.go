@@ -652,13 +652,6 @@ func (r *Repository) DeleteConversation(ctx context.Context, principal, id strin
 		if err != nil {
 			return err
 		}
-		busy, err := q.AgentConversationHasActiveRun(ctx, id)
-		if err != nil {
-			return err
-		}
-		if busy {
-			return agent.ErrConversationBusy
-		}
 		row, err := q.DeleteAgentConversation(ctx, agentdb.DeleteAgentConversationParams{ID: id, PrincipalID: principal})
 		if err != nil {
 			return err
@@ -707,15 +700,6 @@ func (r *Repository) bulkConversationMutation(ctx context.Context, principal str
 			current, err := q.GetAgentConversation(ctx, agentdb.GetAgentConversationParams{ID: id, PrincipalID: principal})
 			if err != nil {
 				return err
-			}
-			if deleting {
-				busy, err := q.AgentConversationHasActiveRun(ctx, id)
-				if err != nil {
-					return err
-				}
-				if busy {
-					return agent.ErrConversationBusy
-				}
 			}
 			var changed agent.Conversation
 			var domainType string
