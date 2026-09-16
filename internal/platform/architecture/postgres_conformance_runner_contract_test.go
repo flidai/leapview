@@ -34,6 +34,7 @@ func TestPostgreSQLConformanceRunnerUsesCompleteBoundedInventory(t *testing.T) {
 		"-tags", "integration duckdb_arrow",
 		"-p", "4",
 		"-count=1",
+		"-timeout=30m",
 		"-v",
 		"-skip", "^TestMinIOParquetSourceRefreshContract$",
 		"github.com/flidai/leapview/internal/pg/legacy",
