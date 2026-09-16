@@ -766,6 +766,11 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		return false, err
 	}
 	for _, resource := range resources {
+		// Project roles are graph-wide and may authorize creation of a resource
+		// before that resource exists in the currently active graph.
+		if accesssnapshot.RoleAllowsCapability(snapshot, subjects, capability) {
+			continue
+		}
 		if resource.Kind() == projectgraph.KindProjectNamespace {
 			if resource.ID() != projectID {
 				return false, errAPIGenResourceNotFound
