@@ -730,6 +730,11 @@ if [[ ! -s "$delivery_hotfix_marker" ]]; then
   bun_binary=/root/.bun/bin/bun
   test -x "$bun_binary"
   (cd "$hotfix_worktree" && "$bun_binary" install --frozen-lockfile && "$bun_binary" run build)
+  while IFS= read -r generated_file; do
+    [[ -f "$hotfix_worktree/$generated_file" ]] || continue
+    mkdir -p "$repo/$(dirname "$generated_file")"
+    cp -p "$hotfix_worktree/$generated_file" "$repo/$generated_file"
+  done < <(git -C "$hotfix_worktree" ls-files -o -i --exclude-standard -- static)
   runtime_version="$("$leapview_binary" version --json | jq -er '.version')"
   build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   build_ldflags="-s -w -X github.com/flidai/leapview/internal/platform/buildinfo.version=$runtime_version -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$latest_revision -X github.com/flidai/leapview/internal/platform/buildinfo.buildTime=$build_time -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=false -X github.com/flidai/leapview/internal/platform/buildinfo.release=true"
