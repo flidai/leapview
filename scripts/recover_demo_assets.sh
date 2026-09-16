@@ -234,7 +234,8 @@ WantedBy=multi-user.target
 OLLAMA_SERVICE
   chmod 0644 /etc/systemd/system/ollama.service
   systemctl daemon-reload
-  systemctl enable --now ollama.service
+  systemctl enable ollama.service
+  systemctl restart ollama.service
   for _ in $(seq 1 60); do
     if curl -fsS --connect-timeout 2 --max-time 5 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
       break
