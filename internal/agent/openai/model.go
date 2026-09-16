@@ -49,6 +49,9 @@ func (m *OpenAIModel) Complete(ctx context.Context, req agentcore.ModelRequest, 
 	if disableThinkingForRequest(m.config) {
 		body.Thinking = &openAIThinking{Type: "disabled"}
 	}
+	if effort := reasoningEffortForRequest(m.config); effort != "" {
+		body.ReasoningEffort = effort
+	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
 	}
@@ -360,15 +363,27 @@ func disableThinkingForRequest(config agentapp.Config) bool {
 	return strings.HasPrefix(model, "deepseek-v4")
 }
 
+// Qwen 3 enables its reasoning pass by default. The OpenAI-compatible Ollama
+// transport accepts reasoning_effort=none, which keeps tool calling available
+// while avoiding a long hidden thinking pass on CPU-only deployments.
+func reasoningEffortForRequest(config agentapp.Config) string {
+	model := strings.ToLower(strings.TrimSpace(config.Model))
+	if strings.HasPrefix(model, "qwen3") {
+		return "none"
+	}
+	return ""
+}
+
 type openAIChatRequest struct {
-	Model         string               `json:"model"`
-	Messages      []openAIMessage      `json:"messages"`
-	Tools         []openAITool         `json:"tools,omitempty"`
-	ToolChoice    string               `json:"tool_choice,omitempty"`
-	MaxTokens     int                  `json:"max_tokens,omitempty"`
-	Thinking      *openAIThinking      `json:"thinking,omitempty"`
-	Stream        bool                 `json:"stream,omitempty"`
-	StreamOptions *openAIStreamOptions `json:"stream_options,omitempty"`
+	Model           string               `json:"model"`
+	Messages        []openAIMessage      `json:"messages"`
+	Tools           []openAITool         `json:"tools,omitempty"`
+	ToolChoice      string               `json:"tool_choice,omitempty"`
+	MaxTokens       int                  `json:"max_tokens,omitempty"`
+	Thinking        *openAIThinking      `json:"thinking,omitempty"`
+	ReasoningEffort string               `json:"reasoning_effort,omitempty"`
+	Stream          bool                 `json:"stream,omitempty"`
+	StreamOptions   *openAIStreamOptions `json:"stream_options,omitempty"`
 }
 
 type openAIThinking struct {

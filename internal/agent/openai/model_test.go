@@ -107,6 +107,36 @@ func TestOpenAIModelConvertsChatCompletionPayloads(t *testing.T) {
 	}
 }
 
+func TestOpenAIModelDisablesQwen3Reasoning(t *testing.T) {
+	var got openAIChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writeJSON(t, w, openAIChatResponse{
+			ID: "chatcmpl_qwen3",
+			Choices: []openAIChoice{{
+				Index: 0, Message: openAIMessage{Role: "assistant", Content: "ready"}, FinishReason: "stop",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	model := NewModel(agentapp.Config{APIKey: "local-ollama", BaseURL: server.URL, Model: "qwen3:4b"}, server.Client())
+	if _, err := model.Complete(context.Background(), agentcore.ModelRequest{
+		Purpose:  agentcore.ModelRequestPurposeCompaction,
+		Messages: []agentcore.Message{{Role: agentcore.RoleUser, Content: "Reply with ready"}},
+	}, nil); err != nil {
+		t.Fatalf("Complete returned error: %v", err)
+	}
+	if got.ReasoningEffort != "none" {
+		t.Fatalf("reasoning_effort = %q, want none", got.ReasoningEffort)
+	}
+	if got.Thinking != nil {
+		t.Fatalf("Qwen request unexpectedly used DeepSeek thinking control: %#v", got.Thinking)
+	}
+}
+
 func TestOpenAIModelStreamsFirstTokenBeforeCompletion(t *testing.T) {
 	firstEventWritten := make(chan struct{})
 	releaseServer := make(chan struct{})
