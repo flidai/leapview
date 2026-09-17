@@ -114,7 +114,7 @@ func TestRefreshHistoryUsesAvailableTimestampsAndReadablePrincipals(t *testing.T
 	table := assetRefreshesTable(AssetRefreshState{Runs: []AssetRefreshRun{run}})
 	row := table.Rows[0]
 	started, _ := time.Parse(time.RFC3339, run.CreatedAt)
-	if row["started"] != started.Local().Format("02 Jan 2006, 15:04 MST") || row["duration"] != "5s" || row["trigger"] != "Pipeline" || row["triggered_by"] != "Service account" {
+	if row["started"] != started.Local().Format("02 Jan 2006, 15:04 MST") || row["duration"] != "5s" || row["trigger"] != "Pipeline" || row["triggered_by"] != "Unknown actor" {
 		t.Fatalf("refresh row = %#v, want readable successful history", row)
 	}
 	if got := row["status"].(recordTableBadge).Label; got != "succeeded" {
@@ -125,6 +125,15 @@ func TestRefreshHistoryUsesAvailableTimestampsAndReadablePrincipals(t *testing.T
 	}
 	if got := assetRefreshStatus(AssetRefreshState{Runs: []AssetRefreshRun{{Status: "succeeded", FinishedAt: "2026-08-24T13:00:05Z"}}}); got != "succeeded" {
 		t.Fatalf("refresh status from successful history = %q, want succeeded", got)
+	}
+}
+
+func TestPrincipalDisplayLabelDoesNotInferServiceAccountFromUUID(t *testing.T) {
+	if got := principalDisplayLabel("123e4567-e89b-12d3-a456-426614174000"); got != "Unknown actor" {
+		t.Fatalf("UUID principal label = %q, want neutral unknown actor label", got)
+	}
+	if got := principalDisplayLabel("service:nightly-refresh"); got != "Nightly Refresh service account" {
+		t.Fatalf("explicit service principal label = %q, want service account label", got)
 	}
 }
 

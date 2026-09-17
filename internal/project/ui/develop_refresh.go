@@ -468,7 +468,7 @@ func principalDisplayLabel(value string) string {
 		return ""
 	}
 	if looksLikeUUID(value) {
-		return "Service account"
+		return "Unknown actor"
 	}
 	lower := strings.ToLower(value)
 	for _, prefix := range []string{"principal:", "user:"} {

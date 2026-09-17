@@ -421,6 +421,77 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, projectID 
 	return options, nil
 }
 
+// ListQueryEventFilterOptionsGlobal returns filter values aggregated across
+// every Project. It is intentionally separate from the project-scoped reader
+// method because the latter is also used by project-bound API surfaces.
+func (r *Repository) ListQueryEventFilterOptionsGlobal(ctx context.Context, field, search string, limit int) ([]queryaudit.FilterOption, error) {
+	if r == nil || r.db == nil {
+		return nil, fmt.Errorf("%w: repository is unavailable", ErrInvalid)
+	}
+	field = strings.TrimSpace(field)
+	if _, ok := filterColumn(field); !ok {
+		return nil, fmt.Errorf("%w: unsupported query event filter option field %q", ErrInvalid, field)
+	}
+	if len(search) > MaxSearchBytes || !utf8.ValidString(search) {
+		return nil, fmt.Errorf("%w: search exceeds %d bytes or is not UTF-8", ErrInvalid, MaxSearchBytes)
+	}
+	if limit <= 0 {
+		limit = DefaultPageSize
+	}
+	if limit > MaxPageSize {
+		limit = MaxPageSize
+	}
+	options := make([]queryaudit.FilterOption, 0, limit)
+	search = strings.TrimSpace(search)
+	pageSize := int32(limit)
+	appendOption := func(value string, count int64) {
+		options = append(options, queryaudit.FilterOption{Value: value, Count: int(count)})
+	}
+	switch field {
+	case "project":
+		rows, err := auditdb.New(r.db).ListQueryEventFilterOptionsGlobal(ctx, auditdb.ListQueryEventFilterOptionsGlobalParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "principal":
+		rows, err := auditdb.New(r.db).ListPrincipalFilterOptionsGlobal(ctx, auditdb.ListPrincipalFilterOptionsGlobalParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "surface":
+		rows, err := auditdb.New(r.db).ListSurfaceFilterOptionsGlobal(ctx, auditdb.ListSurfaceFilterOptionsGlobalParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "kind":
+		rows, err := auditdb.New(r.db).ListKindFilterOptionsGlobal(ctx, auditdb.ListKindFilterOptionsGlobalParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "status":
+		rows, err := auditdb.New(r.db).ListStatusFilterOptionsGlobal(ctx, auditdb.ListStatusFilterOptionsGlobalParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	}
+	return options, nil
+}
+
 // Prune removes at most limit query-audit events at or before before. The
 // operation runs through the SECURITY DEFINER owner function on a separate
 // maintenance connection and commits one bounded batch. A zero cutoff is

@@ -25,6 +25,14 @@ const (
 
 var errQueryHistoryProjectScope = errors.New("query history is outside the active Project")
 
+// queryHistoryGlobalFilterOptionReader is implemented by query-audit stores
+// that can aggregate filter options across all Projects. Query history is an
+// admin-wide surface, so its menus must not inherit the active serving
+// Project's scope.
+type queryHistoryGlobalFilterOptionReader interface {
+	ListQueryEventFilterOptionsGlobal(context.Context, string, string, int) ([]queryaudit.FilterOption, error)
+}
+
 type queryHistoryCommandSignals struct {
 	AdminQueryHistory        uisignals.AdminQueryHistorySignal  `json:"adminQueryHistory"`
 	AdminQueryDetail         uisignals.AdminQueryDetailSignal   `json:"adminQueryDetail"`
@@ -243,25 +251,16 @@ func bindQueryHistoryFilters(filters uisignals.AdminQueryHistoryFilters, project
 	filters = normalizeQueryHistoryFilters(filters)
 	// Query history is an admin-wide surface. Do not inject the active project
 	// into every request: doing so made the project chip impossible to clear
-	// and left stale project IDs trapping the page in a no-results state.
-	if err := projectID.Validate(); err != nil {
-		filters.Projects = nil
-		return filters, nil
-	}
-	activeProject := projectID.String()
+	// and left selected project IDs from another Project trapping the page in a
+	// no-results state. Validate the selected IDs, but preserve them regardless
+	// of the active serving Project.
 	projects := make([]string, 0, len(uisignals.ValueOrZero(filters.Projects)))
 	for _, requested := range uisignals.ValueOrZero(filters.Projects) {
 		parsed, err := projectgraph.NewResourceID(requested)
 		if err != nil {
 			return filters, errQueryHistoryProjectScope
 		}
-		// The project menu is populated from the active serving project. A
-		// syntactically valid value from an older page/session is still stale
-		// when serving has moved on; drop it instead of trapping the global
-		// history view in an empty result set.
-		if parsed.String() == activeProject {
-			projects = append(projects, parsed.String())
-		}
+		projects = append(projects, parsed.String())
 	}
 	filters.Projects = uisignals.OptionalSlice(projects)
 	return filters, nil
@@ -371,25 +370,9 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		if menu.id == searchMenuID {
 			menuSearch = strings.TrimSpace(search)
 		}
-		var options []queryaudit.FilterOption
-		if err := projectID.Validate(); err == nil {
-			var optionsErr error
-			options, optionsErr = repo.ListQueryEventFilterOptions(r.Context(), projectID, menu.id, menuSearch, 100)
-			if optionsErr != nil {
-				return queryHistoryFilterMenusWithError(filters, optionsErr.Error())
-			}
-			if menu.id == "project" && (menuSearch == "" || strings.Contains(strings.ToLower(projectID.String()), strings.ToLower(menuSearch))) {
-				found := false
-				for _, option := range options {
-					if option.Value == projectID.String() {
-						found = true
-						break
-					}
-				}
-				if !found {
-					options = append(options, queryaudit.FilterOption{Value: projectID.String()})
-				}
-			}
+		options, optionsErr := loadQueryHistoryFilterOptions(r, repo, projectID, menu.id, menuSearch)
+		if optionsErr != nil {
+			return queryHistoryFilterMenusWithError(filters, optionsErr.Error())
 		}
 		for _, option := range options {
 			menu.values[option.Value] = option.Count
@@ -400,6 +383,20 @@ func (m ReadModel) queryHistoryFilterMenus(r *http.Request, repo queryaudit.Read
 		out = append(out, queryHistoryFilterMenu(menu.id, menu.label, menu.placeholder, menu.empty, menu.icon, menu.values, menu.labels, menu.selected, menuSearch, loading, ""))
 	}
 	return out
+}
+
+func loadQueryHistoryFilterOptions(r *http.Request, repo queryaudit.Reader, projectID projectgraph.ResourceID, field, search string) ([]queryaudit.FilterOption, error) {
+	if global, ok := repo.(queryHistoryGlobalFilterOptionReader); ok {
+		return global.ListQueryEventFilterOptionsGlobal(r.Context(), field, search, 100)
+	}
+	// Keep compatibility with query-audit readers that predate the global
+	// aggregation capability. Production readers implement the global method;
+	// this fallback remains scoped because those readers cannot safely expose
+	// data outside their existing project boundary.
+	if err := projectID.Validate(); err != nil {
+		return nil, nil
+	}
+	return repo.ListQueryEventFilterOptions(r.Context(), projectID, field, search, 100)
 }
 
 func queryHistoryFilterMenusWithError(filters uisignals.AdminQueryHistoryFilters, message string) []uisignals.FilterMenuSignal {

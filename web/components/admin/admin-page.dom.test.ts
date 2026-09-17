@@ -363,16 +363,16 @@ test('personal API tokens use capability selectors', async () => {
       const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
       const triggerFocused = root.activeElement === add
 
-      const expiryPreset = root.querySelector('#token-expiry-preset') as HTMLSelectElement
-      expiryPreset.value = 'none'
-      expiryPreset.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
-      await personal.updateComplete
+      const expiryOptions = Array.from(root.querySelectorAll('#token-expiry-preset option')).map((option) => ({
+        value: option.getAttribute('value'), label: option.textContent?.trim(),
+      }))
 
       let command: unknown = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const form = root.querySelector('.token-form') as HTMLFormElement
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
       await personal.updateComplete
+      const confirmation = root.querySelector('#token-confirm .settings-description')?.textContent?.trim()
       ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       await personal.updateComplete
       const pending = {
@@ -413,6 +413,8 @@ test('personal API tokens use capability selectors', async () => {
         menuClosed: !root.querySelector('.permission-menu'),
         searchFocused,
         triggerFocused,
+        expiryOptions,
+        confirmation,
         command,
         pending,
         failed,
@@ -465,9 +467,19 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
+    expect(state.expiryOptions).toEqual([
+      { value: '7', label: '7 days' }, { value: '30', label: '30 days' },
+      { value: '60', label: '60 days' }, { value: '90', label: '90 days' },
+      { value: 'custom', label: 'Custom' },
+    ])
+    expect(state.confirmation).toContain('It will expire ')
+    expect(state.confirmation).not.toContain('never')
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'], expiresAt: '',
+      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'],
     })
+    const commandExpiry = (state.command as { expiresAt?: string }).expiresAt
+    expect(typeof commandExpiry).toBe('string')
+    expect(Date.parse(commandExpiry ?? '')).toBeGreaterThan(Date.now())
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({
       name: 'Sales automation', selectedPermissions: 1,
@@ -544,9 +556,6 @@ test('personal API token permissions expose enforceable access levels', async ()
 
       ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Content automation'
       ;(root.querySelector('#token-name') as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-      const expiryPreset = root.querySelector('#token-expiry-preset') as HTMLSelectElement
-      expiryPreset.value = 'none'
-      expiryPreset.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await personal.updateComplete
       let command: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
@@ -576,8 +585,10 @@ test('personal API token permissions expose enforceable access levels', async ()
     expect(state.selectedPermissions).toEqual(['Project administration', 'Resource access'])
     expect(state.fixedAccessControls).toBe(0)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'], expiresAt: '',
+      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'],
     })
+    expect(typeof state.command.expiresAt).toBe('string')
+    expect(Date.parse(state.command.expiresAt)).toBeGreaterThan(Date.now())
   } finally {
     await page.close()
   }

@@ -177,6 +177,16 @@ type browserAssetVersionsStub struct {
 	versions []servingstate.AssetVersion
 }
 
+type browserPrincipalDisplayReaderStub map[string]access.Principal
+
+func (s browserPrincipalDisplayReaderStub) PrincipalByID(_ context.Context, id string) (access.Principal, error) {
+	principal, ok := s[id]
+	if !ok {
+		return access.Principal{}, errors.New("principal not found")
+	}
+	return principal, nil
+}
+
 type browserPhysicalCatalogStub map[string]ModelPhysicalMetadata
 
 func (s browserPhysicalCatalogStub) ModelPhysicalMetadata(context.Context, projectgraph.ResourceID, string) (map[string]ModelPhysicalMetadata, error) {
@@ -235,6 +245,32 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	}
 	if state.Versions[0].Environment != "dev" || state.Versions[0].SnapshotID != "snapshot:2" || state.Versions[0].PayloadJSON != `{"kind":"Model"}` {
 		t.Fatalf("versions drawer state = %#v", state.Versions[0])
+	}
+}
+
+func TestAssetHistoryResolvesPrincipalDisplayNamesWhenAvailable(t *testing.T) {
+	actorID := "123e4567-e89b-12d3-a456-426614174000"
+	h := &BrowserHandler{
+		Environment:            "dev",
+		PrincipalDisplayReader: browserPrincipalDisplayReaderStub{actorID: {ID: actorID, Kind: access.PrincipalKindUser, DisplayName: "Ada Lovelace"}},
+		AssetVersions:          browserAssetVersionsStub{versions: []servingstate.AssetVersion{{ServingStateID: "state:current", CreatedBy: actorID}}},
+		RefreshState:           browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{Runs: []refreshpresentation.AssetRefreshRun{{ID: "run:1", PrincipalID: actorID}}}},
+	}
+
+	versions, err := h.assetVersionsState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "model:orders"}, "versions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := versions.Versions[0].CreatedByDisplayName; got != "Ada Lovelace" {
+		t.Fatalf("version actor display name = %q, want Ada Lovelace", got)
+	}
+
+	refresh, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "pipeline:daily", Type: string(projectview.AssetTypeRefreshPipeline)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := refresh.Runs[0].PrincipalDisplayName; got != "Ada Lovelace" {
+		t.Fatalf("refresh actor display name = %q, want Ada Lovelace", got)
 	}
 }
 

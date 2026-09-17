@@ -485,7 +485,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 <label class="token-field" for="token-expiry-preset">
                   <span class="settings-label">Expiration</span>
                   <select id="token-expiry-preset" .value=${this.tokenExpiryPreset} @change=${this.onTokenExpiryPresetInput}>
-                    <option value="7">7 days</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="custom">Custom</option><option value="none">No expiration</option>
+                    <option value="7">7 days</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="custom">Custom</option>
                   </select>
                   ${this.tokenExpiryPreset === 'custom' ? html`<input id="token-expiry" type="datetime-local" required .value=${this.tokenExpires} @input=${this.onTokenExpiresInput}>` : nothing}
                   <span class="settings-description">The exact expiration date is confirmed before generation.</span>
@@ -668,9 +668,16 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private createToken = (event: Event): void => {
     event.preventDefault()
     if (!this.tokenName.trim()) return
-    const expiresAt = this.tokenExpiryPreset === 'none' ? '' : this.tokenExpiryPreset === 'custom' ? localDateTimeToRFC3339(this.tokenExpires) : new Date(Date.now() + Number(this.tokenExpiryPreset) * 24 * 60 * 60 * 1000).toISOString()
-    if (this.tokenExpiryPreset === 'custom' && !expiresAt) return
-    this.tokenConfirmation = { expiresAt, label: expiresAt ? formatDate(expiresAt) : 'never (if permitted by policy)' }
+    let expiresAt = ''
+    if (this.tokenExpiryPreset === 'custom') {
+      expiresAt = localDateTimeToRFC3339(this.tokenExpires)
+    } else {
+      const expiryDays = Number(this.tokenExpiryPreset)
+      if (!Number.isFinite(expiryDays) || expiryDays <= 0) return
+      expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString()
+    }
+    if (!expiresAt) return
+    this.tokenConfirmation = { expiresAt, label: formatDate(expiresAt) }
     this.tokenConfirmOpen = true
   }
 
