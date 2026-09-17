@@ -26,7 +26,7 @@ All capability modules are peers. Some—especially `access`, `analytics`, `proj
 
 Initialization and physical-pool bootstrap are Admin-owned use cases under `internal/admin/offline`. They depend on explicit Access, instance-state, locking, credential-recovery, and pool-admission ports. `internal/app/adminpostgres` translates process configuration and wires the PostgreSQL-native authorities. Operational retention is likewise composed from capability-owned PostgreSQL maintenance authorities; the application exposes no second local control-plane implementation.
 
-`cmd/leapview` starts the application and CLI. Transport adapters parse HTTP or Datastar commands and invoke capability use cases. Capability code enforces authorization and lifecycle invariants through explicit ports. Capability-owned adapters implement SQLite, DuckLake, object-storage, filesystem, and external-connector behavior.
+`cmd/leapview` starts the application and CLI. Transport adapters parse HTTP or Datastar commands and invoke capability use cases. Capability code enforces authorization and lifecycle invariants through explicit ports. Capability-owned adapters implement PostgreSQL, DuckLake, object-storage, filesystem, and external-connector behavior, including the supported SQLite analytics connector.
 
 The process-facing `Application` surface is deliberately closed: handler,
 start, shutdown, and fatal health only. A private lifecycle owner starts
@@ -57,8 +57,8 @@ Project deployment compiles validated candidates into immutable artifacts and se
 
 Production application state lives in PostgreSQL: identities, grants,
 environments, deployments, jobs, audit history, and active serving pointers.
-SQLite remains an explicit adapter for local/evaluation fixtures; the
-documentation site's SQLite search index is separate and unchanged.
+There is no embedded control-plane database. The documentation site's SQLite
+search index is a separate immutable site artifact and remains unchanged.
 
 One process-owned DuckDB instance is the sole client of the PostgreSQL-backed
 DuckLake catalog in production. Local/evaluation fixtures may use a local

@@ -10,7 +10,7 @@ import (
 func TestCleanupStackClosesEveryConstructionStageInReverseOnce(t *testing.T) {
 	stack := &cleanupStack{}
 	events := []string{}
-	for _, name := range []string{"sqlite", "analytics", "workload", "runtime-host"} {
+	for _, name := range []string{"control-plane", "analytics", "workload", "runtime-host"} {
 		name := name
 		stack.Push(name, func(context.Context) error {
 			events = append(events, name)
@@ -23,7 +23,7 @@ func TestCleanupStackClosesEveryConstructionStageInReverseOnce(t *testing.T) {
 	if err := stack.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"runtime-host", "workload", "analytics", "sqlite"}
+	want := []string{"runtime-host", "workload", "analytics", "control-plane"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("cleanup order = %v, want %v", events, want)
 	}
@@ -32,8 +32,8 @@ func TestCleanupStackClosesEveryConstructionStageInReverseOnce(t *testing.T) {
 func TestCleanupStackContinuesAfterCancellationAndErrors(t *testing.T) {
 	stack := &cleanupStack{}
 	events := []string{}
-	stack.Push("sqlite", func(ctx context.Context) error {
-		events = append(events, "sqlite")
+	stack.Push("control-plane", func(ctx context.Context) error {
+		events = append(events, "control-plane")
 		if !errors.Is(ctx.Err(), context.Canceled) {
 			t.Fatalf("cleanup context error = %v, want canceled", ctx.Err())
 		}
@@ -50,7 +50,7 @@ func TestCleanupStackContinuesAfterCancellationAndErrors(t *testing.T) {
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("cleanup error = %v, want %v", err, wantErr)
 	}
-	if want := []string{"analytics", "sqlite"}; !reflect.DeepEqual(events, want) {
+	if want := []string{"analytics", "control-plane"}; !reflect.DeepEqual(events, want) {
 		t.Fatalf("cleanup events = %v, want %v", events, want)
 	}
 }

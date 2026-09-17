@@ -112,9 +112,15 @@ WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)::uuid
   AND revoked_at IS NULL;
 
 -- name: RevokePrincipalAuthoringSessions :exec
-UPDATE access.authoring_session
-SET revoked_at = clock_timestamp()
-WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL;
+WITH revoked_sessions AS (
+    UPDATE access.authoring_session
+    SET revoked_at = clock_timestamp()
+    WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
+    RETURNING id
+)
+UPDATE access.authoring_credential
+SET active = false
+WHERE session_id IN (SELECT id FROM revoked_sessions) AND active;
 
 -- name: RevokeAuthoringSessionByAccessTokenHash :execresult
 UPDATE access.authoring_session

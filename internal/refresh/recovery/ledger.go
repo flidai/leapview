@@ -29,21 +29,13 @@ const (
 	StatusCanceled  = "canceled"
 	StatusExpired   = "expired"
 
-	EvidencePending   = "pending"
-	EvidenceClaimed   = "claimed"
-	EvidencePublished = "published"
-	EvidenceFailed    = "failed"
-	EvidenceNone      = "none"
+	EvidencePending = "pending"
+	EvidenceFailed  = "failed"
 
 	OperationBackup   = "backup"
 	OperationRestore  = "restore"
 	OperationUpgrade  = "upgrade"
 	OperationRollback = "rollback"
-
-	PhaseRestore   = "restore"
-	PhaseReadiness = "readiness"
-	PhaseStarted   = "started"
-	PhaseCompleted = "completed"
 
 	maxEvidenceReferences = 16
 	maxFailureReasonBytes = 512
@@ -265,10 +257,6 @@ type Result struct {
 
 func (result Result) Validate(completedAt time.Time) error {
 	return result.validate(completedAt, true)
-}
-
-func (result Result) ValidateFailure(completedAt time.Time) error {
-	return result.validate(completedAt, false)
 }
 
 func (result Result) validate(completedAt time.Time, requireRecoveryPoint bool) error {

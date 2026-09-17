@@ -5,15 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -297,13 +294,8 @@ func TestAPIGenServerBoundResourceRouteUsesActiveProject(t *testing.T) {
 }
 
 func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "principal_alice", Email: "alice@example.test", DisplayName: "Alice"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "alice@example.test", DisplayName: "Alice"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -981,12 +973,7 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 
 func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	authoringRepository := accesssqlite.NewRepository(store.SQLDB())
+	authoringRepository := testStore(t).repository
 	authoringAuth, err := access.NewAuthoringAuthService(authoringRepository, access.AuthoringAuthConfig{
 		InstanceID: "instance-prod", CanonicalOrigin: "https://example.test",
 		AccessTokenTTL: time.Hour, RefreshTokenTTL: 2 * time.Hour,

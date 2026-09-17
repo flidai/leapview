@@ -223,32 +223,6 @@ SELECT serving_state.release_expired_query_snapshot_leases(
     sqlc.arg(environment), sqlc.arg(batch_limit)
 );
 
--- name: LeasedSnapshots :many
-SELECT DISTINCT l.ducklake_snapshot_id
-FROM serving_state.reader_lease l
-JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
-JOIN delivery.delivery_target t ON t.target_id = g.target_id
-WHERE t.environment = $1 AND l.released_at IS NULL
-  AND l.expires_at > clock_timestamp()
-ORDER BY l.ducklake_snapshot_id;
-
--- name: ReferencedSnapshots :many
-SELECT DISTINCT s.ducklake_snapshot_id
-FROM delivery.delivery_generation g
-JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
-JOIN delivery.delivery_active_pointer ap ON ap.generation_id = g.generation_id
-JOIN delivery.delivery_target t ON t.target_id = g.target_id
-WHERE t.environment = $1 AND s.ducklake_snapshot_id > 0
-ORDER BY s.ducklake_snapshot_id;
-
--- name: ForeignSnapshots :many
-SELECT DISTINCT s.ducklake_snapshot_id
-FROM delivery.delivery_generation g
-JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
-JOIN delivery.delivery_target t ON t.target_id = g.target_id
-WHERE t.environment <> $1 AND s.ducklake_snapshot_id > 0
-ORDER BY s.ducklake_snapshot_id;
-
 -- name: ListAssets :many
 SELECT snapshot_id, logical_asset_id, asset_type, asset_key,
        parent_logical_asset_id, title, description, source_file,

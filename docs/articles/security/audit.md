@@ -66,8 +66,8 @@ leapview admin maintenance \
   --query-days 90
 ```
 
-Maintenance is a production PostgreSQL operation. Local and evaluation SQLite
-fixtures do not expose a second retention implementation.
+Maintenance is a PostgreSQL operation; there is no second control-plane
+retention implementation.
 
 Review the dry-run output, preservation requirements, and external archive before applying deletion. A value of zero disables pruning for that category; it does not automatically satisfy storage or compliance needs.
 

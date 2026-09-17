@@ -6,35 +6,27 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
-	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	"github.com/flidai/leapview/internal/agent/ui"
-	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestChatStopCancelsActiveRunAndPublishesSettledContinuationState(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-stop.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "stop@example.com", DisplayName: "Stop"})
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "stop@example.com", DisplayName: "Stop"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	startedModel := make(chan struct{})
-	service := agent.NewService(agentsqlite.NewRepositoryWithEvents(store.SQLDB(), jobsqlite.NewRepository(store.SQLDB())), agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(ctx context.Context, _ agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
+	service := agent.NewService(fixture.Agent, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(ctx context.Context, _ agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		if err := stream.Delta(ctx, "partial answer"); err != nil {
 			return agentcore.ModelResponse{}, err
 		}
@@ -132,17 +124,13 @@ func TestChatStopRejectsStaleRunIdentity(t *testing.T) {
 }
 
 func TestCancelChatRunCancelsQueuedJobBeforeLocalPlaceholder(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "chat-stop-queued.db"))
+	fixture := openAgentHTTPPostgresFixture(t, agentpostgres.Options{})
+	owner, err := fixture.Access.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-stop@example.com", DisplayName: "Queued Stop"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "queued-stop@example.com", DisplayName: "Queued Stop"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	queue := jobsqlite.NewRepository(store.SQLDB())
-	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	queue := fixture.Jobs
+	repo := fixture.Agent
 	service := agent.NewService(repo, agent.Config{APIKey: "test", Model: "test"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "unused", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
@@ -151,7 +139,8 @@ func TestCancelChatRunCancelsQueuedJobBeforeLocalPlaceholder(t *testing.T) {
 			Event: jobs.EventInput{Key: "agent_run.queued:" + runID, ResourceKind: "agent_run", ResourceID: runID, EventType: "agent_run.queued", Data: []byte(`{"runId":"` + runID + `"}`)},
 			Job: jobs.EnqueueInput{
 				ID: "agent:" + runID + ":run", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground,
-				PrincipalID: input.Scope.PrincipalID, ResourceKind: "agent_run", ResourceID: runID,
+				PrincipalID: input.Scope.PrincipalID, PartitionKey: "agent:" + input.Scope.ProjectID,
+				ResourceKind: "agent_run", ResourceID: runID,
 				EstimatedMemoryBytes: 1, Payload: []byte(`{"run":"` + runID + `"}`),
 			},
 		}

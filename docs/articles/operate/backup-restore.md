@@ -205,7 +205,6 @@ project/deployment pointers, authorization state, managed-data revisions,
 representative semantic queries, and dashboards. Preserve the failed state and
 all provider and LeapView recovery evidence until the incident is closed.
 
-For an empty or development SQLite fixture, use the fixture's own test harness;
-that path is not production recovery. The commands above are production-only
-and require the PostgreSQL maintenance configuration; they do not provide an
-offline restore or a local archive.
+Test fixtures use isolated PostgreSQL databases or in-memory fakes and are not
+recovery targets. The commands above require the PostgreSQL maintenance
+configuration; they do not provide an offline restore or a local archive.

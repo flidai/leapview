@@ -2,27 +2,32 @@ package module
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"path/filepath"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/agent"
-	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type moduleJobFixture struct {
-	store *platform.Store
-	repo  *agentsqlite.Repository
-	jobs  *jobsqlite.Repository
+	pool  *pgxpool.Pool
+	repo  *agentpostgres.Repository
+	jobs  *moduleJobStore
 	mod   *Module
 	owner access.Principal
 }
@@ -30,17 +35,20 @@ type moduleJobFixture struct {
 func newModuleJobFixture(t *testing.T) moduleJobFixture {
 	t.Helper()
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema, agentpostgres.ApplySchema)
+	accessRepository, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("agent-module-test-key", 2))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	owner, err := accesssqlite.NewRepository(store.SQLDB()).UpsertPrincipal(ctx, access.PrincipalInput{ID: "agent-jobs", Kind: access.PrincipalKindUser, Email: "jobs@example.com", DisplayName: "Jobs"})
+	owner, err := accessRepository.UpsertPrincipal(ctx, access.PrincipalInput{Kind: access.PrincipalKindUser, Email: "jobs@example.com", DisplayName: "Jobs"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	queue := jobsqlite.NewRepository(store.SQLDB())
-	repo := agentsqlite.NewRepositoryWithWorkflow(store.SQLDB(), queue, queue)
+	queue := newModuleJobStore()
+	repo, err := agentpostgres.NewWithOptions(pool, agentpostgres.Options{Workflow: queue, Jobs: queue})
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := agent.NewService(repo, agent.Config{APIKey: "key", Model: "fake"}, agent.WithModel(agentcore.ModelFunc(func(context.Context, agentcore.ModelRequest, agentcore.ModelStream) (agentcore.ModelResponse, error) {
 		return agentcore.ModelResponse{Content: "done", FinishReason: agentcore.FinishReasonStop}, nil
 	})))
@@ -48,7 +56,7 @@ func newModuleJobFixture(t *testing.T) moduleJobFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return moduleJobFixture{store: store, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobplatform.WorkloadClassBackground, runExecution: execution}, owner: owner}
+	return moduleJobFixture{pool: pool, repo: repo, jobs: queue, mod: &Module{service: service, runWorkloadClass: jobplatform.WorkloadClassBackground, runExecution: execution}, owner: owner}
 }
 
 func (f moduleJobFixture) scope() agent.Scope {
@@ -135,18 +143,13 @@ func TestJobHandlerResumeFailuresTerminalizeOnce(t *testing.T) {
 		transcript string
 		promptErr  bool
 	}{
-		{name: "malformed transcript", transcript: "{"},
 		{name: "no user prompt", transcript: `[{"role":"assistant","content":"orphan"}]`},
 		{name: "system prompt unavailable", transcript: `[{"role":"user","content":"hello"}]`, promptErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newModuleJobFixture(t)
 			conv, run := f.run(t, "run_resume_failure", agent.RunStatusRunning)
-			if tc.transcript == "{" {
-				if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE agent_conversations SET transcript_json = ? WHERE id = ?`, tc.transcript, conv.ID); err != nil {
-					t.Fatal(err)
-				}
-			} else if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, tc.transcript, conv.TranscriptRevision); err != nil {
+			if _, err := f.repo.UpdateConversationTranscript(context.Background(), f.owner.ID, conv.ID, tc.transcript, conv.TranscriptRevision); err != nil {
 				t.Fatal(err)
 			}
 			if tc.promptErr {
@@ -210,9 +213,7 @@ func TestJobHandlerCancellationLeavesClaimRecoverable(t *testing.T) {
 		t.Fatalf("run after cancellation = %#v err=%v, want running", current, err)
 	}
 	// Once the lease expires a new worker can reclaim and finish exactly once.
-	if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE api_async_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = ?`, job.ID); err != nil {
-		t.Fatal(err)
-	}
+	f.jobs.expire(job.ID)
 	reclaimed, ok, err := f.jobs.ClaimByID(context.Background(), job.ID, jobplatform.WorkloadClassBackground, "worker-b", 2*time.Second)
 	if err != nil || !ok {
 		t.Fatalf("reclaim = %#v ok=%v err=%v", reclaimed, ok, err)
@@ -229,27 +230,19 @@ func TestJobHandlerCancellationLeavesClaimRecoverable(t *testing.T) {
 	}
 }
 
-func TestJobHandlerInvalidPersistedStatusFailsSafely(t *testing.T) {
+func TestPostgresRejectsInvalidPersistedRunStatus(t *testing.T) {
 	f := newModuleJobFixture(t)
 	conv, run := f.run(t, "run_invalid_status", agent.RunStatusRunning)
-	if _, err := f.store.SQLDB().ExecContext(context.Background(), `UPDATE agent_runs SET status = 'unexpected' WHERE id = ?`, run.ID); err != nil {
-		t.Fatal(err)
-	}
-	job := f.claim(t, conv, run)
-	h := f.mod.JobHandlers(f.jobs)[0]
-	if err := h.Handle(context.Background(), job); err == nil {
-		t.Fatal("invalid status unexpectedly succeeded")
+	if _, err := f.pool.Exec(context.Background(), `UPDATE agent.runs SET status = 'unexpected' WHERE id = $1`, run.ID); err == nil {
+		t.Fatal("PostgreSQL accepted invalid persisted run status")
 	}
 	got, err := f.repo.GetRun(context.Background(), f.owner.ID, conv.ID, run.ID)
-	if err != nil || got.Status != "unexpected" {
-		t.Fatalf("run after invalid status = %#v err=%v", got, err)
+	if err != nil || got.Status != agent.RunStatusRunning {
+		t.Fatalf("run after rejected invalid status = %#v err=%v", got, err)
 	}
 	events, err := f.jobs.ListEvents(context.Background(), "agent_run", run.ID, 0, 20)
 	if err != nil || len(events) != 0 {
 		t.Fatalf("events after invalid status = %#v err=%v, want none", events, err)
-	}
-	if err := f.jobs.Fail(context.Background(), job.ID, job.Fence(), []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -335,4 +328,183 @@ func TestDashboardRunGeneratesConversationTitle(t *testing.T) {
 			}
 		})
 	}
+}
+
+type moduleJobStore struct {
+	mu        sync.Mutex
+	jobs      map[string]jobs.Job
+	events    []jobs.Event
+	eventKeys map[string]struct{}
+}
+
+func newModuleJobStore() *moduleJobStore {
+	return &moduleJobStore{jobs: make(map[string]jobs.Job), eventKeys: make(map[string]struct{})}
+}
+
+func (s *moduleJobStore) Enqueue(_ context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.enqueue(input)
+}
+
+func (s *moduleJobStore) enqueue(input jobs.EnqueueInput) (jobs.Job, error) {
+	if current, ok := s.jobs[input.ID]; ok {
+		return cloneModuleJob(current), nil
+	}
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(input.Payload))
+	job := jobs.Job{ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass, PrincipalID: input.PrincipalID, PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, RequestDigest: digest, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: append([]byte(nil), input.Payload...), Status: jobs.StatusQueued, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	s.jobs[job.ID] = job
+	return cloneModuleJob(job), nil
+}
+
+func (s *moduleJobStore) Get(_ context.Context, id string) (jobs.Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.get(id)
+}
+
+func (s *moduleJobStore) GetTx(_ context.Context, _ jobspostgres.Tx, id string) (jobs.Job, error) {
+	return s.Get(context.Background(), id)
+}
+
+func (s *moduleJobStore) get(id string) (jobs.Job, error) {
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	return cloneModuleJob(job), nil
+}
+
+func (s *moduleJobStore) Cancel(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cancel(id)
+}
+
+func (s *moduleJobStore) CancelTx(_ context.Context, _ jobspostgres.Tx, id string) error {
+	return s.Cancel(context.Background(), id)
+}
+
+func (s *moduleJobStore) cancel(id string) error {
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.ErrNotFound
+	}
+	job.Status, job.FinishedAt = jobs.StatusCancelled, time.Now().UTC().Format(time.RFC3339Nano)
+	s.jobs[id] = job
+	return nil
+}
+
+func (s *moduleJobStore) RecordWorkflow(_ context.Context, _ jobspostgres.Tx, intent jobs.WorkflowIntent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if intent.Event.Key != "" {
+		if _, exists := s.eventKeys[intent.Event.Key]; !exists {
+			s.eventKeys[intent.Event.Key] = struct{}{}
+			s.appendEvent(intent.Event.ResourceKind, intent.Event.ResourceID, intent.Event.EventType, intent.Event.Data)
+		}
+	}
+	if intent.Job.ID != "" {
+		_, err := s.enqueue(intent.Job)
+		return err
+	}
+	return nil
+}
+
+func (s *moduleJobStore) CancelClaimed(_ context.Context, id string, fence jobs.Fence) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.ErrNotFound
+	}
+	if job.Status != jobs.StatusRunning || job.Fence() != fence {
+		return jobs.ErrConflict
+	}
+	job.Status = jobs.StatusCancelled
+	job.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.jobs[id] = job
+	return nil
+}
+
+func (s *moduleJobStore) AppendEvent(_ context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.appendEvent(kind, id, event, data), nil
+}
+
+func (s *moduleJobStore) appendEvent(kind, id, event string, data []byte) jobs.Event {
+	row := jobs.Event{ID: int64(len(s.events) + 1), ResourceKind: kind, ResourceID: id, EventType: event, Data: append([]byte(nil), data...), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	s.events = append(s.events, row)
+	return row
+}
+
+func (s *moduleJobStore) ListEvents(_ context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]jobs.Event, 0, limit)
+	for _, row := range s.events {
+		if row.ResourceKind == kind && row.ResourceID == id && row.ID > after && len(out) < limit {
+			row.Data = append([]byte(nil), row.Data...)
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (s *moduleJobStore) ClaimByID(_ context.Context, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.Job{}, false, jobs.ErrNotFound
+	}
+	now := time.Now().UTC()
+	expires, _ := time.Parse(time.RFC3339Nano, job.LeaseExpiresAt)
+	if job.WorkloadClass != workloadClass || (job.Status == jobs.StatusRunning && expires.After(now)) || (job.Status != jobs.StatusQueued && job.Status != jobs.StatusRunning) {
+		return cloneModuleJob(job), false, nil
+	}
+	job.Status, job.LeaseOwner, job.LeaseGeneration = jobs.StatusRunning, owner, job.LeaseGeneration+1
+	job.LeaseExpiresAt, job.StartedAt = now.Add(lease).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)
+	job.Attempts++
+	s.jobs[id] = job
+	return cloneModuleJob(job), true, nil
+}
+
+func (s *moduleJobStore) Complete(_ context.Context, id string, fence jobs.Fence) error {
+	return s.finish(id, fence, jobs.StatusSucceeded, nil)
+}
+
+func (s *moduleJobStore) Fail(_ context.Context, id string, fence jobs.Fence, problem []byte) error {
+	return s.finish(id, fence, jobs.StatusFailed, problem)
+}
+
+func (s *moduleJobStore) finish(id string, fence jobs.Fence, status jobs.Status, problem []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job, ok := s.jobs[id]
+	if !ok {
+		return jobs.ErrNotFound
+	}
+	if job.Fence() != fence || job.Status != jobs.StatusRunning {
+		return jobs.ErrConflict
+	}
+	job.Status, job.FinishedAt, job.ErrorJSON = status, time.Now().UTC().Format(time.RFC3339Nano), string(problem)
+	s.jobs[id] = job
+	return nil
+}
+
+func (s *moduleJobStore) expire(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job := s.jobs[id]
+	job.LeaseExpiresAt = time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)
+	s.jobs[id] = job
+}
+
+func cloneModuleJob(job jobs.Job) jobs.Job {
+	job.GroupIDs = append([]string(nil), job.GroupIDs...)
+	job.Payload = append([]byte(nil), job.Payload...)
+	sort.Strings(job.GroupIDs)
+	return job
 }

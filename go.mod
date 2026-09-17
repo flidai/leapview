@@ -42,6 +42,7 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.67.5
 	github.com/riverqueue/river v0.47.0
+	github.com/riverqueue/river/riverdriver v0.47.0
 	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.47.0
 	github.com/riverqueue/river/rivertype v0.47.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -71,7 +72,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	maragu.dev/gomponents v1.3.0
 	maragu.dev/gomponents-datastar v0.3.3
-	modernc.org/sqlite v1.52.0
 )
 
 require (
@@ -150,7 +150,6 @@ require (
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
-	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mattn/goveralls v0.0.12 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
@@ -167,7 +166,6 @@ require (
 	github.com/moby/term v0.5.2 // indirect
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/openzipkin/zipkin-go v0.4.2 // indirect
 	github.com/ory/go-acc v0.2.9-0.20230103102148-6b1c9a70dbbe // indirect
@@ -179,8 +177,6 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20260217160748-a481f6a22f94 // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/riverqueue/river/riverdriver v0.47.0 // indirect
 	github.com/riverqueue/river/rivershared v0.47.0 // indirect
 	github.com/seatgeek/logrus-gelf-formatter v0.0.0-20210414080842-5b05eb8ff761 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
@@ -232,6 +228,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	modernc.org/libc v1.72.3 // indirect
-	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
 )

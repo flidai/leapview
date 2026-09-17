@@ -53,9 +53,8 @@ verify authorization, managed-data revisions, representative semantic queries,
 and dashboards. Preserve recovery evidence and the failed state until
 verification is complete.
 
-Development and evaluation fixtures may use embedded SQLite and a local DuckLake
-catalog, but those adapters are not a production fallback. Test fixture backup
-and restore belongs to the fixture harness, not this production runbook.
+Tests use isolated PostgreSQL databases or in-memory fakes. Their lifecycle
+belongs to the fixture harness, not this production runbook.
 
 ## FAI-520 historical managed-object retrieval qualification
 

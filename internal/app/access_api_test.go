@@ -11,8 +11,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 func TestAPITokenCapabilityAllowlistIsEnforced(t *testing.T) {
@@ -117,7 +115,7 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	if created.Principal.Email != "local-user@example.com" || created.TemporaryPassword == "" {
 		t.Fatalf("created response = %#v", created)
 	}
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	repo := store.fixture.Graph.Access
 	if _, credential, err := repo.VerifyLocalPassword(ctx, "local-user@example.com", created.TemporaryPassword); err != nil {
 		t.Fatalf("verify created temporary password: %v", err)
 	} else if !credential.MustChangePassword {
@@ -165,7 +163,7 @@ func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	for _, id := range []string{foreignToken.ID, "token_missing"} {
+	for _, id := range []string{foreignToken.ID, "00000000-0000-0000-0000-000000000000"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/api-tokens/"+id, nil)
 		req.Header.Set("Authorization", "Bearer "+authSecret)
 		req.Header.Set("Accept", "application/json")
@@ -291,7 +289,7 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 		Name:         "platform-admin",
 		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
 	})
-	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_api", DisplayName: "Secret API"})
+	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret API"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
@@ -342,7 +340,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 		Name:         "platform-admin",
 		Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
-	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_secret_cache", DisplayName: "Secret Cache"})
+	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret Cache"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
@@ -418,7 +416,7 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	for _, id := range []string{foreignSessions[0].ID, "session_missing"} {
+	for _, id := range []string{foreignSessions[0].ID, "00000000-0000-0000-0000-000000000000"} {
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/me/sessions/"+id, nil)
 		req.Header.Set("Authorization", "Bearer "+authSecret)
 		req.Header.Set("Accept", "application/json")
@@ -445,8 +443,11 @@ func TestCurrentSessionRevocationIsScopedToAuthenticatedPrincipal(t *testing.T) 
 	}
 }
 
-func testScopedAPIToken(t *testing.T, ctx context.Context, store *platform.Store, input access.APITokenInput) (string, access.APIToken) {
+func testScopedAPIToken(t *testing.T, ctx context.Context, store *testControlStore, input access.APITokenInput) (string, access.APIToken) {
 	t.Helper()
+	if input.ExpiresAt.IsZero() {
+		input.ExpiresAt = time.Now().Add(time.Hour)
+	}
 	secret, token, err := testAccessRepository(store).CreateAPITokenWithMetadata(ctx, input)
 	if err != nil {
 		t.Fatalf("create scoped api token: %v", err)

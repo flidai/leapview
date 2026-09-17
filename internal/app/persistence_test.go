@@ -14,18 +14,17 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	"github.com/flidai/leapview/internal/platform"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
 
-func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyConfig {
-	options.Database = store.SQLDB()
-	options.PlatformHealth = store
-	options.AgentSettings = store
+func testStoreOptions(store *testControlStore, options assemblyConfig) assemblyConfig {
+	options.PlatformHealth = store.fixture.RuntimePool
+	options.AgentSettings = store.fixture.Graph.Bootstrap
+	options.APIIdempotency = store.fixture.Graph.Idempotency
+	options.CursorSigning = store.fixture.Graph.CursorSigning
 	if options.AccessRepo == nil {
 		options.AccessRepo = testAccessRepository(store)
 	}
@@ -52,7 +51,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.AccessModule = module
 	}
 	if options.ServingStateRepo == nil {
-		options.ServingStateRepo = servingstatesqlite.NewRepository(store.SQLDB())
+		options.ServingStateRepo = store.states
 	}
 	if options.RuntimeHost == nil {
 		environment := servingstate.NormalizeEnvironment(servingstate.Environment(options.DefaultEnvironment))
@@ -129,7 +128,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 // testQueryAuditRepository keeps app-package tests independent of a concrete
 // persistence adapter. Production query-audit storage is PostgreSQL-owned;
 // this bounded in-memory implementation exercises the same reader/recorder
-// contract for SQLite-backed application fixtures.
+// contract for bounded in-memory application fixtures.
 type testQueryAuditRepository struct {
 	mu     sync.RWMutex
 	nextID uint64

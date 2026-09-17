@@ -16,12 +16,11 @@ import (
 )
 
 var (
-	ErrRunNotCancellable             = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
-	ErrTargetActive                  = apigenfailure.New("conflict", "refresh target already has an active run")
-	ErrInvocationConflict            = apigenfailure.New("conflict", "refresh invocation conflicts with an active invocation")
-	ErrAdmissionDeniedExternalActive = apigenfailure.New("admission_denied_external_active", "scheduled refresh admission denied while an external invocation is active")
-	ErrLeaseLost                     = errors.New("refresh job lease fence is no longer active")
-	ErrRunStale                      = errors.New("refresh run is stale")
+	ErrRunNotCancellable  = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
+	ErrTargetActive       = apigenfailure.New("conflict", "refresh target already has an active run")
+	ErrInvocationConflict = apigenfailure.New("conflict", "refresh invocation conflicts with an active invocation")
+	ErrLeaseLost          = errors.New("refresh job lease fence is no longer active")
+	ErrRunStale           = errors.New("refresh run is stale")
 )
 
 var validTargetTypes = map[string]struct{}{TargetModel: {}, TargetRefreshPipeline: {}}
@@ -29,18 +28,14 @@ var validTriggerTypes = map[string]struct{}{TriggerDependency: {}, TriggerManual
 var validJobKinds = map[string]struct{}{JobKindRefreshPipeline: {}, JobKindChildRun: {}}
 
 const (
-	RunStatusQueued     = "queued"
-	RunStatusRunning    = "running"
-	RunStatusPrepared   = "prepared"
-	RunStatusSucceeded  = "succeeded"
-	RunStatusFailed     = "failed"
-	RunStatusCancelled  = "cancelled"
-	RunStatusSuperseded = "superseded"
-	RunStatusSkipped    = "skipped"
-	// AdmissionDeniedExternalActive is a terminal occurrence outcome. It is
-	// intentionally not a runnable RunStatus: no job or run tree is created.
-	AdmissionDeniedExternalActive = "admission_denied_external_active"
-
+	RunStatusQueued       = "queued"
+	RunStatusRunning      = "running"
+	RunStatusPrepared     = "prepared"
+	RunStatusSucceeded    = "succeeded"
+	RunStatusFailed       = "failed"
+	RunStatusCancelled    = "cancelled"
+	RunStatusSuperseded   = "superseded"
+	RunStatusSkipped      = "skipped"
 	TargetModel           = "model"
 	TargetRefreshPipeline = "refresh_pipeline"
 

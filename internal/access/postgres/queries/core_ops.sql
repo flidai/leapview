@@ -68,7 +68,7 @@ WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 
 -- name: BlockPrincipal :execresult
 UPDATE access.principal
-SET status = 'disabled', blocked_at = COALESCE(blocked_at, clock_timestamp()),
+SET blocked_at = COALESCE(blocked_at, clock_timestamp()),
     updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id)::uuid AND revoked_at IS NULL;
 

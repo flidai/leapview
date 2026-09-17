@@ -11,8 +11,8 @@ import (
 )
 
 // PublishedCompilationReader is the minimal authoring capability needed by
-// the runtime resolver. Implementations may be backed by SQLite or another
-// repository; resolution does not depend on the repository implementation.
+// the runtime resolver. Resolution does not depend on the repository
+// implementation.
 type PublishedCompilationReader interface {
 	GetPublishedCompilation(context.Context, projectgraph.ResourceID, authoring.DashboardID) (authoring.CompiledRevision, error)
 }

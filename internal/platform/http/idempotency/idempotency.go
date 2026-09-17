@@ -1,7 +1,6 @@
 // Package idempotency defines the narrow HTTP idempotency capability used by
-// protocol handlers. Implementations may be backed by PostgreSQL, SQLite
-// fixtures, or an in-process test double; the protocol does not select a
-// database engine.
+// protocol handlers. Implementations may be backed by PostgreSQL or an
+// in-process test double; the protocol does not select a database engine.
 package idempotency
 
 import (
