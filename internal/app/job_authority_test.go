@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 type jobAuthorityTokenReader struct {
@@ -47,21 +48,34 @@ func testCallerAuthority(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelo
 	if err != nil {
 		t.Fatal(err)
 	}
+	contractPair, err := access.ToContractPermissionPair(pair)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return jobs.AuthorityEnvelope{
 		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
 		ActorPrincipalID: "principal-1", ExecutionPrincipalID: "principal-1",
 		Credential:  &jobs.CredentialEvidence{Class: jobs.CredentialClassAPIToken, ID: "token-1", Fingerprint: "fingerprint-1", ExpiresAt: expiresAt.UTC()},
 		Target:      jobs.AuthorityTarget{ProjectID: projectID.String(), Environment: "prod", ResourceKind: string(projectgraph.KindPipeline), ResourceID: pipelineID.String()},
-		Permissions: []access.PermissionPair{pair},
+		Permissions: []permissions.Pair{contractPair},
 	}
 }
 
-func testAuthorityToken(authority jobs.AuthorityEnvelope) access.APIToken {
+func testAuthorityToken(t *testing.T, authority jobs.AuthorityEnvelope) access.APIToken {
+	t.Helper()
+	pairs := make([]access.PermissionPair, len(authority.Permissions))
+	for index, pair := range authority.Permissions {
+		converted, err := access.FromContractPermissionPair(pair)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pairs[index] = converted
+	}
 	return access.APIToken{
 		ID: authority.Credential.ID, PrincipalID: authority.ActorPrincipalID,
 		TokenFingerprint:  authority.Credential.Fingerprint,
 		PermissionProfile: access.PermissionCatalogProfile,
-		Permissions:       authority.Permissions,
+		Permissions:       pairs,
 		ExpiresAt:         authority.Credential.ExpiresAt.Format(time.RFC3339Nano),
 	}
 }
@@ -80,7 +94,7 @@ func TestCallerAuthorityRevalidatorRejectsQueuedCredentialExpiry(t *testing.T) {
 
 func TestCallerAuthorityRevalidatorRejectsRevokedQueuedCredential(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(authority), err: access.ErrForbidden}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority), err: access.ErrForbidden}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
 		return true, nil
 	})
 	err := revalidator.Revalidate(t.Context(), authority)
@@ -91,13 +105,13 @@ func TestCallerAuthorityRevalidatorRejectsRevokedQueuedCredential(t *testing.T) 
 
 func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
-	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(authority)}, nil, func(_ context.Context, _ string, projectID projectgraph.ResourceID, _ string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(_ context.Context, _ string, projectID projectgraph.ResourceID, _ string, resource access.ResourceRef, capability access.Capability) (bool, error) {
 		return projectID.String() == authority.Target.ProjectID && resource.ID().String() == authority.Target.ResourceID && resource.Kind() == projectgraph.KindPipeline && capability == access.CapabilityResourceUse, nil
 	})
 	if err := revalidator.Revalidate(t.Context(), authority); err != nil {
 		t.Fatalf("exact resource revalidation error = %v", err)
 	}
-	denying := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(authority)}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+	denying := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
 		return false, nil
 	})
 	if err := denying.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {

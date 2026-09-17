@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 const AuthorityEnvelopeProfile = "leapview.jobs/authority/v1"
@@ -70,7 +70,7 @@ type AuthorityTarget struct {
 
 // AuthorityEnvelope is the immutable security context recorded with a
 // product job. Permissions preserve exact action/resource pairings from the
-// access catalog; callers must not replace them with independent lists.
+// permission contract; callers must not replace them with independent lists.
 type AuthorityEnvelope struct {
 	Profile              string                  `json:"profile"`
 	Mode                 AuthorityMode           `json:"mode"`
@@ -79,7 +79,7 @@ type AuthorityEnvelope struct {
 	Credential           *CredentialEvidence     `json:"credential,omitempty"`
 	ExecutionGrant       *ExecutionGrantEvidence `json:"executionGrant,omitempty"`
 	Target               AuthorityTarget         `json:"target"`
-	Permissions          []access.PermissionPair `json:"permissions"`
+	Permissions          []permissions.Pair      `json:"permissions"`
 }
 
 // IsZero reports the migration-sentinel form that carries no usable
@@ -103,7 +103,7 @@ func (a AuthorityEnvelope) Validate() error {
 	if err := a.Target.Validate(); err != nil {
 		return fmt.Errorf("%w: target: %v", ErrAuthorityInvalid, err)
 	}
-	if err := access.ValidatePermissionPairs(a.Permissions); err != nil {
+	if err := permissions.ValidatePairSetShape(a.Permissions); err != nil {
 		return fmt.Errorf("%w: permissions: %v", ErrAuthorityInvalid, err)
 	}
 	switch a.Mode {

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -186,7 +186,7 @@ func TestUnmigratedZeroAuthorityRetainsExistingContract(t *testing.T) {
 
 func moduleTestAuthority(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelope {
 	t.Helper()
-	pair, err := access.NewProjectPermissionPair(access.ActionDeliveryPublish, "project-a")
+	pair, err := permissions.NewProjectPair("leapview.permissions/v1", permissions.Action("delivery.publish"), "project-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func moduleTestAuthority(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelo
 		ActorPrincipalID: "principal-a", ExecutionPrincipalID: "principal-a",
 		Credential:  &jobs.CredentialEvidence{Class: jobs.CredentialClassAPIToken, ID: "token-a", Fingerprint: "fp-a", ExpiresAt: expiresAt},
 		Target:      jobs.AuthorityTarget{InstanceID: "instance-a", ProjectID: "project-a", Environment: "production", ResourceKind: "release", ResourceID: "release-a"},
-		Permissions: []access.PermissionPair{pair},
+		Permissions: []permissions.Pair{pair},
 	}
 }
 

@@ -49,6 +49,16 @@ administrative, or platform authority. Typed credentials now bound qualified
 dashboard/semantic reads, project-catalog discovery, and dashboard authoring
 operations; routes without a typed mapping fail closed.
 
+The reusable action/target mechanics now live in `pkg/permissions` behind an
+explicitly compiled, profile-pinned catalog. That package owns only opaque wire
+types, shape and catalog validation, prerequisite closure, matching,
+intersection, attenuation, and strict encoding. `internal/access` remains the
+single owner of LeapView action definitions, presentation/delegation metadata,
+project-graph identity, roles, grants, credentials, and live authorization; it
+adapts its product catalog into the pure mechanics package. Public authority
+envelopes carry `permissions.Pair` without exposing private access types and
+are rebound to the active product catalog before execution.
+
 This is not the durable grant/role migration. Principal grants and role
 bindings still use the legacy capability model, most generated APIs and the CLI
 authoring profile still use that compatibility vocabulary, and sharing,

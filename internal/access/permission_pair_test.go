@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 func TestPermissionPairsPreserveActionResourcePairing(t *testing.T) {
@@ -175,6 +176,36 @@ func TestPermissionPairEncodingIsStrictAndRoundTrips(t *testing.T) {
 	}
 	if _, err := DecodePermissionPairs([]byte("null")); !errors.Is(err, ErrTokenPermissionsNeeded) {
 		t.Fatalf("null permission pairs error = %v", err)
+	}
+}
+
+func TestPermissionContractAdapterRoundTripsAndRejectsRelabeling(t *testing.T) {
+	pair := mustExactPermissionPair(t, ActionDashboardRead, "project_a", "dashboard_a", projectgraph.KindDashboard)
+	contractPair, err := ToContractPermissionPair(pair)
+	if err != nil {
+		t.Fatalf("ToContractPermissionPair() error = %v", err)
+	}
+	roundTrip, err := FromContractPermissionPair(contractPair)
+	if err != nil || permissionPairKey(roundTrip) != permissionPairKey(pair) {
+		t.Fatalf("FromContractPermissionPair() = %#v, %v", roundTrip, err)
+	}
+
+	forged := contractPair
+	forged.Target.ResourceKind = permissions.Kind(projectgraph.KindPipeline)
+	if err := forged.ValidateShape(); err != nil {
+		t.Fatalf("generic contract rejected canonical opaque kind: %v", err)
+	}
+	if _, err := FromContractPermissionPair(forged); !errors.Is(err, ErrInvalidPermissionPair) {
+		t.Fatalf("product adapter relabeling error = %v, want ErrInvalidPermissionPair", err)
+	}
+
+	unknown := contractPair
+	unknown.Action = permissions.Action("vendor.read")
+	if err := unknown.ValidateShape(); err != nil {
+		t.Fatalf("generic contract rejected canonical opaque action: %v", err)
+	}
+	if _, err := FromContractPermissionPair(unknown); !errors.Is(err, ErrUnknownPermissionAction) {
+		t.Fatalf("product adapter unknown-action error = %v, want ErrUnknownPermissionAction", err)
 	}
 }
 

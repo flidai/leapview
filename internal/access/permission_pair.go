@@ -1,17 +1,15 @@
 package access
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/pkg/strictjson"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 var (
-	ErrInvalidPermissionPair            = errors.New("invalid permission action/resource pair")
+	ErrInvalidPermissionPair            = permissions.ErrInvalidPair
 	ErrTokenPermissionsNeeded           = errors.New("API token permissions are required")
 	ErrTokenPermissionAttenuationNeeded = errors.New("typed API token credential scope is required for permission issuance")
 	ErrTokenPermissionNotAllowed        = errors.New("requested API token permission exceeds credential authority")
@@ -98,55 +96,69 @@ func NewInstancePermissionPair(action Action, instanceID string) (PermissionPair
 }
 
 func (pair PermissionPair) Validate() error {
-	if pair.Profile != PermissionCatalogProfile {
-		return fmt.Errorf("%w: unsupported profile %q", ErrInvalidPermissionPair, pair.Profile)
-	}
-	definition, ok := Permission(pair.Action)
-	if !ok {
-		return fmt.Errorf("%w: %w %q", ErrInvalidPermissionPair, ErrUnknownPermissionAction, pair.Action)
-	}
-	target := pair.Target
-	switch target.Scope {
-	case PermissionScopeInstance:
-		if definition.Scope != PermissionScopeInstance || !validTargetIdentity(target.InstanceID) || target.ProjectID != "" || target.ResourceKind != "" || target.ResourceID != "" || target.IncludeFuture {
-			return fmt.Errorf("%w: action %q has invalid instance target", ErrInvalidPermissionPair, pair.Action)
-		}
-	case PermissionScopeResource:
-		if definition.Scope != PermissionScopeResource || target.InstanceID != "" || target.IncludeFuture || target.ProjectID.Validate() != nil || target.ResourceID.Validate() != nil || !kindAllowed(definition.ResourceKinds, target.ResourceKind) {
-			return fmt.Errorf("%w: action %q has invalid exact resource target", ErrInvalidPermissionPair, pair.Action)
-		}
-	case PermissionScopeProject:
-		if target.InstanceID != "" || target.ResourceID != "" || target.ProjectID.Validate() != nil {
-			return fmt.Errorf("%w: action %q has invalid Project target", ErrInvalidPermissionPair, pair.Action)
-		}
-		if definition.Scope == PermissionScopeProject {
-			if target.ResourceKind != "" || target.IncludeFuture {
-				return fmt.Errorf("%w: Project-scoped action %q cannot carry a resource wildcard", ErrInvalidPermissionPair, pair.Action)
-			}
-		} else if definition.Scope == PermissionScopeResource {
-			if !target.IncludeFuture || !kindAllowed(definition.ResourceKinds, target.ResourceKind) {
-				return fmt.Errorf("%w: resource action %q requires an explicit typed future-resource selector", ErrInvalidPermissionPair, pair.Action)
-			}
-		} else {
-			return fmt.Errorf("%w: instance action %q cannot target a Project", ErrInvalidPermissionPair, pair.Action)
-		}
-	default:
-		return fmt.Errorf("%w: action %q has target scope %q", ErrInvalidPermissionPair, pair.Action, target.Scope)
-	}
-	return nil
+	return permissionMechanicsCatalog.ValidatePair(contractPermissionPair(pair))
 }
 
-func validTargetIdentity(value string) bool {
-	return value != "" && value == strings.TrimSpace(value) && len(value) <= 255 && !strings.ContainsAny(value, "\x00\r\n\t")
+func contractPermissionPair(pair PermissionPair) permissions.Pair {
+	return permissions.Pair{
+		Action:  pair.Action,
+		Profile: pair.Profile,
+		Target: permissions.Target{
+			Scope:         pair.Target.Scope,
+			InstanceID:    pair.Target.InstanceID,
+			ProjectID:     pair.Target.ProjectID.String(),
+			ResourceKind:  permissions.Kind(pair.Target.ResourceKind),
+			ResourceID:    pair.Target.ResourceID.String(),
+			IncludeFuture: pair.Target.IncludeFuture,
+		},
+	}
 }
 
-func kindAllowed(kinds []projectgraph.Kind, candidate projectgraph.Kind) bool {
-	for _, kind := range kinds {
-		if kind == candidate {
-			return true
+func accessPermissionPair(pair permissions.Pair) PermissionPair {
+	return PermissionPair{
+		Action:  pair.Action,
+		Profile: pair.Profile,
+		Target: PermissionTarget{
+			Scope:         pair.Target.Scope,
+			InstanceID:    pair.Target.InstanceID,
+			ProjectID:     projectgraph.ResourceID(pair.Target.ProjectID),
+			ResourceKind:  projectgraph.Kind(pair.Target.ResourceKind),
+			ResourceID:    projectgraph.ResourceID(pair.Target.ResourceID),
+			IncludeFuture: pair.Target.IncludeFuture,
+		},
+	}
+}
+
+// ToContractPermissionPair converts the graph-bound access representation to
+// the public transport-neutral contract and revalidates product semantics.
+func ToContractPermissionPair(pair PermissionPair) (permissions.Pair, error) {
+	if err := pair.Validate(); err != nil {
+		return permissions.Pair{}, err
+	}
+	return contractPermissionPair(pair), nil
+}
+
+// FromContractPermissionPair converts a public pair into graph-bound product
+// types and rejects unknown actions, kinds, profiles, or malformed identities.
+func FromContractPermissionPair(pair permissions.Pair) (PermissionPair, error) {
+	if err := permissionMechanicsCatalog.ValidatePair(pair); err != nil {
+		return PermissionPair{}, err
+	}
+	converted := accessPermissionPair(pair)
+	if converted.Target.ProjectID != "" {
+		if err := converted.Target.ProjectID.Validate(); err != nil {
+			return PermissionPair{}, fmt.Errorf("%w: invalid project id: %v", ErrInvalidPermissionPair, err)
 		}
 	}
-	return false
+	if converted.Target.ResourceID != "" {
+		if err := converted.Target.ResourceID.Validate(); err != nil {
+			return PermissionPair{}, fmt.Errorf("%w: invalid resource id: %v", ErrInvalidPermissionPair, err)
+		}
+	}
+	if converted.Target.ResourceKind != "" && !converted.Target.ResourceKind.Valid() {
+		return PermissionPair{}, fmt.Errorf("%w: invalid resource kind %q", ErrInvalidPermissionPair, converted.Target.ResourceKind)
+	}
+	return converted, nil
 }
 
 // ValidatePermissionPairs validates structural integrity and rejects duplicate
@@ -156,79 +168,65 @@ func ValidatePermissionPairs(pairs []PermissionPair) error {
 	if pairs == nil {
 		return ErrTokenPermissionsNeeded
 	}
-	seen := make(map[string]struct{}, len(pairs))
+	converted := make(permissions.PairSet, len(pairs))
 	for index, pair := range pairs {
-		if err := pair.Validate(); err != nil {
-			return fmt.Errorf("permission %d: %w", index, err)
-		}
-		key := permissionPairKey(pair)
-		if _, duplicate := seen[key]; duplicate {
-			return fmt.Errorf("%w: duplicate permission %q", ErrInvalidPermissionPair, key)
-		}
-		seen[key] = struct{}{}
+		converted[index] = contractPermissionPair(pair)
 	}
-	return nil
+	return permissionMechanicsCatalog.ValidatePairs(converted)
 }
 
 func EncodePermissionPairs(pairs []PermissionPair) ([]byte, error) {
-	if err := ValidatePermissionPairs(pairs); err != nil {
-		return nil, err
+	if pairs == nil {
+		return nil, ErrTokenPermissionsNeeded
 	}
-	encoded, err := json.Marshal(pairs)
-	if err != nil {
-		return nil, fmt.Errorf("encode permission pairs: %w", err)
+	converted := make(permissions.PairSet, len(pairs))
+	for index, pair := range pairs {
+		converted[index] = contractPermissionPair(pair)
 	}
-	return encoded, nil
+	return permissionMechanicsCatalog.Encode(converted)
 }
 
 func DecodePermissionPairs(encoded []byte) ([]PermissionPair, error) {
-	var pairs []PermissionPair
-	if err := strictjson.Decode(encoded, &pairs); err != nil {
-		return nil, fmt.Errorf("decode permission pairs: %w", err)
-	}
-	if err := ValidatePermissionPairs(pairs); err != nil {
+	decoded, err := permissionMechanicsCatalog.Decode(encoded)
+	if err != nil {
+		if errors.Is(err, permissions.ErrPermissionPairsRequired) {
+			return nil, ErrTokenPermissionsNeeded
+		}
 		return nil, err
+	}
+	pairs := make([]PermissionPair, len(decoded))
+	for index, pair := range decoded {
+		pairs[index] = accessPermissionPair(pair)
 	}
 	return pairs, nil
 }
 
 func permissionPairKey(pair PermissionPair) string {
-	target := pair.Target
-	return strings.Join([]string{
-		pair.Profile, string(pair.Action), string(target.Scope), target.InstanceID,
-		target.ProjectID.String(), string(target.ResourceKind), target.ResourceID.String(), fmt.Sprintf("%t", target.IncludeFuture),
-	}, "\x00")
+	return contractPermissionPair(pair).Key()
 }
 
 // PermissionPairAllows reports whether one persisted credential pair permits
 // the requested exact action/target pair. Exact permissions never cross-expand.
 // A typed future-resource selector matches only its declared Project and kind.
 func PermissionPairAllows(granted, requested PermissionPair) bool {
-	if granted.Validate() != nil || requested.Validate() != nil || granted.Profile != requested.Profile || granted.Action != requested.Action {
-		return false
-	}
-	if granted.Target.Scope == PermissionScopeProject && granted.Target.IncludeFuture {
-		return requested.Target.Scope == PermissionScopeResource &&
-			granted.Target.ProjectID == requested.Target.ProjectID &&
-			granted.Target.ResourceKind == requested.Target.ResourceKind
-	}
-	return permissionPairKey(granted) == permissionPairKey(requested)
+	return permissionMechanicsCatalog.Allows(contractPermissionPair(granted), contractPermissionPair(requested))
 }
 
 // IntersectPermissionPairs applies a credential ceiling to effective
 // principal authority while preserving requested pair identity and order.
 func IntersectPermissionPairs(credential, effective []PermissionPair) []PermissionPair {
-	if credential == nil || len(effective) == 0 {
-		return []PermissionPair{}
+	credentialPairs := make(permissions.PairSet, len(credential))
+	for index, pair := range credential {
+		credentialPairs[index] = contractPermissionPair(pair)
 	}
-	result := make([]PermissionPair, 0, len(effective))
-	for _, candidate := range effective {
-		for _, ceiling := range credential {
-			if PermissionPairAllows(ceiling, candidate) {
-				result = append(result, candidate)
-				break
-			}
-		}
+	effectivePairs := make(permissions.PairSet, len(effective))
+	for index, pair := range effective {
+		effectivePairs[index] = contractPermissionPair(pair)
+	}
+	intersection := permissionMechanicsCatalog.Intersect(credentialPairs, effectivePairs)
+	result := make([]PermissionPair, len(intersection))
+	for index, pair := range intersection {
+		result[index] = accessPermissionPair(pair)
 	}
 	return result
 }
@@ -239,33 +237,13 @@ func IntersectPermissionPairs(credential, effective []PermissionPair) []Permissi
 // both principal and credential authority. Catalog validation guarantees the
 // prerequisite graph is acyclic.
 func RequiredPermissionPairs(requested PermissionPair) ([]PermissionPair, error) {
-	if err := requested.Validate(); err != nil {
+	required, err := permissionMechanicsCatalog.Required(contractPermissionPair(requested))
+	if err != nil {
 		return nil, err
 	}
-	result := make([]PermissionPair, 0, 2)
-	seen := make(map[Action]struct{})
-	var appendRequired func(PermissionPair) error
-	appendRequired = func(pair PermissionPair) error {
-		if _, exists := seen[pair.Action]; exists {
-			return nil
-		}
-		seen[pair.Action] = struct{}{}
-		result = append(result, pair)
-		definition, _ := Permission(pair.Action)
-		for _, action := range definition.Prerequisites {
-			prerequisite := pair
-			prerequisite.Action = action
-			if err := prerequisite.Validate(); err != nil {
-				return fmt.Errorf("%w: prerequisite %q cannot use target for %q: %v", ErrInvalidPermissionPair, action, pair.Action, err)
-			}
-			if err := appendRequired(prerequisite); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := appendRequired(requested); err != nil {
-		return nil, err
+	result := make([]PermissionPair, len(required))
+	for index, pair := range required {
+		result[index] = accessPermissionPair(pair)
 	}
 	return result, nil
 }
@@ -273,23 +251,11 @@ func RequiredPermissionPairs(requested PermissionPair) ([]PermissionPair, error)
 // PermissionSetAllows requires the principal or credential set to cover the
 // requested pair and every catalog prerequisite. It never inserts authority.
 func PermissionSetAllows(granted []PermissionPair, requested PermissionPair) bool {
-	required, err := RequiredPermissionPairs(requested)
-	if err != nil {
-		return false
+	converted := make(permissions.PairSet, len(granted))
+	for index, pair := range granted {
+		converted[index] = contractPermissionPair(pair)
 	}
-	for _, requirement := range required {
-		allowed := false
-		for _, permission := range granted {
-			if PermissionPairAllows(permission, requirement) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return false
-		}
-	}
-	return true
+	return permissionMechanicsCatalog.Contains(converted, permissions.PairSet{contractPermissionPair(requested)})
 }
 
 // ValidatePermissionPairsAgainstAuthority verifies that every requested pair

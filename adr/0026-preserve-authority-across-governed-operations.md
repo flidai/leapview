@@ -45,6 +45,12 @@ evidence, legacy token scopes, expiry, revocation, and changed permission
 ceilings fail closed. Existing job kinds retain a migration sentinel; only
 `refresh_pipeline` currently requires this envelope.
 
+The envelope is now a public contract over transport-neutral
+`pkg/permissions` pairs rather than private `internal/access` types. Its own
+validation proves generic wire shape; capture and dequeue boundaries convert
+through `internal/access` and reject pairs outside the active LeapView profile,
+action catalog, graph kinds, or exact resource identity.
+
 Delegated workload execution is represented in the envelope but intentionally
 unsupported by the native revalidator. There is no execution-grant repository,
 approved dependency/destination closure, scheduler authority, per-protected-unit

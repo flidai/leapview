@@ -34,6 +34,14 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 	if r.current == nil {
 		return jobs.ErrAuthorityRevalidator
 	}
+	permissionPairs := make([]access.PermissionPair, len(authority.Permissions))
+	for index, pair := range authority.Permissions {
+		converted, err := access.FromContractPermissionPair(pair)
+		if err != nil {
+			return fmt.Errorf("%w: permission %d is not in the active product catalog: %v", jobs.ErrAuthorityInvalid, index, err)
+		}
+		permissionPairs[index] = converted
+	}
 	now := time.Now().UTC()
 	switch authority.Credential.Class {
 	case jobs.CredentialClassSession:
@@ -70,7 +78,7 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 			if err := access.ValidatePermissionPairs(token.Permissions); err != nil {
 				return fmt.Errorf("%w: token permissions: %v", jobs.ErrAuthorityInvalid, err)
 			}
-			for _, pair := range authority.Permissions {
+			for _, pair := range permissionPairs {
 				if !access.PermissionSetAllows(token.Permissions, pair) {
 					return fmt.Errorf("%w: token permission ceiling changed", jobs.ErrAuthorityInvalid)
 				}
@@ -81,7 +89,7 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 	default:
 		return fmt.Errorf("%w: unsupported caller credential class", jobs.ErrAuthorityInvalid)
 	}
-	for _, pair := range authority.Permissions {
+	for _, pair := range permissionPairs {
 		if pair.Action != access.ActionPipelineRun {
 			return fmt.Errorf("%w: caller authority action is not supported by refresh revalidator", jobs.ErrAuthorityInvalid)
 		}

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -67,14 +67,14 @@ func TestRepositoryPersistsValidatedAuthorityEnvelope(t *testing.T) {
 	if got.Authority.Profile != jobs.AuthorityEnvelopeProfile || got.Authority.Mode != jobs.CallerAuthorityMode || got.Authority.Credential == nil || got.Authority.Credential.ID != "token-a" {
 		t.Fatalf("persisted authority = %#v", got.Authority)
 	}
-	if len(got.Authority.Permissions) != 1 || got.Authority.Permissions[0].Action != access.ActionDeliveryPublish {
+	if len(got.Authority.Permissions) != 1 || got.Authority.Permissions[0].Action != permissions.Action("delivery.publish") {
 		t.Fatalf("persisted authority permissions = %#v", got.Authority.Permissions)
 	}
 }
 
 func testAuthorityEnvelope(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelope {
 	t.Helper()
-	pair, err := access.NewProjectPermissionPair(access.ActionDeliveryPublish, "project-a")
+	pair, err := permissions.NewProjectPair("leapview.permissions/v1", permissions.Action("delivery.publish"), "project-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func testAuthorityEnvelope(t *testing.T, expiresAt time.Time) jobs.AuthorityEnve
 		ActorPrincipalID: "principal-a", ExecutionPrincipalID: "principal-a",
 		Credential:  &jobs.CredentialEvidence{Class: jobs.CredentialClassAPIToken, ID: "token-a", Fingerprint: "fp-a", ExpiresAt: expiresAt},
 		Target:      jobs.AuthorityTarget{InstanceID: "instance-a", ProjectID: "project-a", Environment: "production", ResourceKind: "release", ResourceID: "release-a"},
-		Permissions: []access.PermissionPair{pair},
+		Permissions: []permissions.Pair{pair},
 	}
 }
 

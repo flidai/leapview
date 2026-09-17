@@ -1,12 +1,12 @@
 package access
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 // PermissionCatalogProfile identifies the exact action meanings, prerequisite
@@ -16,15 +16,15 @@ import (
 const PermissionCatalogProfile = "leapview.permissions/v1"
 
 var (
-	ErrInvalidPermissionCatalog = errors.New("invalid permission catalog")
-	ErrUnknownPermissionAction  = errors.New("unknown permission action")
+	ErrInvalidPermissionCatalog = permissions.ErrInvalidCatalog
+	ErrUnknownPermissionAction  = permissions.ErrUnknownAction
 )
 
 // Action is one typed operation in the resource authorization contract. It is
 // deliberately separate from Capability, which remains the bounded legacy
 // migration vocabulary until persisted grants and credentials have moved to
 // action/resource pairs.
-type Action string
+type Action = permissions.Action
 
 const (
 	ActionDashboardRead    Action = "dashboard.read"
@@ -87,7 +87,7 @@ const (
 	ActionPlatformAuditRead      Action = "platform.audit.read"
 )
 
-type PermissionScope string
+type PermissionScope = permissions.Scope
 
 const (
 	PermissionScopeInstance PermissionScope = "instance"
@@ -181,6 +181,38 @@ var permissionCatalog = []PermissionDefinition{
 	instancePermission(ActionPlatformAccessRead, "Platform administration", "Inspect instance access assignments."),
 	instancePermission(ActionPlatformAccessManage, "Platform administration", "Manage instance access assignments."),
 	instancePermission(ActionPlatformAuditRead, "Platform administration", "Read authorized instance audit evidence."),
+}
+
+var permissionMechanicsCatalog = mustCompilePermissionMechanicsCatalog(permissionCatalog)
+
+func mustCompilePermissionMechanicsCatalog(definitions []PermissionDefinition) *permissions.CompiledCatalog {
+	compiled, err := permissions.CompileCatalog(PermissionCatalogProfile, permissionMechanicsDefinitions(definitions))
+	if err != nil {
+		panic(fmt.Sprintf("compile permission mechanics catalog: %v", err))
+	}
+	return compiled
+}
+
+func permissionMechanicsDefinitions(definitions []PermissionDefinition) []permissions.Definition {
+	result := make([]permissions.Definition, len(definitions))
+	for index, definition := range definitions {
+		result[index] = permissions.Definition{
+			Action:        definition.Action,
+			Scope:         definition.Scope,
+			ResourceKinds: permissionMechanicsKinds(definition.ResourceKinds),
+			CheckKinds:    permissionMechanicsKinds(definition.CheckKinds),
+			Prerequisites: append([]permissions.Action(nil), definition.Prerequisites...),
+		}
+	}
+	return result
+}
+
+func permissionMechanicsKinds(kinds []projectgraph.Kind) []permissions.Kind {
+	result := make([]permissions.Kind, len(kinds))
+	for index, kind := range kinds {
+		result[index] = permissions.Kind(kind)
+	}
+	return result
 }
 
 func resourcePermission(action Action, family, description string, kind projectgraph.Kind, delegable bool) PermissionDefinition {
@@ -322,7 +354,7 @@ func ValidatePermissionCatalog(definitions []PermissionDefinition) error {
 	if cycle := permissionCycle(byAction); len(cycle) > 0 {
 		return fmt.Errorf("%w: prerequisite cycle %s", ErrInvalidPermissionCatalog, strings.Join(cycle, " -> "))
 	}
-	return nil
+	return permissions.ValidateCatalog(permissionMechanicsDefinitions(definitions))
 }
 
 func validActionName(action Action) bool {

@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 // captureAuthority binds a native refresh invocation to the credential that
@@ -72,12 +73,16 @@ func (m *Module) captureAuthority(ctx context.Context, identity projectgraph.Ser
 			return jobs.AuthorityEnvelope{}, access.ErrForbidden
 		}
 	}
+	contractPair, err := access.ToContractPermissionPair(pair)
+	if err != nil {
+		return jobs.AuthorityEnvelope{}, err
+	}
 	authority := jobs.AuthorityEnvelope{
 		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
 		ActorPrincipalID: principalID, ExecutionPrincipalID: principalID,
 		Credential:  &jobs.CredentialEvidence{Class: class, ID: credentialID, Fingerprint: credentialFingerprint, ExpiresAt: expiresAt.UTC()},
 		Target:      jobs.AuthorityTarget{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, ResourceKind: string(projectgraph.KindPipeline), ResourceID: pipelineID.String()},
-		Permissions: []access.PermissionPair{pair},
+		Permissions: []permissions.Pair{contractPair},
 	}
 	if err := authority.Validate(); err != nil {
 		return jobs.AuthorityEnvelope{}, fmt.Errorf("capture refresh authority: %w", err)

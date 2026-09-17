@@ -5,16 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 func TestAuthorityEnvelopeValidatesCallerEvidenceAndExactPermission(t *testing.T) {
-	resource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, "project_a", resource)
+	pair, err := permissions.NewExactPair("leapview.permissions/v1", permissions.Action("dashboard.read"), "project_a", permissions.Kind("dashboard"), "dashboard_a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +20,7 @@ func TestAuthorityEnvelopeValidatesCallerEvidenceAndExactPermission(t *testing.T
 		ExecutionPrincipalID: "principal_a",
 		Credential:           &CredentialEvidence{Class: CredentialClassAPIToken, ID: "token_a", Fingerprint: "fingerprint_a", ExpiresAt: time.Now().Add(time.Hour)},
 		Target:               AuthorityTarget{InstanceID: "instance_a", ProjectID: "project_a", Environment: "production", ResourceKind: "dashboard", ResourceID: "dashboard_a"},
-		Permissions:          []access.PermissionPair{pair},
+		Permissions:          []permissions.Pair{pair},
 	}
 	encoded, err := MarshalAuthority(authority)
 	if err != nil {
@@ -48,11 +43,7 @@ func TestAuthorityEnvelopeValidatesCallerEvidenceAndExactPermission(t *testing.T
 }
 
 func TestAuthorityEnvelopeRejectsMissingCallerEvidenceAndAllowsDelegatedShape(t *testing.T) {
-	resource, err := access.NewResourceRef("pipeline_a", projectgraph.KindPipeline)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair, err := access.NewExactPermissionPair(access.ActionPipelineRun, "project_a", resource)
+	pair, err := permissions.NewExactPair("leapview.permissions/v1", permissions.Action("pipeline.run"), "project_a", permissions.Kind("pipeline"), "pipeline_a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +51,7 @@ func TestAuthorityEnvelopeRejectsMissingCallerEvidenceAndAllowsDelegatedShape(t 
 		Profile: AuthorityEnvelopeProfile, Mode: CallerAuthorityMode,
 		ActorPrincipalID: "principal_a", ExecutionPrincipalID: "principal_a",
 		Target:      AuthorityTarget{ProjectID: "project_a", ResourceKind: "pipeline", ResourceID: "pipeline_a"},
-		Permissions: []access.PermissionPair{pair},
+		Permissions: []permissions.Pair{pair},
 	}
 	if err := caller.Validate(); !errors.Is(err, ErrAuthorityInvalid) {
 		t.Fatalf("missing caller evidence error = %v", err)
