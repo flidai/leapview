@@ -154,6 +154,10 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 	if strings.TrimSpace(input.Name) == "" {
 		return "", access.APIToken{}, fmt.Errorf("token name is required")
 	}
+	description := strings.TrimSpace(input.Description)
+	if len(description) > 1024 {
+		return "", access.APIToken{}, fmt.Errorf("token description must not exceed 1024 bytes")
+	}
 	capabilitiesJSON, err := marshalTokenCapabilities(input.Capabilities)
 	if err != nil {
 		return "", access.APIToken{}, err
@@ -185,6 +189,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 		ID:               id,
 		PrincipalID:      input.PrincipalID,
 		Name:             input.Name,
+		Description:      description,
 		TokenFingerprint: fingerprint,
 		TokenVerifier:    verifier,
 		CapabilitiesJson: capabilitiesJSON,
@@ -201,7 +206,7 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, input acces
 			return token, mapAPIToken(row), nil
 		}
 	}
-	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, Capabilities: cloneTokenCapabilities(input.Capabilities), ExpiresAt: nullString(expiresAt)}, nil
+	return token, access.APIToken{ID: id, PrincipalID: input.PrincipalID, Name: input.Name, Description: description, Capabilities: cloneTokenCapabilities(input.Capabilities), ExpiresAt: nullString(expiresAt)}, nil
 }
 
 func cloneTokenCapabilities(capabilities []access.Capability) []access.Capability {

@@ -84,6 +84,12 @@ func (h Handler) APITokens(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	h.renderPage(w, r, "api-tokens")
 }
+func (h Handler) NewAPIToken(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if h.rejectAuthoringCredential(w, r) {
+		return
+	}
+	h.renderPage(w, r, "api-token-new")
+}
 func (h Handler) General(w nethttp.ResponseWriter, r *nethttp.Request) { h.renderPage(w, r, "general") }
 func (h Handler) ServiceAccounts(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.renderPage(w, r, "service-accounts")
@@ -411,7 +417,7 @@ func (h Handler) BootstrapUpdates(w nethttp.ResponseWriter, r *nethttp.Request) 
 	if active == "" {
 		active = "profile"
 	}
-	if (active == "profile" || active == "security" || active == "api-tokens") && h.rejectAuthoringCredential(w, r) {
+	if (active == "profile" || active == "security" || active == "api-tokens" || active == "api-token-new") && h.rejectAuthoringCredential(w, r) {
 		return
 	}
 	var listState entityListSignals
@@ -480,7 +486,7 @@ func (h Handler) rejectAuthoringCredential(w nethttp.ResponseWriter, r *nethttp.
 
 func (h Handler) addSettingsSignals(r *nethttp.Request, active string, signals map[string]any) error {
 	switch active {
-	case "profile", "security", "api-tokens":
+	case "profile", "security", "api-tokens", "api-token-new":
 		if h.PersonalSettings == nil {
 			return nil
 		}
@@ -582,7 +588,7 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 		return h.readModel().StorageData(r), nil
 	case "storage-detail":
 		return h.readModel().StorageTableData(r, r.URL.Query().Get("schema"), r.URL.Query().Get("table"))
-	case "profile", "security", "api-tokens", "general", "service-accounts", "authentication", "audit", "system":
+	case "profile", "security", "api-tokens", "api-token-new", "general", "service-accounts", "authentication", "audit", "system":
 		return h.readModel().SettingsData(r)
 	}
 	data, err := h.adminData(r)

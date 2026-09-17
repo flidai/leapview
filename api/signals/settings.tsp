@@ -172,7 +172,7 @@ model AuditLogSignal {
   `error`?: string;
 }
 
-model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `action`: string; `resourceKind`: string; `resourceId`: string; `capability`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
+model AuditEventSignal { `id`: string; `projectId`?: string; `principalId`?: string; `principalName`?: string; `principalEmail`?: string; `action`: string; `resourceKind`: string; `resourceId`: string; `capability`?: string; `status`?: string; `requestId`?: string; `correlationId`?: string; `metadata`?: Record<unknown>; `createdAt`: string; }
 model AuditLogFilters { `projectId`?: string; `principalId`?: string; `action`?: string; `resourceKind`?: string; `resourceId`?: string; `from`?: string; `to`?: string; }
 
 @apigen.contract(#{ kind: "ui-command", tags: #["admin", "settings", "command"] })

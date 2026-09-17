@@ -69,18 +69,25 @@ type AuditLogSignal struct {
 }
 
 type AuditEventSignal struct {
-	ID            string         `json:"id"`
-	ProjectID     string         `json:"projectId,omitempty"`
-	PrincipalID   string         `json:"principalId,omitempty"`
-	Action        string         `json:"action"`
-	ResourceKind  string         `json:"resourceKind"`
-	ResourceID    string         `json:"resourceId"`
-	Capability    string         `json:"capability,omitempty"`
-	Status        string         `json:"status,omitempty"`
-	RequestID     string         `json:"requestId,omitempty"`
-	CorrelationID string         `json:"correlationId,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     string         `json:"createdAt"`
+	ID             string         `json:"id"`
+	ProjectID      string         `json:"projectId,omitempty"`
+	PrincipalID    string         `json:"principalId,omitempty"`
+	PrincipalName  string         `json:"principalName,omitempty"`
+	PrincipalEmail string         `json:"principalEmail,omitempty"`
+	Action         string         `json:"action"`
+	ResourceKind   string         `json:"resourceKind"`
+	ResourceID     string         `json:"resourceId"`
+	Capability     string         `json:"capability,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	RequestID      string         `json:"requestId,omitempty"`
+	CorrelationID  string         `json:"correlationId,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedAt      string         `json:"createdAt"`
+}
+
+type AuditLogReader interface {
+	ListAuditEvents(context.Context, access.AuditEventFilter) ([]access.AuditEvent, error)
+	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
 }
 
 type AuditLogFilters struct {
@@ -164,7 +171,7 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 	if strings.TrimSpace(event.MetadataJSON) != "" {
 		_ = json.Unmarshal([]byte(event.MetadataJSON), &metadata)
 	}
-	return AuditEventSignal{ID: event.ID, PrincipalID: event.PrincipalID,
+	return AuditEventSignal{ID: event.ID, ProjectID: event.ProjectID, PrincipalID: event.PrincipalID,
 		Action: event.Action, ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, Capability: string(event.Capability),
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
 }
@@ -172,7 +179,7 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 // LoadAuditLog reads the canonical access audit stream. ProjectID is retained
 // in the UI filter contract for future graph-scoped events; current identity
 // audit records are globally keyed by resource kind/id.
-func LoadAuditLog(ctx context.Context, repository access.Repository, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
+func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
 	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
 	if repository == nil {
 		return state, nil
@@ -192,8 +199,19 @@ func LoadAuditLog(ctx context.Context, repository access.Repository, filters Aud
 		last := rows[len(rows)-1]
 		state.NextCursor = AuditPageToken(last.CreatedAt, last.ID)
 	}
+	principalLabels := map[string]access.Principal{}
+	if principals, principalErr := repository.ListPrincipals(ctx, access.PrincipalFilter{}); principalErr == nil {
+		for _, principal := range principals {
+			principalLabels[principal.ID] = principal
+		}
+	}
 	for _, row := range rows {
-		state.Items = append(state.Items, AuditEventSignalFromDomain(row))
+		event := AuditEventSignalFromDomain(row)
+		if principal, ok := principalLabels[row.PrincipalID]; ok {
+			event.PrincipalName = principal.DisplayName
+			event.PrincipalEmail = principal.Email
+		}
+		state.Items = append(state.Items, event)
 	}
 	state.LoadedCount = len(state.Items)
 	return state, nil

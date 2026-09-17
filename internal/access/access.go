@@ -420,6 +420,7 @@ type SCIMGroupFilter struct {
 type APITokenInput struct {
 	PrincipalID  string
 	Name         string
+	Description  string
 	Capabilities []Capability
 	ExpiresAt    time.Time
 }
@@ -430,6 +431,7 @@ type APIToken struct {
 	ID           string
 	PrincipalID  string
 	Name         string
+	Description  string
 	Capabilities []Capability
 	ExpiresAt    string
 	CreatedAt    string

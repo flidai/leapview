@@ -1001,6 +1001,7 @@ func TestRepositoryListsAndRevokesAPITokens(t *testing.T) {
 	secret, created, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
 		PrincipalID: principal.ID,
 		Name:        "production",
+		Description: "Production reporting automation",
 		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
@@ -1017,7 +1018,7 @@ func TestRepositoryListsAndRevokesAPITokens(t *testing.T) {
 		t.Fatalf("tokens len = %d, want 1", len(tokens))
 	}
 	token := tokens[0]
-	if token.ExpiresAt == "" || token.RevokedAt != "" {
+	if token.ExpiresAt == "" || token.RevokedAt != "" || token.Description != "Production reporting automation" {
 		t.Fatalf("token metadata = expires %q revoked %q", token.ExpiresAt, token.RevokedAt)
 	}
 	if _, err := repo.PrincipalForAPIToken(ctx, secret); err != nil {

@@ -22,6 +22,7 @@ import {
   FilePenLine,
   FileText,
   LayoutDashboard,
+  KeyRound,
   LockKeyhole,
   EllipsisVertical,
   Plus,
@@ -309,22 +310,6 @@ const entityListStyles = `
     font: var(--lv-type-caption);
   }
 
-  .entity-list-table thead th:first-child,
-  .entity-list-table-row > th:first-child {
-    position: sticky;
-    left: 0;
-    background: var(--lv-bg-page);
-  }
-
-  .entity-list-table thead th:first-child {
-    z-index: 2;
-  }
-
-  .entity-list-table-row > th:first-child {
-    z-index: 1;
-    transition: background-color var(--motion-transition-stateChange);
-  }
-
   .entity-list-sort-button {
     display: inline-flex;
     max-width: 100%;
@@ -457,11 +442,6 @@ const entityListStyles = `
 
   .entity-list-table-row:hover,
   .entity-list-table-row:focus-within {
-    background: var(--lv-bg-control-hover);
-  }
-
-  .entity-list-table-row:hover > th:first-child,
-  .entity-list-table-row:focus-within > th:first-child {
     background: var(--lv-bg-control-hover);
   }
 
@@ -1425,6 +1405,7 @@ function entityIcon(type = ''): IconNode {
     case 'group': return UsersRound
     case 'user': return UserRound
     case 'application': return Bot
+    case 'key': return KeyRound
     case 'connection': return Plug
     case 'source': return Cable
     case 'catalog': return BookOpen
@@ -1456,6 +1437,7 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'success':
     case 'healthy':
     case 'published':
+    case 'active':
       return { icon: CheckCircle2, tone: 'success' }
     case 'private draft':
     case 'draft':
@@ -1466,6 +1448,9 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'failed':
     case 'cancelled':
     case 'error':
+    case 'disabled':
+    case 'revoked':
+    case 'expired':
       return { icon: XCircle, tone: 'danger' }
     case 'queued':
     case 'running':

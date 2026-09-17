@@ -32,7 +32,7 @@ beforeAll(async () => {
       response.end(testDocument())
       return
     }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') || url.pathname === '/static/command.js' ? projectRoot : root
+    const fileRoot = url.pathname.startsWith('/static/vendor/') || url.pathname.startsWith('/static/chunks/') || url.pathname === '/static/command.js' ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
       response.writeHead(404)
@@ -91,12 +91,23 @@ test('product settings renders redacted sections and emits typed identity comman
       mergePatch({ productSettings: { active: 'authentication' } })
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await element.updateComplete
+      const shadowRoot = element.shadowRoot as ShadowRoot
+      const authHeadings = Array.from(shadowRoot.querySelectorAll<HTMLHeadingElement>('h2')).map((heading) => heading.textContent?.trim())
+      const authStatusTones = Array.from(shadowRoot.querySelectorAll<HTMLElement>('.status')).map((status) => status.getAttribute('data-status'))
+      const authText = element.shadowRoot.textContent.replace(/\s+/g, ' ').trim()
+      mergePatch({ productSettings: { active: 'system' } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await element.updateComplete
       return {
         generalText,
         inputValue: input.value,
         inputLabel: input.getAttribute('aria-label'),
         logoLabel,
-        authText: element.shadowRoot.textContent.replace(/\s+/g, ' ').trim(),
+        authText,
+        authHeadings,
+        authStatusTones,
+        systemHeadings: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLHeadingElement>('h2')).map((heading) => heading.textContent?.trim()),
+        systemPanelLabels: Array.from((element.shadowRoot as ShadowRoot).querySelectorAll<HTMLElement>('section')).map((section) => section.getAttribute('aria-label')),
         saveCommand,
         resetCommand,
         fieldLabelFontSize,
@@ -109,7 +120,13 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.logoLabel).toBe('Change logo')
     expect(state.generalText).toContain('Instance ID')
     expect(state.authText).toContain('Managed by deployment')
-    expect(state.authText).toContain('API and protocol availability')
+    expect(state.authText).toContain('Sign-in & provisioning')
+    expect(state.authText).toContain('API & protocols')
+    expect(state.authHeadings).toEqual(['Sign-in & provisioning', 'API & protocols'])
+    expect(state.authStatusTones).toContain('positive')
+    expect(state.authStatusTones).toContain('neutral')
+    expect(state.systemHeadings).toEqual(['Runtime health', 'Build', 'Limits', 'About LeapView'])
+    expect(state.systemPanelLabels).toEqual(['Runtime health settings', 'Build settings', 'Limits settings', 'About LeapView'])
     expect(state.saveCommand).toEqual({ action: 'save_display_name', displayName: 'Acme BI', revision: 7 })
     expect(state.resetCommand).toEqual({ action: 'reset_identity', revision: 7 })
     expect(state.fieldLabelFontSize).toBe('14px')
@@ -126,6 +143,7 @@ test('logo upload preserves product ETag and CSRF token', async () => {
     })
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-product-settings'))
+    await page.waitForFunction(() => window.LeapViewCommand)
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ productSettings: {
@@ -150,5 +168,5 @@ test('logo upload preserves product ETag and CSRF token', async () => {
 })
 
 function testDocument(): string {
-  return `<!doctype html><html><head><meta name="csrf-token" content="test-csrf"><style>body { ${typographyTestTokens} }</style></head><body><lv-product-settings></lv-product-settings><script src="/static/command.js"></script><script type="module" src="/product-settings-under-test.js"></script></body></html>`
+  return `<!doctype html><html><head><meta name="csrf-token" content="test-csrf"><style>body { ${typographyTestTokens} }</style></head><body><lv-product-settings></lv-product-settings><script type="module" src="/static/command.js"></script><script type="module" src="/product-settings-under-test.js"></script></body></html>`
 }
