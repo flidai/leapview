@@ -69,7 +69,11 @@ type DeliveryPlanRequest struct {
 	Provenance              DeliveryProvenance
 	Governance              DeliveryGovernance
 	Evidence                DeliveryPlanEvidence
-	PipelinePlan            *PipelinePlan
-	CreatedAt               time.Time
-	Persist                 bool
+	// Authorization is the exact compound authority projection evaluated for
+	// this plan. It is persisted with the immutable rich plan so later delivery
+	// transitions can validate the same bound action/resource/evidence pairs.
+	Authorization *DeliveryAuthorizationExecution
+	PipelinePlan  *PipelinePlan
+	CreatedAt     time.Time
+	Persist       bool
 }

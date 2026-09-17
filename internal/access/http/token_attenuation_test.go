@@ -45,6 +45,22 @@ func TestCreateCurrentAPITokenTypedCredentialCannotCrossPairAuthority(t *testing
 	}
 }
 
+func TestCreateCurrentAPITokenTypedCredentialCanRetainExactPermission(t *testing.T) {
+	readA := mustTokenResourcePair(t, access.ActionDashboardRead, "dashboard_a")
+	repository := &tokenAttenuationRepository{}
+	handler := tokenAttenuationHandler(repository, access.APIToken{
+		ID: "parent", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{readA},
+	})
+
+	response := createTypedTokenRequest(t, handler, []access.PermissionPair{readA})
+	if response.Code != stdhttp.StatusCreated {
+		t.Fatalf("exact attenuation issuance status = %d body = %s, want %d", response.Code, response.Body.String(), stdhttp.StatusCreated)
+	}
+	if !repository.created {
+		t.Fatal("exactly attenuated token was not persisted")
+	}
+}
+
 func TestCreateCurrentAPITokenTypedCredentialCannotWidenToFutureResources(t *testing.T) {
 	exact := mustTokenResourcePair(t, access.ActionDashboardRead, "dashboard_a")
 	future, err := access.NewFutureProjectPermissionPair(access.ActionDashboardRead, "project_1", projectgraph.KindDashboard)

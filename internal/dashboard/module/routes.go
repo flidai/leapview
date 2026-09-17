@@ -123,7 +123,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilder))
 	r.Post("/dashboards/{dashboard}/archive", protectAuthoringAction(access.CapabilityResourceManage, access.ActionDashboardDelete, h.DashboardArchive))
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilderPreview))
-	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoringAction(access.CapabilityResourceEdit, access.ActionDashboardUpdate, h.DashboardBuilderExportYAML))
+	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoringAction(access.CapabilityResourceRead, access.ActionDashboardRead, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoringCommand(h.DashboardBuilderCommand))
 	// Builder filter state is a read-side exact-draft preview capability. It
 	// shares authoring authorization but has dedicated endpoints and never

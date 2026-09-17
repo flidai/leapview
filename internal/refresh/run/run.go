@@ -4,6 +4,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
@@ -107,8 +108,8 @@ type RunInput struct {
 	PayloadJSON          string
 	// Authority is captured by the authenticated producer and carried through
 	// native refresh admission into the canonical product job.
-	Authority            jobs.AuthorityEnvelope
-	AuditIntent          *access.AuditIntent
+	Authority   jobs.AuthorityEnvelope
+	AuditIntent *access.AuditIntent
 }
 
 type JobRecord struct {
@@ -134,6 +135,10 @@ type JobRecord struct {
 	AttemptCount         int
 	LeaseOwner           string
 	LeaseRevision        int64
+	// Authority is the immutable queue envelope captured with the root run.
+	// Refresh execution revalidates it again at each protected unit/output
+	// boundary, not only at platform dequeue.
+	Authority jobs.AuthorityEnvelope
 }
 
 type JobQueueStats struct {
@@ -381,6 +386,11 @@ func (job JobRecord) Validate() error {
 	}
 	if job.TargetType == TargetRefreshPipeline && job.PipelineID != job.TargetID {
 		return errors.New("refresh pipeline target must equal pipeline id")
+	}
+	if !job.Authority.IsZero() {
+		if err := validatePipelineAuthorityTarget(job.Authority, job.Identity, job.PipelineID, job.PrincipalID); err != nil {
+			return fmt.Errorf("refresh job authority: %w", err)
+		}
 	}
 	if job.TargetType == TargetRefreshPipeline {
 		if err := validateOperational(job.TriggerID, "trigger id", false); err != nil {

@@ -64,6 +64,15 @@ type Config struct {
 	// CurrentSessionEvidence resolves non-secret browser-session evidence from
 	// its dedicated request context. Browser sessions are not API credentials.
 	CurrentSessionEvidence func(context.Context) (access.CredentialEvidence, bool)
+	// ExecutionGrants is the read-only live authority source for scheduled work.
+	ExecutionGrants ExecutionGrantReader
+	// ExecutionGrantID is the default; the resolver supports per-occurrence grants.
+	ExecutionGrantID                 string
+	ResolveScheduledExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
+	// InstanceID binds delegated envelopes to this durable process target.
+	InstanceID string
+	// AuthorityRevalidator protects refresh boundaries after dequeue.
+	AuthorityRevalidator jobs.AuthorityRevalidator
 	// RequireAuthority enables the durable authority envelope requirement for
 	// native production refresh admissions.
 	RequireAuthority    bool
@@ -113,26 +122,29 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler                materializehttp.Handler
-	runs                   RunPersistence
-	schedules              refreshschedule.Repository
-	service                refreshrun.Service
-	refreshClock           refreshschedule.Clock
-	scheduler              Scheduler
-	reconcileSchedules     func(context.Context) error
-	scheduleInterval       time.Duration
-	leaseTimeout           time.Duration
-	logger                 *slog.Logger
-	events                 EventStore
-	durableAudit           bool
-	refreshExecution       apigencommand.AsyncExecutionContract
-	resolveIdentity        func(context.Context) (projectgraph.ServingIdentity, error)
-	currentCredential      func(context.Context) (access.APICredential, bool)
-	currentSessionEvidence func(context.Context) (access.CredentialEvidence, bool)
-	publishedVersion       PublishedDataVersionResolver
-	recoveryLifecycle      *RecoveryLifecycle
-	recoveryInterval       time.Duration
-	runFinishedCallback    func(context.Context, refreshrun.JobRecord)
+	handler                 materializehttp.Handler
+	runs                    RunPersistence
+	schedules               refreshschedule.Repository
+	service                 refreshrun.Service
+	refreshClock            refreshschedule.Clock
+	scheduler               Scheduler
+	reconcileSchedules      func(context.Context) error
+	scheduleInterval        time.Duration
+	leaseTimeout            time.Duration
+	logger                  *slog.Logger
+	events                  EventStore
+	durableAudit            bool
+	refreshExecution        apigencommand.AsyncExecutionContract
+	resolveIdentity         func(context.Context) (projectgraph.ServingIdentity, error)
+	currentCredential       func(context.Context) (access.APICredential, bool)
+	currentSessionEvidence  func(context.Context) (access.CredentialEvidence, bool)
+	scheduledAuthority      *DelegatedWorkloadAuthorityService
+	executionGrantID        string
+	resolveExecutionGrantID func(context.Context, refreshschedule.Occurrence) (string, error)
+	publishedVersion        PublishedDataVersionResolver
+	recoveryLifecycle       *RecoveryLifecycle
+	recoveryInterval        time.Duration
+	runFinishedCallback     func(context.Context, refreshrun.JobRecord)
 
 	mu         sync.Mutex
 	background context.Context
@@ -205,10 +217,21 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		resolveIdentity:        config.ResolveIdentity,
 		currentCredential:      config.CurrentCredential,
 		currentSessionEvidence: config.CurrentSessionEvidence,
-		publishedVersion:       config.PublishedVersion,
-		recoveryLifecycle:      config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
+		executionGrantID:       config.ExecutionGrantID, resolveExecutionGrantID: config.ResolveScheduledExecutionGrantID,
+		publishedVersion:  config.PublishedVersion,
+		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
 	m.runFinishedCallback = m.runFinished(config.RunFinished)
+	if (config.EnableScheduler || config.Scheduler != nil) && (config.RequireAuthority || config.Production) {
+		capture, captureErr := NewDelegatedWorkloadAuthorityService(config.ExecutionGrants, config.InstanceID)
+		if captureErr != nil {
+			return nil, fmt.Errorf("configure scheduled delegated workload authority: %w", captureErr)
+		}
+		if strings.TrimSpace(config.ExecutionGrantID) == "" && config.ResolveScheduledExecutionGrantID == nil {
+			return nil, errors.New("configure scheduled delegated workload authority: execution grant selector is required")
+		}
+		m.scheduledAuthority = capture
+	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
 			return materializehttp.Principal{}, false
@@ -251,6 +274,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.schedules = persistence.Schedules
 	m.service = config.Service
 	m.service.RequireAuthority = m.service.RequireAuthority || config.RequireAuthority || config.Production
+	m.service.AuthorityRevalidator = config.AuthorityRevalidator
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
 	}
@@ -265,19 +289,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		m.scheduler = refreshschedule.Scheduler{
 			Repository: m.schedules, Clock: config.Clock, ResolveIdentity: config.ResolveIdentity,
-			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) error {
-				result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
-					Identity: occurrence.Identity, PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
-					PipelineID: occurrence.PipelineID, TriggerType: refreshrun.TriggerSchedule,
-					ArtifactDigest: occurrence.ArtifactDigest, Occurrence: &occurrence,
-				})
-				if err == nil {
-					if result.Run.Status == refreshrun.RunStatusSkipped {
-						return refreshschedule.ErrOccurrenceSkipped
-					}
-				}
-				return err
-			},
+			Trigger: m.triggerScheduledRefresh,
 		}
 	}
 	if m.reconcileSchedules == nil && m.schedules != nil {

@@ -38,6 +38,6 @@ alias ListQueryEventsOK = OkJson<QueryEventListResponse>;
 @summary("List project query audit events")
 @route("/projects/{project}/query-events")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "audit.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listQueryEvents(@path project: ResourceId, @query principal?: string, @query surface?: string, @query operation?: string, @query kind?: string, @query modelId?: ResourceId, @query resourceKind?: AuditTargetKind, @query resourceId?: ResourceId, @query status?: string, @query search?: string, @query from?: utcDateTime, @query to?: utcDateTime, @query limit?: ListLimit, @query pageToken?: PageToken): ListQueryEventsOK | CommonErrors;

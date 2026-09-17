@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAuthorizationRoleBindingEncodingPersistsTypedRoleAndPairs(t *testing.T) {
@@ -66,4 +68,28 @@ func TestFreshSchemaHasTypedAssignmentIdentityIndexes(t *testing.T) {
 			t.Errorf("fresh access schema missing typed assignment contract %q", required)
 		}
 	}
+}
+
+func TestTypedSnapshotProfileSupportsAdditiveLegacyMigration(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard_main", Kind: projectgraph.KindDashboard, Name: "main"}}, nil)
+	require.NoError(t, err)
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal"}
+	typed, err := access.NewTypedRoleBinding("typed", "viewer", subject, access.PermissionRoleViewer, projectID)
+	require.NoError(t, err)
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(
+		projectgraph.ServingIdentity{ProjectID: projectID, Environment: "production", GenerationID: "generation"},
+		project,
+		[]accesssnapshot.RoleBinding{
+			{ID: "legacy", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)},
+			typed,
+		},
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	profile, err := typedSnapshotProfile(snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.Equal(t, access.PermissionCatalogProfile, *profile)
 }

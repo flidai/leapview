@@ -67,3 +67,78 @@ func TestTypedOperationRequirementRejectsWrongResolvedTarget(t *testing.T) {
 		t.Fatal("dashboard resolver accepted a pipeline target")
 	}
 }
+
+func TestTypedOperationRequirementResolvesProjectScopedPairs(t *testing.T) {
+	service := NewTypedOperationRequirementService()
+	for _, test := range []struct {
+		action   Action
+		resolver TypedOperationResolver
+	}{
+		{ActionProjectSettingsRead, TypedOperationResolverProject},
+		{ActionConnectionCreate, TypedOperationResolverProject},
+		{ActionDeliveryPlan, TypedOperationResolverDelivery},
+	} {
+		t.Run(string(test.action), func(t *testing.T) {
+			requirement, err := service.Requirement(test.action, string(test.resolver))
+			if err != nil {
+				t.Fatal(err)
+			}
+			pairs, err := requirement.ResolvePairs("project_demo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pairs) != 1 || pairs[0].Action != test.action || pairs[0].Target.Scope != PermissionScopeProject || pairs[0].Target.ProjectID != "project_demo" || pairs[0].Target.ResourceID != "" {
+				t.Fatalf("resolved pairs = %#v, want one project-scoped pair", pairs)
+			}
+		})
+	}
+}
+
+func TestTypedOperationRequirementResolvesSourceModelAndPipelineTargets(t *testing.T) {
+	service := NewTypedOperationRequirementService()
+	for _, test := range []struct {
+		action   Action
+		resolver TypedOperationResolver
+		kind     projectgraph.Kind
+	}{
+		{ActionSourceRead, TypedOperationResolverSource, projectgraph.KindSource},
+		{ActionModelRead, TypedOperationResolverModel, projectgraph.KindModel},
+		{ActionPipelineRun, TypedOperationResolverPipeline, projectgraph.KindPipeline},
+	} {
+		t.Run(string(test.action), func(t *testing.T) {
+			requirement, err := service.Requirement(test.action, string(test.resolver))
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource, err := NewResourceRef("resource_one", test.kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair, err := requirement.PermissionPair("project_demo", resource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pair.Action != test.action || pair.Target.ResourceKind != test.kind || pair.Target.ResourceID != "resource_one" || pair.Target.Scope != PermissionScopeResource {
+				t.Fatalf("resolved pair = %#v", pair)
+			}
+		})
+	}
+}
+
+func TestTypedOperationRequirementResolvesInstancePairsOnlyWithInstanceResolver(t *testing.T) {
+	service := NewTypedOperationRequirementService()
+	requirement, err := service.Requirement(ActionPlatformSettingsRead, string(TypedOperationResolverInstance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairs, err := requirement.ResolveInstancePairs("instance_primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 1 || pairs[0].Target.Scope != PermissionScopeInstance || pairs[0].Target.InstanceID != "instance_primary" {
+		t.Fatalf("resolved instance pairs = %#v", pairs)
+	}
+	if _, err := requirement.ResolvePairs("project_demo"); err == nil {
+		t.Fatal("instance resolver accepted project pair resolution")
+	}
+}

@@ -8,8 +8,9 @@ typed resource actions and credential attenuation remain the foundation.
 
 Decision date: 2026-09-17
 
-Implementation: partial — typed credential and dashboard-consumption slices;
-full catalog enforcement and grant migration pending
+Implementation: advanced partial — typed credentials, assignments, durable
+grant primitives, and qualified private operation slices; compatibility removal
+and complete surface coverage remain pending
 
 Deciders: LeapView maintainers
 
@@ -30,26 +31,29 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 
 ## Implementation status
 
-The first vertical slice is implemented without claiming completion of this
-decision. LeapView now has the versioned `leapview.permissions/v1` catalog,
-validated action/target pairs and prerequisites, named role expansions,
-generated permission documentation, PostgreSQL typed-token persistence, and a
-typed personal-token picker. New public token issuance requires an explicit
-permission array; omission fails, an empty array creates an authentication-only
-credential, and a restricted token cannot mint a broader child. Migration 022
-revokes active legacy API tokens with an explicit audit outcome because their
-generic capability lists cannot be converted to resource pairs without
-widening authority.
+The contract and persistence foundations are implemented without claiming
+complete rollout. LeapView now has the versioned `leapview.permissions/v1`
+catalog, validated action/target pairs and prerequisites, named role
+expansions, generated TypeSpec/SQL/presentation/documentation artifacts,
+PostgreSQL typed-token persistence, and a typed personal-token picker. New
+public token issuance requires an explicit permission array; omission fails,
+an empty array creates an authentication-only credential, and a restricted
+token cannot mint a broader child. Migration 022 revokes active legacy API
+tokens with an explicit audit outcome because their generic capability lists
+cannot be converted to resource pairs without widening authority.
 
-The compatibility projection is intentionally narrow: it derives exact
-`dashboard.read` and `semantic.consume` options from the active authorization
-snapshot, and `pipeline.run` only from an exact legacy Pipeline grant. It never
-turns a broad legacy Project role into operational, sharing, delivery,
-administrative, or platform authority. Typed credentials now bound qualified
-dashboard/semantic reads, project-catalog discovery, and dashboard authoring
-operations; routes without a typed mapping fail closed.
+Typed project assignments capture the exact, profile-pinned expansion of a
+role at issuance time. New role-binding API and bootstrap writes use that
+form, while historical capability bindings remain readable only for explicitly
+unmigrated operations. Typed operation descriptors bind actions to server-owned
+dashboard, semantic-model, source, model, pipeline, connection, project,
+delivery, or instance resolvers. Evaluation unions coherent principal and
+group assignments, requires every prerequisite pair independently, intersects
+typed API-token ceilings, and rejects typed credentials on unmapped routes.
+The deterministic operation-coverage matrix distinguishes qualified,
+mapped-pending-qualification, intentionally legacy, and unsupported paths.
 
-The reusable action/target mechanics now live in `pkg/permissions` behind an
+The reusable action/target mechanics live in `pkg/permissions` behind an
 explicitly compiled, profile-pinned catalog. That package owns only opaque wire
 types, shape and catalog validation, prerequisite closure, matching,
 intersection, attenuation, and strict encoding. `internal/access` remains the
@@ -59,14 +63,28 @@ adapts its product catalog into the pure mechanics package. Public authority
 envelopes carry `permissions.Pair` without exposing private access types and
 are rebound to the active product catalog before execution.
 
-This is not the durable grant/role migration. Principal grants and role
-bindings still use the legacy capability model, most generated APIs and the CLI
-authoring profile still use that compatibility vocabulary, and sharing,
-delivery, platform administration, delegated workloads, and complete
-browser/REST/CLI/agent/MCP parity remain pending. The Go catalog is the runtime
-authority; TypeSpec and the PostgreSQL constraint mechanically validate copies
-of its current vocabulary but are not yet generated from it. Completion still
-requires every Confirmation item below and the ADR-0026 acceptance ledger.
+Migration 025 adds immutable typed grants, typed role bindings, and typed policy
+bindings without guessing meanings for historical rows. Migration 026 adds
+independently durable exact-resource shares, execution grants, and bounded
+grant-administration envelopes with resource UIDs, expiry, revocation,
+idempotency, and audited PostgreSQL mutations. Trusted issuance constructs the
+issuer and credential ceiling from current server-side authority; request DTOs
+cannot supply those fields. Ambiguous legacy assignments deliberately remain
+legacy rather than being widened, so downstream compatibility cannot be
+removed until every affected surface is qualified.
+
+Qualified paths now include private dashboard consumption and authoring,
+governed semantic query entry points, project catalog discovery, selected
+project/connection/managed-data administration, instance settings/audit, and
+the manual/scheduled delegated-refresh foundation. Native delivery planning and
+build also evaluate and persist a coherent compound permission projection,
+then reauthorize it against the current candidate snapshot before physical
+work. Complete publication/rollback reauthorization, sharing-administration,
+agent/MCP, list/facet/autocomplete, public/embed, and all lifecycle-boundary
+coverage remains governed by the ADR-0026 ledger. The Go catalog is the runtime
+authority and generated checks prevent contract drift; completion still
+requires the remaining partial ledger rows rather than an ADR-format or
+schema-only claim.
 
 ## Context and problem statement
 

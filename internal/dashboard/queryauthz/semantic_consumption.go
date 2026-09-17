@@ -24,10 +24,19 @@ const SemanticConsumeAction = string(access.ActionSemanticConsume)
 // retained for the legacy internal call sites until those callers carry
 // operation metadata.
 func semanticPermissionAction(request dataquery.Query) (access.Action, bool) {
+	return semanticPermissionActionWithContext(context.Background(), request)
+}
+
+// semanticPermissionActionWithContext preserves the dashboard consume fence
+// for published execution while treating authored draft preview as a newly
+// constructed semantic query. The preview marker is carried in request
+// metadata so every generated visual query (aggregate, rows, histogram, and
+// spatial) receives the same independent typed action check.
+func semanticPermissionActionWithContext(ctx context.Context, request dataquery.Query) (access.Action, bool) {
 	if request.Surface == dataquery.SurfacePublicDashboard || !isSemanticQueryKind(request.Kind) {
 		return "", false
 	}
-	if request.Surface == dataquery.SurfaceDashboard {
+	if request.Surface == dataquery.SurfaceDashboard && request.Operation != dataquery.OperationDashboardDraftPreview {
 		return access.ActionSemanticConsume, true
 	}
 	if request.Surface == "" && request.Operation == "" {
@@ -140,6 +149,25 @@ func (m Metrics) requireSemanticConsumption(
 	if err != nil {
 		return err
 	}
+	// A typed semantic operation is authorized by the immutable principal/group
+	// pair set. Do not force typed-only assignments through the legacy
+	// RESOURCE_USE projection; the query action carries its own consume
+	// prerequisite and the credential check remains an independent ceiling.
+	if action, typed := semanticPermissionActionWithContext(ctx, request); typed {
+		hasTypedAuthority, allowed, typedErr := typedSemanticPermission(snapshot, subjects, request, semanticModel, action)
+		if typedErr != nil {
+			return typedErr
+		}
+		if hasTypedAuthority {
+			if !allowed {
+				return DeniedError{PrincipalID: principalID, Capability: requirement.Capability}
+			}
+			if credential, credentialOK := m.currentCredential(ctx); credentialOK && !m.tokenAllowsSemanticConsumption(ctx, snapshot, principalID, credential.Token, request, semanticModel, requirement.Capability) {
+				return DeniedError{PrincipalID: principalID, Capability: requirement.Capability, Credential: true}
+			}
+			return nil
+		}
+	}
 	for _, subject := range subjects {
 		allowed, err := snapshot.Allows(subject, semanticModel, requirement.Capability)
 		if err != nil {
@@ -153,6 +181,27 @@ func (m Metrics) requireSemanticConsumption(
 		}
 	}
 	return DeniedError{PrincipalID: principalID, Capability: requirement.Capability}
+}
+
+func typedSemanticPermission(
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	subjects []access.SubjectRef,
+	request dataquery.Query,
+	semanticModel access.ResourceRef,
+	action access.Action,
+) (hasAuthority, allowed bool, err error) {
+	pair, err := access.NewExactPermissionPair(action, request.ProjectID, semanticModel)
+	if err != nil {
+		return false, false, err
+	}
+	granted, err := snapshot.EffectiveTypedPermissions(subjects)
+	if err != nil {
+		return false, false, err
+	}
+	if len(granted) == 0 {
+		return false, false, nil
+	}
+	return true, access.PermissionSetAllows(granted, pair), nil
 }
 
 // tokenAllowsSemanticConsumption is the compatibility binding for the
@@ -169,7 +218,7 @@ func (m Metrics) tokenAllowsSemanticConsumption(
 	semanticModel access.ResourceRef,
 	legacyCapability access.Capability,
 ) bool {
-	action, typed := semanticPermissionAction(request)
+	action, typed := semanticPermissionActionWithContext(ctx, request)
 	if typed {
 		if token.PermissionProfile == "" && token.Permissions == nil && action == access.ActionSemanticQuery &&
 			(request.Operation == dataquery.OperationAPIPreview || request.Operation == dataquery.OperationPreviewWindow) {
@@ -189,7 +238,7 @@ func (m Metrics) tokenAllowsDataQuery(
 	objects []access.ResourceRef,
 	legacyCapability access.Capability,
 ) bool {
-	action, typed := semanticPermissionAction(request)
+	action, typed := semanticPermissionActionWithContext(ctx, request)
 	if !typed {
 		return m.tokenAllowsCapability(ctx, snapshot, principalID, token, legacyCapability)
 	}

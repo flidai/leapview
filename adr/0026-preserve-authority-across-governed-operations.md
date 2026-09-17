@@ -4,8 +4,8 @@ Status: accepted
 
 Decision date: 2026-09-17
 
-Implementation: partial — restricted dashboard consumption and caller-authority
-Pipeline refresh slices; delegated execution and lifecycle qualification pending
+Implementation: advanced partial — restricted consumption, durable delegation,
+and qualified lifecycle slices; complete boundary and interface coverage pending
 
 Deciders: LeapView maintainers
 
@@ -35,15 +35,15 @@ API, agent, Explorer, and preview query construction requires
 interaction input is validated against the server-owned revision rather than
 accepting a caller-supplied query shape.
 
-The first asynchronous slice persists an immutable authority envelope with a
-manual Pipeline refresh. It records an exact `pipeline.run` pair, actor,
-execution principal, target, and non-secret browser-session or typed-token
-evidence. The envelope participates in the job request digest and is
-revalidated against live credential lifecycle and current exact resource
-authority before worker admission. Unknown credential classes, missing
-evidence, legacy token scopes, expiry, revocation, and changed permission
-ceilings fail closed. Existing job kinds retain a migration sentinel; only
-`refresh_pipeline` currently requires this envelope.
+The asynchronous slice persists an immutable authority envelope with Pipeline
+refresh work. Caller-authority refresh records an exact `pipeline.run` pair,
+actor, execution principal, target, and non-secret browser-session or
+typed-token evidence. The envelope participates in the job request digest and
+is revalidated against live credential lifecycle and current exact resource
+authority before worker admission and protected refresh boundaries. Unknown
+credential classes, missing evidence, legacy token scopes, expiry, revocation,
+and changed permission ceilings fail closed. Existing job kinds retain a
+migration sentinel; `refresh_pipeline` is the qualified job kind.
 
 The envelope is now a public contract over transport-neutral
 `pkg/permissions` pairs rather than private `internal/access` types. Its own
@@ -51,14 +51,50 @@ validation proves generic wire shape; capture and dequeue boundaries convert
 through `internal/access` and reject pairs outside the active LeapView profile,
 action catalog, graph kinds, or exact resource identity.
 
-Delegated workload execution is represented in the envelope but intentionally
-unsupported by the native revalidator. There is no execution-grant repository,
-approved dependency/destination closure, scheduler authority, per-protected-unit
-or output-boundary revalidation, grant-administration envelope, or completed
-security-revision concurrency matrix yet. Release, deployment, managed-data,
-agent, and approval jobs have not migrated to this authority contract. The
-companion specification's ledger is authoritative for the remaining evidence;
-these slices must not be described as security-complete.
+Delegated workload execution now uses an independently durable execution grant.
+The current grant binds its workload principal, exact Pipeline UID and target,
+profile-pinned permission ceiling, workflow/revision and closure digest,
+connection-binding digest, destination digest, trigger digest, expiry,
+revocation identity, and immutable fingerprint. Scheduled capture resolves the
+live grant by ID; the queue never accepts a caller-supplied grant document.
+The native revalidator intersects the current workload principal authority with
+the sealed grant and rejects target, fingerprint, closure, binding,
+destination, trigger, expiry, revocation, or principal drift.
+
+Scheduled refresh composition selects exactly one active, unexpired execution
+grant for the instance, Project, Pipeline UID, and workload principal; missing
+or ambiguous selection fails closed and never falls back to a scheduler or
+worker identity. Queue admission binds the grant's closure digest to the
+canonical generation-bound Pipeline plan. Prepare, execute, publish, and output
+boundaries rebuild that plan from the current active artifact, so executable or
+source drift stops queued work. Binding, destination, trigger, and workflow
+revision values remain sealed grant evidence, but are not misrepresented as
+artifact-derived checks until the runtime exposes canonical values for them.
+
+Native delivery planning evaluates authored changes, complete dependency
+closure, connection bindings, and lifecycle transitions against one coherent
+candidate snapshot. It persists the exact execution projection and digest;
+native build validates and reauthorizes that declaration against the current
+candidate snapshot before physical work. Publication and rollback validate the
+persisted rich-plan evidence structurally but do not yet invoke the compound
+resolver independently.
+
+Authorization-aware project catalog paging filters before totals and cursors,
+binds signed cursors to the query, filters, principal, security context and
+snapshot, and reauthorizes continuation pages. Real PostgreSQL lifecycle tests
+qualify the current-security fence for protected cache/coalesced/output-batch
+reuse and for activation/rollback registry revision changes, including
+fail-closed unavailable evidence and idempotent replay of an already committed
+activation.
+
+This remains an intentionally bounded qualification. Release, managed-data,
+agent, approval, public/embed, every discovery facet, external dispatch, and
+all running-job/result retrieval paths have not migrated to the complete
+authority contract. Durable grant issuance/revocation is not yet a public API,
+and the retained-generation test qualifies the current registry/control fence,
+not a future per-semantic-identity eligibility store. The companion
+specification's ledger is authoritative; these slices must not be described as
+security-complete.
 
 ## Context and problem statement
 

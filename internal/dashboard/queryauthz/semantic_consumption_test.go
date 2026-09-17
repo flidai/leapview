@@ -108,6 +108,79 @@ func TestTypedSemanticQueryRequiresConsumePrerequisite(t *testing.T) {
 	}
 }
 
+func TestDashboardDraftPreviewRequiresTypedQueryAndConsume(t *testing.T) {
+	_, _, semantic, _, _ := canonicalGraph(t)
+	semanticSnapshot := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"semantic", semantic, access.CapabilityResourceUse}}, nil)
+	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
+	request.Operation = dataquery.OperationDashboardDraftPreview
+
+	consume, err := access.NewExactPermissionPair(access.ActionSemanticConsume, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := access.NewExactPermissionPair(access.ActionSemanticQuery, canonicalProject, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumeOnly := canonicalMetricsWithTypedToken(t, semanticSnapshot, access.APIToken{
+		ID: "draft-preview-consume-only", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{consume},
+	})
+	if _, _, err := consumeOnly.GovernDataQuery(context.Background(), request); !IsDenied(err) {
+		t.Fatalf("draft preview with consume-only token error = %v, want denial", err)
+	}
+	queryAndConsume := canonicalMetricsWithTypedToken(t, semanticSnapshot, access.APIToken{
+		ID: "draft-preview-query-and-consume", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{query, consume},
+	})
+	if _, _, err := queryAndConsume.GovernDataQuery(context.Background(), request); err != nil {
+		t.Fatalf("draft preview with query and consume token was denied: %v", err)
+	}
+}
+
+func TestDashboardDraftPreviewAcceptsTypedPrincipalAndGroupAssignmentsWithoutLegacyCapability(t *testing.T) {
+	graph, identity, semantic, _, _ := canonicalGraph(t)
+	principal, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := access.NewSubjectRef(access.SubjectKindGroup, "analysts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := access.NewExactPermissionPair(access.ActionSemanticQuery, identity.ProjectID, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consume, err := access.NewExactPermissionPair(access.ActionSemanticConsume, identity.ProjectID, semantic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryGrant, err := accesssnapshot.NewTypedGrant("query", "query", principal, []access.PermissionPair{query})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumeGrant, err := accesssnapshot.NewTypedGrant("consume", "consume", group, []access.PermissionPair{consume})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{queryGrant, consumeGrant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
+	metrics.subjectsFromContext = func(context.Context, string) ([]access.SubjectRef, error) {
+		return []access.SubjectRef{principal, group}, nil
+	}
+	request := dashboardSemanticConsumptionQuery(semantic.CanonicalID())
+	request.Operation = dataquery.OperationDashboardDraftPreview
+	if _, _, err := metrics.GovernDataQuery(context.Background(), request); err != nil {
+		t.Fatalf("typed principal/group draft preview was denied: %v", err)
+	}
+}
+
 func canonicalMetricsWithTypedToken(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot, token access.APIToken) Metrics {
 	t.Helper()
 	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)

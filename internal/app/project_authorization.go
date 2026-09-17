@@ -196,17 +196,27 @@ func authorizeProjectResourcesWithCapability(
 		typedActionResolver = typedActionFor[0]
 	}
 	var typed, allowed bool
-	if typedActionResolver != nil {
-		typed, allowed = typedPermissionDecision(ctx, projectID, resources, typedActionResolver)
-	} else {
-		typed, allowed = typedDashboardReadDecision(ctx, projectID, resources, capabilityFor)
-	}
-	if typed && !allowed {
-		return false, nil
-	}
 	snapshot := authorizedLease.AuthorizationSnapshot()
 	if snapshot.Identity() != lease.Identity() {
 		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
+	}
+	if err := snapshot.ValidateBound(); err != nil {
+		return false, err
+	}
+	if typedActionResolver != nil {
+		typed, allowed, err = typedPermissionDecisionForSnapshot(ctx, principalID, projectID, resources, typedActionResolver, snapshot, subjects)
+	} else {
+		typed, allowed, err = typedDashboardReadDecisionForSnapshot(ctx, principalID, projectID, resources, capabilityFor, snapshot, subjects)
+	}
+	if err != nil {
+		return false, err
+	}
+	if typed {
+		// A migrated typed operation is decided entirely from typed principal /
+		// group authority plus the optional credential ceiling. Do not run the
+		// legacy capability projection after a successful typed decision: a
+		// typed-only assignment must be sufficient on its own.
+		return allowed, nil
 	}
 	for _, resource := range resources {
 		capability := capabilityFor(resource)
@@ -237,77 +247,6 @@ func authorizeProjectResourcesWithCapability(
 		}
 	}
 	return true, nil
-}
-
-func typedPermissionPair(action access.Action, projectID projectgraph.ResourceID, resource access.ResourceRef) (access.PermissionPair, error) {
-	definition, ok := access.Permission(action)
-	if !ok {
-		return access.PermissionPair{}, access.ErrUnknownPermissionAction
-	}
-	checkKind := false
-	for _, kind := range definition.CheckKinds {
-		if kind == resource.Kind() {
-			checkKind = true
-			break
-		}
-	}
-	if !checkKind {
-		return access.PermissionPair{}, fmt.Errorf("typed action %q cannot check resource kind %q", action, resource.Kind())
-	}
-	if definition.Scope == access.PermissionScopeProject {
-		return access.NewProjectPermissionPair(action, projectID)
-	}
-	if definition.Scope == access.PermissionScopeResource {
-		return access.NewExactPermissionPair(action, projectID, resource)
-	}
-	return access.PermissionPair{}, fmt.Errorf("typed action %q has unsupported scope %q", action, definition.Scope)
-}
-
-func typedPermissionDecision(
-	ctx context.Context,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	actionFor func(access.ResourceRef) (access.Action, bool),
-) (typed bool, allowed bool) {
-	credential, found := accessmodule.APICredentialFromContext(ctx)
-	if !found || strings.TrimSpace(credential.Token.ID) == "" ||
-		(credential.Token.PermissionProfile == "" && credential.Token.Permissions == nil) {
-		return false, false
-	}
-	if len(resources) == 0 || actionFor == nil {
-		return true, false
-	}
-	for _, resource := range resources {
-		action, mapped := actionFor(resource)
-		if !mapped {
-			return true, false
-		}
-		pair, err := typedPermissionPair(action, projectID, resource)
-		if err != nil || !access.PermissionSetAllows(credential.Token.Permissions, pair) {
-			return true, false
-		}
-	}
-	return true, true
-}
-
-// typedDashboardReadDecision binds the dashboard Viewer operation to the
-// typed dashboard.read action. It is intentionally narrow: this helper is
-// used by the browser/API dashboard resource-read callback, and does not
-// infer typed authority for mutations or unrelated resource families.
-// Legacy API tokens and browser sessions retain their existing snapshot
-// capability path until their operation contracts are migrated explicitly.
-func typedDashboardReadDecision(
-	ctx context.Context,
-	projectID projectgraph.ResourceID,
-	resources []access.ResourceRef,
-	capabilityFor func(access.ResourceRef) access.Capability,
-) (typed bool, allowed bool) {
-	return typedPermissionDecision(ctx, projectID, resources, func(resource access.ResourceRef) (access.Action, bool) {
-		if resource.Kind() != projectgraph.KindDashboard || capabilityFor == nil || capabilityFor(resource) != access.CapabilityResourceRead {
-			return "", false
-		}
-		return access.ActionDashboardRead, true
-	})
 }
 
 // authorizeProjectRole evaluates a project-wide role binding against the
@@ -488,9 +427,22 @@ func protectProjectAuthoringResourceWithTypedAction(
 				http.NotFound(w, r)
 				return
 			}
-			typed, allowed := typedPermissionDecision(r.Context(), projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+			// Preserve an immediate closed-contract denial for malformed or
+			// attenuated credentials before acquiring a serving lease. The full
+			// decision below additionally resolves principal/group assignments
+			// from that same immutable generation.
+			credentialTyped, credentialAllowed := typedPermissionDecision(r.Context(), projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
 				return typedAction, true
 			})
+			if credentialTyped && !credentialAllowed {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
+			typed, allowed, typedErr := authorizeTypedResourceAction(r.Context(), accessModule, runtimeHost, principal.ID, projectID, []access.ResourceRef{resource}, typedAction)
+			if typedErr != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
 			if typed && !allowed {
 				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 				return

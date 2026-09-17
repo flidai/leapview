@@ -7,13 +7,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
 // roleBindingCreateRequest is deliberately narrower than access.RoleBinding:
-// capabilities are never accepted from an HTTP caller. The role is expanded
-// using the immutable canonical role table immediately before the repository
-// command is invoked.
+// permission pairs and legacy capabilities are never accepted from an HTTP
+// caller. The versioned permission role is expanded by the target authority
+// immediately before the repository command is invoked.
 type roleBindingCreateRequest struct {
 	ID               string `json:"id"`
 	Name             string `json:"name"`
@@ -38,6 +39,15 @@ func (h Handler) authorizationPolicyScope(r *stdhttp.Request) (access.Authorizat
 }
 
 func roleBindingDTO(binding access.RoleBinding, policy access.AuthorizationPolicy) map[string]any {
+	if binding.TypedRoleBinding() {
+		return map[string]any{
+			"id": binding.ID, "name": binding.Name,
+			"subjectType": string(binding.Subject.Kind), "subjectId": binding.Subject.ID,
+			"role": string(binding.PermissionRole), "permissionProfile": binding.PermissionProfile,
+			"permissions":    access.ClonePermissionPairs(binding.Permissions),
+			"policyRevision": policy.Revision, "policyDigest": policy.Digest,
+		}
+	}
 	capabilities := make([]string, 0, len(binding.Capabilities))
 	for _, capability := range binding.Capabilities {
 		capabilities = append(capabilities, string(capability))
@@ -112,16 +122,8 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 		writeAuthorizationPolicyError(w, fmt.Errorf("%w: subject: %w", access.ErrAuthorizationPolicyInvalidBinding, err))
 		return
 	}
-	role, err := access.ParseProjectRole(input.Role)
+	binding, err := access.NewTypedRoleBinding(input.ID, input.Name, subject, access.PermissionRole(input.Role), projectgraph.ResourceID(scope.ProjectID))
 	if err != nil {
-		writeAuthorizationPolicyError(w, fmt.Errorf("%w: role: %w", access.ErrAuthorizationPolicyInvalidBinding, err))
-		return
-	}
-	binding := access.RoleBinding{
-		ID: input.ID, Name: input.Name, Subject: subject, Role: role,
-		Capabilities: access.ProjectRoleCapabilities(role),
-	}
-	if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
 		writeAuthorizationPolicyError(w, err)
 		return
 	}
@@ -151,7 +153,7 @@ func (h Handler) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.R
 		metadata, encodeErr := accessgen.EncodeGenCreateProjectRoleBindingAuditPayload(accessgen.GenSchemaRoleBindingAuditPayload{
 			TargetId: scope.TargetID, ProjectId: scope.ProjectID, Environment: scope.Environment,
 			BindingId: binding.ID, SubjectType: string(binding.Subject.Kind), SubjectId: binding.Subject.ID,
-			Role: string(binding.Role), PolicyRevision: policy.Revision, PolicyDigest: policy.Digest,
+			Role: string(binding.PermissionRole), PolicyRevision: policy.Revision, PolicyDigest: policy.Digest,
 		})
 		if encodeErr != nil {
 			return access.AuditEventInput{}, encodeErr

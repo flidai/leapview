@@ -388,6 +388,17 @@ func (m *Module) revalidateAuthority(ctx context.Context, kind string, authority
 	return m.config.AuthorityRevalidator.Revalidate(ctx, authority)
 }
 
+// RevalidateAuthority exposes the same live authority check used at River
+// dequeue to capability-owned execution services. Callers use it only at
+// their own protected unit/output boundaries; infrastructure credentials are
+// never substituted for the product envelope.
+func (m *Module) RevalidateAuthority(ctx context.Context, kind string, authority jobs.AuthorityEnvelope) error {
+	if m == nil {
+		return jobs.ErrAuthorityRevalidator
+	}
+	return m.revalidateAuthority(ctx, kind, authority)
+}
+
 func (m *Module) waitForStaleRiverClaim(ctx context.Context, riverJobID int64) error {
 	// River has no attempt predicate on its worker result update. Wait for the
 	// successor to reach a terminal state before this stale executor returns,

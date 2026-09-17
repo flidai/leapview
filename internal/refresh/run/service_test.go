@@ -6,13 +6,18 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 
 	"github.com/flidai/leapview/internal/refresh/artifact"
+	refreshplan "github.com/flidai/leapview/internal/refresh/plan"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/permissions"
 )
 
 var serviceIdentity = projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "dep_active"}
@@ -591,6 +596,98 @@ func TestServiceQueuePipelineRefreshRejectsSupersededScheduledArtifact(t *testin
 	}
 	if len(repo.createdRuns) != 0 {
 		t.Fatalf("created runs = %#v, want none", repo.createdRuns)
+	}
+}
+
+func TestServiceQueuePipelineRefreshRejectsDelegatedEditorDrift(t *testing.T) {
+	repo := newFakeRepo()
+	definition := refreshTestDefinition()
+	service := canonicalQueueService(repo)
+	service.Artifacts = fakeArtifactLoader{definition: definition}
+	service.RequireAuthority = true
+	plan := testDelegatedPipelinePlan(t, repo, definition)
+	authority := testDelegatedAuthority(plan.Digest)
+	input := QueuePipelineInput{
+		Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, Authority: authority,
+	}
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err != nil {
+		t.Fatalf("queue matching delegated plan: %v", err)
+	}
+
+	pipeline := definition.Pipelines["sales-refresh"]
+	pipeline.SelectionDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	definition.Pipelines["sales-refresh"] = pipeline
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err == nil || !strings.Contains(err.Error(), "delegated executable authority") {
+		t.Fatalf("queue after editor drift error = %v, want delegated plan mismatch", err)
+	}
+}
+
+func TestServiceExecuteClaimedJobRejectsDelegatedArtifactDrift(t *testing.T) {
+	repo := newFakeRepo()
+	definition := refreshTestDefinition()
+	plan := testDelegatedPipelinePlan(t, repo, definition)
+	authority := testDelegatedAuthority(plan.Digest)
+	executed := false
+	service := canonicalQueueService(repo)
+	service.Artifacts = fakeArtifactLoader{definition: definition}
+	service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error { return nil })
+	service.CanonicalExecutor = func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+		executed = true
+		return CanonicalRefreshResult{}, nil
+	}
+	service.Publication = fakePublication{repo: repo}
+	job := JobRecord{
+		ID: "job-delegated-drift", Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: &plan,
+		InvocationSource: TriggerManual, TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1, Authority: authority,
+	}
+	repo.activeArtifact.Digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	if err := service.ExecuteClaimedJob(t.Context(), job); err == nil || !strings.Contains(err.Error(), "current executable pipeline plan does not match queued plan") {
+		t.Fatalf("execute after artifact drift error = %v, want delegated plan mismatch", err)
+	}
+	if executed {
+		t.Fatal("canonical executor ran after artifact drift")
+	}
+}
+
+func testDelegatedPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifact.Definition) projectpipelineplan.Plan {
+	t.Helper()
+	base, err := refreshplan.ForPipeline(definition, serviceIdentity.ProjectID, "sales-refresh")
+	if err != nil {
+		t.Fatalf("build test refresh plan: %v", err)
+	}
+	bound, err := base.BindGeneration(serviceIdentity, repo.activeArtifact.Digest)
+	if err != nil {
+		t.Fatalf("bind test refresh plan: %v", err)
+	}
+	plan, err := bound.DeliveryPipelinePlan(refreshplan.InvocationPolicy{InvocationSource: TriggerManual})
+	if err != nil {
+		t.Fatalf("build test delivery plan: %v", err)
+	}
+	return plan
+}
+
+func testDelegatedAuthority(closureDigest string) jobs.AuthorityEnvelope {
+	pair, err := permissions.NewExactPair("leapview.permissions/v1", permissions.Action("pipeline.run"), "project", "pipeline", "sales-refresh")
+	if err != nil {
+		panic(err)
+	}
+	return jobs.AuthorityEnvelope{
+		Profile:              jobs.AuthorityEnvelopeProfile,
+		Mode:                 jobs.DelegatedWorkloadMode,
+		ActorPrincipalID:     "principal:issuer",
+		ExecutionPrincipalID: "workload:refresh",
+		Target: jobs.AuthorityTarget{
+			ProjectID: "project", Environment: "dev", ResourceKind: "pipeline", ResourceID: "sales-refresh", ResourceUID: "uid:pipeline",
+		},
+		Permissions: []permissions.Pair{pair},
+		ExecutionGrant: &jobs.ExecutionGrantEvidence{
+			ID: "grant:refresh", Fingerprint: "fingerprint:refresh", ExpiresAt: time.Now().UTC().Add(time.Hour),
+			WorkflowID: "workflow:refresh", WorkflowRevision: "revision:1", ClosureDigest: closureDigest,
+			BindingDigest: "binding:refresh", DestinationDigest: "destination:refresh", TriggerDigest: "trigger:refresh",
+		},
 	}
 }
 

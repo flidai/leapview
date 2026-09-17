@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Request, targetID, projectID, environment, principalID string) bool {
@@ -26,16 +27,15 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid owner binding request", http.StatusBadRequest)
 		return true
 	}
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{{
-		ID: bootstrapOwnerBindingID, Name: bootstrapOwnerBindingName, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: capabilities,
-	}})
+	binding, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	encodedCapabilities := make([]string, len(capabilities))
-	for index, capability := range capabilities {
-		encodedCapabilities[index] = string(capability)
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{{
+		ID: binding.ID, Name: binding.Name, Subject: binding.Subject, PermissionRole: binding.PermissionRole, PermissionProfile: binding.PermissionProfile, Permissions: binding.Permissions,
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
@@ -43,7 +43,7 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 			"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 1, "policyDigest": digest,
 			"items": []any{map[string]any{
 				"id": bootstrapOwnerBindingID, "name": bootstrapOwnerBindingName, "subjectType": "principal", "subjectId": principalID,
-				"role": "admin", "capabilities": encodedCapabilities, "policyRevision": 1, "policyDigest": digest,
+				"role": string(binding.PermissionRole), "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": 1, "policyDigest": digest,
 			}},
 			"page": map[string]any{},
 		})
@@ -60,7 +60,7 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return true
 	}
-	if input.Id != bootstrapOwnerBindingID || input.Name == nil || *input.Name != bootstrapOwnerBindingName || input.SubjectType != "principal" || input.SubjectId != principalID || input.Role != "admin" || input.ExpectedRevision != 0 {
+	if input.Id != bootstrapOwnerBindingID || input.Name == nil || *input.Name != bootstrapOwnerBindingName || input.SubjectType != "principal" || input.SubjectId != principalID || input.Role != string(access.PermissionRoleProjectAdmin) || input.ExpectedRevision != 0 {
 		t.Errorf("owner binding request = %#v", input)
 		http.Error(w, "incompatible owner binding", http.StatusBadRequest)
 		return true
@@ -69,7 +69,7 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id": input.Id, "name": *input.Name, "subjectType": input.SubjectType, "subjectId": input.SubjectId,
-		"role": input.Role, "capabilities": encodedCapabilities, "policyRevision": 1, "policyDigest": digest,
+		"role": input.Role, "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": 1, "policyDigest": digest,
 	})
 	return true
 }
@@ -182,15 +182,13 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	owner := access.RoleBinding{ID: bootstrapOwnerBindingID, Name: bootstrapOwnerBindingName, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: capabilities}
-	ownerDigest, err := access.AuthorizationPolicyDigest(scope, []access.RoleBinding{owner})
+	owner, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	encodedCapabilities := make([]string, len(capabilities))
-	for index, capability := range capabilities {
-		encodedCapabilities[index] = string(capability)
+	ownerDigest, err := access.AuthorizationPolicyDigest(scope, []access.RoleBinding{owner})
+	if err != nil {
+		t.Fatal(err)
 	}
 	postCount, getCount := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,8 +214,8 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": "admin",
-				"capabilities": encodedCapabilities, "policyRevision": 2, "policyDigest": ownerDigest,
+				"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole),
+				"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 2, "policyDigest": ownerDigest,
 			})
 		case http.MethodGet:
 			getCount++
@@ -226,8 +224,8 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 			if getCount == 2 {
 				revision, digest = 2, ownerDigest
 				items = []any{map[string]any{
-					"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": "admin",
-					"capabilities": encodedCapabilities, "policyRevision": revision, "policyDigest": digest,
+					"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole),
+					"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": revision, "policyDigest": digest,
 				}}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -252,8 +250,10 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 
 func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_replay", "project:replay", "production", "principal-replay"
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	owner := access.RoleBinding{ID: bootstrapOwnerBindingID, Name: bootstrapOwnerBindingName, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: capabilities}
+	owner, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	viewer := access.RoleBinding{ID: "viewer-binding", Name: "Viewer", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "viewer-principal"}, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)}
 	revisionOneDigest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{owner})
 	if err != nil {
@@ -276,14 +276,14 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 		case http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": "admin",
-				"capabilities": encodeCapabilities(owner.Capabilities), "policyRevision": 1, "policyDigest": revisionOneDigest,
+				"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole),
+				"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 1, "policyDigest": revisionOneDigest,
 			})
 		case http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 2, "policyDigest": currentDigest,
 				"items": []any{
-					map[string]any{"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": "admin", "capabilities": encodeCapabilities(owner.Capabilities), "policyRevision": 2, "policyDigest": currentDigest},
+					map[string]any{"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole), "permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 2, "policyDigest": currentDigest},
 					map[string]any{"id": viewer.ID, "name": viewer.Name, "subjectType": "principal", "subjectId": viewer.Subject.ID, "role": "viewer", "capabilities": encodeCapabilities(viewer.Capabilities), "policyRevision": 2, "policyDigest": currentDigest},
 				},
 				"page": map[string]any{},
@@ -305,17 +305,16 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 }
 
 func TestBootstrapProjectOwnerPolicyRejectsMalformedCreatedEvidence(t *testing.T) {
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	encodedCapabilities := make([]string, len(capabilities))
-	for index, capability := range capabilities {
-		encodedCapabilities[index] = string(capability)
+	owner, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal"}, access.PermissionRoleProjectAdmin, "project")
+	if err != nil {
+		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": bootstrapOwnerBindingID, "name": bootstrapOwnerBindingName, "subjectType": "principal", "subjectId": "principal", "role": "admin",
-			"capabilities": encodedCapabilities, "policyRevision": 1, "policyDigest": "malformed",
+			"id": bootstrapOwnerBindingID, "name": bootstrapOwnerBindingName, "subjectType": "principal", "subjectId": "principal", "role": string(owner.PermissionRole),
+			"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 1, "policyDigest": "malformed",
 		})
 	}))
 	defer server.Close()

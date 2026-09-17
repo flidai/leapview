@@ -1248,14 +1248,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
 				AuthorizeTypedDashboardAction: func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
-					resource, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
-					if err != nil {
-						return true, false, err
+					if action == "" {
+						return true, false, nil
 					}
-					typed, allowed := typedPermissionDecision(ctx, projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
-						return action, true
-					})
-					return typed, allowed, nil
+					principal, ok := accessmodule.PrincipalFromContext(ctx)
+					if !ok || strings.TrimSpace(principal.ID) == "" {
+						return true, false, nil
+					}
+					allowed, err := authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, dashboardID, action)
+					return true, allowed, err
 				},
 				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
 					principal, ok := routes.accessModule.CurrentPrincipal(r)
@@ -1708,6 +1709,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			return []access.ResourceRef{resource}
 		},
+		Source:   pathResourceResolver("source", projectgraph.KindSource),
+		Model:    pathResourceResolver("model", projectgraph.KindModel),
+		Pipeline: pathResourceResolver("pipeline", projectgraph.KindPipeline),
 		Project: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
 			requested, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
 			if err != nil || requested != active {
@@ -1719,6 +1723,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			return []access.ResourceRef{resource}
 		},
+		Instance: func(*http.Request) string { return storage.instanceID },
 		Delivery: func(ctx context.Context, r *http.Request, operationID, objectID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {

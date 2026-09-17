@@ -59,7 +59,11 @@ func TestAuthorityEnvelopeRejectsMissingCallerEvidenceAndAllowsDelegatedShape(t 
 	delegated := caller
 	delegated.Mode = DelegatedWorkloadMode
 	delegated.ExecutionPrincipalID = "workload_a"
-	delegated.ExecutionGrant = &ExecutionGrantEvidence{ID: "grant_a", Fingerprint: "grant_fp", ExpiresAt: time.Now().Add(time.Hour)}
+	delegated.ExecutionGrant = &ExecutionGrantEvidence{
+		ID: "grant_a", Fingerprint: "grant_fp", ExpiresAt: time.Now().Add(time.Hour),
+		WorkflowID: "workflow_a", WorkflowRevision: "revision_a", ClosureDigest: "closure_a",
+		BindingDigest: "binding_a", DestinationDigest: "destination_a", TriggerDigest: "trigger_a",
+	}
 	if err := delegated.Validate(); err != nil {
 		t.Fatalf("delegated authority shape error = %v", err)
 	}

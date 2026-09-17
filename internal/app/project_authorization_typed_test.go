@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -123,6 +124,113 @@ func TestTypedDashboardAuthoringActionsDoNotCrossAuthorize(t *testing.T) {
 			})
 			if !typed || allowed != test.want {
 				t.Fatalf("decision = typed:%t allowed:%t, want typed:true allowed:%t", typed, allowed, test.want)
+			}
+		})
+	}
+}
+
+func TestTypedBrowserDecisionUsesPrincipalAndGroupAssignments(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_typed_browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard_a", Kind: projectgraph.KindDashboard, Name: "dashboard_a"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupGrant, err := accesssnapshot.NewTypedGrant("group-dashboard-read", "group dashboard read", access.SubjectRef{Kind: access.SubjectKindGroup, ID: "group_analysts"}, []access.PermissionPair{pair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{groupGrant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed, allowed, err := typedPermissionDecisionForSnapshot(context.Background(), "principal_1", identity.ProjectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+		return access.ActionDashboardRead, true
+	}, snapshot, []access.SubjectRef{
+		{Kind: access.SubjectKindPrincipal, ID: "principal_1"},
+		{Kind: access.SubjectKindGroup, ID: "group_analysts"},
+	})
+	if err != nil || !typed || !allowed {
+		t.Fatalf("group typed browser decision = typed:%t allowed:%t err:%v, want typed:true allowed:true", typed, allowed, err)
+	}
+}
+
+func TestTypedBrowserDecisionRejectsTypedTokenAgainstLegacyOnlyAuthority(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_legacy_browser")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "dashboard_a", Kind: projectgraph.KindDashboard, Name: "dashboard_a"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySubject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_1"}
+	legacyGrant, err := access.NewCanonicalGrant(graph, legacySubject, resource, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{{ID: "legacy-read", Canonical: legacyGrant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := accessmodule.WithAPICredential(context.Background(), access.APICredential{
+		Principal: access.Principal{ID: "principal_1"},
+		Token:     access.APIToken{ID: "typed-token", PrincipalID: "principal_1", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair}},
+	})
+	typed, allowed, err := typedPermissionDecisionForSnapshot(ctx, "principal_1", identity.ProjectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+		return access.ActionDashboardRead, true
+	}, snapshot, []access.SubjectRef{legacySubject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !typed || allowed {
+		t.Fatalf("typed token over legacy authority = typed:%t allowed:%t, want typed:true allowed:false", typed, allowed)
+	}
+}
+
+func TestTypedPermissionDecisionRejectsCredentialAttenuationMismatch(t *testing.T) {
+	resource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, "project_1", resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name       string
+		credential access.APICredential
+	}{
+		{name: "wrong principal", credential: access.APICredential{Principal: access.Principal{ID: "principal_2"}, Token: access.APIToken{ID: "typed", PrincipalID: "principal_1", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{pair}}}},
+		{name: "wrong profile", credential: access.APICredential{Principal: access.Principal{ID: "principal_1"}, Token: access.APIToken{ID: "typed", PrincipalID: "principal_1", PermissionProfile: "legacy", Permissions: []access.PermissionPair{pair}}}},
+		{name: "invalid pair set", credential: access.APICredential{Principal: access.Principal{ID: "principal_1"}, Token: access.APIToken{ID: "typed", PrincipalID: "principal_1", PermissionProfile: access.PermissionCatalogProfile, Permissions: []access.PermissionPair{{Action: access.ActionDashboardRead}}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := accessmodule.WithPrincipal(context.Background(), accessmodule.Principal{ID: "principal_1"})
+			ctx = accessmodule.WithAPICredential(ctx, test.credential)
+			typed, allowed := typedPermissionDecision(ctx, "project_1", []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+				return access.ActionDashboardRead, true
+			})
+			if !typed || allowed {
+				t.Fatalf("decision = typed:%t allowed:%t, want typed:true allowed:false", typed, allowed)
 			}
 		})
 	}

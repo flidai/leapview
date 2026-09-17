@@ -17,19 +17,16 @@ import (
 
 func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	store := testStore(t)
-	ctx := context.Background()
-	principal := testPlatformPrincipal(t, ctx, store, "platform-admin@example.test", "Platform Admin")
-	token := testAPIToken(t, ctx, store, principal.ID, "platform-manage")
 	productStorage := newProductAuthorizationStorage()
 	service, err := product.NewWithStorage(productStorage, productAuthorizationBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
+	auth := testAuth(store, accessmodule.AuthConfig{DevBypass: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth, Product: service}))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/instance/settings", nil)
-	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Authorization", "Bearer dev")
 	response := httptest.NewRecorder()
 	server.Routes().ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("ETag") != `"product-1"` {
@@ -37,7 +34,7 @@ func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	}
 
 	patch := httptest.NewRequest(http.MethodPatch, "/api/v1/instance/settings", strings.NewReader(`{"displayName":"Acme Analytics"}`))
-	patch.Header.Set("Authorization", "Bearer "+token)
+	patch.Header.Set("Authorization", "Bearer dev")
 	patch.Header.Set("Content-Type", "application/json")
 	patch.Header.Set("If-Match", response.Header().Get("ETag"))
 	patch.Header.Set("X-Request-ID", "req_product_patch")
@@ -52,7 +49,7 @@ func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	}
 
 	stale := httptest.NewRequest(http.MethodPatch, "/api/v1/instance/settings", strings.NewReader(`{"displayName":"Stale"}`))
-	stale.Header.Set("Authorization", "Bearer "+token)
+	stale.Header.Set("Authorization", "Bearer dev")
 	stale.Header.Set("Content-Type", "application/json")
 	stale.Header.Set("If-Match", `"invalid"`)
 	staleResponse := httptest.NewRecorder()

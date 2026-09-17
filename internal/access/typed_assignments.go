@@ -128,7 +128,7 @@ func ExpandPermissionRole(role PermissionRole, projectID projectgraph.ResourceID
 func NewTypedRoleBinding(id, name string, subject SubjectRef, role PermissionRole, projectID projectgraph.ResourceID) (RoleBinding, error) {
 	pairs, err := ExpandPermissionRole(role, projectID)
 	if err != nil {
-		return RoleBinding{}, err
+		return RoleBinding{}, fmt.Errorf("%w: permission role %q: %v", ErrAuthorizationPolicyInvalidBinding, role, err)
 	}
 	binding := RoleBinding{ID: id, Name: name, Subject: subject, PermissionProfile: PermissionCatalogProfile, Permissions: pairs, PermissionRole: role}
 	if err := ValidateTypedRoleBindingForProject(binding, projectID); err != nil {

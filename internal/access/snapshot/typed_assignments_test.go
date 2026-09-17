@@ -50,6 +50,26 @@ func TestTypedSnapshotIgnoresAmbiguousLegacyRoleForTypedEvaluation(t *testing.T)
 	require.False(t, allowed)
 }
 
+func TestTypedSnapshotSupportsAdditiveMigrationBesideLegacyRole(t *testing.T) {
+	project, err := graph.NewProjectGraph([]graph.Resource{{ID: "dashboard_main", Kind: graph.KindDashboard, Name: "main"}}, nil)
+	require.NoError(t, err)
+	identity := graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_mixed"}
+	subject := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "alice"}
+	typed, err := access.NewTypedRoleBinding("typed", "viewer", subject, access.PermissionRoleViewer, identity.ProjectID)
+	require.NoError(t, err)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(identity, project, []RoleBinding{
+		{ID: "legacy", Subject: subject, Role: access.ProjectRoleViewer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleViewer)},
+		typed,
+	}, nil, nil)
+	require.NoError(t, err)
+
+	requested, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, mustResource(t, "dashboard_main", graph.KindDashboard))
+	require.NoError(t, err)
+	allowed, err := snapshot.AllowsTyped(subject, requested)
+	require.NoError(t, err)
+	require.True(t, allowed)
+}
+
 func mustResource(t *testing.T, id string, kind graph.Kind) access.ResourceRef {
 	t.Helper()
 	resource, err := access.NewResourceRef(graph.ResourceID(id), kind)

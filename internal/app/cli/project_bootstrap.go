@@ -117,7 +117,7 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 			Headers: accessgen.GenCreateProjectRoleBindingClientHeaders{IdempotencyKey: key},
 			Body: accessgen.GenSchemaRoleBindingCreateRequest{
 				Id: bootstrapOwnerBindingID, Name: &name, SubjectType: string(access.SubjectKindPrincipal), SubjectId: principalID,
-				Role: string(access.ProjectRoleAdmin), ExpectedRevision: expectedRevision,
+				Role: string(access.PermissionRoleProjectAdmin), ExpectedRevision: expectedRevision,
 			},
 		})
 	}
@@ -177,7 +177,7 @@ func bootstrapProjectOwnerPolicy(ctx context.Context, client *accessgen.GenClien
 func validateBootstrapOwnerBinding(binding accessgen.GenSchemaRoleBindingResponse, targetID, projectID, environment, principalID string) error {
 	if binding.Id != bootstrapOwnerBindingID || binding.Name != bootstrapOwnerBindingName ||
 		binding.SubjectType != string(access.SubjectKindPrincipal) || binding.SubjectId != principalID ||
-		binding.Role != string(access.ProjectRoleAdmin) {
+		binding.Role != string(access.PermissionRoleProjectAdmin) {
 		return errors.New("created bootstrap owner binding identity is incompatible")
 	}
 	if binding.PolicyRevision <= 0 {
@@ -186,13 +186,13 @@ func validateBootstrapOwnerBinding(binding accessgen.GenSchemaRoleBindingRespons
 	if err := platformdigest.ValidateSHA256Identity(binding.PolicyDigest); err != nil {
 		return fmt.Errorf("created bootstrap owner binding has invalid policy digest: %w", err)
 	}
-	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleAdmin)
-	if err := validateBootstrapCapabilities(binding.Capabilities, capabilities); err != nil {
+	typed, err := bootstrapTypedRoleBinding(binding.Id, binding.Name, binding.SubjectType, binding.SubjectId, binding.Role, binding.PermissionProfile, binding.Permissions)
+	if err != nil {
 		return err
 	}
 	expected, err := access.AuthorizationPolicyDigest(
 		access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment},
-		[]access.RoleBinding{{ID: binding.Id, Name: binding.Name, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: capabilities}},
+		[]access.RoleBinding{typed},
 	)
 	if err != nil {
 		return fmt.Errorf("canonicalize created bootstrap owner binding: %w", err)
@@ -209,7 +209,7 @@ func validateBootstrapExistingPolicy(policy accessgen.GenSchemaRoleBindingListRe
 		return err
 	}
 	for _, binding := range bindings {
-		if binding.Subject.Kind == access.SubjectKindPrincipal && binding.Subject.ID == principalID && bootstrapAdministratorRole(binding.Role) {
+		if binding.Subject.Kind == access.SubjectKindPrincipal && binding.Subject.ID == principalID && bootstrapAdministratorRole(binding) {
 			return nil
 		}
 	}
@@ -243,16 +243,27 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 		if err != nil {
 			return nil, err
 		}
-		role, err := access.ParseProjectRole(item.Role)
+		var binding access.RoleBinding
+		if item.PermissionProfile != nil || item.Permissions != nil {
+			binding, err = bootstrapTypedRoleBinding(item.Id, item.Name, item.SubjectType, item.SubjectId, item.Role, item.PermissionProfile, item.Permissions)
+		} else {
+			role, roleErr := access.ParseProjectRole(item.Role)
+			if roleErr != nil {
+				return nil, roleErr
+			}
+			if item.Capabilities == nil {
+				return nil, errors.New("legacy role binding omitted capabilities")
+			}
+			capabilities := make([]access.Capability, len(*item.Capabilities))
+			for index, capability := range *item.Capabilities {
+				capabilities[index] = access.Capability(capability)
+			}
+			binding = access.RoleBinding{ID: item.Id, Name: item.Name, Subject: subject, Role: role, Capabilities: capabilities}
+			if err = access.ValidateAuthorizationRoleBinding(binding); err != nil {
+				return nil, err
+			}
+		}
 		if err != nil {
-			return nil, err
-		}
-		capabilities := make([]access.Capability, len(item.Capabilities))
-		for index, capability := range item.Capabilities {
-			capabilities[index] = access.Capability(capability)
-		}
-		binding := access.RoleBinding{ID: item.Id, Name: item.Name, Subject: subject, Role: role, Capabilities: capabilities}
-		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
 			return nil, err
 		}
 		if item.PolicyRevision != policy.PolicyRevision || item.PolicyDigest != policy.PolicyDigest {
@@ -270,8 +281,31 @@ func validateBootstrapPolicy(policy accessgen.GenSchemaRoleBindingListResponse, 
 	return bindings, nil
 }
 
-func bootstrapAdministratorRole(role access.ProjectRole) bool {
-	return role == access.ProjectRoleOwner || role == access.ProjectRoleAdmin
+func bootstrapAdministratorRole(binding access.RoleBinding) bool {
+	return binding.PermissionRole == access.PermissionRoleProjectAdmin || binding.Role == access.ProjectRoleOwner || binding.Role == access.ProjectRoleAdmin
+}
+
+func bootstrapTypedRoleBinding(id, name, subjectType, subjectID, role string, profile *accessgen.GenSchemaPermissionCatalogProfile, pairs *[]accessgen.GenSchemaPermissionPair) (access.RoleBinding, error) {
+	if profile == nil || string(*profile) != access.PermissionCatalogProfile || pairs == nil {
+		return access.RoleBinding{}, errors.New("typed role binding omitted its permission profile or expansion")
+	}
+	encoded, err := json.Marshal(*pairs)
+	if err != nil {
+		return access.RoleBinding{}, fmt.Errorf("encode typed role binding permissions: %w", err)
+	}
+	permissions, err := access.DecodePermissionPairs(encoded)
+	if err != nil {
+		return access.RoleBinding{}, fmt.Errorf("decode typed role binding permissions: %w", err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKind(subjectType), subjectID)
+	if err != nil {
+		return access.RoleBinding{}, err
+	}
+	binding := access.RoleBinding{ID: id, Name: name, Subject: subject, PermissionRole: access.PermissionRole(role), PermissionProfile: string(*profile), Permissions: permissions}
+	if err := access.ValidateTypedRoleBinding(binding); err != nil {
+		return access.RoleBinding{}, err
+	}
+	return binding, nil
 }
 
 func validateBootstrapCapabilities(actual []accessgen.GenSchemaCapability, expected []access.Capability) error {

@@ -107,8 +107,12 @@ model RoleBindingResponse {
   subjectType: string;
   subjectId: string;
   role: string;
-  @doc("The immutable capability bundle derived from role by the target authority.")
-  capabilities: Capability[];
+  @doc("The versioned typed permission profile captured with this assignment.")
+  permissionProfile?: PermissionCatalogProfile;
+  @doc("The exact immutable action-target expansion captured at assignment time.")
+  permissions?: PermissionPair[];
+  @doc("Legacy read-only capability evidence. New role bindings never populate this field.")
+  capabilities?: Capability[];
   policyRevision: int64;
   policyDigest: string;
 }
@@ -128,6 +132,7 @@ model RoleBindingCreateRequest {
   name?: string;
   subjectType: string;
   subjectId: string;
+  @doc("A versioned named role from the typed permission catalog. The server captures its exact expansion.")
   role: string;
   @doc("Compare-and-swap fence. Use 0 when creating the first policy revision.")
   expectedRevision: int64;
@@ -928,7 +933,7 @@ alias ListProjectRolesOK = OkJson<RoleListResponse>;
 @summary("List project roles")
 @route("/projects/{project}/roles")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
 
@@ -943,7 +948,7 @@ model CreateProjectRoleBindingCreated {
 @summary("List target-owned project role bindings")
 @route("/projects/{project}/role-bindings")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRoleBindingsOK | CommonErrors;
 
@@ -951,7 +956,7 @@ op listProjectRoleBindings(@path project: ResourceId, @query limit?: ListLimit, 
 @summary("Create a target-owned project role binding")
 @route("/projects/{project}/role-bindings")
 @post
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.manage", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 @apigen.command(#{ auditAction: "role_binding.created", guarantee: "transactional" })
 @apigen.failsWith(RoleBindingInvalidFailure)
@@ -966,7 +971,7 @@ alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 @summary("List effective capabilities")
 @route("/projects/{project}/effective-capabilities")
 @get
-@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+@apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.access.read", resolver: "project" })
 @extension("x-leapview-object-scope", "project")
 op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 

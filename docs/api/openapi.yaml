@@ -5141,7 +5141,12 @@ paths:
       tags:
         - Audit
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.audit.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/capabilities:
     get:
       operationId: getCapabilities
@@ -6284,7 +6289,9 @@ paths:
           action_id: dashboard.appearance.update
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}:
@@ -12522,7 +12529,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.logo.deleted
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: PRODUCT_IDENTITY_PRECONDITION_FAILED
@@ -12532,7 +12539,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.logo.delete
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
     put:
       operationId: uploadProductLogo
@@ -12833,7 +12846,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.logo.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: INVALID_PRODUCT_LOGO
@@ -12847,7 +12860,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.logo.upload
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/logo/{digest}:
     get:
@@ -13121,7 +13140,12 @@ paths:
       tags:
         - Instance
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.settings.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/project-claim:
     post:
@@ -13702,7 +13726,12 @@ paths:
       tags:
         - Instance
       x-apigen-operation-kind: query
-      x-leapview-object-scope: platform
+      x-authz:
+        action: platform.settings.read
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
     patch:
       operationId: updateProductSettings
@@ -13997,7 +14026,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.identity.updated
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: INVALID_PRODUCT_IDENTITY
@@ -14011,7 +14040,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.identity.update
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/settings/reset:
     post:
@@ -14307,7 +14342,7 @@ paths:
             schema_version: 1
           required: true
           success_action: product.identity.reset
-        authz_mode: authenticated
+        authz_mode: privilege
         concurrency: if-match
         failures:
           - code: PRODUCT_IDENTITY_PRECONDITION_FAILED
@@ -14318,7 +14353,13 @@ paths:
         owner: LeapViewAPI
         ui:
           action_id: product-settings.identity.reset
-      x-leapview-object-scope: platform
+        privilege: PLATFORM_ADMIN
+      x-authz:
+        action: platform.settings.update
+        mode: privilege
+        resolver: instance
+        privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
       x-apigen-manual: true
   /api/v1/instance/system:
     get:
@@ -23179,7 +23220,9 @@ paths:
         - Projects
       x-apigen-operation-kind: query
       x-authz:
+        action: project.settings.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/audit-events:
@@ -23528,7 +23571,9 @@ paths:
         - Audit
       x-apigen-operation-kind: query
       x-authz:
+        action: audit.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/catalog:
@@ -24521,7 +24566,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/draft:
@@ -24940,8 +24987,10 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
-        privilege: RESOURCE_EDIT
+        resolver: dashboard
+        privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/preview:
     post:
@@ -25398,7 +25447,9 @@ paths:
                 revisionId: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}:
@@ -25770,7 +25821,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.update
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/revisions/{revision}:
@@ -26136,7 +26189,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/drafts:
@@ -26527,7 +26582,7 @@ paths:
             schema_version: 1
           required: true
           success_action: dashboard_authoring.draft_created
-        authz_mode: authenticated
+        authz_mode: privilege
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
@@ -26536,6 +26591,13 @@ paths:
           type: project
         ui:
           action_id: dashboard.builder.create
+        privilege: RESOURCE_EDIT
+      x-authz:
+        action: dashboard.create
+        mode: privilege
+        resolver: project
+        privilege: RESOURCE_EDIT
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/forks:
     post:
       operationId: forkDashboardAuthoringDraft
@@ -26926,7 +26988,7 @@ paths:
             schema_version: 1
           required: true
           success_action: dashboard_authoring.draft_forked
-        authz_mode: authenticated
+        authz_mode: privilege
         failures: []
         idempotency: required
         owner: LeapViewAPI.Dashboard
@@ -26935,6 +26997,13 @@ paths:
           type: project
         ui:
           action_id: dashboard.builder.fork
+        privilege: RESOURCE_EDIT
+      x-authz:
+        action: dashboard.create
+        mode: privilege
+        resolver: project
+        privilege: RESOURCE_EDIT
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export:
     get:
       operationId: exportDashboardAuthoringSource
@@ -27217,7 +27286,9 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authorization-checks:
@@ -29108,7 +29179,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/active-revision:
@@ -29390,7 +29463,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions:
@@ -29691,7 +29766,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/revisions/{revision}:
@@ -29984,7 +30061,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions:
@@ -30312,7 +30391,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
     post:
@@ -31026,7 +31107,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/cancel:
@@ -31751,7 +31834,9 @@ paths:
         - Managed Data
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/finalize:
@@ -40860,7 +40945,9 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/grants:
@@ -42848,7 +42935,9 @@ paths:
         - Audit
       x-apigen-operation-kind: query
       x-authz:
+        action: audit.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/refresh-runs:
@@ -46385,6 +46474,15 @@ paths:
                       - PLATFORM_ADMIN
                     id: example
                     name: example
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
                     policyDigest: example
                     policyRevision: 1
                     role: example
@@ -46635,7 +46733,9 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
     post:
@@ -46672,6 +46772,15 @@ paths:
                   - PLATFORM_ADMIN
                 id: example
                 name: example
+                permissionProfile: leapview.permissions/v1
+                permissions:
+                  - action: dashboard.read
+                    profile: leapview.permissions/v1
+                    target:
+                      projectId: project:analytics
+                      resourceId: dashboard:sales
+                      resourceKind: dashboard
+                      scope: resource
                 policyDigest: example
                 policyRevision: 1
                 role: example
@@ -46978,7 +47087,9 @@ paths:
           type: project
         privilege: PROJECT_ADMIN
       x-authz:
+        action: project.access.manage
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/roles:
@@ -47267,7 +47378,9 @@ paths:
         - Access
       x-apigen-operation-kind: query
       x-authz:
+        action: project.access.read
         mode: privilege
+        resolver: project
         privilege: PROJECT_ADMIN
       x-leapview-object-scope: project
   /api/v1/projects/{project}/targets/{target}/connection-bindings:
@@ -48259,7 +48372,9 @@ paths:
         - Connections
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
     put:
@@ -48648,7 +48763,9 @@ paths:
           action_id: connection.binding.update
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/disable:
@@ -49017,7 +49134,9 @@ paths:
           action_id: connection.binding.disable
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/enable:
@@ -49382,7 +49501,9 @@ paths:
           action_id: connection.binding.enable
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/health:
@@ -49677,7 +49798,9 @@ paths:
         - Connections
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.read
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_READ
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/plan:
@@ -49993,7 +50116,9 @@ paths:
                   tlsMode: example
       x-apigen-operation-kind: query
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/refresh:
@@ -50361,7 +50486,9 @@ paths:
           action_id: connection.binding.refresh
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/projects/{project}/targets/{target}/connection-bindings/{connection}/test:
@@ -50731,7 +50858,9 @@ paths:
           action_id: connection.binding.test
         privilege: RESOURCE_MANAGE
       x-authz:
+        action: connection.manage
         mode: privilege
+        resolver: connection
         privilege: RESOURCE_MANAGE
       x-leapview-object-scope: connection
   /api/v1/search:
@@ -54728,7 +54857,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets:
@@ -55019,7 +55150,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}:
@@ -55300,7 +55433,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}/fields:
@@ -55606,7 +55741,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/datasets/{dataset}/preview:
@@ -55957,7 +56094,9 @@ paths:
                   field: example
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
       x-leapview-response-trailers:
@@ -56274,7 +56413,9 @@ paths:
                   field: example
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/fields:
@@ -56574,7 +56715,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/query:
@@ -56973,7 +57116,9 @@ paths:
           - semantic-model
           - query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
       x-leapview-response-trailers:
@@ -57288,7 +57433,9 @@ paths:
                 grain: second
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.query
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_USE
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/relationships:
@@ -57583,7 +57730,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/semantic-models/{model}/sources:
@@ -57875,7 +58024,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: semantic.read
         mode: privilege
+        resolver: semantic-model
         privilege: RESOURCE_READ
       x-leapview-object-scope: semantic-model
   /api/v1/service-principals:
@@ -79554,6 +79705,8 @@ components:
           example: example
         role:
           type: string
+          description: A versioned named role from the typed permission catalog. The
+            server captures its exact expansion.
           example: example
         expectedRevision:
           type: integer
@@ -79588,6 +79741,15 @@ components:
                 - PLATFORM_ADMIN
               id: example
               name: example
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
               policyDigest: example
               policyRevision: 1
               role: example
@@ -79621,6 +79783,15 @@ components:
               - PLATFORM_ADMIN
             id: example
             name: example
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
             policyDigest: example
             policyRevision: 1
             role: example
@@ -79640,7 +79811,6 @@ components:
         - subjectType
         - subjectId
         - role
-        - capabilities
         - policyRevision
         - policyDigest
       properties:
@@ -79659,12 +79829,29 @@ components:
         role:
           type: string
           example: example
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+          description: The versioned typed permission profile captured with this assignment.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          description: The exact immutable action-target expansion captured at assignment
+            time.
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         capabilities:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: The immutable capability bundle derived from role by the target
-            authority.
+          description: Legacy read-only capability evidence. New role bindings never
+            populate this field.
           example:
             - PLATFORM_ADMIN
         policyRevision:
@@ -79679,6 +79866,15 @@ components:
           - PLATFORM_ADMIN
         id: example
         name: example
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         policyDigest: example
         policyRevision: 1
         role: example

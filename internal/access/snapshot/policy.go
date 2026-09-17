@@ -288,10 +288,12 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 			}
 		}
 		roleKey := string(binding.Role)
+		assignmentKind := "legacy"
 		if binding.TypedRoleBinding() {
 			roleKey = string(binding.PermissionRole)
+			assignmentKind = "typed"
 		}
-		key := string(binding.Subject.Kind) + "\x00" + binding.Subject.ID + "\x00" + roleKey
+		key := assignmentKind + "\x00" + string(binding.Subject.Kind) + "\x00" + binding.Subject.ID + "\x00" + roleKey
 		if _, ok := seenBindingKeys[key]; ok {
 			return AuthorizationSnapshot{}, fmt.Errorf("duplicate role binding subject/role for %q", binding.ID)
 		}

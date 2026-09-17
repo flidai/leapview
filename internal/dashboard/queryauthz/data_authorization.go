@@ -435,6 +435,11 @@ func (m Metrics) authorizeDataQuery(ctx context.Context, snapshot accesssnapshot
 	if err != nil {
 		return false, err
 	}
+	if handled, allowed, typedErr := authorizeTypedSemanticQuery(ctx, snapshot, subjects, request, objects); typedErr != nil {
+		return false, typedErr
+	} else if handled {
+		return allowed, nil
+	}
 	allows := func(resource access.ResourceRef) (bool, error) {
 		for _, subject := range subjects {
 			ok, err := snapshot.Allows(subject, resource, capability)

@@ -38,6 +38,15 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 				Privilege:   contract.Command.Privilege,
 				Idempotency: contract.Command.Idempotency,
 				Concurrency: contract.Command.Concurrency,
+				UIActionID: func() string {
+					if contract.Command.UI == nil {
+						return ""
+					}
+					return contract.Command.UI.ActionID
+				}(),
+			}
+			for _, exposure := range contract.Command.AdditionalExposures {
+				command.AdditionalExposures = append(command.AdditionalExposures, string(exposure))
 			}
 			if contract.Command.Target != nil {
 				command.Target = &accessmodule.APIGenCommandTarget{Parameter: contract.Command.Target.Parameter, Type: contract.Command.Target.Type}
@@ -48,7 +57,8 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 			action, resolver = contract.Authz.Action, contract.Authz.Resolver
 		}
 		contracts[operationID] = accessmodule.APIGenOperationContract{
-			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path, Protected: contract.Protected,
+			OperationID: contract.OperationID, Kind: string(contract.Kind), Namespace: contract.Namespace,
+			Method: contract.Method, Path: contract.Path, Protected: contract.Protected, Manual: contract.Manual,
 			AuthzMode: contract.AuthzMode, Action: action, Resolver: resolver, Command: command, Extensions: contract.Extensions,
 		}
 	}

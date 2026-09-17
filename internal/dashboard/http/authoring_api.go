@@ -67,6 +67,11 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 type AuthoringAPI struct {
 	Application HeadlessAuthoringApplication
 	ActorID     func(*nethttp.Request) string
+	// AuthorizeTypedDashboardAction is the body-aware action boundary for the
+	// command union. Generated transport metadata protects create/fork/preview
+	// routes with their fixed target/action; execute is intentionally resolved
+	// after decoding because edit, publish, and archive are one endpoint.
+	AuthorizeTypedDashboardAction func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
 	// RecordAudit is retained for source compatibility with older focused
 	// fixtures. Production authoring mutations use the transaction-bound
 	// Access recorder carried by the authoring repository instead.
@@ -475,6 +480,10 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 	command, origin, err := commandFromAPIGen(input, key, actor)
 	if err != nil {
 		writeAuthoringError(w, r, err)
+		return
+	}
+	if authErr := h.authorizeTypedCommand(r.Context(), projectID, command); authErr != nil {
+		writeAuthoringError(w, r, authErr)
 		return
 	}
 	privilege := authoringCommandCapability(command)

@@ -124,23 +124,19 @@ func typedSnapshotProfile(snapshot accesssnapshot.AuthorizationSnapshot) (*strin
 	if profile != "" && profile != access.PermissionCatalogProfile {
 		return nil, fmt.Errorf("authorization snapshot uses unsupported permission profile %q", profile)
 	}
-	legacy := false
 	for _, binding := range snapshot.RoleBindings() {
-		if binding.PermissionProfile == "" && binding.Permissions == nil {
-			legacy = true
-		} else if profile != binding.PermissionProfile {
-			return nil, fmt.Errorf("authorization snapshot profile %q disagrees with role binding profile %q", profile, binding.PermissionProfile)
+		if binding.PermissionProfile != "" || binding.Permissions != nil {
+			if profile != binding.PermissionProfile {
+				return nil, fmt.Errorf("authorization snapshot profile %q disagrees with role binding profile %q", profile, binding.PermissionProfile)
+			}
 		}
 	}
 	for _, grant := range snapshot.Grants() {
-		if grant.PermissionProfile == "" && grant.Permissions == nil {
-			legacy = true
-		} else if profile != grant.PermissionProfile {
-			return nil, fmt.Errorf("authorization snapshot profile %q disagrees with grant profile %q", profile, grant.PermissionProfile)
+		if grant.PermissionProfile != "" || grant.Permissions != nil {
+			if profile != grant.PermissionProfile {
+				return nil, fmt.Errorf("authorization snapshot profile %q disagrees with grant profile %q", profile, grant.PermissionProfile)
+			}
 		}
-	}
-	if profile != "" && legacy {
-		return nil, errors.New("typed authorization snapshot cannot mix legacy and typed assignments")
 	}
 	if profile == "" {
 		return nil, nil

@@ -326,6 +326,21 @@ func (f testRuntimeFactory) Prepare(_ context.Context, input runtimehost.Runtime
 			ID: "test-binding-" + hex.EncodeToString(sum[:8]), Name: "test fixture project role", Subject: subject.subject,
 			Role: subject.role, Capabilities: access.ProjectRoleCapabilities(subject.role),
 		})
+		permissionRole := access.PermissionRoleViewer
+		if subject.role == access.ProjectRoleAdmin {
+			permissionRole = access.PermissionRoleProjectAdmin
+		}
+		typed, typedErr := access.NewTypedRoleBinding(
+			"test-typed-binding-"+hex.EncodeToString(sum[:8]),
+			"test fixture typed project role",
+			subject.subject,
+			permissionRole,
+			input.State.ProjectID,
+		)
+		if typedErr != nil {
+			return nil, fmt.Errorf("build test typed role for %q: %w", subject.subject.ID, typedErr)
+		}
+		bindings = append(bindings, typed)
 	}
 	authorization, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, f.graph, bindings, nil, nil)
 	if err != nil {

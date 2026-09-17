@@ -29,6 +29,8 @@ type AuthorizationRequest struct {
 	DashboardID      authoring.DashboardID
 	OwnerPrincipalID string
 	SemanticModel    graph.ResourceID
+	// DependencyChange requires independent authority on a replacement model.
+	DependencyChange bool
 	Target           AuthorizationTarget
 	Visibility       authoring.Visibility
 	Action           authoring.AuthorizationAction
@@ -831,6 +833,11 @@ func (s *Service) edit(ctx context.Context, projectID graph.ResourceID, command 
 	}
 	if err != nil {
 		return Result{}, err
+	}
+	if nextLifecycle.SemanticModel != lifecycle.SemanticModel {
+		if err := s.authorizeDependencyChange(ctx, projectID, lifecycle, nextLifecycle, command); err != nil {
+			return Result{}, err
+		}
 	}
 	appended, err := s.repository.AppendDraft(ctx, authoring.AppendDraftInput{ProjectID: projectID, DashboardID: command.DashboardID, ExpectedDraftRevision: command.ExpectedRevision, Revision: revision, Next: nextLifecycle, Evidence: evidence})
 	if err != nil {

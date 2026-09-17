@@ -17,8 +17,12 @@ const (
 	TypedOperationResolverDashboard     TypedOperationResolver = "dashboard"
 	TypedOperationResolverSemanticModel TypedOperationResolver = "semantic-model"
 	TypedOperationResolverConnection    TypedOperationResolver = "connection"
+	TypedOperationResolverSource        TypedOperationResolver = "source"
+	TypedOperationResolverModel         TypedOperationResolver = "model"
 	TypedOperationResolverProject       TypedOperationResolver = "project"
 	TypedOperationResolverPipeline      TypedOperationResolver = "pipeline"
+	TypedOperationResolverDelivery      TypedOperationResolver = "delivery"
+	TypedOperationResolverInstance      TypedOperationResolver = "instance"
 )
 
 var (
@@ -67,10 +71,15 @@ func (TypedOperationRequirementService) New(action Action, resolver string) (Typ
 		return TypedOperationRequirement{}, fmt.Errorf("%w: resolver %q is not canonical", ErrUnknownTypedOperationResolver, resolver)
 	}
 	resolverKind, ok := typedOperationResolverKinds[TypedOperationResolver(resolverValue)]
-	if !ok {
+	if !ok && TypedOperationResolver(resolverValue) != TypedOperationResolverInstance {
 		return TypedOperationRequirement{}, fmt.Errorf("%w: %q", ErrUnknownTypedOperationResolver, resolver)
 	}
-	if err := ValidateActionForKind(action, resolverKind); err != nil {
+	if TypedOperationResolver(resolverValue) == TypedOperationResolverInstance {
+		definition, _ := Permission(action)
+		if definition.Scope != PermissionScopeInstance {
+			return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: %w", action, resolver, ErrInvalidPermissionCatalog)
+		}
+	} else if err := ValidateActionForKind(action, resolverKind); err != nil {
 		return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: %w", action, resolver, err)
 	}
 	return TypedOperationRequirement{Action: action, Resolver: TypedOperationResolver(resolverValue)}, nil
@@ -88,6 +97,36 @@ func (service TypedOperationRequirementService) Requirement(action Action, resol
 func (requirement TypedOperationRequirement) ResolvePairs(projectID projectgraph.ResourceID, resources ...ResourceRef) ([]PermissionPair, error) {
 	if err := projectID.Validate(); err != nil {
 		return nil, err
+	}
+	definition, ok := Permission(requirement.Action)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownPermissionAction, requirement.Action)
+	}
+	if definition.Scope == PermissionScopeInstance {
+		return nil, fmt.Errorf("typed instance operation %q requires an instance identity", requirement.Action)
+	}
+	// Project-scoped actions are checked against the serving Project namespace,
+	// even when their resource family is a child object (for example
+	// connection.create). Never encode these as resource-scoped pairs: doing
+	// so would make the pair structurally invalid and could accidentally widen
+	// an attenuation to a child object.
+	if definition.Scope == PermissionScopeProject {
+		if len(resources) == 0 {
+			resources = []ResourceRef{projectResourceRef(projectID)}
+		}
+		for _, resource := range resources {
+			if err := requirement.ValidateResource(resource); err != nil {
+				return nil, err
+			}
+			if resource.Kind() != projectgraph.KindProjectNamespace || resource.ID() != projectID {
+				return nil, fmt.Errorf("typed project operation target %q is not the requested project %q", resource.ID(), projectID)
+			}
+		}
+		pair, err := NewProjectPermissionPair(requirement.Action, projectID)
+		if err != nil {
+			return nil, err
+		}
+		return RequiredPermissionPairs(pair)
 	}
 	if len(resources) == 0 {
 		return nil, ErrTypedOperationTargetRequired
@@ -118,6 +157,32 @@ func (requirement TypedOperationRequirement) ResolvePairs(projectID projectgraph
 	return result, nil
 }
 
+// ResolveInstancePairs creates the instance-audience pair for platform
+// administration operations. Instance actions intentionally do not accept a
+// graph ResourceRef or a project ID; callers must supply the target instance
+// identity resolved by the application boundary.
+func (requirement TypedOperationRequirement) ResolveInstancePairs(instanceID string) ([]PermissionPair, error) {
+	if requirement.Resolver != TypedOperationResolverInstance {
+		return nil, fmt.Errorf("typed operation resolver %q is not instance", requirement.Resolver)
+	}
+	definition, ok := Permission(requirement.Action)
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrUnknownPermissionAction, requirement.Action)
+	}
+	if definition.Scope != PermissionScopeInstance {
+		return nil, fmt.Errorf("typed operation action %q is not instance-scoped", requirement.Action)
+	}
+	pair, err := NewInstancePermissionPair(requirement.Action, strings.TrimSpace(instanceID))
+	if err != nil {
+		return nil, err
+	}
+	return RequiredPermissionPairs(pair)
+}
+
+func projectResourceRef(projectID projectgraph.ResourceID) ResourceRef {
+	return ResourceRef{id: projectID, kind: projectgraph.KindProjectNamespace}
+}
+
 // PermissionPair resolves exactly one domain target for this requirement.
 func (requirement TypedOperationRequirement) PermissionPair(projectID projectgraph.ResourceID, resource ResourceRef) (PermissionPair, error) {
 	pairs, err := requirement.ResolvePairs(projectID, resource)
@@ -136,6 +201,9 @@ func (requirement TypedOperationRequirement) ValidateResource(resource ResourceR
 	}
 	wantKind, ok := typedOperationResolverKinds[requirement.Resolver]
 	if !ok {
+		if requirement.Resolver == TypedOperationResolverInstance {
+			return fmt.Errorf("typed instance resolver does not accept graph resources")
+		}
 		return fmt.Errorf("%w: %q", ErrUnknownTypedOperationResolver, requirement.Resolver)
 	}
 	if resource.Kind() != wantKind {
@@ -148,6 +216,11 @@ var typedOperationResolverKinds = map[TypedOperationResolver]projectgraph.Kind{
 	TypedOperationResolverDashboard:     projectgraph.KindDashboard,
 	TypedOperationResolverSemanticModel: projectgraph.KindSemanticModel,
 	TypedOperationResolverConnection:    projectgraph.KindConnection,
+	TypedOperationResolverSource:        projectgraph.KindSource,
+	TypedOperationResolverModel:         projectgraph.KindModel,
 	TypedOperationResolverProject:       projectgraph.KindProjectNamespace,
 	TypedOperationResolverPipeline:      projectgraph.KindPipeline,
+	// Delivery is a project-scoped control-plane family. Its actions are
+	// validated against the Project namespace, not an invented graph kind.
+	TypedOperationResolverDelivery: projectgraph.KindProjectNamespace,
 }

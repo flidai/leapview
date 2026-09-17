@@ -313,6 +313,7 @@ func (a *PostgresJobsAdapter) jobRecord(run refreshpostgres.Run, job jobs.Job) (
 		NominalTime: formatNominal(run.NominalTime), PrincipalID: run.PrincipalID, GroupIDs: append([]string(nil), job.GroupIDs...), Kind: job.Kind,
 		PayloadJSON: inputPayload, EstimatedMemoryBytes: job.EstimatedMemoryBytes, RunID: run.RunID, TargetType: run.TargetType, TargetID: projectgraph.ResourceID(run.TargetID),
 		TargetRevision: run.TargetRevision, TriggerType: run.TriggerType, AttemptCount: job.Attempts, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseGeneration,
+		Authority: job.Authority,
 	}
 	if err := record.Validate(); err != nil {
 		return refreshrun.JobRecord{}, err

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -36,7 +37,7 @@ func TestAPIGenTypedDashboardReadRequiresExactPermissionPair(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			identity, snapshot := apigenSnapshot(t, "principal", "", projectgraph.ResourceID(test.resourceID), projectgraph.KindDashboard, true, false)
+			identity, snapshot := typedDashboardSnapshot(t, test.resourceID)
 			module := browserGuardModule(browserGuardRepository{}, Principal{ID: "principal"}, true)
 			authorizer, err := module.APIGenAuthorizer(
 				apigenRuntimeFake{project: "project_demo", lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
@@ -72,6 +73,39 @@ func TestAPIGenTypedDashboardReadRequiresExactPermissionPair(t *testing.T) {
 			}
 		})
 	}
+}
+
+func typedDashboardSnapshot(t *testing.T, dashboardID string) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
+	t.Helper()
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_typed_dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: projectgraph.ResourceID(dashboardID), Kind: projectgraph.KindDashboard, Name: dashboardID}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "principal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := accesssnapshot.NewTypedGrant("dashboard-read", "dashboard-read", subject, []access.PermissionPair{pair})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identity, snapshot
 }
 
 func TestAPIGenTypedDashboardMappingDoesNotAuthorizeMutationOrOtherResources(t *testing.T) {

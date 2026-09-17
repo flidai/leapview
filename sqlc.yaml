@@ -21,6 +21,9 @@ sql:
     queries: "internal/access/postgres/queries"
     schema:
       - "internal/access/postgres/schema.sql"
+      - "internal/project/postgres/schema.sql"
+      - "internal/project/postgres/resource_uid_schema.sql"
+      - "internal/platform/postgres/migrations/026_durable_authority_grants.sql"
     gen:
       go:
         package: "db"

@@ -56,3 +56,14 @@ func (service *APIGenTypedOperationRequirementService) ResolvePairs(operationID 
 	}
 	return requirement.ResolvePairs(projectID, resources...)
 }
+
+// ResolveInstancePairs resolves an instance-audience operation using the
+// application-owned instance identity. Project graph resources are never
+// fabricated for instance-scoped actions.
+func (service *APIGenTypedOperationRequirementService) ResolveInstancePairs(operationID, instanceID string) ([]access.PermissionPair, error) {
+	requirement, ok := service.Requirement(operationID)
+	if !ok {
+		return nil, fmt.Errorf("typed requirement for APIGen operation %q is unavailable", operationID)
+	}
+	return requirement.ResolveInstancePairs(instanceID)
+}

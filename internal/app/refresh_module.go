@@ -13,6 +13,7 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
@@ -73,11 +74,17 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if refreshPersistence == nil && persistence.requireNativePersistence {
 		return fmt.Errorf("configure refresh persistence: native composition requires an injected persistence bundle")
 	}
+	var executionGrants refreshmodule.ExecutionGrantReader
+	if reader, ok := persistence.accessRepo.(refreshmodule.ExecutionGrantReader); ok {
+		executionGrants = reader
+	}
+	scheduledExecutionGrantID := postgresScheduledExecutionGrantIDResolver(persistence.accessRepo, storage.instanceID)
 	config := refreshmodule.Config{
 		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
 		CurrentCredential: accessmodule.APICredentialFromContext, RequireAuthority: persistence.requireNativePersistence,
 		CurrentSessionEvidence: accessmodule.SessionCredentialEvidenceFromContext,
-		Artifacts:              appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
+		ExecutionGrants:        executionGrants, InstanceID: storage.instanceID,
+		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },
 			CurrentPrincipal: func(r *http.Request) (refreshmodule.HTTPPrincipal, bool) {
@@ -114,10 +121,14 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
 		Clock: workflow.refreshPipelineClock, ResolveIdentity: resolveRefreshIdentity,
-		PublishedVersion:  workflow.publishedVersion,
-		EnableScheduler:   false,
-		RecoveryLifecycle: recoveryLifecycle,
-		RecoveryInterval:  workflow.recoveryInterval,
+		PublishedVersion: workflow.publishedVersion,
+		// Native PostgreSQL production owns the scheduler lifecycle. Its
+		// occurrence callback is bound to the explicit current-grant selector
+		// above; Build rejects production composition if that selector is absent.
+		EnableScheduler:                  persistence.requireNativePersistence,
+		ResolveScheduledExecutionGrantID: scheduledExecutionGrantID,
+		RecoveryLifecycle:                recoveryLifecycle,
+		RecoveryInterval:                 workflow.recoveryInterval,
 		RecoveryEnvironment: func() string {
 			if runtime.runtimeHostModule == nil {
 				return ""
@@ -128,6 +139,11 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},
+	}
+	if platform.jobModule != nil {
+		config.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(ctx context.Context, authority jobs.AuthorityEnvelope) error {
+			return platform.jobModule.RevalidateAuthority(ctx, refreshrun.JobKindRefreshPipeline, authority)
+		})
 	}
 	module, err := refreshmodule.Build(ctx, config)
 	if err != nil {

@@ -162,7 +162,11 @@ func TestAuthorityRevalidationRejectsExpiredCallerAndUnsupportedDelegation(t *te
 	delegated.Mode = jobs.DelegatedWorkloadMode
 	delegated.ExecutionPrincipalID = "workload-a"
 	delegated.Credential = nil
-	delegated.ExecutionGrant = &jobs.ExecutionGrantEvidence{ID: "grant-a", Fingerprint: "grant-fp", ExpiresAt: time.Now().Add(time.Hour)}
+	delegated.ExecutionGrant = &jobs.ExecutionGrantEvidence{
+		ID: "grant-a", Fingerprint: "grant-fp", ExpiresAt: time.Now().Add(time.Hour),
+		WorkflowID: "workflow-a", WorkflowRevision: "revision-a", ClosureDigest: "closure-a",
+		BindingDigest: "binding-a", DestinationDigest: "destination-a", TriggerDigest: "trigger-a",
+	}
 	m.config.AuthorityRevalidator = nil
 	if err := m.revalidateAuthority(t.Context(), "refresh_pipeline", delegated); !errors.Is(err, jobs.ErrAuthorityRevalidator) {
 		t.Fatalf("delegated authority without revalidator error = %v", err)

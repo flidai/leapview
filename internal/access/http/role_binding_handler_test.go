@@ -64,7 +64,7 @@ func (s *roleBindingPolicyRepositoryStub) RunAuditedMutation(ctx context.Context
 	return err
 }
 
-func TestCreateProjectRoleBindingDerivesCapabilitiesAndBindsServerScope(t *testing.T) {
+func TestCreateProjectRoleBindingCapturesTypedRoleExpansionAndBindsServerScope(t *testing.T) {
 	repo := &roleBindingPolicyRepositoryStub{}
 	handler := Handler{
 		Repository:                     func() (access.Repository, error) { return repo, nil },
@@ -94,21 +94,33 @@ func TestCreateProjectRoleBindingDerivesCapabilitiesAndBindsServerScope(t *testi
 	if got, want := repo.input.IdempotencyKey, "idem-1"; got != want {
 		t.Fatalf("idempotency key = %q, want %q", got, want)
 	}
-	wantCapabilities := access.ProjectRoleCapabilities(access.ProjectRoleViewer)
-	if len(repo.input.Binding.Capabilities) != len(wantCapabilities) {
-		t.Fatalf("capabilities = %#v, want %#v", repo.input.Binding.Capabilities, wantCapabilities)
+	if repo.input.Binding.PermissionRole != access.PermissionRoleViewer || repo.input.Binding.PermissionProfile != access.PermissionCatalogProfile {
+		t.Fatalf("typed role binding = %#v", repo.input.Binding)
 	}
-	for index, capability := range wantCapabilities {
-		if repo.input.Binding.Capabilities[index] != capability {
-			t.Fatalf("capability[%d] = %q, want %q", index, repo.input.Binding.Capabilities[index], capability)
+	wantPermissions, err := access.ExpandPermissionRole(access.PermissionRoleViewer, "project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.input.Binding.Permissions) != len(wantPermissions) {
+		t.Fatalf("permissions = %#v, want %#v", repo.input.Binding.Permissions, wantPermissions)
+	}
+	for index := range wantPermissions {
+		if repo.input.Binding.Permissions[index].Key() != wantPermissions[index].Key() {
+			t.Fatalf("permission[%d] = %#v, want %#v", index, repo.input.Binding.Permissions[index], wantPermissions[index])
 		}
 	}
 	var response map[string]any
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if _, supplied := response["capabilities"]; !supplied {
-		t.Fatalf("response omitted derived capabilities: %#v", response)
+	if response["permissionProfile"] != access.PermissionCatalogProfile {
+		t.Fatalf("response omitted typed profile: %#v", response)
+	}
+	if _, supplied := response["permissions"]; !supplied {
+		t.Fatalf("response omitted exact permission expansion: %#v", response)
+	}
+	if _, supplied := response["capabilities"]; supplied {
+		t.Fatalf("typed response exposed legacy capabilities: %#v", response)
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal([]byte(repo.audit.MetadataJSON), &metadata); err != nil {
@@ -123,13 +135,13 @@ func TestCreateProjectRoleBindingDerivesCapabilitiesAndBindsServerScope(t *testi
 	}
 }
 
-func TestCreateProjectRoleBindingRejectsCallerCapabilities(t *testing.T) {
+func TestCreateProjectRoleBindingRejectsCallerAuthorityExpansion(t *testing.T) {
 	repo := &roleBindingPolicyRepositoryStub{}
 	handler := Handler{
 		Repository:                  func() (access.Repository, error) { return repo, nil },
 		AuthorizationPolicyTargetID: "target-server", AuthorizationPolicyEnvironment: "prod",
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"principal","subjectId":"principal-1","role":"viewer","capabilities":["PROJECT_ADMIN"],"expectedRevision":0}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_demo/role-bindings", strings.NewReader(`{"id":"binding-1","subjectType":"principal","subjectId":"principal-1","role":"viewer","permissions":[],"expectedRevision":0}`))
 	request = withProjectRoute(request, "project_demo")
 	request.Header.Set("Idempotency-Key", "idem-1")
 	recorder := httptest.NewRecorder()

@@ -492,6 +492,7 @@ func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testin
 		SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel),
 		Connection:    apigenResolver("connection", projectgraph.KindConnection),
 		Project:       apigenResolver("project", projectgraph.KindProjectNamespace),
+		Instance:      func(*http.Request) string { return "instance_test" },
 	})
 	if err != nil {
 		t.Fatalf("generated operation contracts are not constructible: %v", err)

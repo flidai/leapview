@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,6 +22,53 @@ type callerAuthorityRevalidator struct {
 	current        func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error)
 	requirement    access.TypedOperationRequirement
 	requirementErr error
+}
+
+// executionGrantAuthorityReader is the narrow live authority port required
+// by delegated workload mode. In particular, it does not expose issuance,
+// credential, or ambient service-principal authority.
+type executionGrantAuthorityReader interface {
+	CurrentExecutionGrant(context.Context, string, string) (access.ExecutionGrant, error)
+}
+
+type delegatedWorkloadRevalidator struct {
+	grants      executionGrantAuthorityReader
+	current     func(context.Context, string, access.PermissionPair, string) (bool, error)
+	instanceID  string
+	environment string
+}
+
+// newDelegatedWorkloadRevalidator constructs the live execution-grant check.
+// The instance and environment bind the transport envelope to this serving
+// process; neither is accepted from a queue credential or worker identity.
+func newDelegatedWorkloadRevalidator(grants executionGrantAuthorityReader, current func(context.Context, string, access.PermissionPair, string) (bool, error), instanceID, environment string) jobs.AuthorityRevalidator {
+	return delegatedWorkloadRevalidator{grants: grants, current: current, instanceID: instanceID, environment: environment}
+}
+
+// authorityRevalidator dispatches between the two mutually exclusive product
+// authority modes. A caller credential is never consulted for delegated work.
+type authorityRevalidator struct {
+	caller    callerAuthorityRevalidator
+	delegated delegatedWorkloadRevalidator
+}
+
+func newAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, grants executionGrantAuthorityReader, current func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error), delegatedCurrent func(context.Context, string, access.PermissionPair, string) (bool, error), instanceID, environment string) jobs.AuthorityRevalidator {
+	requirement, requirementErr := refreshmodule.CreateRefreshRunTypedOperationRequirement()
+	return authorityRevalidator{
+		caller:    callerAuthorityRevalidator{tokens: tokens, sessions: sessions, current: current, requirement: requirement, requirementErr: requirementErr},
+		delegated: delegatedWorkloadRevalidator{grants: grants, current: delegatedCurrent, instanceID: instanceID, environment: environment},
+	}
+}
+
+func (r authorityRevalidator) Revalidate(ctx context.Context, authority jobs.AuthorityEnvelope) error {
+	switch authority.Mode {
+	case jobs.CallerAuthorityMode:
+		return r.caller.Revalidate(ctx, authority)
+	case jobs.DelegatedWorkloadMode:
+		return r.delegated.Revalidate(ctx, authority)
+	default:
+		return fmt.Errorf("%w: unsupported authority mode", jobs.ErrAuthorityInvalid)
+	}
 }
 
 func newCallerAuthorityRevalidator(tokens access.APITokenAuthorityEvidenceReader, sessions access.SessionAuthorityEvidenceReader, current func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error)) jobs.AuthorityRevalidator {
@@ -147,6 +195,149 @@ func (r callerAuthorityRevalidator) Revalidate(ctx context.Context, authority jo
 	return nil
 }
 
+func (r delegatedWorkloadRevalidator) Revalidate(ctx context.Context, authority jobs.AuthorityEnvelope) error {
+	if authority.Mode != jobs.DelegatedWorkloadMode {
+		return fmt.Errorf("%w: delegated workload authority is not configured", jobs.ErrAuthorityRevalidator)
+	}
+	if err := authority.Validate(); err != nil {
+		return err
+	}
+	if len(authority.Permissions) == 0 {
+		return jobs.ErrAuthorityNoPermissions
+	}
+	if r.grants == nil || r.current == nil {
+		return jobs.ErrAuthorityRevalidator
+	}
+	if r.instanceID != "" && authority.Target.InstanceID != r.instanceID {
+		return fmt.Errorf("%w: delegated target instance changed", jobs.ErrAuthorityInvalid)
+	}
+	if r.environment != "" && authority.Target.Environment != r.environment {
+		return fmt.Errorf("%w: delegated target environment changed", jobs.ErrAuthorityInvalid)
+	}
+	if authority.Target.InstanceID == "" || authority.Target.Environment == "" || authority.Target.ResourceUID == "" || authority.Target.ResourceKind != string(projectgraph.KindPipeline) {
+		return fmt.Errorf("%w: delegated authority requires an exact pipeline target", jobs.ErrAuthorityInvalid)
+	}
+
+	evidence := authority.ExecutionGrant
+	grant, err := r.grants.CurrentExecutionGrant(ctx, evidence.ID, authority.ExecutionPrincipalID)
+	if err != nil {
+		return fmt.Errorf("%w: current execution grant: %v", jobs.ErrAuthorityInvalid, err)
+	}
+	if err := validateDelegatedGrantEvidence(authority, grant); err != nil {
+		return fmt.Errorf("%w: %v", jobs.ErrAuthorityInvalid, err)
+	}
+	if err := validateDelegatedPermissionSet(authority, grant); err != nil {
+		return fmt.Errorf("%w: %v", jobs.ErrAuthorityInvalid, err)
+	}
+	for index, pair := range grant.Permissions {
+		allowed, currentErr := r.current(ctx, authority.ExecutionPrincipalID, pair, authority.Target.Environment)
+		if currentErr != nil {
+			return fmt.Errorf("%w: current workload permission %d: %v", jobs.ErrAuthorityInvalid, index, currentErr)
+		}
+		if !allowed {
+			return fmt.Errorf("%w: current workload permission %d is unavailable", jobs.ErrAuthorityInvalid, index)
+		}
+	}
+	return nil
+}
+
+func validateDelegatedGrantEvidence(authority jobs.AuthorityEnvelope, grant access.ExecutionGrant) error {
+	if grant.ID != authority.ExecutionGrant.ID || grant.Fingerprint != authority.ExecutionGrant.Fingerprint {
+		return errors.New("execution grant identity changed")
+	}
+	now := time.Now().UTC()
+	if grant.ExpiresAt.IsZero() || !grant.ExpiresAt.Equal(authority.ExecutionGrant.ExpiresAt.UTC()) || !grant.ExpiresAt.After(now) {
+		return errors.New("execution grant expiry changed")
+	}
+	if !grant.RevokedAt.IsZero() {
+		return errors.New("execution grant is revoked")
+	}
+	if grant.Profile != access.DurableGrantProfile {
+		return errors.New("execution grant profile changed")
+	}
+	if err := grant.Target.Validate(); err != nil {
+		return fmt.Errorf("execution grant target: %v", err)
+	}
+	if err := grant.Issuer.Validate(); err != nil {
+		return fmt.Errorf("execution grant issuer: %v", err)
+	}
+	// ActorPrincipalID is the principal that issued the durable grant, while
+	// ExecutionPrincipalID is the workload recipient. A schedule/trigger
+	// identity is not an ambient authority substitute; trigger evidence is only
+	// an immutable closure digest and does not grant access to trigger outputs.
+	if grant.Issuer.PrincipalID != authority.ActorPrincipalID {
+		return errors.New("execution grant actor principal changed")
+	}
+	if grant.ExecutionPrincipalID != authority.ExecutionPrincipalID {
+		return errors.New("execution grant execution principal changed")
+	}
+	if grant.Target.InstanceID != authority.Target.InstanceID || grant.Target.ProjectID.String() != authority.Target.ProjectID || grant.Target.ResourceUID != authority.Target.ResourceUID || grant.Target.ResourceID.String() != authority.Target.ResourceID || string(grant.Target.ResourceKind) != authority.Target.ResourceKind {
+		return errors.New("execution grant target changed")
+	}
+	if grant.Target.ResourceKind != projectgraph.KindPipeline {
+		return errors.New("execution grant target is not a pipeline")
+	}
+	if grant.WorkflowID != authority.ExecutionGrant.WorkflowID || grant.WorkflowRevision != authority.ExecutionGrant.WorkflowRevision || grant.ClosureDigest != authority.ExecutionGrant.ClosureDigest || grant.BindingDigest != authority.ExecutionGrant.BindingDigest || grant.DestinationDigest != authority.ExecutionGrant.DestinationDigest || grant.TriggerDigest != authority.ExecutionGrant.TriggerDigest {
+		return errors.New("execution grant immutable closure evidence changed")
+	}
+	return nil
+}
+
+func validateDelegatedPermissionSet(authority jobs.AuthorityEnvelope, grant access.ExecutionGrant) error {
+	grantSet, err := delegatedPermissionSet(grant.Permissions, grant.Target)
+	if err != nil {
+		return fmt.Errorf("persisted execution permissions: %v", err)
+	}
+	authorityPairs := make([]access.PermissionPair, len(authority.Permissions))
+	for index, pair := range authority.Permissions {
+		converted, err := access.FromContractPermissionPair(pair)
+		if err != nil {
+			return fmt.Errorf("permission %d is invalid: %v", index, err)
+		}
+		authorityPairs[index] = converted
+	}
+	authoritySet, err := delegatedPermissionSet(authorityPairs, grant.Target)
+	if err != nil {
+		return fmt.Errorf("authority permissions: %v", err)
+	}
+	if len(grantSet) != len(authoritySet) {
+		return errors.New("execution permission set changed")
+	}
+	for key := range grantSet {
+		if _, ok := authoritySet[key]; !ok {
+			return errors.New("execution permission set changed")
+		}
+	}
+	return nil
+}
+
+func delegatedPermissionSet(pairs []access.PermissionPair, target access.DurableGrantTarget) (map[string]struct{}, error) {
+	if err := access.ValidatePermissionPairs(pairs); err != nil {
+		return nil, err
+	}
+	result := make(map[string]struct{}, len(pairs))
+	hasRun := false
+	for _, pair := range pairs {
+		if pair.Target.Scope != access.PermissionScopeResource || pair.Target.ProjectID != target.ProjectID || pair.Target.IncludeFuture || pair.Target.ResourceKind == "" || pair.Target.ResourceID == "" {
+			return nil, errors.New("execution permissions must be exact resources in the target project")
+		}
+		key := pair.Key()
+		if _, duplicate := result[key]; duplicate {
+			return nil, errors.New("execution permissions contain a duplicate pair")
+		}
+		result[key] = struct{}{}
+		if pair.Action == access.ActionPipelineRun && pair.Target.ResourceKind == projectgraph.KindPipeline && pair.Target.ResourceID == target.ResourceID {
+			hasRun = true
+		}
+	}
+	if !hasRun {
+		return nil, errors.New("execution permissions do not contain the exact pipeline.run pair")
+	}
+	return result, nil
+}
+
 // Ensure a malformed callback cannot accidentally become a permissive
 // revalidator when composed by a caller outside native PostgreSQL startup.
 var _ jobs.AuthorityRevalidator = callerAuthorityRevalidator{}
+var _ jobs.AuthorityRevalidator = delegatedWorkloadRevalidator{}
+var _ jobs.AuthorityRevalidator = authorityRevalidator{}

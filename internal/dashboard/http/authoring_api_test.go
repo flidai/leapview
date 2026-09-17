@@ -566,6 +566,49 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	}
 }
 
+func TestAuthoringAPICommandRequiresIndependentTypedDashboardAction(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		kind   string
+		field  string
+		action access.Action
+	}{
+		{name: "edit", kind: "setVisibility", field: `"setVisibility":{"visibility":"organization"}`, action: access.ActionDashboardUpdate},
+		{name: "publish", kind: "publish", field: `"publish":{}`, action: access.ActionDashboardPublish},
+		{name: "archive", kind: "archive", field: `"archive":{}`, action: access.ActionDashboardDelete},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := &fakeHeadlessAuthoring{}
+			var got access.Action
+			api := AuthoringAPI{
+				Application: app,
+				ActorID:     func(*http.Request) string { return "principal_1" },
+				AuthorizeTypedDashboardAction: func(_ context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
+					if projectID != "sales" || dashboardID != "dash-command" {
+						t.Fatalf("typed action target = %q/%q", projectID, dashboardID)
+					}
+					got = action
+					return true, false, nil
+				},
+			}
+			body := `{"kind":"` + test.kind + `","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"` + strings.Repeat("a", 64) + `"},` + test.field + `}`
+			req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(body))
+			req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000120")
+			rec := httptest.NewRecorder()
+			testAuthoringRouterWithAPI(api).ServeHTTP(rec, req)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want forbidden (%s)", rec.Code, rec.Body.String())
+			}
+			if got != test.action {
+				t.Fatalf("typed action = %q, want %q", got, test.action)
+			}
+			if app.command.ID != "" {
+				t.Fatalf("denied command reached application: %#v", app.command)
+			}
+		})
+	}
+}
+
 func TestAuthoringAPIForkBindsInstanceSourceToRouteProject(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
 	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"instance","dashboardId":"dash"}}`))
