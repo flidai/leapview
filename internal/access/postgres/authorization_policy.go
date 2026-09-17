@@ -12,10 +12,34 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5"
 )
 
 const maxAuthorizationPolicyIdempotencyKeyBytes = 256
+
+func nullableString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func authorizationRoleBindingEncoding(binding access.RoleBinding) ([]byte, []byte, *string, *string, error) {
+	if binding.TypedRoleBinding() {
+		encoded, err := access.EncodePermissionPairs(binding.Permissions)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		profile, role := binding.PermissionProfile, string(binding.PermissionRole)
+		return nil, encoded, nullableString(profile), nullableString(role), nil
+	}
+	if binding.Capabilities == nil {
+		return nil, nil, nil, nil, errors.New("legacy role binding capabilities are omitted")
+	}
+	encoded, err := json.Marshal(binding.Capabilities)
+	return encoded, nil, nil, nil, err
+}
 
 type authorizationPolicyHead struct {
 	Scope    access.AuthorizationPolicyScope
@@ -56,12 +80,29 @@ func policyHeadFromLockRow(row accessdb.LockAuthorizationPolicyHeadRow) authoriz
 	return authorizationPolicyHead{Scope: access.AuthorizationPolicyScope{TargetID: row.TargetID, ProjectID: row.ProjectID, Environment: row.Environment}, Revision: row.Revision, Digest: row.Digest}
 }
 
-func authorizationPolicyRoleBindingFromRow(id, name, kind, subjectID, role string, encoded []byte) (access.RoleBinding, error) {
+func authorizationPolicyRoleBindingFromRow(id, name, kind, subjectID string, role *string, encoded []byte, profile *string, permissions []byte, permissionRole *string) (access.RoleBinding, error) {
+	if profile != nil {
+		if permissionRole == nil {
+			return access.RoleBinding{}, fmt.Errorf("decode authorization role binding %q: typed permission role is missing", id)
+		}
+		pairs, err := access.DecodePermissionPairs(permissions)
+		if err != nil {
+			return access.RoleBinding{}, fmt.Errorf("decode authorization role binding %q permissions: %w", id, err)
+		}
+		binding := access.RoleBinding{ID: id, Name: name, Subject: access.SubjectRef{Kind: access.SubjectKind(kind), ID: subjectID}, PermissionProfile: *profile, Permissions: pairs, PermissionRole: access.PermissionRole(*permissionRole)}
+		if err := access.ValidateTypedRoleBinding(binding); err != nil {
+			return access.RoleBinding{}, fmt.Errorf("authorization role binding %q: %w", id, err)
+		}
+		return binding, nil
+	}
+	if role == nil {
+		return access.RoleBinding{}, fmt.Errorf("decode authorization role binding %q: legacy role is missing", id)
+	}
 	var capabilities []access.Capability
 	if err := json.Unmarshal(encoded, &capabilities); err != nil {
 		return access.RoleBinding{}, fmt.Errorf("decode authorization role binding %q capabilities: %w", id, err)
 	}
-	binding := access.RoleBinding{ID: id, Name: name, Subject: access.SubjectRef{Kind: access.SubjectKind(kind), ID: subjectID}, Role: access.ProjectRole(role), Capabilities: capabilities}
+	binding := access.RoleBinding{ID: id, Name: name, Subject: access.SubjectRef{Kind: access.SubjectKind(kind), ID: subjectID}, Role: access.ProjectRole(*role), Capabilities: capabilities}
 	if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
 		return access.RoleBinding{}, fmt.Errorf("authorization role binding %q: %w", id, err)
 	}
@@ -89,11 +130,20 @@ func (r *Repository) authorizationPolicyAtRevision(ctx context.Context, db DBTX,
 	}
 	bindings := make([]access.RoleBinding, 0, len(rows))
 	for _, item := range rows {
-		binding, bindingErr := authorizationPolicyRoleBindingFromRow(item.ID, item.Name, item.SubjectKind, item.SubjectID, item.Role, item.Capabilities)
+		binding, bindingErr := authorizationPolicyRoleBindingFromRow(item.ID, item.Name, item.SubjectKind, item.SubjectID, item.Role, item.Capabilities, item.PermissionProfile, item.Permissions, item.PermissionRole)
 		if bindingErr != nil {
 			return access.AuthorizationPolicy{}, bindingErr
 		}
 		bindings = append(bindings, binding)
+		if binding.TypedRoleBinding() {
+			projectID, projectErr := projectgraph.NewResourceID(scope.ProjectID)
+			if projectErr != nil {
+				return access.AuthorizationPolicy{}, fmt.Errorf("authorization policy project: %w", projectErr)
+			}
+			if err := access.ValidateTypedRoleBindingForProject(binding, projectID); err != nil {
+				return access.AuthorizationPolicy{}, fmt.Errorf("authorization role binding %q: %w", binding.ID, err)
+			}
+		}
 	}
 	// SQL orders by ID, but sort again before validation/digesting so this
 	// boundary remains deterministic if the query is ever changed.
@@ -224,16 +274,22 @@ func cloneAuthorizationRoleBindings(input []access.RoleBinding) []access.RoleBin
 	output := append([]access.RoleBinding(nil), input...)
 	for i := range output {
 		output[i].Capabilities = append([]access.Capability(nil), output[i].Capabilities...)
+		output[i].Permissions = access.ClonePermissionPairs(output[i].Permissions)
 	}
 	return output
 }
 
 func equalAuthorizationRoleBinding(left, right access.RoleBinding) bool {
-	if left.ID != right.ID || left.Name != right.Name || left.Subject != right.Subject || left.Role != right.Role || len(left.Capabilities) != len(right.Capabilities) {
+	if left.ID != right.ID || left.Name != right.Name || left.Subject != right.Subject || left.Role != right.Role || left.PermissionProfile != right.PermissionProfile || left.PermissionRole != right.PermissionRole || len(left.Capabilities) != len(right.Capabilities) || len(left.Permissions) != len(right.Permissions) {
 		return false
 	}
 	for i := range left.Capabilities {
 		if left.Capabilities[i] != right.Capabilities[i] {
+			return false
+		}
+	}
+	for i := range left.Permissions {
+		if left.Permissions[i].Key() != right.Permissions[i].Key() {
 			return false
 		}
 	}
@@ -296,11 +352,11 @@ func insertAuthorizationPolicyRevision(ctx context.Context, db DBTX, input acces
 		return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy revision: %w", err)
 	}
 	for _, binding := range bindings {
-		encoded, marshalErr := json.Marshal(binding.Capabilities)
+		caps, permissions, profile, permissionRole, marshalErr := authorizationRoleBindingEncoding(binding)
 		if marshalErr != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("encode authorization policy role binding %q: %w", binding.ID, marshalErr)
 		}
-		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: revision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: string(binding.Role), Capabilities: encoded, Name: binding.Name}); err != nil {
+		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: revision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
 	}
@@ -334,6 +390,15 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 	}
 	if err := access.ValidateAuthorizationRoleBinding(input.Binding); err != nil {
 		return access.AuthorizationPolicy{}, err
+	}
+	if input.Binding.TypedRoleBinding() {
+		projectID, projectErr := projectgraph.NewResourceID(input.Scope.ProjectID)
+		if projectErr != nil {
+			return access.AuthorizationPolicy{}, fmt.Errorf("authorization policy project: %w", projectErr)
+		}
+		if err := access.ValidateTypedRoleBindingForProject(input.Binding, projectID); err != nil {
+			return access.AuthorizationPolicy{}, err
+		}
 	}
 	if err := validateAuthorizationPolicySubject(ctx, db, input.Binding.Subject); err != nil {
 		return access.AuthorizationPolicy{}, err
@@ -382,7 +447,7 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 	replaced := false
 	for index := range bindings {
 		if bindings[index].ID != input.Binding.ID {
-			if bindings[index].Subject == input.Binding.Subject && bindings[index].Role == input.Binding.Role {
+			if bindings[index].Subject == input.Binding.Subject && authorizationRoleKey(bindings[index]) == authorizationRoleKey(input.Binding) {
 				return access.AuthorizationPolicy{}, fmt.Errorf("%w: subject/role already bound by %q", access.ErrAuthorizationPolicyConflict, bindings[index].ID)
 			}
 			continue
@@ -408,11 +473,11 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 		return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy revision: %w", err)
 	}
 	for _, binding := range bindings {
-		encoded, marshalErr := json.Marshal(binding.Capabilities)
+		caps, permissions, profile, permissionRole, marshalErr := authorizationRoleBindingEncoding(binding)
 		if marshalErr != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("encode authorization policy role binding %q: %w", binding.ID, marshalErr)
 		}
-		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: string(binding.Role), Capabilities: encoded, Name: binding.Name}); err != nil {
+		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
 	}
@@ -427,6 +492,13 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 		return access.AuthorizationPolicy{}, fmt.Errorf("record authorization policy idempotency: %w", err)
 	}
 	return (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, input.Scope, nextRevision, digest)
+}
+
+func authorizationRoleKey(binding access.RoleBinding) string {
+	if binding.TypedRoleBinding() {
+		return "typed:" + string(binding.PermissionRole)
+	}
+	return "legacy:" + string(binding.Role)
 }
 
 // UpsertAuthorizationRoleBinding applies one exact role binding through a

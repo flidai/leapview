@@ -51,6 +51,8 @@ type APIGenOperationContract struct {
 	Path        string
 	Protected   bool
 	AuthzMode   string
+	Action      string
+	Resolver    string
 	Command     *APIGenCommandContract
 	Extensions  map[string]any
 }
@@ -81,6 +83,7 @@ type APIGenAuthorizer struct {
 	runtime    apigenRuntimeHost
 	scopes     map[string]apiGenResourceScope
 	operations map[string]APIGenOperationContract
+	typed      *APIGenTypedOperationRequirementService
 	delivery   APIGenDeliveryAuthorizer
 	// bootstrap is an explicit, narrow pre-activation authorization seam. It
 	// is intentionally optional and is only consulted for candidate routes;
@@ -122,10 +125,15 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 	if m == nil {
 		return nil, fmt.Errorf("access module is required")
 	}
+	typed, err := NewAPIGenTypedOperationRequirementService(operations)
+	if err != nil {
+		return nil, err
+	}
 	authorizer := &APIGenAuthorizer{
 		module:     m,
 		runtime:    runtime,
 		operations: operations,
+		typed:      typed,
 		delivery:   resolvers.Delivery,
 		scopes: map[string]apiGenResourceScope{
 			"dashboard":      {pathParameter: "dashboard", resolver: resolvers.Dashboard, kind: projectgraph.KindDashboard},

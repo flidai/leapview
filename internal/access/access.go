@@ -54,6 +54,15 @@ type RoleBinding struct {
 	Subject      SubjectRef   `json:"subject"`
 	Role         ProjectRole  `json:"role"`
 	Capabilities []Capability `json:"capabilities"`
+	// PermissionProfile and Permissions are the typed authority for new
+	// assignments. Capabilities is retained only for historical compatibility
+	// rows and must never be expanded into typed authority implicitly.
+	PermissionProfile string           `json:"permissionProfile,omitempty"`
+	Permissions       []PermissionPair `json:"permissions,omitempty"`
+	// PermissionRole identifies the versioned preset whose expansion is
+	// captured in Permissions. Role remains for historical project-policy
+	// rows and is not consulted by typed evaluation.
+	PermissionRole PermissionRole `json:"permissionRole,omitempty"`
 }
 
 // AuthorizationPolicy is the exact target-owned policy document plus its
@@ -103,6 +112,17 @@ func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
 	if err := binding.Subject.Validate(); err != nil {
 		return fmt.Errorf("%w: subject: %w", ErrAuthorizationPolicyInvalidBinding, err)
 	}
+	if binding.PermissionProfile != "" || binding.Permissions != nil {
+		if err := ValidateTypedRoleBinding(binding); err != nil {
+			return err
+		}
+		// A single row must have one authoritative representation. Legacy
+		// capabilities remain available only when the typed fields are absent.
+		if binding.Capabilities != nil {
+			return fmt.Errorf("%w: typed role binding cannot carry legacy capabilities", ErrAuthorizationPolicyInvalidBinding)
+		}
+		return nil
+	}
 	role, err := ParseProjectRole(string(binding.Role))
 	if err != nil {
 		return fmt.Errorf("%w: role: %w", ErrAuthorizationPolicyInvalidBinding, err)
@@ -151,7 +171,11 @@ func AuthorizationPolicyDigest(scope AuthorizationPolicyScope, bindings []RoleBi
 			return "", fmt.Errorf("%w: duplicate binding id %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
 		}
 		seenID[canonical[i].ID] = struct{}{}
-		key := string(canonical[i].Subject.Kind) + "\x00" + canonical[i].Subject.ID + "\x00" + string(canonical[i].Role)
+		roleKey := string(canonical[i].Role)
+		if canonical[i].TypedRoleBinding() {
+			roleKey = string(canonical[i].PermissionRole)
+		}
+		key := string(canonical[i].Subject.Kind) + "\x00" + canonical[i].Subject.ID + "\x00" + roleKey
 		if _, exists := seenSubjectRole[key]; exists {
 			return "", fmt.Errorf("%w: duplicate subject/role for %q", ErrAuthorizationPolicyConflict, canonical[i].ID)
 		}

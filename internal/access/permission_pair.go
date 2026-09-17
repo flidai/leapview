@@ -205,6 +205,10 @@ func permissionPairKey(pair PermissionPair) string {
 	return contractPermissionPair(pair).Key()
 }
 
+// Key returns the stable identity of a validated pair for deterministic
+// set/evidence handling. It is diagnostic identity, not a persisted ID.
+func (pair PermissionPair) Key() string { return permissionPairKey(pair) }
+
 // PermissionPairAllows reports whether one persisted credential pair permits
 // the requested exact action/target pair. Exact permissions never cross-expand.
 // A typed future-resource selector matches only its declared Project and kind.

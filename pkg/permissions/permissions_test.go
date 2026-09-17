@@ -105,6 +105,20 @@ func TestShapeAndCatalogValidationSeparateUnknownActions(t *testing.T) {
 	}
 }
 
+func TestResourceIdentityShapeMatchesOpaqueProjectGraphContract(t *testing.T) {
+	longID := "project_" + strings.Repeat("a", 300)
+	pair, err := NewProjectPair(testProfile, "dashboard.create", longID)
+	if err != nil {
+		t.Fatalf("opaque resource id was given a new length limit: %v", err)
+	}
+	if pair.Target.ProjectID != longID {
+		t.Fatalf("opaque resource id changed: %q", pair.Target.ProjectID)
+	}
+	if _, err := NewProjectPair(testProfile, "dashboard.create", "project with spaces"); !errors.Is(err, ErrInvalidPair) {
+		t.Fatalf("invalid resource id error = %v", err)
+	}
+}
+
 func TestExactFutureClosureContainmentAndIntersection(t *testing.T) {
 	catalog := testCatalog(t)
 	if _, err := catalog.NewExactPair("semantic.consume", "project_a", Kind("dashboard"), "dashboard_a"); !errors.Is(err, ErrInvalidPair) {
@@ -170,6 +184,9 @@ func TestCatalogJSONIsStrictAndWireCompatible(t *testing.T) {
 	}
 	for _, forged := range []string{
 		`[{"action":"semantic.consume","target":{"scope":"resource","projectId":"project_a","resourceKind":"semantic_model","resourceId":"semantic_a","unknown":true},"profile":"leapview.permissions/v1"}]`,
+		`[{"action":null,"target":{"scope":"resource","projectId":"project_a","resourceKind":"semantic_model","resourceId":"semantic_a"},"profile":"leapview.permissions/v1"}]`,
+		`[{"action":"semantic.consume","target":null,"profile":"leapview.permissions/v1"}]`,
+		`[{"action":"semantic.consume","target":{"scope":"resource","instanceId":null,"projectId":"project_a","resourceKind":"semantic_model","resourceId":"semantic_a"},"profile":"leapview.permissions/v1"}]`,
 		`[{"action":"semantic.consume","target":{"scope":"resource","projectId":"project_a","resourceKind":"semantic_model","resourceId":"semantic_a"},"profile":"leapview.permissions/v1"}] {"trailing":true}`,
 		`null`,
 	} {
@@ -179,6 +196,10 @@ func TestCatalogJSONIsStrictAndWireCompatible(t *testing.T) {
 	}
 	if _, err := catalog.Decode([]byte(`[{"action":"semantic.consume","action":"semantic.consume","target":{"scope":"resource","projectId":"project_a","resourceKind":"semantic_model","resourceId":"semantic_a"},"profile":"leapview.permissions/v1"}]`)); err == nil {
 		t.Fatal("Decode accepted duplicate object key")
+	}
+	project := testCatalog(t)
+	if decoded, err := project.Decode([]byte(`[{"action":"dashboard.create","target":{"scope":"project","projectId":"project_a","includeFuture":false},"profile":"leapview.permissions/v1"}]`)); err != nil || len(decoded) != 1 || decoded[0].Target.IncludeFuture {
+		t.Fatalf("Decode explicit false optional field = %#v, %v", decoded, err)
 	}
 }
 

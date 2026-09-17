@@ -301,7 +301,7 @@ describe("APIGen TypeSpec emitter", () => {
       interface RoleBindings {
         @post
         @operationId("createRoleBinding")
-        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS" })
+        @apigen.authz(#{ mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" })
         @apigen.ui("workspace.access.role-binding.create")
         @apigen.auditPayload(RoleBindingAuditPayload, #{ schemaVersion: 1, retention: "security" })
         @apigen.command(#{
@@ -332,6 +332,9 @@ describe("APIGen TypeSpec emitter", () => {
         idempotency: "required",
         authz_mode: "privilege",
         privilege: "MANAGE_GRANTS",
+      },
+      extensions: {
+        "x-authz": { mode: "privilege", privilege: "MANAGE_GRANTS", action: "dashboard.read", resolver: "dashboard" },
       },
     });
   });

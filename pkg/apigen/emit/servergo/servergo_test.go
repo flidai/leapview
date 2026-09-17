@@ -181,7 +181,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 				},
 				Extensions: map[string]any{
 					"x-apigen-manual": true,
-					"x-authz":         map[string]any{"mode": "none"},
+					"x-authz":         map[string]any{"mode": "none", "action": "dashboard.read", "resolver": "dashboard"},
 				},
 			},
 		},
@@ -197,6 +197,7 @@ func TestEmit_OperationContractsIncludeManualAndBodyMetadata(t *testing.T) {
 	require.Contains(t, content, `DocumentedStatusCodes: []int{200, 401}`)
 	require.Contains(t, content, `RequestBodyRequired: true`)
 	require.Contains(t, content, `AuthzMode: "none"`)
+	require.Contains(t, content, `Authz: &GenAuthzContract{Mode: "none", Privilege: "", Action: "dashboard.read", Resolver: "dashboard"}`)
 	require.Contains(t, content, `Protected: true`)
 	require.Contains(t, content, `Manual: true`)
 }

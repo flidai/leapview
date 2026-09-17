@@ -172,6 +172,13 @@ interface Command {
   privilege?: string;
 }
 
+interface AuthzMetadata {
+  mode?: string;
+  privilege?: string;
+  action?: string;
+  resolver?: string;
+}
+
 interface Contract {
   name: string;
   schema: SchemaRef;
@@ -996,7 +1003,7 @@ function endpoint(
   for (const [key, value] of operationVendorExtensions(program, builder, operation.operation)) {
     extensions[key] = value;
   }
-  const authz = getAuthz({ program }, operation.operation);
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   if (authz !== undefined) {
     extensions["x-authz"] = authz;
   }
@@ -1368,7 +1375,7 @@ function commandMetadata(
     builder.invalidCommand("PATCH commands require a required If-Match header", operation.operation);
   }
 
-  const authz = getAuthz({ program }, operation.operation) as Record<string, unknown> | undefined;
+  const authz = getAuthz({ program }, operation.operation) as AuthzMetadata | undefined;
   const authzMode = typeof authz?.mode === "string" ? authz.mode : undefined;
   const privilege = typeof authz?.privilege === "string" ? authz.privilege : undefined;
   return prune({

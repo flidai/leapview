@@ -57,20 +57,27 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 		typedToken := hasCredential && strings.TrimSpace(credential.Token.ID) != "" &&
 			(credential.Token.PermissionProfile != "" || credential.Token.Permissions != nil)
 		if typedToken {
-			// Typed credentials are evaluated as exact action/resource pairs. The
-			// generated operation ID is part of this mapping: a generic
-			// RESOURCE_READ capability must not be inferred as dashboard.read,
-			// and dashboard.read must not be reused for mutations or authoring.
-			for _, resource := range resources {
-				action, mapped := apiGenTypedAction(operationID, resource)
-				if !mapped {
+			// Typed credentials are evaluated from the generated operation's
+			// exact action/resolver contract. An operation without a migrated
+			// typed contract is denied until its product resolver exists; no
+			// legacy capability may be inferred as a typed action.
+			var pairs []access.PermissionPair
+			var pairErr error
+			if a.typed == nil {
+				pairErr = errors.New("typed operation requirement service is unavailable")
+			} else {
+				pairs, pairErr = a.typed.ResolvePairs(operationID, projectID, resources...)
+			}
+			if pairErr != nil {
+				for _, resource := range resources {
 					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
-					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-					return
 				}
-				pair, pairErr := access.NewExactPermissionPair(action, projectID, resource)
-				if pairErr != nil || !access.PermissionSetAllows(credential.Token.Permissions, pair) {
-					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resource, capability)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			for _, pair := range pairs {
+				if !access.PermissionSetAllows(credential.Token.Permissions, pair) {
+					a.recordResourceAuthorizationDenial(r, operationID, projectID, principal.ID, resources[0], capability)
 					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 					return
 				}
@@ -120,23 +127,4 @@ func containsCapability(capabilities []access.Capability, expected access.Capabi
 		}
 	}
 	return false
-}
-
-// apiGenTypedAction is the explicit operation-to-action mapping for the
-// generated dashboard viewer surface. It deliberately covers only published
-// dashboard reads. Other operations must add their own typed contract before
-// a typed credential can reach them; falling back to a legacy capability here
-// would let dashboard.read authorize mutation, authoring, or another resource
-// family.
-func apiGenTypedAction(operationID string, resource access.ResourceRef) (access.Action, bool) {
-	if resource.Kind() != projectgraph.KindDashboard {
-		return "", false
-	}
-	switch operationID {
-	case "getDashboard", "getDashboardPage", "getDashboardFilter", "listDashboardFilterValues",
-		"queryDashboardPage", "getDashboardVisual", "queryDashboardVisualData":
-		return access.ActionDashboardRead, true
-	default:
-		return "", false
-	}
 }

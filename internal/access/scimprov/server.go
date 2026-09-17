@@ -20,7 +20,6 @@ import (
 	parserfilter "github.com/scim2/filter-parser/v2"
 )
 
-
 type Repository interface {
 	UpsertSCIMUser(ctx context.Context, input access.SCIMUserInput) (access.SCIMUser, error)
 	ListSCIMUsers(ctx context.Context, filter access.SCIMUserFilter) ([]access.SCIMUser, error)

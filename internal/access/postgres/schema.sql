@@ -611,60 +611,9 @@ BEGIN
     RETURN TRUE;
 END $$;
 
-CREATE FUNCTION access.valid_permission_pairs(profile text, value jsonb)
-RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
-DECLARE item jsonb; target jsonb; action_name text; target_scope text; seen_items jsonb := '[]'::jsonb;
-BEGIN
-    IF profile IS NULL OR value IS NULL THEN RETURN profile IS NULL AND value IS NULL; END IF;
-    IF profile <> 'leapview.permissions/v1' OR jsonb_typeof(value) <> 'array' THEN RETURN FALSE; END IF;
-    IF jsonb_array_length(value) > 256 OR octet_length(value::text) > 65536 THEN RETURN FALSE; END IF;
-    FOR item IN SELECT jsonb_array_elements(value) LOOP
-        IF jsonb_typeof(item) <> 'object' OR item->>'profile' <> profile OR jsonb_typeof(item->'target') <> 'object' THEN RETURN FALSE; END IF;
-        IF seen_items @> jsonb_build_array(item) THEN RETURN FALSE; END IF;
-        seen_items := seen_items || jsonb_build_array(item);
-        action_name := item->>'action'; target := item->'target'; target_scope := target->>'scope';
-        IF action_name NOT IN (
-            'dashboard.read','dashboard.create','dashboard.update','dashboard.delete','dashboard.publish',
-            'semantic.read','semantic.query','semantic.consume','semantic.create','semantic.update','semantic.delete',
-            'source.read','source.create','source.update','source.delete','model.read','model.create','model.update','model.delete',
-            'pipeline.read','pipeline.create','pipeline.run','pipeline.update','pipeline.delete',
-            'connection.read','connection.create','connection.use','connection.manage','resource.share',
-            'delivery.read','delivery.plan','delivery.build','delivery.publish','delivery.approve','delivery.activate','delivery.rollback',
-            'project.settings.read','project.settings.update','project.access.read','project.access.manage','project.access.delegate','audit.read',
-            'workload.delegate','platform.settings.read','platform.settings.update','platform.access.read','platform.access.manage','platform.audit.read'
-        ) THEN RETURN FALSE; END IF;
-        IF target_scope = 'instance' THEN
-            IF action_name NOT LIKE 'platform.%' OR COALESCE(target->>'instanceId','') = ''
-               OR target ? 'projectId' OR target ? 'resourceKind' OR target ? 'resourceId' OR target ? 'includeFuture' THEN RETURN FALSE; END IF;
-        ELSIF target_scope = 'project' THEN
-            IF action_name LIKE 'platform.%' OR COALESCE(target->>'projectId','') = '' OR target ? 'instanceId' OR target ? 'resourceId' THEN RETURN FALSE; END IF;
-            IF COALESCE((target->>'includeFuture')::boolean, FALSE) THEN
-                IF COALESCE(target->>'resourceKind','') NOT IN ('connection','source','model','semantic_model','pipeline','dashboard')
-                   OR action_name LIKE '%.create' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read' THEN RETURN FALSE; END IF;
-            ELSE
-                IF target ? 'resourceKind' OR target ? 'includeFuture'
-                   OR NOT (action_name LIKE '%.create' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read') THEN RETURN FALSE; END IF;
-            END IF;
-        ELSIF target_scope = 'resource' THEN
-            IF action_name LIKE 'platform.%' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read'
-               OR action_name LIKE '%.create' OR COALESCE(target->>'projectId','') = ''
-               OR COALESCE(target->>'resourceKind','') NOT IN ('connection','source','model','semantic_model','pipeline','dashboard')
-               OR COALESCE(target->>'resourceId','') = '' OR target ? 'instanceId' OR target ? 'includeFuture' THEN RETURN FALSE; END IF;
-        ELSE RETURN FALSE;
-        END IF;
-        IF target ? 'resourceKind' AND (
-            (action_name LIKE 'dashboard.%' AND target->>'resourceKind' <> 'dashboard')
-            OR (action_name LIKE 'semantic.%' AND target->>'resourceKind' <> 'semantic_model')
-            OR (action_name LIKE 'source.%' AND target->>'resourceKind' <> 'source')
-            OR (action_name LIKE 'model.%' AND target->>'resourceKind' <> 'model')
-            OR (action_name LIKE 'pipeline.%' AND target->>'resourceKind' <> 'pipeline')
-            OR (action_name LIKE 'connection.%' AND target->>'resourceKind' <> 'connection')
-            OR (action_name = 'workload.delegate' AND target->>'resourceKind' <> 'pipeline')
-        ) THEN RETURN FALSE; END IF;
-    END LOOP;
-    RETURN TRUE;
-EXCEPTION WHEN invalid_text_representation THEN RETURN FALSE;
-END $$;
+-- The generated permission contract is expanded by repository.go before this
+-- schema is executed. Keep the expansion point before api_token's CHECK.
+-- LEAPVIEW_PERMISSION_CONTRACT_SQL
 
 CREATE TABLE access.api_token (
     id uuid PRIMARY KEY,
@@ -842,6 +791,7 @@ CREATE TABLE access.authorization_snapshot (
     environment text NOT NULL CHECK (environment = btrim(environment) AND length(environment) BETWEEN 1 AND 128),
     generation_id text NOT NULL CHECK (generation_id = btrim(generation_id) AND length(generation_id) BETWEEN 1 AND 255),
     digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    permission_profile text CHECK (permission_profile IS NULL OR permission_profile = 'leapview.permissions/v1'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (project_id, environment, generation_id)
 );
@@ -853,15 +803,26 @@ CREATE TABLE access.authorization_role_binding (
     generation_id text NOT NULL,
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    role text NOT NULL CHECK (role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    role text CHECK (role IS NULL OR role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
+    capabilities jsonb CHECK (capabilities IS NULL OR (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048)),
+    permission_profile text,
+    permissions jsonb,
+    permission_role text,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     revoked_at timestamptz,
     PRIMARY KEY (project_id, environment, generation_id, id),
-    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id)
+    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id),
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND permission_role IS NULL AND role IS NOT NULL AND capabilities IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND permission_role IN ('viewer','explorer','editor','project_admin','publisher','release_approver','release_operator','auditor') AND role IS NULL AND capabilities IS NULL))
+    )
 );
 CREATE UNIQUE INDEX authorization_role_binding_active_key ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id, role) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX authorization_role_binding_typed_role_key
+    ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id, permission_role)
+    WHERE revoked_at IS NULL AND permission_profile IS NOT NULL;
 CREATE INDEX authorization_role_binding_subject_idx ON access.authorization_role_binding(project_id, environment, generation_id, subject_kind, subject_id);
 
 CREATE TABLE access.authorization_grant (
@@ -871,18 +832,36 @@ CREATE TABLE access.authorization_grant (
     generation_id text NOT NULL,
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255),
-    resource_kind text NOT NULL CHECK (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128),
-    capability text NOT NULL CHECK (capability IN ('PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH')),
+    resource_id text CHECK (resource_id IS NULL OR (resource_id = btrim(resource_id) AND length(resource_id) BETWEEN 1 AND 255)),
+    resource_kind text CHECK (resource_kind IS NULL OR (resource_kind = btrim(resource_kind) AND length(resource_kind) BETWEEN 1 AND 128)),
+    capability text CHECK (capability IS NULL OR capability IN ('PROJECT_ADMIN','RESOURCE_USE','RESOURCE_READ','RESOURCE_EDIT','RESOURCE_MANAGE','RESOURCE_SHARE','RESOURCE_PUBLISH')),
+    permission_profile text,
+    permissions jsonb,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     revoked_at timestamptz,
     PRIMARY KEY (project_id, environment, generation_id, id),
-    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id)
+    FOREIGN KEY (project_id, environment, generation_id) REFERENCES access.authorization_snapshot(project_id, environment, generation_id),
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND resource_id IS NOT NULL AND resource_kind IS NOT NULL AND capability IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND jsonb_array_length(permissions) = 1 AND resource_id IS NULL AND resource_kind IS NULL AND capability IS NULL))
+    )
 );
 CREATE UNIQUE INDEX authorization_grant_active_key ON access.authorization_grant(project_id, environment, generation_id, subject_kind, subject_id, resource_id, resource_kind, capability) WHERE revoked_at IS NULL;
 CREATE INDEX authorization_grant_subject_idx ON access.authorization_grant(project_id, environment, generation_id, subject_kind, subject_id);
 CREATE INDEX authorization_grant_resource_idx ON access.authorization_grant(project_id, environment, generation_id, resource_id, capability);
+CREATE UNIQUE INDEX authorization_grant_typed_pair_key
+    ON access.authorization_grant (
+        project_id, environment, generation_id, subject_kind, subject_id,
+        (permissions->0->>'action'),
+        (permissions->0->'target'->>'scope'),
+        (permissions->0->'target'->>'instanceId'),
+        (permissions->0->'target'->>'projectId'),
+        (permissions->0->'target'->>'resourceKind'),
+        (permissions->0->'target'->>'resourceId'),
+        (permissions->0->'target'->>'includeFuture')
+    ) NULLS NOT DISTINCT WHERE revoked_at IS NULL AND permission_profile IS NOT NULL;
 
 CREATE TABLE access.authorization_data_policy (
     id text NOT NULL CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
@@ -940,18 +919,29 @@ CREATE TABLE access.authorization_policy_role_binding (
     id text NOT NULL CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
     subject_kind text NOT NULL CHECK (subject_kind IN ('principal','group')),
     subject_id text NOT NULL CHECK (subject_id = btrim(subject_id) AND length(subject_id) BETWEEN 1 AND 255),
-    role text NOT NULL CHECK (role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
-    capabilities jsonb NOT NULL CHECK (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048),
+    role text CHECK (role IS NULL OR role IN ('owner','admin','deployer','data_deployer','contributor','editor','member','viewer')),
+    capabilities jsonb CHECK (capabilities IS NULL OR (access.valid_capabilities(capabilities) AND jsonb_typeof(capabilities)='array' AND octet_length(capabilities::text)<=2048)),
+    permission_profile text,
+    permissions jsonb,
+    permission_role text,
     name text NOT NULL DEFAULT '' CHECK (length(name)<=255),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (target_id, project_id, environment, revision, id),
     UNIQUE (target_id, project_id, environment, revision, subject_kind, subject_id, role),
     FOREIGN KEY (target_id, project_id, environment, revision)
         REFERENCES access.authorization_policy_revision(target_id, project_id, environment, revision)
-        ON DELETE RESTRICT
+        ON DELETE RESTRICT,
+    CHECK (
+        access.valid_permission_pairs(permission_profile, permissions)
+        AND ((permission_profile IS NULL AND permissions IS NULL AND permission_role IS NULL AND role IS NOT NULL AND capabilities IS NOT NULL)
+             OR (permission_profile = 'leapview.permissions/v1' AND permissions IS NOT NULL AND permission_role IN ('viewer','explorer','editor','project_admin','publisher','release_approver','release_operator','auditor') AND role IS NULL AND capabilities IS NULL))
+    )
 );
 CREATE INDEX authorization_policy_role_binding_subject_idx
     ON access.authorization_policy_role_binding(target_id, project_id, environment, revision, subject_kind, subject_id);
+CREATE UNIQUE INDEX authorization_policy_role_binding_typed_role_key
+    ON access.authorization_policy_role_binding(target_id, project_id, environment, revision, subject_kind, subject_id, permission_role)
+    WHERE permission_profile IS NOT NULL;
 
 -- An idempotency record binds a retry key to the complete canonical command,
 -- not merely to a binding ID. This rejects accidental key reuse while
@@ -1165,9 +1155,9 @@ BEGIN
     IF TG_TABLE_NAME = 'authorization_snapshot' THEN
         IF OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.digest<>NEW.digest OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization snapshot identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_role_binding' THEN
-        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.role<>NEW.role OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization role binding identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.role IS DISTINCT FROM NEW.role OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.permission_role IS DISTINCT FROM NEW.permission_role OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization role binding identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_grant' THEN
-        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.resource_id<>NEW.resource_id OR OLD.resource_kind<>NEW.resource_kind OR OLD.capability<>NEW.capability OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization grant identity is immutable'; END IF;
+        IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.subject_kind<>NEW.subject_kind OR OLD.subject_id<>NEW.subject_id OR OLD.resource_id IS DISTINCT FROM NEW.resource_id OR OLD.resource_kind IS DISTINCT FROM NEW.resource_kind OR OLD.capability IS DISTINCT FROM NEW.capability OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.name<>NEW.name OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization grant identity is immutable'; END IF;
     ELSIF TG_TABLE_NAME = 'authorization_data_policy' THEN
         IF OLD.id<>NEW.id OR OLD.project_id<>NEW.project_id OR OLD.environment<>NEW.environment OR OLD.generation_id<>NEW.generation_id OR OLD.resource_id<>NEW.resource_id OR OLD.resource_kind<>NEW.resource_kind OR OLD.subject_kind IS DISTINCT FROM NEW.subject_kind OR OLD.subject_id IS DISTINCT FROM NEW.subject_id OR OLD.policy_type<>NEW.policy_type OR OLD.expression IS DISTINCT FROM NEW.expression OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'authorization policy identity is immutable'; END IF;
     END IF;

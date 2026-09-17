@@ -2,13 +2,13 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -18,6 +18,17 @@ func validateServingPolicyInitialization(scope access.AuthorizationPolicyScope, 
 	}
 	if generationID == "" || generationID != strings.TrimSpace(generationID) || len(generationID) > 255 || strings.ContainsAny(generationID, "\x00\r\n\t") {
 		return "", fmt.Errorf("%w: active generation id is invalid", access.ErrAuthorizationPolicyInvalidScope)
+	}
+	projectID, err := projectgraph.NewResourceID(scope.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("active serving authorization policy project: %w", err)
+	}
+	for _, binding := range bindings {
+		if binding.TypedRoleBinding() {
+			if err := access.ValidateTypedRoleBindingForProject(binding, projectID); err != nil {
+				return "", err
+			}
+		}
 	}
 	digest, err := access.AuthorizationPolicyDigest(scope, bindings)
 	if err != nil {
@@ -60,14 +71,15 @@ func initializeAuthorizationPolicyFromServingPolicyDB(
 		return access.AuthorizationPolicy{}, fmt.Errorf("insert upgraded authorization policy revision: %w", err)
 	}
 	for _, binding := range bindings {
-		capabilities, marshalErr := json.Marshal(binding.Capabilities)
+		capabilities, permissions, profile, permissionRole, marshalErr := authorizationRoleBindingEncoding(binding)
 		if marshalErr != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("encode upgraded role binding %q: %w", binding.ID, marshalErr)
 		}
 		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{
 			TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, Revision: 1,
 			ID: binding.ID, Name: binding.Name, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
-			Role: string(binding.Role), Capabilities: capabilities,
+			Role: nullableString(string(binding.Role)), Capabilities: capabilities,
+			PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole,
 		}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert upgraded role binding %q: %w", binding.ID, err)
 		}

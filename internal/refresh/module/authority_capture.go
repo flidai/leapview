@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/permissions"
 )
@@ -61,7 +62,11 @@ func (m *Module) captureAuthority(ctx context.Context, identity projectgraph.Ser
 	if err != nil {
 		return jobs.AuthorityEnvelope{}, err
 	}
-	pair, err := access.NewExactPermissionPair(access.ActionPipelineRun, identity.ProjectID, resource)
+	requirement, err := refreshRunTypedOperationRequirement()
+	if err != nil {
+		return jobs.AuthorityEnvelope{}, fmt.Errorf("refresh typed operation requirement: %w", err)
+	}
+	pair, err := requirement.PermissionPair(identity.ProjectID, resource)
 	if err != nil {
 		return jobs.AuthorityEnvelope{}, err
 	}
@@ -88,4 +93,23 @@ func (m *Module) captureAuthority(ctx context.Context, identity projectgraph.Ser
 		return jobs.AuthorityEnvelope{}, fmt.Errorf("capture refresh authority: %w", err)
 	}
 	return authority, nil
+}
+
+// refreshRunTypedOperationRequirement loads the generated operation contract
+// used by both the API command and browser manual-refresh capture. Keeping the
+// generated action/resolver pair at this boundary prevents the queue path
+// from drifting into a handwritten action mapping.
+func refreshRunTypedOperationRequirement() (access.TypedOperationRequirement, error) {
+	contract, ok := refreshgen.GetAPIGenOperationContracts()[CreateRefreshRunOperationID]
+	if !ok || contract.Authz == nil {
+		return access.TypedOperationRequirement{}, fmt.Errorf("generated operation %q authz contract is unavailable", CreateRefreshRunOperationID)
+	}
+	return access.NewTypedOperationRequirementService().Requirement(access.Action(contract.Authz.Action), contract.Authz.Resolver)
+}
+
+// CreateRefreshRunTypedOperationRequirement exposes the generated manual
+// refresh requirement to the durable dequeue adapter. Both producers and the
+// dequeue revalidator therefore consume the same APIGen operation contract.
+func CreateRefreshRunTypedOperationRequirement() (access.TypedOperationRequirement, error) {
+	return refreshRunTypedOperationRequirement()
 }

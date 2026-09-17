@@ -5978,7 +5978,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/appearance:
@@ -6556,7 +6558,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}:
@@ -6888,7 +6892,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/filters/{filter}/values:
@@ -7220,7 +7226,9 @@ paths:
                   visualID: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/query:
@@ -7569,7 +7577,9 @@ paths:
                   visualID: example
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}:
@@ -7858,7 +7868,9 @@ paths:
         - BI
       x-apigen-operation-kind: query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
   /api/v1/dashboards/{dashboard}/pages/{page}/visuals/{visual}/query:
@@ -8265,7 +8277,9 @@ paths:
           - visual
           - query
       x-authz:
+        action: dashboard.read
         mode: privilege
+        resolver: dashboard
         privilege: RESOURCE_READ
       x-leapview-object-scope: dashboard
       x-leapview-response-trailers:
@@ -75974,16 +75988,11 @@ components:
         - platform.access.read
         - platform.access.manage
         - platform.audit.read
-      description: |-
-        Typed action identities for the versioned resource-authorization catalog.
-        Current-user token creation uses these paired action/target values. The
-        legacy Capability enum remains only for compatibility and bootstrap flows.
       example: dashboard.read
     PermissionCatalogProfile:
       type: string
       enum:
         - leapview.permissions/v1
-      description: The catalog profile pinned by a typed permission pair.
       example: leapview.permissions/v1
     PermissionPair:
       type: object
@@ -75998,7 +76007,6 @@ components:
           $ref: '#/components/schemas/PermissionTarget'
         profile:
           $ref: '#/components/schemas/PermissionCatalogProfile'
-      description: Preserve the action/target relationship through authorization boundaries.
       example:
         action: dashboard.read
         profile: leapview.permissions/v1
@@ -76026,24 +76034,17 @@ components:
           example: example
         projectId:
           type: string
-          minLength: 1
-          maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         resourceKind:
           $ref: '#/components/schemas/ResourceKind'
         resourceId:
           type: string
-          minLength: 1
-          maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
         includeFuture:
           type: boolean
           example: true
-      description: |-
-        The audience and resource half of one typed permission pair. The optional
-        fields are structurally constrained by scope and action at runtime.
       example:
         projectId: project:analytics
         resourceId: dashboard:sales

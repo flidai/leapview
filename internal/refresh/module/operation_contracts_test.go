@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
@@ -48,6 +49,17 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Privilege != "" {
 			t.Errorf("command contract %q = %#v", operationID, contract)
 		}
+	}
+	createAuthz := contracts["createRefreshRun"].Authz
+	if createAuthz == nil || createAuthz.Action != string(access.ActionPipelineRun) || createAuthz.Resolver != string(access.TypedOperationResolverPipeline) {
+		t.Fatalf("create refresh typed authz = %#v, want pipeline.run/pipeline", createAuthz)
+	}
+	requirement, err := CreateRefreshRunTypedOperationRequirement()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requirement.Action != access.ActionPipelineRun || requirement.Resolver != access.TypedOperationResolverPipeline {
+		t.Fatalf("create refresh requirement = %#v, want generated pipeline.run/pipeline", requirement)
 	}
 	create := contracts["createRefreshRun"].Command
 	if create.UI == nil || create.UI.ActionID != "refresh.run" || len(create.AdditionalExposures) != 1 || string(create.AdditionalExposures[0]) != "ui" {

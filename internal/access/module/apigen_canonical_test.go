@@ -460,11 +460,25 @@ func generatedAPIGenContracts() map[string]APIGenOperationContract {
 		}
 		contracts[operationID] = APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path,
-			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Command: command,
+			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Action: authzAction(contract), Resolver: authzResolver(contract), Command: command,
 			Extensions: contract.Extensions,
 		}
 	}
 	return contracts
+}
+
+func authzAction(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Action
+}
+
+func authzResolver(contract accessgen.GenOperationContract) string {
+	if contract.Authz == nil {
+		return ""
+	}
+	return contract.Authz.Resolver
 }
 
 func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testing.T) {

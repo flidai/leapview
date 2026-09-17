@@ -16,6 +16,90 @@ var resourceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]*$`)
 // for adapters.
 type PairSet = []Pair
 
+// UnmarshalJSON rejects missing or null required fields before assigning a
+// pair. encoding/json otherwise treats JSON null as the zero value for string
+// aliases, which would make the Go contract less strict than persistence.
+func (pair *Pair) UnmarshalJSON(data []byte) error {
+	if pair == nil {
+		return fmt.Errorf("%w: cannot decode into a nil pair", ErrInvalidPair)
+	}
+	type pairWire struct {
+		Action  *Action `json:"action"`
+		Target  *Target `json:"target"`
+		Profile *string `json:"profile"`
+	}
+	var wire pairWire
+	if err := strictjson.Decode(data, &wire); err != nil {
+		return err
+	}
+	if wire.Action == nil || wire.Target == nil || wire.Profile == nil {
+		return fmt.Errorf("%w: action, target, and profile must be non-null", ErrInvalidPair)
+	}
+	*pair = Pair{Action: *wire.Action, Target: *wire.Target, Profile: *wire.Profile}
+	return nil
+}
+
+// UnmarshalJSON preserves optional-field presence long enough to reject null
+// values. Explicit false for includeFuture remains valid and is normalized to
+// the same target as an omitted false field.
+func (target *Target) UnmarshalJSON(data []byte) error {
+	if target == nil {
+		return fmt.Errorf("%w: cannot decode into a nil target", ErrInvalidPair)
+	}
+	type targetWire struct {
+		Scope         *Scope  `json:"scope"`
+		InstanceID    *string `json:"instanceId"`
+		ProjectID     *string `json:"projectId"`
+		ResourceKind  *Kind   `json:"resourceKind"`
+		ResourceID    *string `json:"resourceId"`
+		IncludeFuture *bool   `json:"includeFuture"`
+	}
+	var raw map[string]json.RawMessage
+	if err := strictjson.Decode(data, &raw); err != nil {
+		return err
+	}
+	var wire targetWire
+	if err := strictjson.Decode(data, &wire); err != nil {
+		return err
+	}
+	if wire.Scope == nil {
+		return fmt.Errorf("%w: target scope must be non-null", ErrInvalidPair)
+	}
+	if _, present := raw["instanceId"]; present && wire.InstanceID == nil {
+		return fmt.Errorf("%w: target field instanceId must not be null", ErrInvalidPair)
+	}
+	if _, present := raw["projectId"]; present && wire.ProjectID == nil {
+		return fmt.Errorf("%w: target field projectId must not be null", ErrInvalidPair)
+	}
+	if _, present := raw["resourceKind"]; present && wire.ResourceKind == nil {
+		return fmt.Errorf("%w: target field resourceKind must not be null", ErrInvalidPair)
+	}
+	if _, present := raw["resourceId"]; present && wire.ResourceID == nil {
+		return fmt.Errorf("%w: target field resourceId must not be null", ErrInvalidPair)
+	}
+	if _, present := raw["includeFuture"]; present && wire.IncludeFuture == nil {
+		return fmt.Errorf("%w: target field includeFuture must not be null", ErrInvalidPair)
+	}
+	decoded := Target{Scope: *wire.Scope}
+	if wire.InstanceID != nil {
+		decoded.InstanceID = *wire.InstanceID
+	}
+	if wire.ProjectID != nil {
+		decoded.ProjectID = *wire.ProjectID
+	}
+	if wire.ResourceKind != nil {
+		decoded.ResourceKind = *wire.ResourceKind
+	}
+	if wire.ResourceID != nil {
+		decoded.ResourceID = *wire.ResourceID
+	}
+	if wire.IncludeFuture != nil {
+		decoded.IncludeFuture = *wire.IncludeFuture
+	}
+	*target = decoded
+	return nil
+}
+
 // ValidateShape checks target structure without consulting an action catalog.
 // It is useful at generic authority and persistence boundaries; action scope
 // and allowed-kind checks require CompiledCatalog.ValidatePair.
@@ -244,7 +328,7 @@ func validTargetIdentity(value string) bool {
 }
 
 func validResourceID(value string) bool {
-	return validTargetIdentity(value) && resourceIDPattern.MatchString(value)
+	return resourceIDPattern.MatchString(value)
 }
 
 func pairKey(pair Pair) string {

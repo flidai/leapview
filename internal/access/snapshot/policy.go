@@ -30,6 +30,10 @@ type AuthorizationSnapshot struct {
 	roleBindings []RoleBinding
 	grants       []Grant
 	dataPolicies []DataPolicy
+	// permissionProfile is the aggregate profile pin for typed assignments.
+	// It is persisted alongside the durable snapshot identity and encoded in
+	// the snapshot digest; a legacy snapshot intentionally has no profile.
+	permissionProfile string
 	// project is retained privately so exported fields cannot be replaced with
 	// values from another graph and then serialized as an installable snapshot.
 	project graph.ProjectGraph
@@ -41,6 +45,12 @@ type Grant struct {
 	ID        string
 	Name      string
 	Canonical access.CanonicalGrant
+	Subject   access.SubjectRef
+	// PermissionProfile and Permissions are the typed authority for newly
+	// persisted grants. Canonical is retained for historical capability rows;
+	// ambiguous legacy capabilities are never converted during typed checks.
+	PermissionProfile string
+	Permissions       []access.PermissionPair
 }
 
 // RoleBinding is one explicit project-wide RBAC assignment. It aliases the
@@ -183,26 +193,32 @@ func (s AuthorizationSnapshot) EffectiveCapabilities(subjects []access.SubjectRe
 }
 
 type snapshotWire struct {
-	Identity     graph.ServingIdentity `json:"identity"`
-	RoleBindings []roleBindingWire     `json:"roleBindings,omitempty"`
-	Grants       []grantWire           `json:"grants,omitempty"`
-	DataPolicies []dataPolicyWire      `json:"dataPolicies,omitempty"`
+	Identity          graph.ServingIdentity `json:"identity"`
+	PermissionProfile string                `json:"permissionProfile,omitempty"`
+	RoleBindings      []roleBindingWire     `json:"roleBindings,omitempty"`
+	Grants            []grantWire           `json:"grants,omitempty"`
+	DataPolicies      []dataPolicyWire      `json:"dataPolicies,omitempty"`
 }
 
 type roleBindingWire struct {
-	ID           string              `json:"id"`
-	Name         string              `json:"name,omitempty"`
-	Subject      access.SubjectRef   `json:"subject"`
-	Role         access.ProjectRole  `json:"role"`
-	Capabilities []access.Capability `json:"capabilities"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name,omitempty"`
+	Subject           access.SubjectRef       `json:"subject"`
+	Role              access.ProjectRole      `json:"role,omitempty"`
+	Capabilities      []access.Capability     `json:"capabilities,omitempty"`
+	PermissionProfile string                  `json:"permissionProfile,omitempty"`
+	Permissions       []access.PermissionPair `json:"permissions,omitempty"`
+	PermissionRole    access.PermissionRole   `json:"permissionRole,omitempty"`
 }
 
 type grantWire struct {
-	ID         string             `json:"id"`
-	Name       string             `json:"name,omitempty"`
-	Subject    access.SubjectRef  `json:"subject"`
-	Resource   access.ResourceRef `json:"resource"`
-	Capability access.Capability  `json:"capability"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name,omitempty"`
+	Subject           access.SubjectRef       `json:"subject,omitempty"`
+	Resource          *access.ResourceRef     `json:"resource,omitempty"`
+	Capability        *access.Capability      `json:"capability,omitempty"`
+	PermissionProfile string                  `json:"permissionProfile,omitempty"`
+	Permissions       []access.PermissionPair `json:"permissions,omitempty"`
 }
 
 type dataPolicyWire struct {
@@ -234,6 +250,20 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 	sort.Slice(normalizedBindings, func(i, j int) bool { return normalizedBindings[i].ID < normalizedBindings[j].ID })
 	seenBindingIDs := make(map[string]struct{}, len(normalizedBindings))
 	seenBindingKeys := make(map[string]struct{}, len(normalizedBindings))
+	permissionProfile := ""
+	setPermissionProfile := func(candidate string) error {
+		if candidate == "" {
+			return nil
+		}
+		if permissionProfile == "" {
+			permissionProfile = candidate
+			return nil
+		}
+		if permissionProfile != candidate {
+			return fmt.Errorf("authorization snapshot mixes permission profiles %q and %q", permissionProfile, candidate)
+		}
+		return nil
+	}
 	for i := range normalizedBindings {
 		binding := &normalizedBindings[i]
 		if binding.ID == "" {
@@ -246,7 +276,22 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 		if err := validateRoleBinding(binding); err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("role binding %q: %w", binding.ID, err)
 		}
-		key := string(binding.Subject.Kind) + "\x00" + binding.Subject.ID + "\x00" + string(binding.Role)
+		if binding.TypedRoleBinding() {
+			if err := setPermissionProfile(binding.PermissionProfile); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("role binding %q: %w", binding.ID, err)
+			}
+			if err := access.ValidateTypedRoleBindingForProject(*binding, identity.ProjectID); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("role binding %q: %w", binding.ID, err)
+			}
+			if err := validateTypedRoleBindingTargets(*binding, identity, project); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("role binding %q: %w", binding.ID, err)
+			}
+		}
+		roleKey := string(binding.Role)
+		if binding.TypedRoleBinding() {
+			roleKey = string(binding.PermissionRole)
+		}
+		key := string(binding.Subject.Kind) + "\x00" + binding.Subject.ID + "\x00" + roleKey
 		if _, ok := seenBindingKeys[key]; ok {
 			return AuthorizationSnapshot{}, fmt.Errorf("duplicate role binding subject/role for %q", binding.ID)
 		}
@@ -265,6 +310,32 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 			return AuthorizationSnapshot{}, fmt.Errorf("duplicate grant id %q", grants.ID)
 		}
 		seenGrantIDs[grants.ID] = struct{}{}
+		if grants.PermissionProfile != "" || grants.Permissions != nil {
+			if err := setPermissionProfile(grants.PermissionProfile); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", grants.ID, err)
+			}
+			if err := validateTypedGrant(*grants, identity, project); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", grants.ID, err)
+			}
+			if grants.Canonical.Validate() == nil {
+				if grants.Subject == (access.SubjectRef{}) {
+					grants.Subject = grants.Canonical.Subject()
+				}
+				if grants.Subject != (access.SubjectRef{}) && grants.Subject != grants.Canonical.Subject() {
+					return AuthorizationSnapshot{}, fmt.Errorf("grant %q: typed subject disagrees with canonical grant", grants.ID)
+				}
+			} else if err := grants.Subject.Validate(); err != nil {
+				return AuthorizationSnapshot{}, fmt.Errorf("grant %q subject: %w", grants.ID, err)
+			}
+			for _, pair := range grants.Permissions {
+				key := string(grants.Subject.Kind) + "\x00" + grants.Subject.ID + "\x00" + pair.Key()
+				if _, ok := seenGrantKeys[key]; ok {
+					return AuthorizationSnapshot{}, fmt.Errorf("duplicate grant subject/pair for %q", grants.ID)
+				}
+				seenGrantKeys[key] = struct{}{}
+			}
+			continue
+		}
 		if err := grants.Canonical.ValidateAgainst(project); err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("grant %q: %w", grants.ID, err)
 		}
@@ -306,11 +377,15 @@ func NewAuthorizationSnapshotWithRoleBindings(identity graph.ServingIdentity, pr
 		}
 		policy.Compiled = compiled
 	}
-	return AuthorizationSnapshot{identity: identity, roleBindings: normalizedBindings, grants: normalizedGrants, dataPolicies: normalizedPolicies, project: project}, nil
+	return AuthorizationSnapshot{identity: identity, roleBindings: normalizedBindings, grants: normalizedGrants, dataPolicies: normalizedPolicies, permissionProfile: permissionProfile, project: project}, nil
 }
 
 // Identity returns the immutable serving identity by value.
 func (s AuthorizationSnapshot) Identity() graph.ServingIdentity { return s.identity }
+
+// PermissionProfile returns the aggregate typed-assignment profile pinned by
+// this snapshot. Legacy snapshots return an empty profile.
+func (s AuthorizationSnapshot) PermissionProfile() string { return s.permissionProfile }
 
 // Project returns the immutable project graph bound to this snapshot. The
 // graph is a value with defensive-copy accessors, so callers cannot replace or
@@ -350,16 +425,24 @@ func Decode(data []byte, project graph.ProjectGraph) (AuthorizationSnapshot, err
 		if err := item.Subject.Validate(); err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("role binding %d subject: %w", i, err)
 		}
-		roleBindings = append(roleBindings, RoleBinding{ID: item.ID, Name: item.Name, Subject: item.Subject, Role: item.Role, Capabilities: append([]access.Capability(nil), item.Capabilities...)})
+		roleBindings = append(roleBindings, RoleBinding{ID: item.ID, Name: item.Name, Subject: item.Subject, Role: item.Role, Capabilities: append([]access.Capability(nil), item.Capabilities...), PermissionProfile: item.PermissionProfile, Permissions: access.ClonePermissionPairs(item.Permissions), PermissionRole: item.PermissionRole})
 	}
 
 	grants := make([]Grant, 0, len(wire.Grants))
 	for i, item := range wire.Grants {
-		canonical, err := access.NewCanonicalGrant(project, item.Subject, item.Resource, item.Capability)
+		var canonical access.CanonicalGrant
+		if item.PermissionProfile != "" || item.Permissions != nil {
+			grants = append(grants, Grant{ID: item.ID, Name: item.Name, Subject: item.Subject, Canonical: canonical, PermissionProfile: item.PermissionProfile, Permissions: access.ClonePermissionPairs(item.Permissions)})
+			continue
+		}
+		if item.Resource == nil || item.Capability == nil {
+			return AuthorizationSnapshot{}, fmt.Errorf("grant %d: legacy grant requires resource and capability", i)
+		}
+		canonical, err := access.NewCanonicalGrant(project, item.Subject, *item.Resource, *item.Capability)
 		if err != nil {
 			return AuthorizationSnapshot{}, fmt.Errorf("grant %d: %w", i, err)
 		}
-		grants = append(grants, Grant{ID: item.ID, Name: item.Name, Canonical: canonical})
+		grants = append(grants, Grant{ID: item.ID, Name: item.Name, Subject: item.Subject, Canonical: canonical})
 	}
 	policies := make([]DataPolicy, 0, len(wire.DataPolicies))
 	for i, item := range wire.DataPolicies {
@@ -377,7 +460,14 @@ func Decode(data []byte, project graph.ProjectGraph) (AuthorizationSnapshot, err
 		}
 		policies = append(policies, DataPolicy{ID: item.ID, Name: item.Name, Resource: item.Resource, Subject: cloneSubject(item.Subject), PolicyType: item.PolicyType, ExpressionJSON: item.ExpressionJSON, Compiled: compiled})
 	}
-	return NewAuthorizationSnapshotWithRoleBindings(wire.Identity, project, roleBindings, grants, policies)
+	snapshot, err := NewAuthorizationSnapshotWithRoleBindings(wire.Identity, project, roleBindings, grants, policies)
+	if err != nil {
+		return AuthorizationSnapshot{}, err
+	}
+	if wire.PermissionProfile != snapshot.permissionProfile {
+		return AuthorizationSnapshot{}, fmt.Errorf("authorization snapshot permission profile %q does not match assignments %q", wire.PermissionProfile, snapshot.permissionProfile)
+	}
+	return snapshot, nil
 }
 
 func (s AuthorizationSnapshot) Validate(project graph.ProjectGraph) error {
@@ -420,17 +510,30 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 		if err := validateRoleBinding(&item); err != nil {
 			return nil, err
 		}
-		roleBindings = append(roleBindings, roleBindingWire{ID: item.ID, Name: item.Name, Subject: item.Subject, Role: item.Role, Capabilities: append([]access.Capability(nil), item.Capabilities...)})
+		roleBindings = append(roleBindings, roleBindingWire{ID: item.ID, Name: item.Name, Subject: item.Subject, Role: item.Role, Capabilities: append([]access.Capability(nil), item.Capabilities...), PermissionProfile: item.PermissionProfile, Permissions: access.ClonePermissionPairs(item.Permissions), PermissionRole: item.PermissionRole})
 	}
 	grants := make([]grantWire, 0, len(s.grants))
 	for _, item := range s.grants {
+		if item.PermissionProfile != "" || item.Permissions != nil {
+			if err := validateTypedGrant(item, s.identity, s.project); err != nil {
+				return nil, fmt.Errorf("grant %q: %w", item.ID, err)
+			}
+			subject := item.Subject
+			if subject == (access.SubjectRef{}) && item.Canonical.Validate() == nil {
+				subject = item.Canonical.Subject()
+			}
+			grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: subject, PermissionProfile: item.PermissionProfile, Permissions: access.ClonePermissionPairs(item.Permissions)})
+			continue
+		}
 		if err := item.Canonical.ValidateAgainst(s.project); err != nil {
 			return nil, err
 		}
 		if err := access.ValidateProjectNamespace(item.Canonical.Resource(), s.identity); err != nil {
 			return nil, err
 		}
-		grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: item.Canonical.Subject(), Resource: item.Canonical.Resource(), Capability: item.Canonical.Capability()})
+		resource := item.Canonical.Resource()
+		capability := item.Canonical.Capability()
+		grants = append(grants, grantWire{ID: item.ID, Name: item.Name, Subject: item.Canonical.Subject(), Resource: &resource, Capability: &capability})
 	}
 	policies := make([]dataPolicyWire, 0, len(s.dataPolicies))
 	for _, item := range s.dataPolicies {
@@ -453,18 +556,25 @@ func (s AuthorizationSnapshot) MarshalJSON() ([]byte, error) {
 	sort.Slice(grants, func(i, j int) bool { return grants[i].ID < grants[j].ID })
 	sort.Slice(policies, func(i, j int) bool { return policies[i].ID < policies[j].ID })
 	sort.Slice(roleBindings, func(i, j int) bool { return roleBindings[i].ID < roleBindings[j].ID })
-	return json.Marshal(snapshotWire{Identity: s.identity, RoleBindings: roleBindings, Grants: grants, DataPolicies: policies})
+	return json.Marshal(snapshotWire{Identity: s.identity, PermissionProfile: s.permissionProfile, RoleBindings: roleBindings, Grants: grants, DataPolicies: policies})
 }
 
 func (s *AuthorizationSnapshot) UnmarshalJSON(data []byte) error {
 	return errors.New("authorization snapshot requires Decode with an authoritative project graph")
 }
 
-func cloneGrants(input []Grant) []Grant { return append([]Grant(nil), input...) }
+func cloneGrants(input []Grant) []Grant {
+	output := append([]Grant(nil), input...)
+	for i := range output {
+		output[i].Permissions = access.ClonePermissionPairs(output[i].Permissions)
+	}
+	return output
+}
 func cloneRoleBindings(input []RoleBinding) []RoleBinding {
 	output := append([]RoleBinding(nil), input...)
 	for i := range output {
 		output[i].Capabilities = append([]access.Capability(nil), output[i].Capabilities...)
+		output[i].Permissions = access.ClonePermissionPairs(output[i].Permissions)
 	}
 	return output
 }
@@ -472,6 +582,12 @@ func cloneRoleBindings(input []RoleBinding) []RoleBinding {
 func validateRoleBinding(binding *RoleBinding) error {
 	if err := binding.Subject.Validate(); err != nil {
 		return fmt.Errorf("subject: %w", err)
+	}
+	if binding.PermissionProfile != "" || binding.Permissions != nil {
+		if err := access.ValidateTypedRoleBinding(*binding); err != nil {
+			return err
+		}
+		return nil
 	}
 	role, err := access.ParseProjectRole(string(binding.Role))
 	if err != nil {

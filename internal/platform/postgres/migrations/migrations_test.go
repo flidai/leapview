@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_platform_admin_token_capability.sql,022_typed_api_token_permissions.sql,023_job_authority_envelope.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_platform_admin_token_capability.sql,022_typed_api_token_permissions.sql,023_job_authority_envelope.sql,024_typed_permission_validation_hardening.sql,025_typed_authorization_assignments.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,39 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestTypedPermissionValidationHardeningMigrationIsExactAndImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "024_typed_permission_validation_hardening.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"CREATE OR REPLACE FUNCTION access.valid_permission_pairs",
+		"jsonb_object_keys(item)",
+		"jsonb_object_keys(target)",
+		"jsonb_typeof(item->'profile')",
+		"jsonb_typeof(item->'action')",
+		"jsonb_typeof(target->'scope')",
+		"jsonb_typeof(target->'resourceKind')",
+		"jsonb_typeof(target->'resourceId')",
+		"semantic_model",
+		"resource.share",
+		"workload.delegate",
+		"typed permission validation hardening is immutable",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("typed permission hardening migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("typed permission hardening migration must restore the migrator role")
+	}
+	down := migration[strings.Index(migration, "-- +goose Down"):]
+	if strings.Contains(strings.ToUpper(down), "DROP FUNCTION") {
+		t.Error("typed permission hardening Down must refuse instead of deleting the validator")
 	}
 }
 

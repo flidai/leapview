@@ -43,6 +43,7 @@ func TestAPIGenTypedDashboardReadRequiresExactPermissionPair(t *testing.T) {
 				map[string]APIGenOperationContract{"getDashboard": {
 					OperationID: "getDashboard", Method: http.MethodGet,
 					Path: "/api/v1/dashboards/{dashboard}", Protected: true, AuthzMode: "privilege",
+					Action: "dashboard.read", Resolver: "dashboard",
 					Extensions: map[string]any{
 						"x-authz":                  map[string]any{"mode": "privilege", "privilege": "RESOURCE_READ"},
 						apiGenObjectScopeExtension: "dashboard",
@@ -93,14 +94,46 @@ func TestAPIGenTypedDashboardMappingDoesNotAuthorizeMutationOrOtherResources(t *
 		{name: "semantic resource", operation: "getDashboard", resource: semantic},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			action, mapped := apiGenTypedAction(test.operation, test.resource)
-			if mapped != test.wantMapped {
-				t.Fatalf("mapped = %t action = %q, want mapped=%t", mapped, action, test.wantMapped)
+			contract := APIGenOperationContract{OperationID: test.operation, Action: "dashboard.read", Resolver: "dashboard"}
+			if !test.wantMapped {
+				contract.Action, contract.Resolver = "", ""
 			}
-			if test.wantMapped && action != access.ActionDashboardRead {
-				t.Fatalf("action = %q, want %q", action, access.ActionDashboardRead)
+			service, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{test.operation: contract})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.ResolvePairs(test.operation, "project_demo", test.resource)
+			mapped := err == nil
+			if mapped != test.wantMapped {
+				t.Fatalf("mapped = %t, err = %v, want mapped=%t", mapped, err, test.wantMapped)
 			}
 		})
+	}
+}
+
+func TestAPIGenTypedOperationRequirementServiceFailsClosed(t *testing.T) {
+	for name, contract := range map[string]APIGenOperationContract{
+		"unknown action":   {OperationID: "getDashboard", Action: "dashboard.unknown", Resolver: "dashboard"},
+		"missing resolver": {OperationID: "getDashboard", Action: "dashboard.read"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{contract.OperationID: contract}); err == nil {
+				t.Fatal("invalid typed contract was accepted")
+			}
+		})
+	}
+	service, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{
+		"getDashboard": {OperationID: "getDashboard"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboard, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolvePairs("getDashboard", "project_demo", dashboard); err == nil {
+		t.Fatal("operation without typed metadata was accepted")
 	}
 }
 

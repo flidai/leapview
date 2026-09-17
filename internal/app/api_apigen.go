@@ -43,9 +43,13 @@ func accessAPIGenOperationContracts() map[string]accessmodule.APIGenOperationCon
 				command.Target = &accessmodule.APIGenCommandTarget{Parameter: contract.Command.Target.Parameter, Type: contract.Command.Target.Type}
 			}
 		}
+		action, resolver := "", ""
+		if contract.Authz != nil {
+			action, resolver = contract.Authz.Action, contract.Authz.Resolver
+		}
 		contracts[operationID] = accessmodule.APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path, Protected: contract.Protected,
-			AuthzMode: contract.AuthzMode, Command: command, Extensions: contract.Extensions,
+			AuthzMode: contract.AuthzMode, Action: action, Resolver: resolver, Command: command, Extensions: contract.Extensions,
 		}
 	}
 	return contracts

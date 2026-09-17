@@ -28,6 +28,31 @@ import (
 // Current main's generated surface plus the two target-policy operations.
 const expectedAPIGenAggregateOperationCount = 191
 
+func TestAPIGenTypedAuthzMetadataReachesAccessBoundary(t *testing.T) {
+	contracts := accessAPIGenOperationContracts()
+	for operationID, want := range map[string]struct {
+		action   string
+		resolver string
+	}{
+		"getDashboard":              {"dashboard.read", "dashboard"},
+		"getDashboardPage":          {"dashboard.read", "dashboard"},
+		"getDashboardFilter":        {"dashboard.read", "dashboard"},
+		"listDashboardFilterValues": {"dashboard.read", "dashboard"},
+		"queryDashboardPage":        {"dashboard.read", "dashboard"},
+		"getDashboardVisual":        {"dashboard.read", "dashboard"},
+		"queryDashboardVisualData":  {"dashboard.read", "dashboard"},
+		"createRefreshRun":          {"pipeline.run", "pipeline"},
+	} {
+		contract, ok := contracts[operationID]
+		if !ok {
+			t.Fatalf("operation %q is missing from access conversion", operationID)
+		}
+		if contract.Action != want.action || contract.Resolver != want.resolver {
+			t.Errorf("operation %q typed authz = %q/%q, want %q/%q", operationID, contract.Action, contract.Resolver, want.action, want.resolver)
+		}
+	}
+}
+
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
 	manifest, err := os.ReadFile(filepath.Join(root, "api", "apigen.yaml"))

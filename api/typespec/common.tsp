@@ -1,3 +1,5 @@
+import "./generated/permissions.tsp";
+
 using Http;
 using TypeSpec.OpenAPI;
 
@@ -7,16 +9,6 @@ namespace LeapViewAPI.Protocol;
 @maxLength(200)
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceId extends string;
-
-enum ResourceKind {
-  project;
-  connection;
-  sourceKind: "source";
-  modelKind: "model";
-  semanticModel: "semantic_model";
-  pipelineKind: "pipeline";
-  dashboardKind: "dashboard";
-}
 
 @minLength(1)
 @maxLength(64)
@@ -32,109 +24,6 @@ enum Capability {
   resourceManage: "RESOURCE_MANAGE";
   resourceShare: "RESOURCE_SHARE";
   resourcePublish: "RESOURCE_PUBLISH";
-}
-
-/**
- * Typed action identities for the versioned resource-authorization catalog.
- * Current-user token creation uses these paired action/target values. The
- * legacy Capability enum remains only for compatibility and bootstrap flows.
- */
-enum PermissionAction {
-  dashboardRead: "dashboard.read";
-  dashboardCreate: "dashboard.create";
-  dashboardUpdate: "dashboard.update";
-  dashboardDelete: "dashboard.delete";
-  dashboardPublish: "dashboard.publish";
-
-  semanticRead: "semantic.read";
-  semanticQuery: "semantic.query";
-  semanticConsume: "semantic.consume";
-  semanticCreate: "semantic.create";
-  semanticUpdate: "semantic.update";
-  semanticDelete: "semantic.delete";
-
-  sourceRead: "source.read";
-  sourceCreate: "source.create";
-  sourceUpdate: "source.update";
-  sourceDelete: "source.delete";
-
-  modelRead: "model.read";
-  modelCreate: "model.create";
-  modelUpdate: "model.update";
-  modelDelete: "model.delete";
-
-  pipelineRead: "pipeline.read";
-  pipelineCreate: "pipeline.create";
-  pipelineRun: "pipeline.run";
-  pipelineUpdate: "pipeline.update";
-  pipelineDelete: "pipeline.delete";
-
-  connectionRead: "connection.read";
-  connectionCreate: "connection.create";
-  connectionUse: "connection.use";
-  connectionManage: "connection.manage";
-
-  resourceShare: "resource.share";
-
-  deliveryRead: "delivery.read";
-  deliveryPlan: "delivery.plan";
-  deliveryBuild: "delivery.build";
-  deliveryPublish: "delivery.publish";
-  deliveryApprove: "delivery.approve";
-  deliveryActivate: "delivery.activate";
-  deliveryRollback: "delivery.rollback";
-
-  projectSettingsRead: "project.settings.read";
-  projectSettingsUpdate: "project.settings.update";
-  projectAccessRead: "project.access.read";
-  projectAccessManage: "project.access.manage";
-  projectAccessDelegate: "project.access.delegate";
-  auditRead: "audit.read";
-
-  workloadDelegate: "workload.delegate";
-
-  platformSettingsRead: "platform.settings.read";
-  platformSettingsUpdate: "platform.settings.update";
-  platformAccessRead: "platform.access.read";
-  platformAccessManage: "platform.access.manage";
-  platformAuditRead: "platform.audit.read";
-}
-
-/** The catalog profile pinned by a typed permission pair. */
-enum PermissionCatalogProfile {
-  v1: "leapview.permissions/v1";
-}
-
-enum PermissionScope {
-  instance;
-  project;
-  resource;
-}
-
-/**
- * The audience and resource half of one typed permission pair. The optional
- * fields are structurally constrained by scope and action at runtime.
- */
-@example(#{
-  scope: PermissionScope.resource,
-  projectId: "project:analytics",
-  resourceKind: ResourceKind.dashboardKind,
-  resourceId: "dashboard:sales",
-})
-model PermissionTarget {
-  scope: PermissionScope;
-  instanceId?: string;
-  projectId?: ResourceId;
-  resourceKind?: ResourceKind;
-  resourceId?: ResourceId;
-  includeFuture?: boolean;
-}
-
-/** Preserve the action/target relationship through authorization boundaries. */
-model PermissionPair {
-  action: PermissionAction;
-  target: PermissionTarget;
-  profile: PermissionCatalogProfile;
 }
 
 @minValue(1)

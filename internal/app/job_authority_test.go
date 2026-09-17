@@ -119,6 +119,17 @@ func TestCallerAuthorityRevalidatorChecksExactPipelineResource(t *testing.T) {
 	}
 }
 
+func TestCallerAuthorityRevalidatorRejectsWrongTypedAction(t *testing.T) {
+	authority := testCallerAuthority(t, time.Now().UTC().Add(time.Hour))
+	authority.Permissions[0].Action = permissions.Action("pipeline.read")
+	revalidator := newCallerAuthorityRevalidator(jobAuthorityTokenReader{token: testAuthorityToken(t, authority)}, nil, func(context.Context, string, projectgraph.ResourceID, string, access.ResourceRef, access.Capability) (bool, error) {
+		return true, nil
+	})
+	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("wrong typed action revalidation error = %v, want authority invalid", err)
+	}
+}
+
 func browserSessionAuthority(authority jobs.AuthorityEnvelope) jobs.AuthorityEnvelope {
 	authority.Credential.Class = "session"
 	return authority

@@ -89,6 +89,10 @@ func (s AuthorizationSnapshot) compatibilityPermissionAllowed(subject access.Sub
 		}
 		return false, nil
 	}
+	// This helper is the explicit, bounded compatibility path used by the
+	// legacy token picker. It is deliberately separate from AllowsTyped: only
+	// the qualified dashboard-read and semantic-consume projections are
+	// retained while surfaces migrate. Typed evaluation never calls this path.
 	return s.Allows(subject, resource, capability)
 }
 

@@ -103,7 +103,7 @@ interface RefreshRuns {
 
   @summary("Create a refresh run")
   @post
-  @apigen.authz(#{ mode: "authenticated" })
+  @apigen.authz(#{ mode: "authenticated", action: "pipeline.run", resolver: "pipeline" })
   @apigen.ui("refresh.run")
   @apigen.failsWith(InvalidRefreshRunFailure)
   @apigen.failsWith(RefreshRunConflictFailure)

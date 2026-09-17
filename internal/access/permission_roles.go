@@ -104,6 +104,14 @@ func PermissionRoleActions(role PermissionRole) ([]Action, bool) {
 	return nil, false
 }
 
+// Valid reports whether role is one of the versioned typed permission
+// presets. The name alone never grants authority; callers must persist and
+// validate the corresponding expansion.
+func (role PermissionRole) Valid() bool {
+	_, ok := PermissionRoleActions(role)
+	return ok
+}
+
 func ValidatePermissionRolePresets(presets []PermissionRolePreset, definitions []PermissionDefinition) error {
 	knownActions := make(map[Action]struct{}, len(definitions))
 	for _, definition := range definitions {
