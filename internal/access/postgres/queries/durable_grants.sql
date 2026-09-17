@@ -98,6 +98,36 @@ WHERE issuer_principal_id = sqlc.arg(issuer_principal_id)::uuid
   AND issuer_credential_id = sqlc.arg(issuer_credential_id)::text
   AND idempotency_key = sqlc.arg(idempotency_key)::text;
 
+-- name: SelectCurrentExecutionGrantIDs :many
+SELECT g.id
+FROM access.execution_grant g
+WHERE g.instance_id = sqlc.arg(instance_id)::text
+  AND g.project_id = sqlc.arg(project_id)::text
+  AND g.resource_id = sqlc.arg(resource_id)::text
+  AND g.resource_kind = 'pipeline'
+  AND g.revoked_at IS NULL
+  AND g.expires_at > clock_timestamp()
+  AND EXISTS (
+      SELECT 1
+      FROM project.resource_uid_registry target
+      WHERE target.instance_id = g.instance_id
+        AND target.project_id = g.project_id
+        AND target.resource_uid = g.resource_uid
+        AND target.authored_resource_id = g.resource_id
+        AND target.resource_kind = g.resource_kind
+        AND target.state = 'active'
+  )
+  AND EXISTS (
+      SELECT 1
+      FROM access.principal execution_principal
+      WHERE execution_principal.id = g.execution_principal_id
+        AND execution_principal.status = 'active'
+        AND execution_principal.revoked_at IS NULL
+        AND execution_principal.disabled_at IS NULL
+        AND execution_principal.blocked_at IS NULL
+  )
+ORDER BY g.id;
+
 -- name: GetGrantAdminEnvelope :one
 SELECT id, profile, issuer_principal_id::text AS issuer_principal_id,
        issuer_credential_class, issuer_credential_id, issuer_credential_fingerprint,
