@@ -24987,10 +24987,10 @@ paths:
         - Dashboard Authoring
       x-apigen-operation-kind: query
       x-authz:
-        action: dashboard.read
+        action: dashboard.update
         mode: privilege
         resolver: dashboard
-        privilege: RESOURCE_READ
+        privilege: RESOURCE_EDIT
       x-leapview-object-scope: dashboard
   /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/preview:
     post:

@@ -789,7 +789,7 @@ interface DashboardAuthoring {
   @summary("Get the exact current dashboard draft")
   @route("/dashboards/{dashboard}/draft")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ", action: "dashboard.read", resolver: "dashboard" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "dashboard.update", resolver: "dashboard" })
   @extension("x-leapview-object-scope", "dashboard")
   getDashboardAuthoringDraft(@path project: ResourceId, @path dashboard: ResourceId): OkJson<DashboardAuthoringDraftResponse> | CommonErrors;
 
