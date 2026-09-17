@@ -2,7 +2,6 @@ package access
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -134,15 +133,4 @@ func ValidatePermissionRolePresets(presets []PermissionRolePreset, definitions [
 		}
 	}
 	return nil
-}
-
-// SortedPermissionRoleActions is a documentation/testing helper; persisted
-// role expansions retain the declared order from PermissionRoleActions.
-func SortedPermissionRoleActions(role PermissionRole) ([]Action, bool) {
-	actions, ok := PermissionRoleActions(role)
-	if !ok {
-		return nil, false
-	}
-	sort.Slice(actions, func(i, j int) bool { return actions[i] < actions[j] })
-	return actions, true
 }
