@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 
@@ -142,6 +143,7 @@ func Provider(config Config) webpage.Provider {
 				Items: historyItems(config, firstNonEmpty(context.HistoryID, config.ActiveConversationID)),
 			}
 		}
+		initialChrome, _ := json.Marshal(Chrome{Sidebar: sidebar})
 		return webpage.Layout{
 			Presentation: config.Presentation,
 			Assets:       config.Assets,
@@ -150,7 +152,8 @@ func Provider(config Config) webpage.Provider {
 			Scripts:      []string{"/static/app-shell.js"},
 			Mount: func(content g.Node, attrs ...g.Node) g.Node {
 				bindings := []g.Node{
-					g.Attr("data-on:lv-chat-management", "$chatManagement = {action: evt.detail.action, conversationId: evt.detail.conversationId, requestId: evt.detail.requestId, archivedConversations: []}; "+uiactions.CommandPost(agentgen.GenUIActionManageAgentConversations(), "/chats/manage", "chatManagement")),
+					g.Attr("data-initial-chrome", string(initialChrome)),
+					g.Attr("data-on:lv-chat-management", "$chatManagement = {action: evt.detail.action, conversationId: evt.detail.conversationId, title: evt.detail.title || '', requestId: evt.detail.requestId, archivedConversations: []}; "+uiactions.CommandPost(agentgen.GenUIActionManageAgentConversations(), "/chats/manage", "chatManagement")),
 					g.Attr("data-on:lv-chat-management-load", "$chatManagement = {action: '', conversationId: '', requestId: evt.detail.requestId, archivedConversations: []}; "+uiactions.Get("/chats/management", "chatManagement")),
 				}
 				bindings = append(bindings, attrs...)
@@ -223,6 +226,7 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 				{ID: "profile", Label: "Profile", Href: "/admin/profile", Icon: "user"},
 				{ID: "security", Label: "Security & sessions", Href: "/admin/security", Icon: "activity"},
 				{ID: "api-tokens", Label: "API tokens", Href: "/admin/api-tokens", Icon: "data"},
+				{ID: "archived-chats", Label: "Archived chats", Href: "/admin/archived-chats", Icon: "history"},
 			},
 		},
 		{

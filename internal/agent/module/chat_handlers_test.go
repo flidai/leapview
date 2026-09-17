@@ -19,7 +19,7 @@ func TestChatTurnStatusErrorReportsMaxTurnsWithoutPromptError(t *testing.T) {
 
 func TestChatTurnStatusErrorPreservesPromptErrors(t *testing.T) {
 	want := errors.New("provider failed")
-	if got := chatTurnStatusError(want, agentcore.StopReasonMaxTurns); got != want.Error() {
-		t.Fatalf("prompt error status = %q, want %q", got, want)
+	if got := chatTurnStatusError(want, agentcore.StopReasonMaxTurns); got == want.Error() || got != "The agent could not complete that request. Please try again." {
+		t.Fatalf("prompt error status = %q, want safe user-facing message", got)
 	}
 }

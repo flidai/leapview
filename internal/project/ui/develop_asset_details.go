@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -42,7 +43,7 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 	case "semantic_model":
 		semanticModelDetailModel(&model, project, asset, assets, refresh)
 	case "model":
-		modelDetailModel(&model, project, asset, assets)
+		modelDetailModel(&model, project, asset, assets, refresh)
 	case "dashboard":
 		dashboardDetailModel(&model, asset, assets)
 	case "refresh_pipeline", "pipeline":
@@ -143,7 +144,7 @@ func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
 	status := assetRefreshStatus(refresh)
 	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
-		{Label: "Last refreshed", Value: emptyDash(assetLastSuccessful(refresh))},
+		{Label: "Last refreshed", Value: unavailableDash(assetLastSuccessful(refresh))},
 	}
 	if refresh.Unavailable {
 		facts = append(facts, definitionFact{
@@ -235,7 +236,7 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 	datasetDetails := metaMap(meta, "DatasetDetails")
 	metricCounts := semanticMetricCountsByDataset(metaMap(meta, "Metrics"))
 	rows := make([]map[string]any, 0, len(datasets))
-	lastRefreshed := emptyDash(assetLastSuccessful(refresh))
+	lastRefreshed := formatRefreshTimestamp(assetLastSuccessful(refresh))
 	refreshStatus := assetRefreshStatus(refresh)
 	for _, name := range sortedMapKeys(datasets) {
 		dataset := asMap(datasets[name])
@@ -244,7 +245,6 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 		rows = append(rows, map[string]any{
 			"name":           name,
 			"nameHref":       childHref(projectID, child),
-			"model":          emptyDash(metaString(dataset, "Model")),
 			"fields":         len(metaMap(details, "Dimensions")),
 			"metrics":        metricCounts[name],
 			"last_refreshed": lastRefreshed,
@@ -255,7 +255,6 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 	return recordTable{
 		Columns: []recordTableColumn{
 			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("180px")},
-			{ID: "model", Header: "Model", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
 			{ID: "fields", Header: "Fields", Width: uisignals.Pointer("100px")},
 			{ID: "metrics", Header: "Metrics", Width: uisignals.Pointer("110px")},
 			{ID: "last_refreshed", Header: "Last refreshed", Width: uisignals.Pointer("180px")},
@@ -264,7 +263,7 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 		},
 		Rows:     rows,
 		Empty:    "No datasets are defined for this semantic model.",
-		MinWidth: uisignals.Pointer("1120px"),
+		MinWidth: uisignals.Pointer("960px"),
 	}
 }
 
@@ -568,7 +567,7 @@ func sortedMapKeysString(values map[string][]string) []string {
 	return keys
 }
 
-func modelDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {
+func modelDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, refresh AssetRefreshState) {
 	fields := modelFields(asset.Payload)
 	schema := metaMap(asset.Payload, "Schema", "schema")
 	physicalColumns := metaSlice(schema, "Columns", "columns")
@@ -596,7 +595,7 @@ func modelDetailModel(model *assetDetailModel, project projectview.DevelopView, 
 			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
 		)
 	}
-	model.Overview = append(model.Overview, modelLastRefreshedFact(asset))
+	model.Overview = append(model.Overview, modelLastRefreshedFact(asset, refresh))
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelEntitiesTable", Table: modelEntitiesGrid(asset.Payload)},
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelFieldsTable", Table: modelFieldsGrid(asset, asset.Payload)},
@@ -1003,9 +1002,9 @@ func dashboardVisualsTable(parent projectview.DevelopAssetView, visuals []projec
 		rows = append(rows, map[string]any{
 			"visual":     assetTitle(visual),
 			"key":        assetChildName(parent, visual),
-			"type":       emptyDash(firstNonEmpty(metaString(visual.Payload, "Type", "type", "RendererID", "rendererID"), metaString(visual.Payload, "Shape", "shape"))),
-			"metrics":    emptyDash(strings.Join(stringSlice(metaValue(query, "Metrics", "metrics")), ", ")),
-			"dimensions": emptyDash(strings.Join(stringSlice(metaValue(query, "Dimensions", "dimensions")), ", ")),
+			"type":       unavailableDash(dashboardVisualTypeLabel(visual.Payload)),
+			"metrics":    unavailableDash(strings.Join(dashboardQueryFieldLabels(metaValue(query, "Metrics", "metrics")), ", ")),
+			"dimensions": unavailableDash(strings.Join(dashboardQueryFieldLabels(metaValue(query, "Dimensions", "dimensions")), ", ")),
 		})
 	}
 	return recordTable{
@@ -1020,6 +1019,135 @@ func dashboardVisualsTable(parent projectview.DevelopAssetView, visuals []projec
 		Empty:    "No visuals are defined for this dashboard.",
 		MinWidth: uisignals.Pointer("1040px"),
 	}
+}
+
+func dashboardVisualTypeLabel(payload map[string]any) string {
+	spec := metaMap(payload, "Spec", "spec")
+	presentation := metaMap(payload, "Presentation", "presentation")
+	renderer := strings.ToLower(strings.TrimSpace(metaString(payload, "RendererID", "rendererID")))
+	raw := firstNonEmpty(
+		metaString(payload, "Type", "type"),
+		metaString(presentation, "Type", "type"),
+		metaString(spec, "Mark", "mark", "Type", "type", "Kind", "kind"),
+		metaString(payload, "Shape", "shape"),
+	)
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "cartesian" || raw == "proportional" || raw == "geographic" || raw == "hierarchy" {
+		raw = strings.ToLower(strings.TrimSpace(metaString(spec, "Mark", "mark", "Type", "type", "Kind", "kind")))
+	}
+	switch raw {
+	case "kpi", "number", "single_value", "single-value":
+		return "KPI"
+	case "donut", "pie", "polar":
+		return "Donut chart"
+	case "bar", "column", "horizontal_bar", "vertical_bar":
+		return "Bar chart"
+	case "line":
+		return "Line chart"
+	case "area":
+		return "Area chart"
+	case "combo":
+		return "Combo chart"
+	case "table", "grid", "matrix", "pivot":
+		return "Table"
+	case "scatter", "point":
+		return "Scatter plot"
+	case "map", "point_map", "point-map", "geographic":
+		return "Map"
+	case "graph", "hierarchy":
+		return "Graph"
+	case "waterfall":
+		return "Waterfall chart"
+	case "funnel":
+		return "Funnel chart"
+	case "histogram":
+		return "Histogram"
+	case "text":
+		return "Text"
+	case "":
+		switch renderer {
+		case "echarts":
+			return "Chart"
+		case "tanstack":
+			return "Table"
+		case "maplibre":
+			return "Map"
+		case "html":
+			return "Text"
+		default:
+			return ""
+		}
+	default:
+		return humanizeIdentifier(raw)
+	}
+}
+
+func dashboardQueryFieldLabels(value any) []string {
+	items := stringOrAnySlice(value)
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		label := ""
+		switch typed := item.(type) {
+		case map[string]any:
+			label = firstNonEmpty(
+				metaString(typed, "Alias", "alias", "Label", "label"),
+				metaString(typed, "FieldID", "fieldID", "Field", "field", "Name", "name", "SourceRef", "sourceRef"),
+			)
+		default:
+			label = fmt.Sprint(item)
+		}
+		label = humanizeIdentifier(label)
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	return labels
+}
+
+func stringOrAnySlice(value any) []any {
+	switch typed := value.(type) {
+	case []any:
+		return typed
+	case []string:
+		items := make([]any, len(typed))
+		for index := range typed {
+			items[index] = typed[index]
+		}
+		return items
+	case []map[string]any:
+		items := make([]any, len(typed))
+		for index := range typed {
+			items[index] = typed[index]
+		}
+		return items
+	default:
+		return nil
+	}
+}
+
+func humanizeIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	upperNext := true
+	for _, char := range value {
+		if char == '_' || char == '-' || char == '.' {
+			if builder.Len() > 0 && !upperNext {
+				builder.WriteByte(' ')
+			}
+			upperNext = true
+			continue
+		}
+		if upperNext {
+			builder.WriteRune(unicode.ToUpper(char))
+			upperNext = false
+			continue
+		}
+		builder.WriteRune(char)
+	}
+	return strings.TrimSpace(builder.String())
 }
 
 func connectionDetailModel(model *assetDetailModel, _ projectview.DevelopView, asset projectview.DevelopAssetView, _ []projectview.DevelopAssetView, _ []projectview.DevelopEdgeView) {

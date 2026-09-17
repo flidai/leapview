@@ -28,7 +28,17 @@ func LoadServiceAccounts(ctx context.Context, reader ServiceAccountReader, selec
 		return left < right
 	})
 	for _, principal := range principals {
-		state.Items = append(state.Items, ServiceAccountSignalFromPrincipal(principal))
+		item := ServiceAccountSignalFromPrincipal(principal)
+		secrets, secretErr := reader.ListServicePrincipalSecrets(ctx, principal.ID)
+		if secretErr != nil {
+			return state, secretErr
+		}
+		for _, secret := range secrets {
+			if strings.TrimSpace(secret.RevokedAt) == "" {
+				item.SecretCount++
+			}
+		}
+		state.Items = append(state.Items, item)
 	}
 	if state.SelectedID != "" {
 		secrets, err := reader.ListServicePrincipalSecrets(ctx, state.SelectedID)

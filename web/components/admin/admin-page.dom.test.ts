@@ -246,7 +246,6 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
     expect(state.appliedTheme).toBe('dark_colorblind')
     expect(state.sectionHeadings).toEqual(['Chat history'])
-    expect(state.text).toContain('Archived chats')
     expect(state.text).toContain('Archive all chats')
     expect(state.text).toContain('Delete all chats')
     expect(state.mainCentered).toBe(true)
@@ -364,10 +363,17 @@ test('personal API tokens use capability selectors', async () => {
       const selectedPermissions = Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim())
       const triggerFocused = root.activeElement === add
 
+      const expiryPreset = root.querySelector('#token-expiry-preset') as HTMLSelectElement
+      expiryPreset.value = 'none'
+      expiryPreset.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await personal.updateComplete
+
       let command: unknown = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       const form = root.querySelector('.token-form') as HTMLFormElement
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      await personal.updateComplete
+      ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       await personal.updateComplete
       const pending = {
         name: (root.querySelector('#token-name') as HTMLInputElement).value,
@@ -383,6 +389,8 @@ test('personal API tokens use capability selectors', async () => {
         createDisabled: (root.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
       form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      await personal.updateComplete
+      ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       mergePatch({ personalSettings: { tokens: { items: [
         { id: 'token-1', name: 'Sales automation', capabilities: ['RESOURCE_READ'], createdAt: '2026-08-12T06:40:00Z', lastUsedAt: '', expiresAt: '', revokedAt: '' },
       ], newToken: 'lv_created_secret' } } })
@@ -469,7 +477,7 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.succeeded.name).toBe('')
     expect(state.succeeded.selectedPermissions).toBe(0)
     expect(state.succeeded.tokenNames).toContain('Sales automation')
-    expect(state.succeeded.notice).toContain('Copy this token now')
+    expect(state.succeeded.notice).toContain('Copy it now')
     expect(mobile.position).toBe('fixed')
     expect(mobile.left).toBeGreaterThanOrEqual(16)
     expect(mobile.right).toBeLessThanOrEqual(mobile.viewportWidth - 16)
@@ -536,9 +544,15 @@ test('personal API token permissions expose enforceable access levels', async ()
 
       ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Content automation'
       ;(root.querySelector('#token-name') as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      const expiryPreset = root.querySelector('#token-expiry-preset') as HTMLSelectElement
+      expiryPreset.value = 'none'
+      expiryPreset.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await personal.updateComplete
       let command: any = null
       personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
       ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      await personal.updateComplete
+      ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       await personal.updateComplete
       return {
         initialAdministrationAccess,
@@ -1246,8 +1260,7 @@ test('query audit page filters table rows and exposes optional metadata columns'
     expect(state.drawerText).toMatch(/req_1/)
     expect(state.drawerText).toMatch(/corr_1/)
     expect(state.drawerHasCodeBlock).toBe(true)
-    expect(state.drawerCode).toContain('SELECT')
-    expect(state.drawerCode).toMatch(/\nFROM\n\s+orders/)
+    expect(state.drawerCode).toMatch(/select\s+status\s+from\s+orders/i)
     expect(state.drawerText).toMatch(/12 ms/)
     expect(state.drawerText).toMatch(/semantic_aggregate/)
     expect(state.drawerText).toMatch(/semantic_dataset:sales:orders/)

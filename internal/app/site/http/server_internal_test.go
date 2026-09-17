@@ -787,6 +787,12 @@ func TestSiteDocsIndexListsEverySection(t *testing.T) {
 	}
 
 	body := readBody(t, response)
+	if got := strings.Count(body, `aria-label="Search documentation"`); got != 1 {
+		t.Fatalf("docs index search controls = %d, want one header search:\n%s", got, body)
+	}
+	if strings.Contains(body, `class="site-docs-search"`) {
+		t.Fatalf("docs index rendered the duplicate body search form:\n%s", body)
+	}
 	for _, want := range []string{
 		"<title>LeapView documentation</title>",
 		"<h1>Documentation</h1>",

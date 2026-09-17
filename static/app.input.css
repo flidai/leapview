@@ -692,3 +692,115 @@ body:has(lv-dashboard-page[data-agent-open]) datastar-inspector {
 body:has(lv-dashboard-builder) datastar-inspector {
   --ds-toggle-bottom: var(--base-size-80);
 }
+
+/* Server-rendered create/copy forms share the product shell tokens without
+   waiting for a custom element to upgrade. */
+.lv-draft-form {
+  box-sizing: border-box;
+  display: grid;
+  min-height: 100svh;
+  place-items: start center;
+  background: var(--lv-bg-app);
+  padding: clamp(var(--base-size-24), 7vh, var(--base-size-80)) var(--base-size-16);
+}
+
+.lv-draft-form section {
+  box-sizing: border-box;
+  display: grid;
+  width: min(36rem, 100%);
+  gap: var(--base-size-8);
+  border: var(--lv-border-muted);
+  border-radius: var(--lv-radius-large);
+  background: var(--lv-bg-panel);
+  box-shadow: var(--lv-shadow-floating-lg);
+  padding: clamp(var(--base-size-20), 4vw, var(--base-size-32));
+}
+
+.lv-draft-form h1,
+.lv-draft-form p {
+  margin: 0;
+}
+
+.lv-draft-form h1 {
+  font: var(--lv-type-page-title);
+}
+
+.lv-draft-form p,
+.lv-draft-form small {
+  color: var(--lv-fg-muted);
+  font: var(--lv-type-body-compact);
+}
+
+.lv-draft-form form {
+  display: grid;
+  gap: var(--base-size-8);
+  margin-top: var(--base-size-16);
+}
+
+.lv-draft-form label {
+  margin-top: var(--base-size-8);
+  color: var(--lv-fg-default);
+  font: var(--lv-type-body-compact);
+  font-weight: var(--base-text-weight-semibold);
+}
+
+.lv-draft-form input:not([type='hidden']) {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--control-medium-size);
+  border: var(--lv-border-muted);
+  border-radius: var(--lv-radius-default);
+  background: var(--lv-bg-panel);
+  color: var(--lv-fg-default);
+  padding: var(--base-size-8) var(--base-size-12);
+}
+
+.lv-draft-form input:not([type='hidden']):focus-visible {
+  border-color: var(--lv-border-accent);
+  outline: var(--focus-outline);
+  outline-offset: var(--focus-outline-offset);
+}
+
+.lv-draft-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--base-size-12);
+  margin-top: var(--base-size-16);
+}
+
+.lv-draft-form-actions a,
+.lv-draft-form-actions button {
+  display: inline-flex;
+  min-height: var(--control-medium-size);
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lv-radius-default);
+  padding: 0 var(--base-size-16);
+  font: var(--lv-type-body-compact);
+  font-weight: var(--base-text-weight-semibold);
+  text-decoration: none;
+}
+
+.lv-draft-form-actions a {
+  color: var(--lv-fg-default);
+}
+
+.lv-draft-form-actions button {
+  border: 1px solid var(--lv-button-accent-border-rest, var(--lv-line-accent));
+  background: var(--lv-button-accent-bg-rest, var(--lv-line-accent));
+  color: var(--lv-button-accent-fg-rest, var(--lv-fg-on-emphasis));
+  cursor: pointer;
+}
+
+.lv-draft-form-actions button:disabled {
+  cursor: wait;
+  opacity: .65;
+}
+
+@media (max-width: 40rem) {
+  .lv-draft-form-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+}

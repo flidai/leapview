@@ -272,9 +272,17 @@ SELECT g.generation_id::text, t.project_id, t.environment,
 FROM serving_state.asset a
 JOIN delivery.delivery_generation g ON g.generation_id = a.generation_id
 JOIN delivery.delivery_target t ON t.target_id = g.target_id
-JOIN delivery.delivery_publication p
-  ON p.generation_id = g.generation_id AND p.state = 'committed'
-LEFT JOIN delivery.delivery_active_pointer ap ON ap.generation_id = g.generation_id
+JOIN LATERAL (
+  SELECT publication.actor_id, publication.committed_at
+  FROM delivery.delivery_publication publication
+  WHERE publication.generation_id = g.generation_id
+    AND publication.target_id = g.target_id
+    AND publication.state = 'committed'
+  ORDER BY publication.committed_at DESC, publication.publication_id DESC
+  LIMIT 1
+) p ON TRUE
+LEFT JOIN delivery.delivery_active_pointer ap
+  ON ap.target_id = g.target_id AND ap.generation_id = g.generation_id
 WHERE t.project_id = $1 AND t.environment = $2
   AND a.logical_asset_id = $3
 ORDER BY g.created_at DESC, g.generation_id DESC;

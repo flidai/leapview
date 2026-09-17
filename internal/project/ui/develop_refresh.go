@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,17 @@ func assetRefreshStatus(refresh AssetRefreshState) string {
 		return "unavailable"
 	}
 	if status == "" {
+		if strings.TrimSpace(refresh.LatestSuccessful.Status) != "" {
+			return strings.TrimSpace(refresh.LatestSuccessful.Status)
+		}
+		if strings.TrimSpace(refresh.LatestSuccessful.FinishedAt) != "" {
+			return "succeeded"
+		}
+		for _, run := range refresh.Runs {
+			if runStatus := strings.TrimSpace(run.Status); runStatus != "" {
+				return runStatus
+			}
+		}
 		if refresh.DataVersion.SnapshotID > 0 && !refresh.DataVersion.RefreshedAt.IsZero() {
 			return "succeeded"
 		}
@@ -41,14 +53,35 @@ func assetLastSuccessful(refresh AssetRefreshState) string {
 	if refresh.DataVersion.SnapshotID > 0 && !refresh.DataVersion.RefreshedAt.IsZero() {
 		return refresh.DataVersion.RefreshedAt.UTC().Format(time.RFC3339Nano)
 	}
-	return refresh.LatestSuccessful.FinishedAt
+	if value := firstNonEmpty(refresh.LatestSuccessful.FinishedAt, refresh.LatestSuccessful.UpdatedAt, refresh.LatestSuccessful.CreatedAt); value != "" {
+		return value
+	}
+	if run, ok := latestSuccessfulRefreshRun(refresh.Runs); ok {
+		return firstNonEmpty(run.FinishedAt, run.UpdatedAt, run.CreatedAt)
+	}
+	return ""
 }
 
-func modelRefreshSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetRefreshSignal {
+func latestSuccessfulRefreshRun(runs []AssetRefreshRun) (AssetRefreshRun, bool) {
+	for _, run := range runs {
+		switch strings.ToLower(strings.TrimSpace(run.Status)) {
+		case "succeeded", "success", "completed":
+			return run, true
+		}
+	}
+	return AssetRefreshRun{}, false
+}
+
+func modelRefreshSignal(asset projectview.DevelopAssetView, refresh AssetRefreshState) uisignals.ResourceAssetRefreshSignal {
 	physical := metaMap(asset.Payload, "Physical", "physical")
 	lastSuccessful := metaString(physical, "SnapshotAt", "snapshotAt")
+	status := modelRefreshStatus(asset)
+	if refresh.Unavailable || refresh.Latest.Status != "" || refresh.LatestSuccessful.Status != "" || refresh.LatestSuccessful.FinishedAt != "" || len(refresh.Runs) > 0 || refresh.DataVersion.SnapshotID > 0 {
+		status = assetRefreshStatus(refresh)
+		lastSuccessful = assetLastSuccessful(refresh)
+	}
 	return uisignals.ResourceAssetRefreshSignal{
-		Status:         modelRefreshStatus(asset),
+		Status:         status,
 		LastSuccessful: lastSuccessful,
 	}
 }
@@ -60,7 +93,7 @@ func modelRefreshStatus(asset projectview.DevelopAssetView) string {
 	return firstNonEmpty(metaString(asset.Payload, "PhysicalStatus", "physicalStatus"), "not refreshed")
 }
 
-func modelLastRefreshedFact(asset projectview.DevelopAssetView) definitionFact {
+func modelLastRefreshedFact(asset projectview.DevelopAssetView, refresh AssetRefreshState) definitionFact {
 	physical := metaMap(asset.Payload, "Physical", "physical")
 	value := "Never refreshed"
 	if len(physical) > 0 {
@@ -71,6 +104,9 @@ func modelLastRefreshedFact(asset projectview.DevelopAssetView) definitionFact {
 	}
 	if snapshotAt := metaString(physical, "SnapshotAt", "snapshotAt"); snapshotAt != "" {
 		value = formatCatalogTimestamp(snapshotAt)
+	}
+	if lastSuccessful := assetLastSuccessful(refresh); lastSuccessful != "" {
+		value = formatCatalogTimestamp(lastSuccessful)
 	}
 	return definitionFact{Label: "Last refreshed", Value: value, Wide: true}
 }
@@ -90,28 +126,54 @@ func assetVersionsSignal(state AssetVersionsState) uisignals.ResourceAssetVersio
 }
 
 func assetVersionsTable(state AssetVersionsState) recordTable {
-	rows := make([]map[string]any, 0, len(state.Versions))
+	versions := normalizedAssetVersionHistory(state.Versions)
+	rows := make([]map[string]any, 0, len(versions))
 	current := strings.TrimSpace(state.CurrentContentHash)
-	for index, version := range state.Versions {
-		versionNumber := len(state.Versions) - index
-		status := version.Status
-		if current != "" && version.ContentHash == current {
-			status = "current"
+	currentIndex := -1
+	if current != "" {
+		for index, version := range versions {
+			if version.ContentHash == current {
+				currentIndex = index
+				break
+			}
+		}
+	}
+	if currentIndex < 0 {
+		for index, version := range versions {
+			if status := strings.ToLower(strings.TrimSpace(version.Status)); status == "active" || status == "current" {
+				currentIndex = index
+				break
+			}
+		}
+	}
+	for index, version := range versions {
+		versionNumber := len(versions) - index
+		status := strings.ToLower(strings.TrimSpace(version.Status))
+		if currentIndex >= 0 {
+			if index == currentIndex {
+				status = "current"
+			} else if status == "active" || status == "current" || status == "" {
+				status = "inactive"
+			}
 		}
 		compiledConfiguration := formatCompiledConfiguration(version.PayloadJSON)
 		changes := ""
 		changesSummary := "This is the first recorded version."
 		previousVersion := ""
-		var diffStat any = "-"
-		if index+1 < len(state.Versions) {
-			previous := state.Versions[index+1]
+		var diffStat any = "—"
+		if index+1 < len(versions) {
+			previous := versions[index+1]
 			previousVersion = strconv.Itoa(versionNumber - 1)
 			changes = compiledConfigurationDiff(previous, version)
 			additions, deletions := compiledConfigurationDiffStats(previous, version)
-			diffStat = recordTableDiff{
-				Label:     diffStatLabel(additions, deletions),
-				Additions: additions,
-				Deletions: deletions,
+			if additions == 0 && deletions == 0 {
+				diffStat = "—"
+			} else {
+				diffStat = recordTableDiff{
+					Label:     diffStatLabel(additions, deletions),
+					Additions: additions,
+					Deletions: deletions,
+				}
 			}
 			changesSummary = "No compiled configuration changes."
 			if strings.TrimSpace(changes) != "" {
@@ -120,21 +182,20 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 		}
 		rows = append(rows, map[string]any{
 			"version":               versionNumber,
-			"content_hash":          shortHash(version.ContentHash),
-			"published":             emptyDash(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
+			"published":             formatRefreshTimestamp(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
 			"status":                recordTableBadge{Label: status, Tone: uisignals.Pointer(versionStatusTone(status))},
-			"published_by":          emptyDash(version.CreatedBy),
+			"published_by":          unavailableDash(firstNonEmpty(version.CreatedByDisplayName, principalDisplayLabel(version.CreatedBy))),
 			"diff_stat":             diffStat,
 			"versionId":             version.ServingStateID,
-			"statusLabel":           emptyDash(status),
-			"contentHash":           emptyDash(version.ContentHash),
-			"sourceFile":            emptyDash(version.SourceFile),
-			"environment":           emptyDash(version.Environment),
-			"snapshotId":            emptyDash(version.SnapshotID),
-			"servingStateId":        emptyDash(version.ServingStateID),
-			"servingDigest":         emptyDash(version.Digest),
-			"createdAt":             emptyDash(version.CreatedAt),
-			"activatedAt":           emptyDash(version.ActivatedAt),
+			"statusLabel":           unavailableDash(status),
+			"contentHash":           unavailableDash(version.ContentHash),
+			"sourceFile":            unavailableDash(version.SourceFile),
+			"environment":           unavailableDash(version.Environment),
+			"snapshotId":            unavailableDash(version.SnapshotID),
+			"servingStateId":        unavailableDash(version.ServingStateID),
+			"servingDigest":         unavailableDash(version.Digest),
+			"createdAt":             formatRefreshTimestamp(version.CreatedAt),
+			"activatedAt":           formatRefreshTimestamp(version.ActivatedAt),
 			"compiledConfiguration": compiledConfiguration,
 			"previousVersion":       previousVersion,
 			"changes":               changes,
@@ -144,17 +205,51 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 	return recordTable{
 		Columns: []recordTableColumn{
 			{ID: "version", Header: "Version", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("90px")},
-			{ID: "content_hash", Header: "Content hash", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
 			{ID: "published", Header: "Published", Width: uisignals.Pointer("180px")},
 			{ID: "diff_stat", Header: "Changes", Kind: uisignals.Pointer("diff"), Width: uisignals.Pointer("120px")},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
-			{ID: "published_by", Header: "Published by", Width: uisignals.Pointer("150px")},
+			{ID: "published_by", Header: "Published by", Width: uisignals.Pointer("180px")},
 		},
 		Rows:      rows,
 		Empty:     "No config versions recorded for this asset yet.",
-		MinWidth:  uisignals.Pointer("850px"),
+		MinWidth:  uisignals.Pointer("700px"),
 		RowAction: uisignals.Pointer("open-asset-version"),
 	}
+}
+
+func normalizedAssetVersionHistory(versions []AssetVersionState) []AssetVersionState {
+	normalized := make([]AssetVersionState, 0, len(versions))
+	byServingState := map[string]int{}
+	for _, version := range versions {
+		servingStateID := strings.TrimSpace(version.ServingStateID)
+		if servingStateID == "" {
+			normalized = append(normalized, version)
+			continue
+		}
+		if index, exists := byServingState[servingStateID]; exists {
+			if assetVersionTime(version).After(assetVersionTime(normalized[index])) {
+				normalized[index] = version
+			}
+			continue
+		}
+		byServingState[servingStateID] = len(normalized)
+		normalized = append(normalized, version)
+	}
+	sort.SliceStable(normalized, func(i, j int) bool {
+		left, right := assetVersionTime(normalized[i]), assetVersionTime(normalized[j])
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return normalized[i].ServingStateID > normalized[j].ServingStateID
+	})
+	return normalized
+}
+
+func assetVersionTime(version AssetVersionState) time.Time {
+	if parsed, ok := parseRefreshTime(firstNonEmpty(version.ActivatedAt, version.CreatedAt)); ok {
+		return parsed
+	}
+	return time.Time{}
 }
 
 func formatCompiledConfiguration(payload string) string {
@@ -208,6 +303,9 @@ func compiledConfigurationDiffStats(previous, current AssetVersionState) (additi
 }
 
 func diffStatLabel(additions, deletions int) string {
+	if additions == 0 && deletions == 0 {
+		return "—"
+	}
 	return fmt.Sprintf("%d %s, %d %s", additions, pluralizeLine(additions, "addition"), deletions, pluralizeLine(deletions, "deletion"))
 }
 
@@ -253,23 +351,24 @@ func shortHash(hash string) string {
 func assetRefreshesTable(refresh AssetRefreshState) recordTable {
 	rows := make([]map[string]any, 0, len(refresh.Runs))
 	for _, run := range refresh.Runs {
+		startedAt := refreshRunStartedAt(run)
 		rows = append(rows, map[string]any{
 			"status":           refreshStatusGridValue(run.Status),
-			"started":          emptyDash(run.StartedAt),
-			"duration":         emptyDash(refreshRunDuration(run)),
-			"trigger":          refreshTriggerLabel(run.TriggerType),
-			"triggered_by":     emptyDash(run.PrincipalDisplayName),
+			"started":          formatRefreshTimestamp(startedAt),
+			"duration":         unavailableDash(refreshRunDuration(run)),
+			"trigger":          refreshRunTriggerLabel(run),
+			"triggered_by":     unavailableDash(firstNonEmpty(run.PrincipalDisplayName, principalDisplayLabel(run.PrincipalID))),
 			"runId":            run.ID,
-			"environment":      emptyDash(run.Environment),
-			"modelId":          emptyDash(run.ModelID),
-			"servingStateId":   emptyDash(run.ServingStateID),
-			"parentRunId":      emptyDash(run.ParentRunID),
+			"environment":      unavailableDash(run.Environment),
+			"modelId":          unavailableDash(run.ModelID),
+			"servingStateId":   unavailableDash(run.ServingStateID),
+			"parentRunId":      unavailableDash(run.ParentRunID),
 			"targetGeneration": run.TargetGeneration,
-			"createdAt":        emptyDash(run.CreatedAt),
-			"updatedAt":        emptyDash(run.UpdatedAt),
-			"startedAt":        emptyDash(run.StartedAt),
-			"finishedAt":       emptyDash(run.FinishedAt),
-			"statusLabel":      emptyDash(run.Status),
+			"createdAt":        formatRefreshTimestamp(run.CreatedAt),
+			"updatedAt":        formatRefreshTimestamp(run.UpdatedAt),
+			"startedAt":        formatRefreshTimestamp(startedAt),
+			"finishedAt":       formatRefreshTimestamp(run.FinishedAt),
+			"statusLabel":      unavailableDash(run.Status),
 			"error":            strings.TrimSpace(run.Error),
 		})
 	}
@@ -297,8 +396,18 @@ func refreshTriggerLabel(trigger string) string {
 	case "dependency":
 		return "Pipeline"
 	default:
-		return "-"
+		return "—"
 	}
+}
+
+func refreshRunTriggerLabel(run AssetRefreshRun) string {
+	if strings.TrimSpace(run.TriggerType) != "" {
+		return refreshTriggerLabel(run.TriggerType)
+	}
+	if strings.TrimSpace(run.ParentRunID) != "" {
+		return "Pipeline"
+	}
+	return "—"
 }
 
 func refreshStatusGridValue(status string) any {
@@ -331,7 +440,7 @@ func shortRefreshRunID(id string) string {
 }
 
 func refreshRunDuration(run AssetRefreshRun) string {
-	started, ok := parseRefreshTime(run.StartedAt)
+	started, ok := parseRefreshTime(refreshRunStartedAt(run))
 	if !ok {
 		return ""
 	}
@@ -340,6 +449,61 @@ func refreshRunDuration(run AssetRefreshRun) string {
 		return ""
 	}
 	return finished.Sub(started).Round(time.Second).String()
+}
+
+func refreshRunStartedAt(run AssetRefreshRun) string {
+	return firstNonEmpty(run.StartedAt, run.CreatedAt)
+}
+
+func formatRefreshTimestamp(value string) string {
+	if parsed, ok := parseRefreshTime(value); ok {
+		return parsed.Local().Format("02 Jan 2006, 15:04 MST")
+	}
+	return unavailableDash(value)
+}
+
+func principalDisplayLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if looksLikeUUID(value) {
+		return "Service account"
+	}
+	lower := strings.ToLower(value)
+	for _, prefix := range []string{"principal:", "user:"} {
+		if strings.HasPrefix(lower, prefix) {
+			return humanizeIdentifier(value[len(prefix):])
+		}
+	}
+	for _, prefix := range []string{"service:", "service-account:"} {
+		if strings.HasPrefix(lower, prefix) {
+			label := humanizeIdentifier(value[len(prefix):])
+			if label == "" {
+				return "Service account"
+			}
+			return label + " service account"
+		}
+	}
+	return value
+}
+
+func looksLikeUUID(value string) bool {
+	if len(value) != 36 {
+		return false
+	}
+	for index, char := range value {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if char != '-' {
+				return false
+			}
+			continue
+		}
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func parseRefreshTime(value string) (time.Time, bool) {

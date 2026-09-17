@@ -54,12 +54,14 @@ test('settings surfaces render typed signals and emit commands', async () => {
       return {
         text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(),
         detail,
-        displayNameLabel: (element.shadowRoot as ShadowRoot).querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
+        createHref: (element.shadowRoot as ShadowRoot).querySelector<HTMLAnchorElement>('a.primary')?.getAttribute('href'),
+        hasInlineCreateForm: Boolean((element.shadowRoot as ShadowRoot).querySelector('input[name="displayName"]')),
       }
     })
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
-    expect(result.displayNameLabel).toBe('New account')
+    expect(result.createHref).toBe('/admin/service-accounts/new')
+    expect(result.hasInlineCreateForm).toBe(false)
   } finally { await page.close() }
 })
 
@@ -214,6 +216,8 @@ test('principal administration exposes local controls and keeps external profile
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'Updated User'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       ;(window as any).confirm = () => true
+      ;((element.shadowRoot as ShadowRoot).querySelector('.principal-actions-trigger') as HTMLButtonElement).click()
+      await element.updateComplete
       ;(Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.includes('Revoke all sessions'))?.click()
       const localText = (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim()
       const local = {

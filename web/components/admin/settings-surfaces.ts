@@ -1,103 +1,17 @@
-import { LitElement, css, html, nothing } from 'lit'
-import { property, state } from 'lit/decorators.js'
+import { LitElement, html, nothing } from 'lit'
+import { property, query, state } from 'lit/decorators.js'
 import { CircleSlash2, Info, Pencil, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import '../shared/entity-multi-select'
 import type { EntityMultiSelectItem } from '../shared/entity-multi-select'
-
-const tableStyles = css`
-  :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); font-family: var(--fontStack-system); }
-  .surface { display: grid; gap: 12px; min-width: 0; }
-  h2, h3, p { margin: 0; }
-  h2 { font: var(--lv-type-section-title); }
-  h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-  .muted { color: var(--lv-fg-muted); }
-  .error { color: var(--lv-fg-danger); }
-  .table-wrap { overflow-x: auto; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); }
-  table { width: 100%; min-width: 620px; border-collapse: collapse; }
-  th, td { padding: var(--base-size-8) var(--base-size-12); text-align: left; border-bottom: var(--lv-border-muted); vertical-align: top; }
-  th { color: var(--lv-fg-muted); font: var(--lv-type-caption); text-transform: uppercase; letter-spacing: .03em; }
-  tbody tr:last-child td { border-bottom: 0; }
-  a { color: var(--lv-fg-link); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  button, input, select { box-sizing: border-box; min-height: var(--lv-control-small); border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); color: inherit; padding: var(--base-size-4) var(--base-size-8); font: inherit; }
-  button { cursor: pointer; }
-  button[disabled] { cursor: default; opacity: .55; }
-  .toolbar, .form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-  label { display: grid; gap: var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .empty { padding: var(--base-size-20) var(--base-size-12); color: var(--lv-fg-muted); }
-  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .notice { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); }
-  .danger { color: var(--lv-fg-danger); }
-  code { overflow-wrap: anywhere; }
-  dialog { width: min(30rem, calc(100vw - var(--base-size-32))); max-width: none; max-height: calc(100svh - var(--base-size-32)); overflow: auto; border: 0; border-radius: var(--lv-radius-large); background: transparent; color: inherit; padding: 0; }
-  dialog::backdrop { background: var(--lv-modal-backdrop); }
-  .modal { display: grid; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
-  .modal-header { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-16); border-bottom: var(--lv-border-muted); padding: var(--base-size-16) var(--base-size-20); }
-  .modal-title { display: grid; gap: var(--base-size-4); }
-  .modal-title h2 { font: var(--lv-type-section-title); }
-  .modal-close { display: inline-flex; width: var(--control-medium-size); min-height: var(--control-medium-size); align-items: center; justify-content: center; border-color: transparent; background: transparent; color: var(--lv-fg-muted); padding: 0; }
-  .modal-close:hover { border-color: var(--lv-line-muted); background: var(--lv-bg-control-hover); color: var(--lv-fg-default); }
-  .modal-body { display: grid; gap: var(--base-size-16); padding: var(--base-size-20); }
-  .modal-body .form { display: grid; align-items: stretch; }
-  .modal-body input, .modal-body select { width: 100%; min-height: var(--control-medium-size); }
-  .modal-actions { display: flex; justify-content: flex-end; gap: var(--base-size-8); }
-  .primary { border-color: var(--lv-button-accent-border-rest); background: var(--lv-button-accent-bg-rest); color: var(--lv-button-accent-fg-rest); }
-  .primary:hover { border-color: var(--lv-button-accent-border-hover); background: var(--lv-button-accent-bg-hover); }
-  .password-result { display: grid; gap: var(--base-size-12); }
-  .password-value { display: block; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel-muted); padding: var(--base-size-12); font-family: var(--fontStack-monospace); overflow-wrap: anywhere; user-select: all; }
-  .status-active { color: var(--lv-fg-success); }
-  .status-blocked, .status-disabled { color: var(--lv-fg-danger); }
-  .primary-detail-action { display: inline-flex; align-items: center; gap: var(--base-size-6); color: var(--lv-fg-link); }
-  .action-menu { position: relative; }
-  .action-menu summary { display: inline-flex; min-height: var(--lv-control-small); box-sizing: border-box; align-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; list-style: none; }
-  .action-menu summary::-webkit-details-marker { display: none; }
-  .action-menu[open] summary { background: var(--lv-bg-control-hover); }
-  .action-menu-popover { position: absolute; z-index: 2; top: calc(100% + var(--base-size-4)); right: 0; display: grid; width: max-content; min-width: 180px; gap: var(--base-size-4); border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); }
-  .action-menu-popover button { width: 100%; border-color: transparent; background: transparent; text-align: left; }
-  .action-menu-popover button:hover { background: var(--lv-bg-control-hover); }
-  .detail-section { display: grid; min-width: 0; align-content: start; gap: var(--base-size-16); border-top: var(--lv-border-muted); padding: var(--base-size-24) 0; }
-  .detail-section .table-wrap { border: 0; border-radius: 0; }
-  .detail-section table { min-width: 540px; }
-  .detail-section th, .detail-section td { padding-inline: 0 var(--base-size-16); }
-  .detail-section table.member-table { min-width: 0; }
-  .member-table th:last-child, .member-table td:last-child { width: 1%; padding-right: 0; text-align: right; white-space: nowrap; }
-  .member-table td:nth-child(2) { overflow-wrap: anywhere; }
-  .card-header { display: flex; align-items: start; justify-content: space-between; gap: var(--base-size-12); }
-  .card-header-copy { display: grid; gap: var(--base-size-4); }
-  .section-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-12); }
-  .section-action { display: inline-flex; align-items: center; gap: var(--base-size-6); }
-  .inline-value { display: flex; min-width: 0; align-items: center; gap: var(--base-size-6); }
-  .inline-value code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .text-button { min-height: auto; flex: 0 0 auto; border-color: transparent; background: transparent; color: var(--lv-fg-link); padding: var(--base-size-2); }
-  .role-source { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .detail-subsection { display: grid; gap: var(--base-size-12); }
-  .detail-empty-row { display: grid; grid-template-columns: minmax(10rem, 0.45fr) minmax(0, 1fr); gap: var(--base-size-16); color: var(--lv-fg-muted); }
-  .detail-empty-row strong { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
-  .detail-form { width: fit-content; }
-  .activity-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
-  .activity-item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: start; gap: var(--base-size-8); border-bottom: var(--lv-border-muted); padding: var(--base-size-8) 0; }
-  .activity-item:last-child { border-bottom: 0; }
-  .activity-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--lv-fg-muted); }
-  .activity-copy { display: grid; gap: var(--base-size-2); }
-  .detail-user-avatar { --lv-user-avatar-size: 100%; width: 100%; height: 100%; }
-  @media (max-width: 760px) {
-    .detail-section { padding-block: var(--base-size-20); }
-    .detail-empty-row { grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); }
-    .activity-item { grid-template-columns: 10px minmax(0, 1fr); }
-    .activity-item > time { grid-column: 2; }
-  }
-  @media (max-width: 480px) {
-    .detail-empty-row { grid-template-columns: minmax(0, 1fr); gap: var(--base-size-4); }
-  }
-`
+import { tableStyles } from './settings-surface-styles'
 
 type DatastarFetchOwnerDetail = { type?: string; el?: Element }
 
@@ -139,8 +53,7 @@ abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) 
   protected feedback() {
     const signal = this.accessState
     return html`
-      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      ${signal.message ? html`<p role="status">${signal.message}</p>` : nothing}
+      ${signal.message ? html`<p role="status">${signal.message}</p>` : signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${signal.temporaryPassword ? html`<div class="notice" role="status"><strong>Copy this temporary password now:</strong> <code>${signal.temporaryPassword}</code> <button type="button" @click=${this.copyTemporaryPassword}>${this.passwordCopied ? 'Copied' : 'Copy'}</button></div>` : nothing}
     `
   }
@@ -190,6 +103,23 @@ abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) 
 
 class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   @state() private copiedPrincipalID = false
+  @state() private actionMenuOpen = false
+  @state() private sessionsVisible = 10
+  @state() private activityVisible = 10
+  @query('.principal-actions-trigger') private actionMenuTrigger?: HTMLButtonElement
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('pointerdown', this.handleActionMenuOutside)
+    window.addEventListener('keydown', this.handleActionMenuKeydown)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('pointerdown', this.handleActionMenuOutside)
+    window.removeEventListener('keydown', this.handleActionMenuKeydown)
+    super.disconnectedCallback()
+  }
+
   render() {
     const signal = this.accessState
     if (signal.loading && !signal.principals.length) return html`<p class="muted" aria-live="polite">Loading principals…</p>`
@@ -222,25 +152,25 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   private renderDetail(signal: AccessAdministrationSignal, principal: AccessPrincipalSignal) {
     const source = identitySourceLabel(principal)
     const status = principal.disabledAt ? 'Disabled' : principal.blockedAt ? 'Blocked' : 'Active'
-    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || project.id]))
+    const projects = new Map((signal.projects || []).map((project) => [project.id, project.name || 'Project']))
     const actions = html`
       ${principal.capabilities.canBlock ? html`<button class="primary-detail-action" @click=${() => this.blockPrincipal(principal)}>${lucideIcon(CircleSlash2, { size: 16, strokeWidth: 2 })}<span>Block access</span></button>` : nothing}
       ${principal.capabilities.canUnblock ? html`<button class="primary-detail-action" @click=${() => this.emit({ action: 'unblock_principal', principalId: principal.id })}>Unblock access</button>` : nothing}
       ${principal.capabilities.canResetPassword || (principal.capabilities.canManageSessions && signal.sessions.length) || principal.capabilities.canDelete ? html`
-        <details class="action-menu">
-          <summary>More actions</summary>
-          <div class="action-menu-popover">
-            ${principal.capabilities.canResetPassword ? html`<button @click=${() => this.resetPassword(principal)}>Reset password</button>` : nothing}
-            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button @click=${() => this.revokeAllSessions(principal)}>Revoke all sessions</button>` : nothing}
-            ${principal.capabilities.canDelete ? html`<button class="danger" @click=${() => this.deletePrincipal(principal)}>Delete user</button>` : nothing}
-          </div>
-        </details>` : nothing}`
+        <div class="action-menu">
+          <button class="principal-actions-trigger" type="button" aria-haspopup="menu" aria-expanded=${String(this.actionMenuOpen)} @click=${this.toggleActionMenu} @keydown=${this.handleActionMenuTriggerKeydown}>More actions</button>
+          ${this.actionMenuOpen ? html`<div class="action-menu-popover" role="menu" @keydown=${this.handleActionMenuItemsKeydown}>
+            ${principal.capabilities.canResetPassword ? html`<button role="menuitem" type="button" @click=${() => this.runAction(() => this.resetPassword(principal))}>Reset password</button>` : nothing}
+            ${principal.capabilities.canManageSessions && signal.sessions.length ? html`<button role="menuitem" type="button" @click=${() => this.runAction(() => this.revokeAllSessions(principal))}>Revoke all sessions</button>` : nothing}
+            ${principal.capabilities.canDelete ? html`<button role="menuitem" type="button" class="danger" @click=${() => this.runAction(() => this.deletePrincipal(principal))}>Delete user</button>` : nothing}
+          </div>` : nothing}
+        </div>` : nothing}`
     const notice = principal.identitySource === 'external' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${source} owns this identity.</strong> Profile fields and synchronized memberships are read-only in LeapView. Block access locally or revoke sessions here; update or permanently remove the user in ${source}.</p></div>`
       : principal.identitySource === 'system' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>System-managed account.</strong> Profile fields are read-only because this account is provisioned by LeapView configuration. Block access locally or revoke sessions here; update it through its provisioning source.</p></div>` : nothing
     const avatarUrl = currentPrincipalAvatarUrl(this.signal<{ sidebar?: { userAvatarUrl?: string } }>('chrome', {}), principal.id)
     return renderEntityDetail({
       label: 'User administration', feedback: this.feedback(), backHref: '/admin/principals', backLabel: 'All users',
-      avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
+      avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email || 'User'} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || 'User', subtitle: principal.email,
       badges: html`<span class="badge">${source}</span><span class=${`badge status-${status.toLowerCase()}`} data-user-status>${status}</span>`,
       actions, notice,
       sections: html`
@@ -261,17 +191,17 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
         </section>
         <section class="detail-section" aria-labelledby="user-access-title">
           <div class="card-header"><h2 id="user-access-title">Access</h2></div>
-          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || assignment.projectId}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
-          <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || group.id}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
+          <div class="detail-subsection">${signal.roleAssignments.length ? html`<h3>Project roles</h3><div class="table-wrap"><table><thead><tr><th>Project</th><th>Role</th><th>Granted through</th></tr></thead><tbody>${signal.roleAssignments.map((assignment) => html`<tr><td>${projects.get(assignment.projectId) || 'Unknown project'}</td><td>${humanizeAccessValue(assignment.role)}</td><td>${assignment.sourceType === 'group' ? html`<a href=${`/admin/groups/${encodeURIComponent(assignment.sourceId)}`}>Via ${assignment.sourceName || 'group'}</a>` : 'Direct assignment'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Project roles</strong><span>No project roles assigned.</span></div>`}</div>
+          <div class="detail-subsection">${principal.groups.length ? html`<h3>Groups</h3><div class="table-wrap"><table><thead><tr><th>Group</th><th>Source</th></tr></thead><tbody>${principal.groups.map((group) => html`<tr><td><a href=${`/admin/groups/${encodeURIComponent(group.id)}`}>${group.name || 'Group'}</a></td><td>${group.provider || 'local'}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Groups</strong><span>No group memberships.</span></div>`}</div>
         </section>
         <section class="detail-section" aria-labelledby="user-security-title">
           <div class="card-header"><h2 id="user-security-title">Security</h2></div>
           ${principal.disabledAt ? html`<p class="notice">This account was disabled by ${source} on ${formatAccessDate(principal.disabledAt)}.</p>` : principal.blockedAt ? html`<p class="notice">LeapView access has been blocked since ${formatAccessDate(principal.blockedAt)}.</p>` : nothing}
-          ${principal.capabilities.canManageSessions ? html`${signal.sessions.length ? html`<div class="table-wrap"><table><thead><tr><th>Session</th><th>Last seen</th><th>Expires</th><th></th></tr></thead><tbody>${signal.sessions.map((session) => html`<tr><td>${humanizeAccessValue(session.kind)}</td><td>${formatAccessDate(session.lastSeenAt || session.createdAt)}</td><td>${formatAccessDate(session.expiresAt)}</td><td><button @click=${() => this.emit({ action: 'revoke_session', principalId: principal.id, sessionId: session.id })}>Revoke</button></td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Active sessions</strong><span>No active sessions.</span></div>`}` : nothing}
+          ${principal.capabilities.canManageSessions ? html`${signal.sessions.length ? html`<div class="table-wrap"><table><thead><tr><th>Session</th><th>Created</th><th>Last seen</th><th>Expires</th><th></th></tr></thead><tbody>${signal.sessions.slice(0, this.sessionsVisible).map((session) => html`<tr><td>${humanizeAccessValue(session.kind)}</td><td>${formatAccessDate(session.createdAt)}</td><td>${formatAccessDate(session.lastSeenAt || session.createdAt)}</td><td>${formatAccessDate(session.expiresAt)}</td><td><button @click=${() => this.emit({ action: 'revoke_session', principalId: principal.id, sessionId: session.id })}>Revoke</button></td></tr>`)}</tbody></table></div>${signal.sessions.length > this.sessionsVisible ? html`<button type="button" @click=${() => { this.sessionsVisible += 10 }}>Show 10 more sessions</button>` : nothing}` : html`<div class="detail-empty-row"><strong>Active sessions</strong><span>No active sessions.</span></div>`}` : nothing}
         </section>
         <section class="detail-section" aria-labelledby="user-activity-title">
           <div class="card-header"><h2 id="user-activity-title">Recent activity</h2><a href="/admin/audit">View audit log</a></div>
-          ${signal.activity.length ? html`<ol class="activity-list">${signal.activity.map((activity) => html`<li class="activity-item"><span class="activity-dot" aria-hidden="true"></span><div class="activity-copy"><span>${principalActivityLabel(activity)}</span>${activity.status && activity.status !== 'success' ? html`<span class="error">${humanizeAccessValue(activity.status)}</span>` : nothing}</div><time datetime=${activity.createdAt}>${formatAccessDate(activity.createdAt)}</time></li>`)}</ol>` : html`<p class="muted">No recent administrative activity.</p>`}
+          ${signal.activity.length ? html`<ol class="activity-list">${signal.activity.slice(0, this.activityVisible).map((activity) => html`<li class="activity-item"><span class="activity-dot" aria-hidden="true"></span><div class="activity-copy"><span>${principalActivityLabel(activity)}</span>${activity.status && activity.status !== 'success' ? html`<span class="error">${humanizeAccessValue(activity.status)}</span>` : nothing}</div><time datetime=${activity.createdAt}>${formatAccessDate(activity.createdAt)}</time></li>`)}</ol>${signal.activity.length > this.activityVisible ? html`<button type="button" @click=${() => { this.activityVisible += 10 }}>Show 10 more activity events</button>` : nothing}` : html`<p class="muted">No recent administrative activity.</p>`}
         </section>
       `,
     })
@@ -302,6 +232,63 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
   }
   private deletePrincipal(principal: AccessPrincipalSignal): void {
     if (window.confirm(`Delete ${principal.displayName || principal.email}? This cannot be undone.`)) this.emit({ action: 'delete_principal', principalId: principal.id })
+  }
+
+  private toggleActionMenu = (): void => {
+    this.actionMenuOpen = !this.actionMenuOpen
+    if (this.actionMenuOpen) void this.focusActionMenuItem()
+    else this.actionMenuTrigger?.focus()
+  }
+
+  private closeActionMenu = (returnFocus = false): void => {
+    if (!this.actionMenuOpen) return
+    this.actionMenuOpen = false
+    if (returnFocus) void this.updateComplete.then(() => this.actionMenuTrigger?.focus())
+  }
+
+  private runAction(action: () => void): void {
+    this.closeActionMenu(true)
+    action()
+  }
+
+  private focusActionMenuItem = async (): Promise<void> => {
+    await this.updateComplete
+    this.renderRoot.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus()
+  }
+
+  private handleActionMenuOutside = (event: PointerEvent): void => {
+    const menu = this.renderRoot.querySelector('.action-menu')
+    if (menu && !event.composedPath().includes(menu)) this.closeActionMenu()
+  }
+
+  private handleActionMenuKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.actionMenuOpen) {
+      event.preventDefault()
+      this.closeActionMenu(true)
+    }
+  }
+
+  private handleActionMenuTriggerKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      if (!this.actionMenuOpen) this.toggleActionMenu()
+    }
+  }
+
+  private handleActionMenuItemsKeydown = (event: KeyboardEvent): void => {
+    const items = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+    const index = items.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement)
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const offset = event.key === 'ArrowDown' ? 1 : -1
+      items[(index + offset + items.length) % items.length]?.focus()
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      items[event.key === 'Home' ? 0 : items.length - 1]?.focus()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      this.closeActionMenu(true)
+    }
   }
 }
 
@@ -360,7 +347,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
     const notice = !local ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${provider.toUpperCase()} owns this group.</strong> Its profile and membership are synchronized and read-only in LeapView. Update or remove it through its provisioning source.</p></div>` : nothing
     return html`${renderEntityDetail({
       label: 'Group administration', feedback: this.feedback(), backHref: '/admin/groups', backLabel: 'All groups',
-      avatar: initialsForValue(group.name || group.id), title: group.name || group.id,
+      avatar: initialsForValue(group.name || 'Group'), title: group.name || 'Group',
       subtitle: group.externalId ? `External ID ${group.externalId}` : undefined,
       badges: html`<span class="badge">${provider}</span><span class="badge status-active">${local ? 'Managed in LeapView' : 'Synchronized'}</span>`,
       actions, notice,
@@ -381,7 +368,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
             <h2 id="group-members-title">Members</h2>
             ${group.capabilities.canManageMembers ? html`<button class="section-action" type="button" @click=${() => this.openDetailDialog('add-member')}>${lucideIcon(UserPlus, { size: 16 })}<span>Add members</span></button>` : nothing}
           </div>
-          ${group.members.length ? html`<div class="table-wrap"><table class="member-table"><thead><tr><th>Member</th><th>Email</th><th></th></tr></thead><tbody>${group.members.map((member) => html`<tr><td><a href=${`/admin/principals/${encodeURIComponent(member.id)}`}>${member.displayName || member.email}</a></td><td>${member.email}</td><td>${group.capabilities.canManageMembers ? html`<button @click=${() => this.removeMember(group, member.id, member.displayName || member.email)}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Members</strong><span>No members.</span></div>`}
+          ${group.members.length ? html`<div class="table-wrap"><table class="member-table"><thead><tr><th>Member</th><th>Email</th><th></th></tr></thead><tbody>${group.members.map((member) => html`<tr><td><a href=${`/admin/principals/${encodeURIComponent(member.id)}`}>${member.displayName || member.email || 'User'}</a></td><td>${member.email || '—'}</td><td>${group.capabilities.canManageMembers ? html`<button @click=${() => this.removeMember(group, member.id, member.displayName || member.email || 'this user')}>Remove</button>` : nothing}</td></tr>`)}</tbody></table></div>` : html`<div class="detail-empty-row"><strong>Members</strong><span>No members.</span></div>`}
         </section>
       `,
     })}${this.renderDetailDialog(signal, group, candidates)}`
@@ -472,7 +459,7 @@ function identitySourceLabel(principal: AccessPrincipalSignal): string {
 }
 
 function principalInitials(principal: AccessPrincipalSignal): string {
-  return initialsForValue(principal.displayName || principal.email || principal.id)
+  return initialsForValue(principal.displayName || principal.email || 'User')
 }
 
 function currentPrincipalAvatarUrl(chrome: { sidebar?: { userAvatarUrl?: string } }, principalId: string): string {
@@ -509,7 +496,7 @@ function humanizeAccessValue(value: string): string {
 }
 
 function principalActivityLabel(activity: AccessActivitySignal): string {
-  const actor = activity.actorName || activity.actorId || 'System'
+  const actor = activity.actorName || 'System'
   const labels: Record<string, string> = {
     'principal.local_user.created': 'created the local user',
     'principal.updated': 'updated the user profile',
@@ -551,7 +538,7 @@ function projectListItems(signal: ProjectRegistrySignal): EntityListItem[] {
     const deployment = item.deploymentStatus || item.servingStateStatus || 'Not deployed'
     return {
       id: item.id,
-      title: item.title || item.id,
+      title: item.title || 'Project',
       description: item.description,
       href: item.href || item.links.project,
       icon: 'database',
@@ -600,8 +587,12 @@ function projectTimestamp(value = ''): number {
 
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   static styles = tableStyles
+  @property() mode: 'list' | 'new' = 'list'
   @state() private busy = false
   @state() private commandError = ''
+  @state() private secretCopied = false
+  @state() private secretDismissed = ''
+  private handledSecret = ''
   private pendingSignalKey = ''
 
   override connectedCallback(): void {
@@ -618,6 +609,14 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   override updated(): void {
     const key = JSON.stringify(this.accounts)
     if (this.busy && key !== this.pendingSignalKey) this.busy = false
+    const createdSecret = this.accounts.createdSecret ?? ''
+    if (!createdSecret) {
+      this.handledSecret = ''
+    } else if (createdSecret !== this.handledSecret) {
+      this.handledSecret = createdSecret
+      this.secretCopied = false
+      this.secretDismissed = ''
+    }
     this.pendingSignalKey = key
   }
 
@@ -648,26 +647,65 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
 
   render() {
     const signal = this.accounts
+    if (this.mode === 'new') return this.renderCreatePage(signal)
     return html`<section class="surface" aria-label="Service accounts">
-      <h2>Service accounts</h2>
+      <div class="section-heading"><div><h2>Service accounts</h2><p class="muted">Machine identities for automation and integrations.</p></div><a class="primary" href="/admin/service-accounts/new">Create service account</a></div>
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const input = form.elements.namedItem('displayName') as HTMLInputElement; this.emit({ action: 'create', displayName: input.value }); input.value = '' }}>
-        <label>New account<input id="service-account-display-name" aria-label="New account" name="displayName" required placeholder="Display name" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create</button>
-      </form>
-      ${signal.createdSecret ? html`<p role="status"><strong>Copy this secret now:</strong> <code>${signal.createdSecret}</code></p>` : nothing}
+      ${this.renderCreatedSecret(signal)}
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Account</th><th>Status</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>
         ${signal.items.map((account) => html`<tr>
-          <td><strong>${account.displayName || account.id}</strong><div class="muted">${account.id}</div></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
-          <td>${account.id === signal.selectedId ? (signal.secrets?.length || 0) : '—'}</td>
+          <td><strong>${account.displayName || 'Unnamed service account'}</strong><div class="muted">${account.email || 'Machine identity'}</div></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
+          <td>${account.secretCount}</td>
           <td class="actions"><button ?disabled=${this.busy} @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button><button ?disabled=${this.busy} @click=${() => this.deleteAccount(account)}>Delete</button></td>
         </tr>`)}</tbody></table></div>` : html`<p class="empty">No service accounts have been created.</p>`}
-      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const name = (form.elements.namedItem('secretName') as HTMLInputElement).value; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
+      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const input = form.elements.namedItem('secretName') as HTMLInputElement; const name = input.value.trim(); if (!name) return; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); input.value = '' }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
     </section>`
   }
 
+  private renderCreatePage(signal: ServiceAccountsSignal) {
+    const account = signal.selectedId ? signal.items.find((item) => item.id === signal.selectedId) : undefined
+    return html`<section class="surface" aria-label="Create service account">
+      <p class="muted">An editable machine identity will be added to the service-account list. Secrets are generated separately and shown only once.</p>
+      ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
+      ${account ? html`<div class="notice" role="status"><strong>${account.displayName || 'Service account'} created.</strong><p class="muted">Create its first secret from the account list.</p><a href="/admin/service-accounts">Go to service accounts</a></div>` : html`<form class="form" @submit=${this.createAccount}>
+        <label>Account name<input id="service-account-display-name" aria-label="Account name" name="displayName" required minlength="1" maxlength="120" autocomplete="off" placeholder="Finance automation" ?disabled=${this.busy}></label>
+        <div class="actions"><a href="/admin/service-accounts">Cancel</a><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy ? 'Creating…' : 'Create service account'}</button></div>
+      </form>`}
+    </section>`
+  }
+
+  private createAccount = (event: SubmitEvent): void => {
+    event.preventDefault()
+    const form = event.currentTarget as HTMLFormElement
+    const name = (form.elements.namedItem('displayName') as HTMLInputElement).value.trim()
+    if (!name || this.busy) return
+    this.emit({ action: 'create', displayName: name })
+  }
+
+  private renderCreatedSecret(signal: ServiceAccountsSignal) {
+    const secret = signal.createdSecret || ''
+    if (!secret || secret === this.secretDismissed) return nothing
+    return html`<div class="secret-result" role="status"><strong>Secret created. Copy it now.</strong><span class="muted">This secret will not be shown again after you dismiss this message.</span><code>${secret}</code><div class="actions"><button type="button" @click=${() => this.copySecret(secret)}>${this.secretCopied ? 'Copied' : 'Copy secret'}</button><button type="button" @click=${() => this.dismissSecret(secret)}>Done</button></div></div>`
+  }
+
+  private async copySecret(secret: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(secret)
+      this.secretCopied = true
+    } catch {
+      this.commandError = 'Copy failed. Select the secret manually before dismissing this message.'
+    }
+  }
+
+  private dismissSecret(secret: string): void {
+    if (!this.secretCopied && !window.confirm('Dismiss this secret without copying? It cannot be viewed again.')) return
+    this.secretDismissed = secret
+  }
+
   private deleteAccount(account: ServiceAccountSignal): void {
-    if (window.confirm(`Delete ${account.displayName || account.id}? Its credentials will stop working immediately.`)) {
+    if (window.confirm(`Delete ${account.displayName || 'this service account'}? Its credentials will stop working immediately.`)) {
       this.emit({ action: 'delete', accountId: account.id })
     }
   }
@@ -677,6 +715,7 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
   static styles = tableStyles
   @state() private busy = false
   @state() private commandError = ''
+  @state() private selectedEvent: AuditEventSignal | null = null
   private pendingSignalKey = ''
 
   override connectedCallback(): void {
@@ -723,12 +762,20 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
     const signal = this.audit
     const filters = signal.filters || {}
     const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
-    return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
-      ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.resourceKind} / ${event.resourceId}</td><td>${event.capability || '—'}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
+    return html`<section class="surface" aria-label="Audit log"><p class="muted">Read-only product activity. Select an event to inspect technical metadata.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
+      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear all</button></form>
+      ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr class="audit-row" tabindex="0" @click=${() => { this.selectedEvent = event }} @keydown=${(keyboardEvent: KeyboardEvent) => { if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') { keyboardEvent.preventDefault(); this.selectedEvent = event } }}><td>${formatAuditDate(event.createdAt)}</td><td>${humanizeAccessValue(event.action)}</td><td>${event.principalName || (event.principalId ? 'Unknown actor' : 'System')}</td><td>${event.resourceLabel || humanizeAccessValue(event.resourceKind)}</td><td>${event.capability ? humanizeAccessValue(event.capability) : '—'}</td><td>${event.status ? humanizeAccessValue(event.status) : '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
       ${signal.hasMore ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
+      ${this.selectedEvent ? html`<dialog class="audit-detail" open @click=${(event: MouseEvent) => { if (event.target === event.currentTarget) this.selectedEvent = null }}><div class="modal"><header class="modal-header"><div class="modal-title"><h2>Audit event details</h2><p class="muted">${formatAuditDate(this.selectedEvent.createdAt)}</p></div><button class="modal-close" type="button" aria-label="Close details" @click=${() => { this.selectedEvent = null }}>×</button></header><div class="modal-body"><dl class="audit-detail-grid"><div><dt>Actor</dt><dd>${this.selectedEvent.principalName || 'System'}${this.selectedEvent.principalId ? html`<br><code>${this.selectedEvent.principalId}</code>` : nothing}</dd></div><div><dt>Action</dt><dd>${this.selectedEvent.action}</dd></div><div><dt>Resource</dt><dd>${this.selectedEvent.resourceLabel || humanizeAccessValue(this.selectedEvent.resourceKind)}<br><code>${this.selectedEvent.resourceKind} / ${this.selectedEvent.resourceId}</code></dd></div><div><dt>Status</dt><dd>${this.selectedEvent.status || '—'}</dd></div>${this.selectedEvent.requestId ? html`<div><dt>Request ID</dt><dd><code>${this.selectedEvent.requestId}</code></dd></div>` : nothing}${this.selectedEvent.correlationId ? html`<div><dt>Correlation ID</dt><dd><code>${this.selectedEvent.correlationId}</code></dd></div>` : nothing}${this.selectedEvent.metadata ? html`<div><dt>Metadata</dt><dd><code>${JSON.stringify(this.selectedEvent.metadata, null, 2)}</code></dd></div>` : nothing}</dl></div></div></dialog>` : nothing}
     </section>`
   }
+}
+
+function formatAuditDate(value: string): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
 }
 
 if (!customElements.get('lv-project-registry')) customElements.define('lv-project-registry', LeapViewProjectRegistry)

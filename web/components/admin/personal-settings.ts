@@ -73,6 +73,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private tokenPermissionMenuOpen = false
   @state() private tokenPermissionSearch = ''
   @state() private tokenPermissionAccessMenu = ''
+  @state() private sessionsVisible = 10
+  @state() private tokenExpiryPreset = '90'
+  @state() private tokenConfirmOpen = false
+  @state() private tokenConfirmation: { expiresAt: string; label: string } | null = null
+  @state() private tokenSecretCopied = false
+  @state() private tokenSecretDismissed = ''
   @state() private message = ''
   @state() private error = ''
   @state() private avatarMenuOpen = false
@@ -83,6 +89,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @query('.avatar-input') private avatarInput?: HTMLInputElement
   @query('.permission-trigger') private permissionTrigger?: HTMLButtonElement
   @query('.theme-trigger') private themeTrigger?: HTMLButtonElement
+  @query('#token-confirm') private tokenConfirmDialog?: HTMLDialogElement
   private handledNewToken = ''
   private observedDisplayName = ''
   private observedProfileID = ''
@@ -196,6 +203,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .avatar-menu-item svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); }
     .avatar-menu-item.danger, .avatar-menu-item.danger svg { color: var(--lv-fg-danger); }
     .notice { padding: var(--base-size-8) var(--base-size-12); border-radius: var(--lv-radius-small); background: var(--lv-bg-success-muted); color: var(--lv-fg-success); }
+    .token-success { display: grid; gap: var(--base-size-8); border: var(--lv-border-width) solid var(--lv-line-success-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-success-muted); padding: var(--base-size-12); }
+    .token-secret { overflow-wrap: anywhere; user-select: all; font-family: var(--fontStack-monospace); }
+    dialog { width: min(32rem, calc(100vw - var(--base-size-32))); max-width: none; border: 0; border-radius: var(--lv-radius-large); background: transparent; color: inherit; padding: 0; }
+    dialog::backdrop { background: var(--lv-modal-backdrop); }
     .error { color: var(--lv-fg-danger); }
     @media (max-width: 40rem) {
       .row { grid-template-columns: 1fr; gap: var(--base-size-12); padding: var(--base-size-16); }
@@ -262,11 +273,20 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (newToken && newToken !== this.handledNewToken) {
       this.handledNewToken = newToken
       this.tokenCreatePending = false
+      this.tokenSecretCopied = false
+      this.tokenSecretDismissed = ''
       this.tokenName = ''
       this.tokenPermissionSelections = {}
       this.tokenExpires = ''
       this.closePermissionMenu()
       this.closeTokenPermissionAccessMenu()
+    }
+    const dialog = this.tokenConfirmDialog
+    if (this.tokenConfirmOpen && dialog && !dialog.open) {
+      if (typeof dialog.showModal === 'function') dialog.showModal()
+      else dialog.setAttribute('open', '')
+    } else if (!this.tokenConfirmOpen && dialog?.open) {
+      dialog.close()
     }
   }
 
@@ -345,7 +365,6 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         ${settings.active === 'profile' ? html`<section aria-label="Chat history">
           <h2>Chat history</h2>
           <div class="card">
-            <div class="row"><div class="settings-field"><h3>Archived chats</h3><span class="settings-description">Restore or delete chats hidden from your sidebar.</span></div><button @click=${() => this.dispatchEvent(new CustomEvent('lv-chat-settings-open', { bubbles: true, composed: true }))}>Manage</button></div>
             <div class="row"><div class="settings-field"><h3>Archive all chats</h3><span class="settings-description">Clear your sidebar and keep your conversations.</span></div><button @click=${() => this.requestChatCleanup('archive_all')}>Archive all</button></div>
             <div class="row"><div class="settings-field"><h3>Delete all chats</h3><span class="settings-description">Permanently delete your conversations, including archived chats.</span></div><button class="danger" @click=${() => this.requestChatCleanup('delete_all')}>Delete all</button></div>
           </div>
@@ -416,7 +435,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderNotice(settings: PersonalSettingsSignal) {
-    if (settings.tokens.newToken) return html`<p class="notice" role="status">Copy this token now; it will not be shown again: <code>${settings.tokens.newToken}</code></p>`
+    if (settings.tokens.newToken && settings.tokens.newToken !== this.tokenSecretDismissed) return html`<div class="token-success" role="status"><strong>Token generated successfully.</strong><span>Copy it now. For your security, this token will only be shown once.</span><code class="token-secret">${settings.tokens.newToken}</code><div class="actions"><button type="button" @click=${() => this.copyTokenSecret(settings.tokens.newToken!)}>${this.tokenSecretCopied ? 'Copied' : 'Copy token'}</button><button type="button" @click=${() => this.dismissTokenSecret(settings.tokens.newToken!)}>Done</button></div></div>`
     if (this.error) return html`<p class="error" role="alert">${this.error}</p>`
     if (this.message) return html`<p class="notice" role="status">${this.message}</p>`
     return nothing
@@ -428,7 +447,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         ${settings.security.localPasswordEnabled && settings.profile.hasLocalPassword ? html`
           <div class="card"><div class="row"><div class="settings-field"><h3>Change password</h3><span class="settings-description">Use at least 12 characters and do not reuse the password elsewhere. Changing it signs out browser, desktop, CLI, and MCP sessions.</span></div></div><div class="row"><form @submit=${this.changePassword}><div class="form-grid"><input aria-label="Current password" type="password" autocomplete="current-password" maxlength="1024" placeholder="Current password" .value=${this.currentPassword} @input=${this.onCurrentPasswordInput} required><input aria-label="New password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="New password" .value=${this.newPassword} @input=${this.onNewPasswordInput} required></div><div class="actions"><button class="primary" type="submit">Change password</button></div></form></div></div>
         ` : html`<div class="card"><div class="row"><div class="settings-field"><h3>Local password</h3><span class="settings-description">Password changes are managed by your identity provider.</span></div></div></div>`}
-        <div class="card"><div class="row"><div class="settings-field"><h3>Browser &amp; desktop sessions</h3><span class="settings-description">Revoke sessions you no longer recognize.</span></div></div>${settings.security.sessions.length ? settings.security.sessions.map((session) => this.renderSession(session)) : html`<div class="row"><span class="muted">No active sessions.</span></div>`}</div>
+        <div class="card"><div class="row"><div class="settings-field"><h3>Browser &amp; desktop sessions</h3><span class="settings-description">Revoke sessions you no longer recognize. Current session is marked as This device.</span></div></div>${settings.security.sessions.length ? settings.security.sessions.slice(0, this.sessionsVisible).map((session) => this.renderSession(session)) : html`<div class="row"><span class="muted">No active sessions.</span></div>`}${settings.security.sessions.length > this.sessionsVisible ? html`<div class="row"><button type="button" @click=${() => { this.sessionsVisible += 10 }}>Show 10 more sessions</button></div>` : nothing}</div>
         ${settings.security.authoringSessions.length ? html`<div class="card"><div class="row"><div class="settings-field"><h3>CLI &amp; authoring sessions</h3><span class="settings-description">These sessions grant scoped access to authoring tools.</span></div></div>${settings.security.authoringSessions.map((session) => this.renderAuthoringSession(session))}</div>` : nothing}
       </section>
     `
@@ -463,10 +482,13 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   <input id="token-name" required autocomplete="off" placeholder="For example, Sales reporting" .value=${this.tokenName} @input=${this.onTokenNameInput}>
                   <span class="settings-description">A recognizable name for this credential.</span>
                 </label>
-                <label class="token-field" for="token-expiry">
+                <label class="token-field" for="token-expiry-preset">
                   <span class="settings-label">Expiration</span>
-                  <input id="token-expiry" type="datetime-local" .value=${this.tokenExpires} @input=${this.onTokenExpiresInput}>
-                  <span class="settings-description">Defaults to the product token lifetime.</span>
+                  <select id="token-expiry-preset" .value=${this.tokenExpiryPreset} @change=${this.onTokenExpiryPresetInput}>
+                    <option value="7">7 days</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option><option value="custom">Custom</option><option value="none">No expiration</option>
+                  </select>
+                  ${this.tokenExpiryPreset === 'custom' ? html`<input id="token-expiry" type="datetime-local" required .value=${this.tokenExpires} @input=${this.onTokenExpiresInput}>` : nothing}
+                  <span class="settings-description">The exact expiration date is confirmed before generation.</span>
                 </label>
               </div>
               <div class="permissions">
@@ -523,11 +545,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
                 </div>
               </div>
-              <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Create token'}</button></div>
+              <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Generate new token'}</button></div>
             </form>
           </div>
         </div>
         <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.capabilities)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
+        ${this.tokenConfirmOpen && this.tokenConfirmation ? html`<dialog id="token-confirm" aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation}><div class="card"><div class="row"><div class="settings-field"><h3 id="token-confirm-title">Generate this token?</h3><span class="settings-description">It will expire ${this.tokenConfirmation.label}. The secret is displayed once and cannot be recovered.</span></div></div><div class="row actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" @click=${this.confirmTokenCreation}>Generate token</button></div></div></dialog>` : nothing}
       </section>
     `
   }
@@ -589,7 +612,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[]) {
     const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
     const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'Dynamically follows current access'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
+    const expired = Boolean(token.expiresAt && Date.parse(token.expiresAt) <= Date.now())
+    const status = token.revokedAt ? 'Revoked' : expired ? 'Expired' : 'Active'
+    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'Dynamically follows current access'} · Created ${formatDate(token.createdAt)} · Last used ${token.lastUsedAt ? formatDate(token.lastUsedAt) : 'Never'}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ' · No expiration'}</span></div><span class=${token.revokedAt || expired ? 'muted' : 'status-active'}>${status}</span>${token.revokedAt || expired ? nothing : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -643,11 +668,40 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private createToken = (event: Event): void => {
     event.preventDefault()
     if (!this.tokenName.trim()) return
-    const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: localDateTimeToRFC3339(this.tokenExpires) }
+    const expiresAt = this.tokenExpiryPreset === 'none' ? '' : this.tokenExpiryPreset === 'custom' ? localDateTimeToRFC3339(this.tokenExpires) : new Date(Date.now() + Number(this.tokenExpiryPreset) * 24 * 60 * 60 * 1000).toISOString()
+    if (this.tokenExpiryPreset === 'custom' && !expiresAt) return
+    this.tokenConfirmation = { expiresAt, label: expiresAt ? formatDate(expiresAt) : 'never (if permitted by policy)' }
+    this.tokenConfirmOpen = true
+  }
+
+  private confirmTokenCreation = (): void => {
+    if (!this.tokenConfirmation || this.tokenCreatePending) return
+    const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: this.tokenConfirmation.expiresAt }
     const capabilities = this.selectedTokenCapabilities()
     if (capabilities.length) command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
+    this.tokenConfirmOpen = false
+  }
+
+  private cancelTokenConfirmation = (event?: Event): void => {
+    event?.preventDefault()
+    this.tokenConfirmOpen = false
+    this.tokenConfirmation = null
+  }
+
+  private async copyTokenSecret(secret: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(secret)
+      this.tokenSecretCopied = true
+    } catch {
+      this.error = 'Copy failed. Select the token manually before dismissing this message.'
+    }
+  }
+
+  private dismissTokenSecret(secret: string): void {
+    if (!this.tokenSecretCopied && !window.confirm('Dismiss this token without copying? It cannot be viewed again.')) return
+    this.tokenSecretDismissed = secret
   }
   private revokeToken = (tokenId: string): void => { this.send('lv-personal-token-command', { action: 'revoke', tokenId }) }
   private revokeSession = (sessionId: string): void => { this.send('lv-personal-session-command', { action: 'revoke', sessionId }) }
@@ -703,6 +757,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!insidePermissionAccessPicker) this.closeTokenPermissionAccessMenu()
   }
   private handleWindowKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.tokenConfirmOpen) {
+      event.preventDefault()
+      this.cancelTokenConfirmation()
+    }
     if (event.key === 'Escape' && this.avatarMenuOpen) {
       event.preventDefault()
       this.closeAvatarMenu(true)
@@ -763,6 +821,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
   private onTokenExpiresInput = (event: Event): void => { this.tokenExpires = (event.currentTarget as HTMLInputElement).value }
+  private onTokenExpiryPresetInput = (event: Event): void => {
+    this.tokenExpiryPreset = (event.currentTarget as HTMLSelectElement).value
+    if (this.tokenExpiryPreset !== 'custom') this.tokenExpires = ''
+  }
   private filteredTokenPermissions(permissions: TokenPermissionDefinition[]): TokenPermissionDefinition[] {
     const query = this.tokenPermissionSearch.trim().toLocaleLowerCase()
     if (!query) return permissions

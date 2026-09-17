@@ -810,7 +810,7 @@ test('documentation index exposes every task-oriented section', async () => {
     for (const title of ['Start here', 'Build dashboards', 'Deploy and operate', 'Reference', 'Architecture and contributing']) {
       expect(await articleNavigation.getByRole('heading', { name: title }).isVisible()).toBe(true)
     }
-    expect(await page.getByRole('searchbox', { name: 'Search documentation' }).count()).toBe(1)
+    expect(await page.getByRole('button', { name: 'Search documentation' }).count()).toBe(1)
   } finally {
     await page.close()
   }

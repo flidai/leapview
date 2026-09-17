@@ -117,6 +117,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	}{
 		{path: "/admin", status: http.StatusSeeOther, want: []string{"/admin/profile"}},
 		{path: "/admin/profile", want: []string{"<lv-admin-page", `section="profile"`, `/updates?route=admin&amp;section=profile`}},
+		{path: "/admin/archived-chats", want: []string{"<lv-admin-page", `section="archived-chats"`, `/updates?route=admin&amp;section=archived-chats`}},
 		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`, "/admin/access/command", "createPrincipal"}},
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},

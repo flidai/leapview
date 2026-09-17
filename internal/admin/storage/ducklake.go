@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -18,25 +19,42 @@ type Service struct {
 	// reads must come from this provider so PostgreSQL-backed DuckLake metadata
 	// is inspected through the exact sealed snapshot admitted to the runtime.
 	Runtime projectruntime.Provider
+	// Logger receives the technical catalog diagnostic while Data exposes only
+	// a bounded, user-facing availability message. Catalog errors can contain
+	// DuckDB SQL and relation names and must never become a browser signal.
+	Logger *slog.Logger
 }
 
 var errNoActiveRuntime = errors.New("no active LeapView serving state")
+
+const (
+	storageUnavailableStatus = "Storage metadata is currently unavailable."
+	storageInactiveStatus    = "Storage metadata is unavailable until a serving state is active."
+	storageTooManyTables     = "Storage metadata exceeds the supported table limit."
+)
 
 func (s Service) Data(ctx context.Context) ui.AdminStorageData {
 	data := ui.AdminStorageData{}
 	reader, release, err := s.acquireReader(ctx)
 	if err != nil {
-		data.Status = err.Error()
+		if errors.Is(err, errNoActiveRuntime) {
+			data.Status = storageInactiveStatus
+		} else {
+			data.Status = storageUnavailableStatus
+			s.logCatalogError(ctx, "acquire", err)
+		}
 		return data
 	}
 	defer release()
 	tables, err := reader.CatalogTableStatistics(ctx)
 	if err != nil {
-		data.Status = err.Error()
+		data.Status = storageUnavailableStatus
+		s.logCatalogError(ctx, "read_catalog", err)
 		return data
 	}
 	if len(tables) > maxStorageTables {
-		data.Status = fmt.Sprintf("DuckLake catalog contains more than %d tables.", maxStorageTables)
+		data.Status = storageTooManyTables
+		s.logCatalogError(ctx, "table_limit", fmt.Errorf("catalog contains %d tables; limit is %d", len(tables), maxStorageTables))
 		return data
 	}
 	data.Tables = storageTablesFromStatistics(tables)
@@ -47,6 +65,14 @@ func (s Service) Data(ctx context.Context) ui.AdminStorageData {
 	}
 	data.TotalDataSizeLabel = formatBytes(data.TotalDataSizeBytes)
 	return data
+}
+
+func (s Service) logCatalogError(ctx context.Context, operation string, err error) {
+	logger := s.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.ErrorContext(ctx, "admin storage catalog inspection failed", "operation", operation, "error", err)
 }
 
 func (s Service) Table(ctx context.Context, schema, tableName string) (*ui.AdminStorageTable, error) {

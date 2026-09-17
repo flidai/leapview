@@ -92,6 +92,16 @@ func TestChatManagementDoesNotAddChatHistoryToSettingsNavigation(t *testing.T) {
 	}
 }
 
+func TestValidateConversationManagementRequestRequiresTitleForRename(t *testing.T) {
+	if _, _, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionRename, ConversationID: "conversation-1"}); err == nil {
+		t.Fatal("rename without title was accepted")
+	}
+	action, conversationID, err := validateConversationManagementRequest(conversationManagementRequest{Action: conversationManagementActionRename, ConversationID: "conversation-1", Title: "Renamed"})
+	if err != nil || action != conversationManagementActionRename || conversationID != "conversation-1" {
+		t.Fatalf("rename validation = action %q conversation %q err %v", action, conversationID, err)
+	}
+}
+
 func TestDeletedChatReturnsNotFoundFromConversationAPI(t *testing.T) {
 	service, principalID := commandAuditService(t)
 	scope := agent.Scope{PrincipalID: principalID}
