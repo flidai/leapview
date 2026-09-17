@@ -140,6 +140,9 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
       await list.updateComplete
       const rows = Array.from(list.querySelectorAll<HTMLElement>('.entity-list-table-row'))
       const groups = Array.from(list.querySelectorAll('.entity-list-group-label')).map((label) => label.textContent?.trim())
+      const firstHeader = list.querySelector<HTMLElement>('.entity-list-table thead th:first-child')
+      const firstCell = list.querySelector<HTMLElement>('.entity-list-table-row th[scope="row"]')
+      const firstColumnPositions = [firstHeader, firstCell].map((cell) => cell ? getComputedStyle(cell).position : '')
       rows[0]?.click()
       await tools.updateComplete
       const drawer = toolsRoot.querySelector('lv-drawer') as any
@@ -159,6 +162,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
         discardedState,
         command,
         hasSharedList: Boolean(list),
+        firstColumnPositions,
         groups,
         impacts: rows.map((row) => row.querySelectorAll('td')[1]?.textContent?.trim()),
         hasRowIcons: Boolean(list.querySelector('.entity-list-icon')),
@@ -180,6 +184,7 @@ test('agent settings keeps instructions and tools in a focused tabbed surface', 
     expect(state.discardedState).toEqual({ status: '', hasDiscard: false, editorValue: 'Signal prompt' })
     expect(state.command).toEqual({ systemPrompt: 'Saved prompt' })
     expect(state.hasSharedList).toBe(true)
+    expect(state.firstColumnPositions).toEqual(['static', 'static'])
     expect(state.groups).toEqual(['Data & queries', 'Dashboards'])
     expect(state.impacts).toEqual(['Read-only', 'Changes draft'])
     expect(state.hasRowIcons).toBe(false)
