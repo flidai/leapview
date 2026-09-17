@@ -4,6 +4,14 @@ Status: accepted
 
 Authoring collection syntax amended by [ADR-0024](0024-use-named-lists-for-authored-definitions.md).
 
+API credential attenuation for control-plane administration amended by
+[ADR-0025](0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md);
+semantic policy and durable platform-role ownership remain unchanged.
+
+Retained-generation eligibility under current security restrictions amended by
+[ADR-0026](0026-preserve-authority-across-governed-operations.md);
+historical publication validation and authored policy meaning remain unchanged.
+
 Decision date: 2026-09-01
 
 Implementation: active for the qualified supported profile
