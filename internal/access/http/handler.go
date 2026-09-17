@@ -153,8 +153,8 @@ func (h Handler) requirePlatformAdmin(w stdhttp.ResponseWriter, r *stdhttp.Reque
 			writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 			return false
 		}
-		if credential.Token.ID != "" && credential.Token.Capabilities != nil {
-			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin) {
+		if credential.Token.ID != "" {
+			if len(credential.Token.Capabilities) == 0 || !containsCapability(credential.Token.Capabilities, access.CapabilityPlatformAdmin) {
 				writeJSONError(w, errForbidden, stdhttp.StatusForbidden)
 				return false
 			}

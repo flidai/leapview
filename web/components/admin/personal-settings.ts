@@ -28,11 +28,11 @@ type ThemeOption = {
   tone: 'system' | 'light' | 'dark'
 }
 
-type TokenPermissionAccess = 'read' | 'write'
+type TokenPermissionAccess = 'read' | 'write' | 'fixed'
 
 type TokenPermissionAccessOption = {
   value: TokenPermissionAccess
-  label: 'Read-only' | 'Read and write'
+  label: string
   capabilities: string[]
 }
 
@@ -542,7 +542,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   </div>
                 </div>
                 <div class="selected-permissions" aria-live="polite">
-                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
+                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No project or resource authority selected. The token will have no project or resource authority.</div>`}
                 </div>
               </div>
               <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Generate new token'}</button></div>
@@ -581,8 +581,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
               </button>
             ` : html`
-              <span class="permission-access-fixed" aria-label=${`Access for ${permission.label}: ${access.label}`}>
-                <span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span>
+              <span class="permission-access-fixed" data-permission=${permission.id} aria-label=${`Permission: ${access.label}`}>
+                <span class="permission-access-prefix">Permission: </span><span class="permission-access-value">${access.label}</span>
               </span>
             `}
             ${accessMenuOpen ? html`
@@ -612,9 +612,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[]) {
     const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
     const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
-    const expired = Boolean(token.expiresAt && Date.parse(token.expiresAt) <= Date.now())
-    const status = token.revokedAt ? 'Revoked' : expired ? 'Expired' : 'Active'
-    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'Dynamically follows current access'} · Created ${formatDate(token.createdAt)} · Last used ${token.lastUsedAt ? formatDate(token.lastUsedAt) : 'Never'}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ' · No expiration'}</span></div><span class=${token.revokedAt || expired ? 'muted' : 'status-active'}>${status}</span>${token.revokedAt || expired ? nothing : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
+    return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'No project or resource authority'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
@@ -685,7 +683,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (!this.tokenConfirmation || this.tokenCreatePending) return
     const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: this.tokenConfirmation.expiresAt }
     const capabilities = this.selectedTokenCapabilities()
-    if (capabilities.length) command.capabilities = capabilities
+    command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
     this.tokenConfirmOpen = false
@@ -957,34 +955,24 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
 function tokenPermissionDefinitions(capabilities: PersonalCapabilityOptionSignal[]): TokenPermissionDefinition[] {
   const options = new Map(capabilities.map((capability) => [capability.value, capability]))
   const permissions: TokenPermissionDefinition[] = []
-  const baseReadCapabilities = ['RESOURCE_USE', 'RESOURCE_READ'].filter((value) => options.has(value))
-  const addPermission = (
+  const addFixedPermission = (
     id: string,
-    writeCapabilityValue: string,
-    label: string,
+    capabilityValue: string,
   ): void => {
-    const writeCapability = options.get(writeCapabilityValue)
-    if (!writeCapability) return
-    const access: TokenPermissionAccessOption[] = []
-    if (baseReadCapabilities.length) {
-      access.push({ value: 'read', label: 'Read-only', capabilities: [...baseReadCapabilities] })
-    }
-    access.push({
-      value: 'write',
-      label: 'Read and write',
-      capabilities: uniqueCapabilities([...baseReadCapabilities, writeCapability.value]),
-    })
+    const capability = options.get(capabilityValue)
+    if (!capability) return
     permissions.push({
       id,
-      label,
-      description: writeCapability.description,
-      category: writeCapability.category,
-      searchText: `${writeCapability.value} ${writeCapability.label}`,
-      access,
+      label: capability.label,
+      description: capability.description,
+      category: capability.category,
+      searchText: `${capability.value} ${capability.label} ${capability.description}`,
+      access: [{ value: 'fixed', label: capability.label, capabilities: [capability.value] }],
     })
   }
 
-  addPermission('project-administration', 'PROJECT_ADMIN', 'Project administration')
+  addFixedPermission('project-administration', 'PROJECT_ADMIN')
+  addFixedPermission('platform-administration', 'PLATFORM_ADMIN')
 
   const use = options.get('RESOURCE_USE')
   const read = options.get('RESOURCE_READ')
@@ -992,21 +980,25 @@ function tokenPermissionDefinitions(capabilities: PersonalCapabilityOptionSignal
   if (use || read || edit) {
     const access: TokenPermissionAccessOption[] = []
     const readCapabilities = [use?.value, read?.value].filter((value): value is string => Boolean(value))
-    if (readCapabilities.length) access.push({ value: 'read', label: 'Read-only', capabilities: uniqueCapabilities(readCapabilities) })
-    if (edit) access.push({ value: 'write', label: 'Read and write', capabilities: uniqueCapabilities([...readCapabilities, edit.value]) })
+    const readOptions = [use, read].filter((capability): capability is PersonalCapabilityOptionSignal => Boolean(capability))
+    if (readCapabilities.length) access.push({ value: 'read', label: joinCapabilityLabels(readOptions), capabilities: uniqueCapabilities(readCapabilities) })
+    if (edit) {
+      const writeOptions = [...readOptions, edit]
+      access.push({ value: 'write', label: joinCapabilityLabels(writeOptions), capabilities: uniqueCapabilities([...readCapabilities, edit.value]) })
+    }
     permissions.push({
       id: 'resource-content',
       label: 'Resource access',
-      description: 'Open and view project resources, or add access to create and update them.',
+      description: `Select the exact resource capabilities to persist: ${joinCapabilityLabels([use, read, edit].filter((capability): capability is PersonalCapabilityOptionSignal => Boolean(capability)))}.`,
       category: use?.category ?? read?.category ?? edit?.category ?? 'Resource',
       searchText: [use, read, edit].filter(Boolean).map((capability) => `${capability?.value} ${capability?.label} ${capability?.description}`).join(' '),
       access,
     })
   }
 
-  addPermission('resource-management', 'RESOURCE_MANAGE', 'Resource management')
-  addPermission('resource-sharing', 'RESOURCE_SHARE', 'Resource sharing')
-  addPermission('resource-publishing', 'RESOURCE_PUBLISH', 'Resource publishing')
+  addFixedPermission('resource-management', 'RESOURCE_MANAGE')
+  addFixedPermission('resource-sharing', 'RESOURCE_SHARE')
+  addFixedPermission('resource-publishing', 'RESOURCE_PUBLISH')
   return permissions
 }
 
@@ -1022,6 +1014,13 @@ function groupTokenPermissions(permissions: TokenPermissionDefinition[]): Array<
 
 function uniqueCapabilities(capabilities: string[]): string[] {
   return [...new Set(capabilities)]
+}
+
+function joinCapabilityLabels(capabilities: PersonalCapabilityOptionSignal[]): string {
+  const labels = capabilities.map((capability) => capability.label)
+  if (labels.length <= 1) return labels[0] ?? 'No resource capabilities'
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`
+  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
 }
 
 function themeOption(value: string): ThemeOption {

@@ -41,6 +41,12 @@ type Options struct {
 	PrincipalFromContext      func(context.Context) (Principal, bool)
 	CredentialFromContext     func(context.Context) (access.APICredential, bool)
 	AuditRecorder             access.CanonicalAuditRecorder
+	// SemanticConsumption is the local compatibility binding for the future
+	// semantic.consume action. Until that action is present in the global
+	// catalog, dashboard semantic execution uses RESOURCE_USE on the exact
+	// SemanticModel. Keeping the requirement here makes the second check
+	// explicit without widening the global permission vocabulary.
+	SemanticConsumption SemanticConsumptionRequirement
 }
 
 type Metrics struct {
@@ -52,6 +58,7 @@ type Metrics struct {
 	principalFromContext      func(context.Context) (Principal, bool)
 	credentialFromContext     func(context.Context) (access.APICredential, bool)
 	auditRecorder             access.CanonicalAuditRecorder
+	semanticConsumption       SemanticConsumptionRequirement
 }
 
 var _ queryruntime.SpatialTileStreamExpirer = Metrics{}
@@ -104,6 +111,7 @@ func New(metrics queryruntime.Metrics, options Options) Metrics {
 		principalFromContext:      options.PrincipalFromContext,
 		credentialFromContext:     options.CredentialFromContext,
 		auditRecorder:             options.AuditRecorder,
+		semanticConsumption:       options.SemanticConsumption.withDefault(),
 	}
 }
 
@@ -361,6 +369,10 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, capabilityAction) {
 		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+		return request, nil, err
+	}
+	if err := m.requireSemanticConsumption(ctx, snapshot, principalID, request, objects); err != nil {
+		_ = m.recordDataAccessAudit(ctx, request, m.semanticConsumption.withDefault().Capability, "denied", err)
 		return request, nil, err
 	}
 	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&

@@ -1023,11 +1023,14 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 }
 
 func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
+	// Repository callers below the HTTP/service boundary may omit this field.
+	// Persist that form as an explicit deny-all list; only request validation
+	// treats omission as an invalid public contract.
+	if caps == nil {
+		caps = []access.Capability{}
+	}
 	if err := access.ValidateTokenCapabilities(caps, access.CanonicalCapabilities()); err != nil {
 		return nil, err
-	}
-	if caps == nil {
-		return nil, nil
 	}
 	return json.Marshal(caps)
 }
@@ -1041,7 +1044,10 @@ func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (boo
 }
 
 func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
-	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name})
+	// This legacy convenience method has no capability parameter. Preserve its
+	// historical broad helper behavior by materializing an explicit allowlist;
+	// token creation itself never persists an omitted (NULL) scope.
+	t, _, e := r.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: pid, Name: name, Capabilities: access.LegacyProjectCapabilities()})
 	return t, e
 }
 func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.APITokenInput) (string, access.APIToken, error) {
@@ -1115,8 +1121,14 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
+	// NULL/null is a legacy omitted scope. It is deliberately represented as
+	// explicit deny-all so old credentials cannot regain current authority.
+	t.Capabilities = []access.Capability{}
 	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
-		_ = json.Unmarshal(row.Capabilities, &t.Capabilities)
+		var capabilities []access.Capability
+		if err := json.Unmarshal(row.Capabilities, &capabilities); err == nil && capabilities != nil && access.ValidateTokenCapabilities(capabilities, access.CanonicalCapabilities()) == nil {
+			t.Capabilities = capabilities
+		}
 	}
 	return t, nil
 }

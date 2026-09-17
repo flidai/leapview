@@ -219,9 +219,9 @@ func (m *Module) AuthorizeBootstrapCredential(ctx context.Context, principalID, 
 
 // RequestPlatformAdmin evaluates durable platform administration and then
 // applies request-credential attenuation. Credentials can reduce authority,
-// never grant the durable role: authoring credentials always deny, API tokens
-// with nil capabilities inherit, explicit empty capabilities deny, and an
-// explicit non-empty list must include PROJECT_ADMIN.
+// never grant the durable role: authoring credentials always deny, and API
+// tokens must explicitly carry PLATFORM_ADMIN. Legacy NULL/empty capability
+// lists deny.
 func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, principalID string) (bool, error) {
 	allowed, err := m.IsPlatformAdmin(ctx, principalID)
 	if err != nil || !allowed {
@@ -237,13 +237,10 @@ func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, prin
 	if credential.Authoring != nil {
 		return false, nil
 	}
-	if credential.Token.ID == "" || credential.Token.Capabilities == nil {
-		return true, nil
-	}
-	if len(credential.Token.Capabilities) == 0 {
+	if credential.Token.ID == "" || len(credential.Token.Capabilities) == 0 {
 		return false, nil
 	}
-	return containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin), nil
+	return containsCapability(credential.Token.Capabilities, access.CapabilityPlatformAdmin), nil
 }
 
 // AuthorizeBootstrapRequest applies the narrow request-side checks shared by
@@ -317,7 +314,7 @@ func (m *Module) AuthorizePublicationApprovalBootstrapRequest(_ context.Context,
 // tokens must carry the exact operation capability.
 func bootstrapTokenAllowsCapability(capabilities []access.Capability, required access.Capability) bool {
 	return containsCapability(capabilities, required) ||
-		(required != access.CapabilityProjectAdmin && containsCapability(capabilities, access.CapabilityProjectAdmin))
+		(required != access.CapabilityProjectAdmin && required != access.CapabilityPlatformAdmin && containsCapability(capabilities, access.CapabilityProjectAdmin))
 }
 
 // AuthorizeAuthoringBootstrapRequest admits an already-issued human/workload
@@ -476,8 +473,8 @@ func (m *Module) CurrentPrincipal(r *http.Request) (Principal, bool) {
 
 // RequestEffectiveCapabilities evaluates the active immutable authorization
 // projection and attenuates it with any bearer or authoring credential on the
-// request. Stored credentials never add authority: omitted token capabilities
-// inherit the active projection, while an explicit empty list denies all.
+// request. Stored credentials never add authority: legacy omitted token
+// capabilities and explicit empty lists both deny all.
 func (m *Module) RequestEffectiveCapabilities(ctx context.Context, r *http.Request, principalID string) ([]access.Capability, error) {
 	capabilities, err := m.CurrentEffectiveCapabilities(ctx, principalID)
 	if err != nil {

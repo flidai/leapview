@@ -60,8 +60,12 @@ type Service struct {
 	Avatar                       AvatarReader
 	Authoring                    AuthoringReader
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	LocalPasswordEnabled         bool
-	Now                          func() time.Time
+	// PlatformAdmin reports the durable, instance-wide platform role. It is
+	// kept separate from the active project capability projection so project
+	// administration cannot mint platform-admin tokens.
+	PlatformAdmin        func(context.Context, string) (bool, error)
+	LocalPasswordEnabled bool
+	Now                  func() time.Time
 }
 
 func (s *Service) Load(ctx context.Context, principalID, currentSessionID string, includeCapabilityOptions bool) (Signal, error) {
@@ -110,10 +114,7 @@ func (s *Service) Load(ctx context.Context, principalID, currentSessionID string
 	}
 	capabilityOptions := []CapabilityOptionSignal{}
 	if includeCapabilityOptions {
-		if s.CurrentEffectiveCapabilities == nil {
-			return Signal{}, fmt.Errorf("effective project capabilities are unavailable")
-		}
-		effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
+		effective, effectiveErr := s.tokenAuthority(ctx, principalID, nil, true)
 		if effectiveErr != nil {
 			return Signal{}, effectiveErr
 		}
@@ -254,20 +255,19 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		if name == "" || len(name) > 200 {
 			return nil, fmt.Errorf("token name must contain between 1 and 200 bytes")
 		}
-		var capabilities []access.Capability
-		if command.Capabilities != nil {
-			capabilities = make([]access.Capability, 0, len(command.Capabilities))
-			for _, raw := range command.Capabilities {
-				capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
-				if parseErr != nil {
-					return nil, fmt.Errorf("unsupported API token capability %q: %w", raw, parseErr)
-				}
-				capabilities = append(capabilities, capability)
+		if command.Capabilities == nil {
+			return nil, access.ErrTokenCapabilitiesRequired
+		}
+		capabilities := make([]access.Capability, 0, len(command.Capabilities))
+		for _, raw := range command.Capabilities {
+			capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+			if parseErr != nil {
+				return nil, fmt.Errorf("unsupported API token capability %q: %w", raw, parseErr)
 			}
-			if s.CurrentEffectiveCapabilities == nil {
-				return nil, fmt.Errorf("effective project capabilities are unavailable")
-			}
-			effective, effectiveErr := s.CurrentEffectiveCapabilities(ctx, principalID)
+			capabilities = append(capabilities, capability)
+		}
+		if len(capabilities) > 0 {
+			effective, effectiveErr := s.tokenAuthority(ctx, principalID, capabilities, false)
 			if effectiveErr != nil {
 				return nil, effectiveErr
 			}
@@ -300,6 +300,44 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 	default:
 		return nil, fmt.Errorf("%w: token action %q", ErrCommandInvalid, command.Action)
 	}
+}
+
+// tokenAuthority combines project capabilities from the active serving
+// snapshot with the durable platform role. Platform administration is only
+// added when requested (or when building the UI options), and is never
+// inferred from project administration.
+func (s *Service) tokenAuthority(ctx context.Context, principalID string, requested []access.Capability, includeOptions bool) ([]access.Capability, error) {
+	needsProject := includeOptions
+	needsPlatform := includeOptions
+	for _, capability := range requested {
+		if capability == access.CapabilityPlatformAdmin {
+			needsPlatform = true
+		} else {
+			needsProject = true
+		}
+	}
+
+	effective := []access.Capability{}
+	if needsProject {
+		if s.CurrentEffectiveCapabilities == nil {
+			return nil, fmt.Errorf("effective project capabilities are unavailable")
+		}
+		projectCapabilities, err := s.CurrentEffectiveCapabilities(ctx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		effective = append(effective, projectCapabilities...)
+	}
+	if needsPlatform && s.PlatformAdmin != nil {
+		platformAdmin, err := s.PlatformAdmin(ctx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		if platformAdmin {
+			effective = append(effective, access.CapabilityPlatformAdmin)
+		}
+	}
+	return effective, nil
 }
 
 func (s *Service) principalAndIdentity(ctx context.Context, principalID string) (access.Principal, access.PrincipalIdentityManagement, error) {

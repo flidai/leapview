@@ -91,6 +91,9 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID: admin.ID,
 		Name:        "access-admin",
+		Capabilities: []access.Capability{
+			access.CapabilityPlatformAdmin,
+		},
 	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
@@ -287,7 +290,7 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID:  owner.ID,
 		Name:         "platform-admin",
-		Capabilities: []access.Capability{access.CapabilityProjectAdmin},
+		Capabilities: []access.Capability{access.CapabilityPlatformAdmin},
 	})
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret API"})
 	if err != nil {
@@ -338,7 +341,7 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
 		PrincipalID:  owner.ID,
 		Name:         "platform-admin",
-		Capabilities: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
+		Capabilities: []access.Capability{access.CapabilityPlatformAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret Cache"})
 	if err != nil {

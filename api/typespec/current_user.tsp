@@ -10,16 +10,16 @@ model EffectiveCapabilitiesResponse {
 
 model APITokenCreateRequest {
   name: string;
-  @doc("Omit to keep the token dynamically constrained by the principal's effective capabilities at request time. An explicit list must be a subset of the principal's current effective capabilities.")
-  capabilities?: Capability[];
+  @doc("Required explicit attenuation allowlist. An empty list creates an authentication-only token; omitted or null capabilities are invalid. PLATFORM_ADMIN attenuates durable instance administration and does not grant the role.")
+  capabilities: Capability[];
   expiresAt?: utcDateTime;
 }
 
 model APITokenResponse {
   id: string;
   name: string;
-  @doc("Present when the token has an explicit capability allowlist. When omitted, the principal's effective capabilities are evaluated dynamically at request time.")
-  capabilities?: Capability[];
+  @doc("The explicit capability allowlist persisted for this token. Legacy NULL values are returned as an empty deny-all list.")
+  capabilities: Capability[];
   expiresAt?: utcDateTime;
   revokedAt?: utcDateTime;
   createdAt: utcDateTime;

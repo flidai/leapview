@@ -238,7 +238,7 @@ func TestRequirePlatformAdminAllowsDevelopmentBypassWithoutRepository(t *testing
 	}
 }
 
-func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocation(t *testing.T) {
+func TestRequirePlatformAdminAttenuatesScopedTokensAndHonorsRevocation(t *testing.T) {
 	repository := testStore(t).repository
 	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "platform@example.test", DisplayName: "Platform User"})
 	if err != nil {
@@ -267,12 +267,12 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 		})).ServeHTTP(recorder, request(secret))
 		return recorder.Code
 	}
-	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "dynamic", ExpiresAt: time.Now().Add(time.Hour)})
+	platformSecret, platformToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("create platform token: %v", err)
 	}
-	if got := call(dynamicSecret); got != http.StatusNoContent {
-		t.Fatalf("dynamic token status = %d, want 204", got)
+	if got := call(platformSecret); got != http.StatusNoContent {
+		t.Fatalf("platform token status = %d, want 204", got)
 	}
 	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
@@ -281,11 +281,11 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 	if got := call(denySecret); got != http.StatusForbidden {
 		t.Fatalf("deny-all token status = %d, want 403", got)
 	}
-	if err := repository.RevokeAPIToken(t.Context(), dynamicToken.ID); err != nil {
+	if err := repository.RevokeAPIToken(t.Context(), platformToken.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := call(dynamicSecret); got != http.StatusUnauthorized {
-		t.Fatalf("revoked dynamic token status = %d, want 401", got)
+	if got := call(platformSecret); got != http.StatusUnauthorized {
+		t.Fatalf("revoked platform token status = %d, want 401", got)
 	}
 }
 
@@ -344,10 +344,11 @@ func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
 			t.Fatalf("%s allowed = %t, want %t", name, got, want)
 		}
 	}
-	check("session", access.APICredential{}, true)
+	check("session", access.APICredential{}, false)
 	check("authoring", access.APICredential{Authoring: &access.AuthoringSession{}}, false)
-	check("dynamic token", access.APICredential{Token: access.APIToken{ID: "dynamic"}}, true)
+	check("legacy nil token", access.APICredential{Token: access.APIToken{ID: "dynamic"}}, false)
 	check("empty token", access.APICredential{Token: access.APIToken{ID: "empty", Capabilities: []access.Capability{}}}, false)
 	check("narrow token", access.APICredential{Token: access.APIToken{ID: "narrow", Capabilities: []access.Capability{access.CapabilityResourceRead}}}, false)
-	check("project admin token", access.APICredential{Token: access.APIToken{ID: "project", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, true)
+	check("project admin token", access.APICredential{Token: access.APIToken{ID: "project", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, false)
+	check("platform admin token", access.APICredential{Token: access.APIToken{ID: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}}}, true)
 }

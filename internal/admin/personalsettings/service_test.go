@@ -191,3 +191,45 @@ func TestServiceMutationsAuditAndValidateIdentity(t *testing.T) {
 		t.Fatalf("external profile error = %v", err)
 	}
 }
+
+func TestServicePlatformAdminCapabilityUsesDurableRole(t *testing.T) {
+	repo := &fakeRepository{
+		principal: access.Principal{ID: "principal-1", Kind: access.PrincipalKindUser},
+		effective: []access.Capability{access.CapabilityProjectAdmin, access.CapabilityResourceRead},
+	}
+	service := testService(repo)
+	service.PlatformAdmin = func(context.Context, string) (bool, error) { return true, nil }
+
+	state, err := service.Load(context.Background(), repo.principal.ID, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundPlatform := false
+	for _, option := range state.Tokens.Capabilities {
+		if option.Value == string(access.CapabilityPlatformAdmin) {
+			foundPlatform = true
+			break
+		}
+	}
+	if !foundPlatform {
+		t.Fatalf("capability options = %#v, want durable platform-admin capability", state.Tokens.Capabilities)
+	}
+
+	if _, err := service.ApplyToken(context.Background(), repo.principal.ID, TokenCommand{
+		Action: "create", Name: "platform", Capabilities: []string{string(access.CapabilityPlatformAdmin)},
+	}); err != nil {
+		t.Fatalf("durable platform-admin token = %v", err)
+	}
+	if _, err := service.ApplyToken(context.Background(), repo.principal.ID, TokenCommand{
+		Action: "create", Name: "omitted", Capabilities: nil,
+	}); !errors.Is(err, access.ErrTokenCapabilitiesRequired) {
+		t.Fatalf("omitted capabilities error = %v", err)
+	}
+
+	service.PlatformAdmin = func(context.Context, string) (bool, error) { return false, nil }
+	if _, err := service.ApplyToken(context.Background(), repo.principal.ID, TokenCommand{
+		Action: "create", Name: "escalating", Capabilities: []string{string(access.CapabilityPlatformAdmin)},
+	}); !errors.Is(err, access.ErrCapabilityNotAllowed) {
+		t.Fatalf("non-admin platform capability error = %v", err)
+	}
+}

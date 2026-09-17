@@ -1218,6 +1218,12 @@ func TestAPIGenOperationKindsAndRoleMappingAreExhaustive(t *testing.T) {
 					t.Errorf("command %s has unknown capability %q", operationID, command.Privilege)
 					continue
 				}
+				if capability == access.CapabilityPlatformAdmin {
+					if len(rolesByCapability[capability]) != 0 {
+						t.Errorf("platform capability %q must not be granted by a project role", capability)
+					}
+					continue
+				}
 				if len(rolesByCapability[capability]) == 0 {
 					t.Errorf("command %s capability %q is not granted by any project role", operationID, capability)
 				}

@@ -341,12 +341,12 @@ func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code
 	}
-	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "dynamic", ExpiresAt: time.Now().Add(time.Hour)})
+	dynamicSecret, dynamicToken, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "read-only", Capabilities: []access.Capability{access.CapabilityResourceRead}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := call(dynamicSecret); got != http.StatusNoContent {
-		t.Fatalf("dynamic token status = %d, want 204", got)
+		t.Fatalf("read-only token status = %d, want 204", got)
 	}
 	denySecret, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: "deny-all", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {

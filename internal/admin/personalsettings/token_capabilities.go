@@ -31,6 +31,7 @@ func capabilityOptionsSignal(effective []access.Capability) []CapabilityOptionSi
 }
 
 var capabilityDescriptors = map[access.Capability]capabilityDescriptor{
+	access.CapabilityPlatformAdmin:   {"Platform administration", "Attenuate durable instance administration.", "Administration"},
 	access.CapabilityProjectAdmin:    {"Project administration", "Manage project-level access and settings.", "Administration"},
 	access.CapabilityResourceUse:     {"Use resource", "Open and use the project resource.", "Resource"},
 	access.CapabilityResourceRead:    {"Read resource", "View the resource and its governed data.", "Resource"},

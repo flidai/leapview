@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	stdhttp "net/http"
 	"strings"
@@ -62,9 +63,9 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	var input struct {
-		Name         string   `json:"name"`
-		Capabilities []string `json:"capabilities"`
-		ExpiresAt    string   `json:"expiresAt"`
+		Name         string          `json:"name"`
+		Capabilities json.RawMessage `json:"capabilities"`
+		ExpiresAt    string          `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -84,30 +85,54 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	var capabilities []access.Capability
-	if input.Capabilities != nil {
-		capabilities = make([]access.Capability, 0, len(input.Capabilities))
-		for _, raw := range input.Capabilities {
-			capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
-			if parseErr != nil {
-				writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
-				return
-			}
-			capabilities = append(capabilities, capability)
-		}
-		if h.CurrentEffectiveCapabilities == nil {
-			writeJSONError(w, fmt.Errorf("effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+	if len(input.Capabilities) == 0 || string(input.Capabilities) == "null" {
+		writeJSONError(w, access.ErrTokenCapabilitiesRequired, stdhttp.StatusBadRequest)
+		return
+	}
+	var rawCapabilities []string
+	if err := json.Unmarshal(input.Capabilities, &rawCapabilities); err != nil || rawCapabilities == nil {
+		writeJSONError(w, access.ErrTokenCapabilitiesRequired, stdhttp.StatusBadRequest)
+		return
+	}
+	capabilities := make([]access.Capability, 0, len(rawCapabilities))
+	needsProjectCapabilities := false
+	for _, raw := range rawCapabilities {
+		capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
+		if parseErr != nil {
+			writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
 			return
 		}
-		effective, effectiveErr := h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
+		capabilities = append(capabilities, capability)
+		if capability != access.CapabilityPlatformAdmin {
+			needsProjectCapabilities = true
+		}
+	}
+	effective := []access.Capability{}
+	if h.CurrentEffectiveCapabilities != nil && needsProjectCapabilities {
+		var effectiveErr error
+		effective, effectiveErr = h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
 		if effectiveErr != nil {
 			writeJSONError(w, effectiveErr, stdhttp.StatusBadRequest)
 			return
 		}
-		if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
-			writeJSONError(w, validateErr, stdhttp.StatusBadRequest)
+	}
+	if containsCapability(capabilities, access.CapabilityPlatformAdmin) && h.PlatformAdmin != nil {
+		platformAdmin, platformErr := h.PlatformAdmin(r.Context(), principal.ID)
+		if platformErr != nil {
+			writeJSONError(w, platformErr, stdhttp.StatusBadRequest)
 			return
 		}
+		if platformAdmin {
+			effective = append(effective, access.CapabilityPlatformAdmin)
+		}
+	}
+	if h.CurrentEffectiveCapabilities == nil && len(capabilities) > 0 && !containsCapability(capabilities, access.CapabilityPlatformAdmin) {
+		writeJSONError(w, fmt.Errorf("effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+		return
+	}
+	if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
+		writeJSONError(w, validateErr, stdhttp.StatusBadRequest)
+		return
 	}
 	var secret string
 	var token access.APIToken

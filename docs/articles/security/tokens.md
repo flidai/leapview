@@ -43,7 +43,9 @@ For a person, `leapview login <target>` uses browser/device authorization and th
 
 ## User API tokens
 
-An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Token access is the intersection of the principal's effective privileges, any token project scope, and token privilege allowlist. A token can narrow the principal; it cannot elevate it.
+An authenticated user can list, create, and revoke their tokens through `/api/v1/me/api-tokens`. Every new token requires an explicit capability allowlist. An empty list creates an authentication-only token with no Project or resource authority; omission is rejected and never means "inherit everything." Token access is the intersection of the principal's effective privileges and the token capability allowlist. A token can narrow the principal; it cannot elevate it.
+
+`PROJECT_ADMIN` covers Project administration only. Instance administration requires the separate `PLATFORM_ADMIN` token capability and the principal's current durable platform-admin role. Neither capability grants the other, and the token capability never grants the durable role by itself. Legacy tokens whose capability list was omitted are treated as deny-all and must be replaced with an explicitly scoped credential.
 
 The same user can inspect browser sessions, API tokens, and authoring sessions through the Current User API. Revoke unused CLI sessions during credential or device incidents. Reuse of a rotated refresh credential revokes the entire CLI session family.
 

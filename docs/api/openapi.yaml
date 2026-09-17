@@ -4889,7 +4889,7 @@ paths:
               example:
                 items:
                   - action: example
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -13418,10 +13418,10 @@ paths:
             status_code: 503
         idempotency: required
         owner: LeapViewAPI.Deployment
-        privilege: PROJECT_ADMIN
+        privilege: PLATFORM_ADMIN
       x-authz:
         mode: privilege
-        privilege: PROJECT_ADMIN
+        privilege: PLATFORM_ADMIN
       x-leapview-object-scope: platform
   /api/v1/instance/settings:
     get:
@@ -15213,7 +15213,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -15489,7 +15489,7 @@ paths:
               example:
                 apiToken:
                   capabilities:
-                    - PROJECT_ADMIN
+                    - PLATFORM_ADMIN
                   createdAt: "2026-01-02T15:04:05Z"
                   expiresAt: "2026-01-02T15:04:05Z"
                   id: example
@@ -15742,7 +15742,7 @@ paths:
               $ref: '#/components/schemas/APITokenCreateRequest'
             example:
               capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
       x-apigen-operation-kind: command
@@ -16091,7 +16091,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     clientId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     current: true
@@ -17228,7 +17228,7 @@ paths:
                 $ref: '#/components/schemas/EffectiveCapabilitiesResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
         '400':
           description: The server could not understand the request due to invalid
             syntax.
@@ -23237,7 +23237,7 @@ paths:
               example:
                 items:
                   - action: example
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     correlationId: example
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
@@ -27206,7 +27206,7 @@ paths:
               example:
                 decisions:
                   - allowed: true
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -27462,7 +27462,7 @@ paths:
               $ref: '#/components/schemas/AuthorizationBatchCheckRequest'
             example:
               checks:
-                - capability: PROJECT_ADMIN
+                - capability: PLATFORM_ADMIN
                   resourceId: example
                   resourceKind: project
       x-apigen-operation-kind: query
@@ -40567,10 +40567,10 @@ paths:
                 $ref: '#/components/schemas/EffectiveCapabilityListResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
                 effectiveGrants:
                   - allowed: true
-                    capability: PROJECT_ADMIN
+                    capability: PLATFORM_ADMIN
                     grantId: example
                     grantResourceId: example
                     inherited: true
@@ -40891,7 +40891,7 @@ paths:
                 $ref: '#/components/schemas/GrantListResponse'
               example:
                 items:
-                  - capability: PROJECT_ADMIN
+                  - capability: PLATFORM_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
                     id: example
                     inherited: true
@@ -41181,7 +41181,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: PROJECT_ADMIN
+                capability: PLATFORM_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
@@ -41436,7 +41436,7 @@ paths:
             schema:
               $ref: '#/components/schemas/GrantRequest'
             example:
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               resourceId: example
               resourceKind: project
               subjectId: example
@@ -41824,7 +41824,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: PROJECT_ADMIN
+                capability: PLATFORM_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
@@ -42110,7 +42110,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GrantResponse'
               example:
-                capability: PROJECT_ADMIN
+                capability: PLATFORM_ADMIN
                 createdAt: "2026-01-02T15:04:05Z"
                 id: example
                 inherited: true
@@ -42365,7 +42365,7 @@ paths:
             schema:
               $ref: '#/components/schemas/GrantRequest'
             example:
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               resourceId: example
               resourceKind: project
               subjectId: example
@@ -46344,7 +46344,7 @@ paths:
                 environment: example
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     id: example
                     name: example
                     policyDigest: example
@@ -46631,7 +46631,7 @@ paths:
                 $ref: '#/components/schemas/RoleBindingResponse'
               example:
                 capabilities:
-                  - PROJECT_ADMIN
+                  - PLATFORM_ADMIN
                 id: example
                 name: example
                 policyDigest: example
@@ -46986,7 +46986,7 @@ paths:
               example:
                 items:
                   - capabilities:
-                      - PROJECT_ADMIN
+                      - PLATFORM_ADMIN
                     name: example
                 page:
                   nextCursor: example
@@ -60461,15 +60461,16 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         name: example
     APITokenCreateRequest:
       type: object
       required:
         - name
+        - capabilities
       properties:
         name:
           type: string
@@ -60478,18 +60479,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: Omit to keep the token dynamically constrained by the principal's
-            effective capabilities at request time. An explicit list must be a subset
-            of the principal's current effective capabilities.
+          description: Required explicit attenuation allowlist. An empty list creates
+            an authentication-only token; omitted or null capabilities are invalid.
+            PLATFORM_ADMIN attenuates durable instance administration and does not
+            grant the role.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         expiresAt:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
     APITokenCreateResponse:
@@ -60506,7 +60508,7 @@ components:
       example:
         apiToken:
           capabilities:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
           createdAt: "2026-01-02T15:04:05Z"
           expiresAt: "2026-01-02T15:04:05Z"
           id: example
@@ -60526,7 +60528,7 @@ components:
             $ref: '#/components/schemas/APITokenResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
@@ -60538,7 +60540,7 @@ components:
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
@@ -60552,6 +60554,7 @@ components:
       required:
         - id
         - name
+        - capabilities
         - createdAt
       properties:
         id:
@@ -60564,11 +60567,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: Present when the token has an explicit capability allowlist.
-            When omitted, the principal's effective capabilities are evaluated dynamically
-            at request time.
+          description: The explicit capability allowlist persisted for this token.
+            Legacy NULL values are returned as an empty deny-all list.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         expiresAt:
           type: string
           format: date-time
@@ -60587,7 +60589,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
         expiresAt: "2026-01-02T15:04:05Z"
         id: example
@@ -61184,7 +61186,7 @@ components:
             $ref: '#/components/schemas/AuditEventResponse'
           example:
             - action: example
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               correlationId: example
               createdAt: "2026-01-02T15:04:05Z"
               id: example
@@ -61201,7 +61203,7 @@ components:
       example:
         items:
           - action: example
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             correlationId: example
             createdAt: "2026-01-02T15:04:05Z"
             id: example
@@ -61274,7 +61276,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         action: example
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         correlationId: example
         createdAt: "2026-01-02T15:04:05Z"
         id: example
@@ -61303,7 +61305,7 @@ components:
             $ref: '#/components/schemas/AuthoringSessionResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               clientId: example
               createdAt: "2026-01-02T15:04:05Z"
               current: true
@@ -61319,7 +61321,7 @@ components:
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             clientId: example
             createdAt: "2026-01-02T15:04:05Z"
             current: true
@@ -61371,7 +61373,7 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         createdAt:
           type: string
           format: date-time
@@ -61390,7 +61392,7 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         createdAt: "2026-01-02T15:04:05Z"
         current: true
@@ -61430,10 +61432,10 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         kind: example
         projectId: example
@@ -61448,12 +61450,12 @@ components:
           items:
             $ref: '#/components/schemas/AuthorizationCheckRequest'
           example:
-            - capability: PROJECT_ADMIN
+            - capability: PLATFORM_ADMIN
               resourceId: example
               resourceKind: project
       example:
         checks:
-          - capability: PROJECT_ADMIN
+          - capability: PLATFORM_ADMIN
             resourceId: example
             resourceKind: project
     AuthorizationBatchCheckResponse:
@@ -61467,7 +61469,7 @@ components:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -61481,7 +61483,7 @@ components:
       example:
         decisions:
           - allowed: true
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -61510,7 +61512,7 @@ components:
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
       example:
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         resourceId: example
         resourceKind: project
     AuthorizationDecisionResponse:
@@ -61565,7 +61567,7 @@ components:
           example: true
       example:
         allowed: true
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         grantId: example
         grantResourceId: example
         inherited: true
@@ -61985,6 +61987,7 @@ components:
     Capability:
       type: string
       enum:
+        - PLATFORM_ADMIN
         - PROJECT_ADMIN
         - RESOURCE_USE
         - RESOURCE_READ
@@ -61992,7 +61995,7 @@ components:
         - RESOURCE_MANAGE
         - RESOURCE_SHARE
         - RESOURCE_PUBLISH
-      example: PROJECT_ADMIN
+      example: PLATFORM_ADMIN
     CartesianDashboardPresentation:
       type: object
       allOf:
@@ -73157,13 +73160,13 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         decision:
           type: string
           example: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         clientId: example
         decision: example
         projectId: example
@@ -73286,10 +73289,10 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
     EffectiveCapabilityListResponse:
       type: object
       required:
@@ -73311,14 +73314,14 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         effectiveGrants:
           type: array
           items:
             $ref: '#/components/schemas/AuthorizationDecisionResponse'
           example:
             - allowed: true
-              capability: PROJECT_ADMIN
+              capability: PLATFORM_ADMIN
               grantId: example
               grantResourceId: example
               inherited: true
@@ -73331,10 +73334,10 @@ components:
               subjectType: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         effectiveGrants:
           - allowed: true
-            capability: PROJECT_ADMIN
+            capability: PLATFORM_ADMIN
             grantId: example
             grantResourceId: example
             inherited: true
@@ -73750,7 +73753,7 @@ components:
           type: string
           example: example
       example:
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         environment: example
         operationId: example
         resourceId: example
@@ -73769,7 +73772,7 @@ components:
           items:
             $ref: '#/components/schemas/GrantResponse'
           example:
-            - capability: PROJECT_ADMIN
+            - capability: PLATFORM_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
               id: example
               inherited: true
@@ -73784,7 +73787,7 @@ components:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
-          - capability: PROJECT_ADMIN
+          - capability: PLATFORM_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
             id: example
             inherited: true
@@ -73823,7 +73826,7 @@ components:
         capability:
           $ref: '#/components/schemas/Capability'
       example:
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         resourceId: example
         resourceKind: project
         subjectId: example
@@ -73877,7 +73880,7 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        capability: PROJECT_ADMIN
+        capability: PLATFORM_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
         id: example
         inherited: true
@@ -79362,7 +79365,7 @@ components:
             $ref: '#/components/schemas/RoleBindingResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               id: example
               name: example
               policyDigest: example
@@ -79395,7 +79398,7 @@ components:
         environment: example
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             id: example
             name: example
             policyDigest: example
@@ -79443,7 +79446,7 @@ components:
           description: The immutable capability bundle derived from role by the target
             authority.
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
         policyRevision:
           type: integer
           format: int64
@@ -79453,7 +79456,7 @@ components:
           example: example
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         id: example
         name: example
         policyDigest: example
@@ -79473,14 +79476,14 @@ components:
             $ref: '#/components/schemas/RoleResponse'
           example:
             - capabilities:
-                - PROJECT_ADMIN
+                - PLATFORM_ADMIN
               name: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
         items:
           - capabilities:
-              - PROJECT_ADMIN
+              - PLATFORM_ADMIN
             name: example
         page:
           nextCursor: example
@@ -79498,10 +79501,10 @@ components:
           items:
             $ref: '#/components/schemas/Capability'
           example:
-            - PROJECT_ADMIN
+            - PLATFORM_ADMIN
       example:
         capabilities:
-          - PROJECT_ADMIN
+          - PLATFORM_ADMIN
         name: example
     RulesVisualizationConditionalRule:
       type: object

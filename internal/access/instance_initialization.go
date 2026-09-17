@@ -32,9 +32,11 @@ type InstanceInitializer interface {
 
 func InitialPublisherCapabilities() []Capability {
 	// The one-time offline publisher is the pre-project platform bootstrap
-	// credential. It needs PROJECT_ADMIN to submit the issuer-owned claim;
-	// browser/workload authoring logins below retain their narrower scopes.
+	// credential. It needs PLATFORM_ADMIN to attenuate instance administration
+	// and PROJECT_ADMIN to submit the issuer-owned claim; browser/workload
+	// authoring logins below retain their narrower scopes.
 	return []Capability{
+		CapabilityPlatformAdmin,
 		CapabilityProjectAdmin,
 		CapabilityResourceUse,
 		CapabilityResourceRead,

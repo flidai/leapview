@@ -3,20 +3,18 @@ package access
 import (
 	"errors"
 	"testing"
+
+	"github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestValidateTokenCapabilitiesAllowsOmittedDynamicScope(t *testing.T) {
+func TestValidateTokenCapabilitiesRejectsOmittedScopeAndDeniesLegacyNil(t *testing.T) {
 	effective := []Capability{CapabilityResourceRead, CapabilityResourceEdit}
-	if err := ValidateTokenCapabilities(nil, effective); err != nil {
-		t.Fatalf("nil token capability allowlist rejected: %v", err)
+	if !errors.Is(ValidateTokenCapabilities(nil, effective), ErrTokenCapabilitiesRequired) {
+		t.Fatalf("nil token capability allowlist was accepted")
 	}
 	got := IntersectTokenCapabilities(nil, effective)
-	if len(got) != len(effective) || got[0] != effective[0] || got[1] != effective[1] {
-		t.Fatalf("dynamic capabilities = %#v, want %#v", got, effective)
-	}
-	got[0] = CapabilityResourceUse
-	if effective[0] == got[0] {
-		t.Fatal("dynamic intersection leaked effective-slice storage")
+	if got == nil || len(got) != 0 {
+		t.Fatalf("legacy nil capabilities = %#v, want non-nil deny-all", got)
 	}
 }
 
@@ -46,6 +44,15 @@ func TestValidateTokenCapabilitiesRejectsEscalationAndInvalidValues(t *testing.T
 	}
 	if got := IntersectTokenCapabilities([]Capability{}, effective); got == nil || len(got) != 0 {
 		t.Fatalf("explicit deny-all intersection = %#v, want non-nil empty", got)
+	}
+}
+
+func TestPlatformAdminCapabilityIsCanonicalButNotProjectResourceAuthority(t *testing.T) {
+	if got, err := ParseCapability(string(CapabilityPlatformAdmin)); err != nil || got != CapabilityPlatformAdmin {
+		t.Fatalf("platform capability parse = %q, %v", got, err)
+	}
+	if SupportsCapability(graph.KindProjectNamespace, CapabilityPlatformAdmin) {
+		t.Fatal("platform capability unexpectedly applies to project resources")
 	}
 }
 

@@ -24,6 +24,7 @@ enum ResourceKind {
 scalar AuditTargetKind extends string;
 
 enum Capability {
+  platformAdmin: "PLATFORM_ADMIN";
   projectAdmin: "PROJECT_ADMIN";
   resourceUse: "RESOURCE_USE";
   resourceRead: "RESOURCE_READ";

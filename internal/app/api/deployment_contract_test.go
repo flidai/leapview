@@ -76,7 +76,7 @@ func TestProjectClaimBootstrapContractIsPlatformScopedAndTransactional(t *testin
 	spec := managedDataOpenAPISpec(t)
 	paths := openAPIMap(t, spec, "paths")
 	operation := openAPIOperation(t, paths, "/api/v1/instance/project-claim", "post")
-	if operation["operationId"] != "bootstrapProjectClaim" || openAPIMap(t, operation, "x-authz")["privilege"] != "PROJECT_ADMIN" {
+	if operation["operationId"] != "bootstrapProjectClaim" || openAPIMap(t, operation, "x-authz")["privilege"] != "PLATFORM_ADMIN" {
 		t.Fatalf("bootstrap operation = %#v", operation)
 	}
 	if operation["x-leapview-object-scope"] != "platform" || !operationHasParameter(operation, "header", "Idempotency-Key") {

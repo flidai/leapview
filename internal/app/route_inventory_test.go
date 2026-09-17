@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "da790deb943344b8719233acffcd776311ffefb7fec1e55b9a996ba5a9a90683"
+	const expectedRouteContractDigest = "4dea740f33ba0b88596d0e1c1ebf1f2a09a6b881bdecdbe1d8ab9bf911ab256e"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))

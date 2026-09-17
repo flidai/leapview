@@ -286,6 +286,7 @@ test('personal API tokens use capability selectors', async () => {
         createDisabled: create.disabled,
         rawProjectField: Boolean(root.querySelector('input[placeholder*="Project ID"]')),
         rawPrivilegeField: Boolean(root.querySelector('input[placeholder*="Privileges"]')),
+        emptyPermissionText: root.querySelector('.selected-permissions .permission-empty')?.textContent?.trim(),
       }
 
       name.value = 'Sales automation'
@@ -420,6 +421,7 @@ test('personal API tokens use capability selectors', async () => {
       createDisabled: true,
       rawProjectField: false,
       rawPrivilegeField: false,
+      emptyPermissionText: 'No project or resource authority selected. The token will have no project or resource authority.',
     })
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
@@ -473,7 +475,7 @@ test('personal API tokens use capability selectors', async () => {
   }
 })
 
-test('personal API token permissions expose enforceable access levels', async () => {
+test('personal API token permissions map to exact capability scopes', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
     await page.goto(baseURL)
@@ -488,6 +490,7 @@ test('personal API token permissions expose enforceable access levels', async ()
         security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
         tokens: { items: [], capabilities: [
           { value: 'PROJECT_ADMIN', label: 'Project administration', description: 'Manage project-level access and settings.', category: 'Administration' },
+          { value: 'PLATFORM_ADMIN', label: 'Platform administration', description: 'Manage instance-level administration.', category: 'Administration' },
           { value: 'RESOURCE_USE', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource' },
           { value: 'RESOURCE_READ', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource' },
           { value: 'RESOURCE_EDIT', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource' },
@@ -504,19 +507,15 @@ test('personal API token permissions expose enforceable access levels', async ()
       const root = personal.shadowRoot as ShadowRoot
       ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
       await personal.updateComplete
-      ;(root.querySelector('input[type="checkbox"][value="project-administration"]') as HTMLInputElement).click()
+      const platformPermission = root.querySelector('input[type="checkbox"][value="platform-administration"]') as HTMLInputElement
+      platformPermission.click()
       await personal.updateComplete
-      ;(root.querySelector('input[type="checkbox"][value="resource-content"]') as HTMLInputElement).click()
-      await personal.updateComplete
+      const platformOnlyCapabilities = personal.selectedTokenCapabilities()
+      for (const permissionID of ['project-administration', 'resource-content', 'resource-management', 'resource-sharing', 'resource-publishing']) {
+        ;(root.querySelector(`input[type="checkbox"][value="${permissionID}"]`) as HTMLInputElement).click()
+        await personal.updateComplete
+      }
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-      await personal.updateComplete
-
-      const administrationAccess = root.querySelector('.permission-access-trigger[data-permission="project-administration"]') as HTMLButtonElement
-      const initialAdministrationAccess = administrationAccess.textContent?.replace(/\s+/g, ' ').trim()
-      administrationAccess.click()
-      await personal.updateComplete
-      const administrationAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
       await personal.updateComplete
 
       const resourceAccess = root.querySelector('.permission-access-trigger[data-permission="resource-content"]') as HTMLButtonElement
@@ -524,7 +523,7 @@ test('personal API token permissions expose enforceable access levels', async ()
       resourceAccess.click()
       await personal.updateComplete
       const resourceAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
-      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Use resource, Read resource, and Edit resource'))?.click()
       await personal.updateComplete
 
       ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Content automation'
@@ -537,9 +536,8 @@ test('personal API token permissions expose enforceable access levels', async ()
       ;(root.querySelector('#token-confirm .primary') as HTMLButtonElement).click()
       await personal.updateComplete
       return {
-        initialAdministrationAccess,
-        administrationAccessOptions,
-        selectedAdministrationAccess: administrationAccess.textContent?.replace(/\s+/g, ' ').trim(),
+        platformOnlyCapabilities,
+        fixedPermissionLabels: Array.from(root.querySelectorAll<HTMLElement>('.permission-access-fixed')).map((control) => ({ permission: control.dataset.permission, label: control.textContent?.replace(/\s+/g, ' ').trim(), ariaLabel: control.getAttribute('aria-label') })),
         initialResourceAccess,
         resourceAccessOptions,
         selectedResourceAccess: resourceAccess.textContent?.replace(/\s+/g, ' ').trim(),
@@ -549,16 +547,21 @@ test('personal API token permissions expose enforceable access levels', async ()
       }
     })
 
-    expect(state.initialAdministrationAccess).toBe('Access: Read-only')
-    expect(state.administrationAccessOptions).toEqual(['Read-only', 'Read and write'])
-    expect(state.selectedAdministrationAccess).toBe('Access: Read and write')
-    expect(state.initialResourceAccess).toBe('Access: Read-only')
-    expect(state.resourceAccessOptions).toEqual(['Read-only', 'Read and write'])
-    expect(state.selectedResourceAccess).toBe('Access: Read and write')
-    expect(state.selectedPermissions).toEqual(['Project administration', 'Resource access'])
-    expect(state.fixedAccessControls).toBe(0)
+    expect(state.platformOnlyCapabilities).toEqual(['PLATFORM_ADMIN'])
+    expect(state.fixedPermissionLabels).toEqual([
+      { permission: 'project-administration', label: 'Permission: Project administration', ariaLabel: 'Permission: Project administration' },
+      { permission: 'platform-administration', label: 'Permission: Platform administration', ariaLabel: 'Permission: Platform administration' },
+      { permission: 'resource-management', label: 'Permission: Manage resource', ariaLabel: 'Permission: Manage resource' },
+      { permission: 'resource-sharing', label: 'Permission: Share resource', ariaLabel: 'Permission: Share resource' },
+      { permission: 'resource-publishing', label: 'Permission: Publish resource', ariaLabel: 'Permission: Publish resource' },
+    ])
+    expect(state.initialResourceAccess).toBe('Access: Use resource and Read resource')
+    expect(state.resourceAccessOptions).toEqual(['Use resource and Read resource', 'Use resource, Read resource, and Edit resource'])
+    expect(state.selectedResourceAccess).toBe('Access: Use resource, Read resource, and Edit resource')
+    expect(state.selectedPermissions).toEqual(['Project administration', 'Platform administration', 'Resource access', 'Manage resource', 'Share resource', 'Publish resource'])
+    expect(state.fixedAccessControls).toBe(5)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'],
+      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'PLATFORM_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT', 'RESOURCE_MANAGE', 'RESOURCE_SHARE', 'RESOURCE_PUBLISH'], expiresAt: '',
     })
     expect(typeof state.command.expiresAt).toBe('string')
     expect(Date.parse(state.command.expiresAt)).toBeGreaterThan(Date.now())

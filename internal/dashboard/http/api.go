@@ -57,6 +57,10 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	dashboardID := chi.URLParam(r, "dashboard")
+	if err := h.authorizeDashboardRead(r, dashboardID); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
 		writeJSONError(w, fmt.Errorf("dashboard %q not found", dashboardID), nethttp.StatusNotFound)
@@ -71,6 +75,10 @@ func (h Handler) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -89,6 +97,10 @@ func (h Handler) GetDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) 
 }
 
 func (h Handler) GetDashboardFilter(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -152,6 +164,10 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 	if !metricsOK {
 		return
 	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
+		return
+	}
 	report, page, ok := h.dashboardReportPage(w, r)
 	if !ok {
 		return
@@ -177,6 +193,10 @@ func (h Handler) GetDashboardVisual(w nethttp.ResponseWriter, r *nethttp.Request
 func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardPageQueryRequest
@@ -214,6 +234,10 @@ func (h Handler) QueryDashboardPage(w nethttp.ResponseWriter, r *nethttp.Request
 func (h Handler) QueryDashboardVisualData(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardVisualQueryRequest
@@ -386,6 +410,10 @@ func (h Handler) queryDashboardTabularVisual(w nethttp.ResponseWriter, r *nethtt
 func (h Handler) ListDashboardFilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 	metrics, ok := h.biMetrics(w, r)
 	if !ok {
+		return
+	}
+	if err := h.authorizeDashboardRead(r, chi.URLParam(r, "dashboard")); err != nil {
+		writeJSONError(w, requireDashboardReadAuthorization(err), dashboardReadAuthorizationStatus(err))
 		return
 	}
 	var input api.DashboardPageQueryRequest

@@ -100,6 +100,7 @@ type Config struct {
 	SettingsAccess               SettingsAccess
 	AuthorizationProjection      adminsettings.AuthorizationProjectionReader
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	PlatformAdmin                func(context.Context, string) (bool, error)
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	PersonalAvatar               PersonalAvatar
 	AuthoringSessions            AuthoringSessions
@@ -163,6 +164,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			Preferences: config.SettingsAccess,
 			Avatar:      config.PersonalAvatar, Authoring: config.AuthoringSessions,
 			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			PlatformAdmin:                config.PlatformAdmin,
 			LocalPasswordEnabled:         config.LocalPasswordEnabled,
 		}
 		m.handler.PersonalSettings = &personalsettings.Handler{

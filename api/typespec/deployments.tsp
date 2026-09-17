@@ -159,7 +159,7 @@ model ProjectClaimUnavailableFailure {}
 interface ProjectClaimBootstrap {
   @summary("Bootstrap this unclaimed instance with an issuer-owned ProjectUID")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN" })
   @extension("x-leapview-object-scope", "platform")
   @apigen.command(#{ auditAction: "project.claim.bootstrapped", guarantee: "transactional" })
   @apigen.auditPayload(ProjectClaimBootstrappedAuditPayload)

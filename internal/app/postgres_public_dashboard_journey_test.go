@@ -37,7 +37,14 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 		t.Fatalf("seed journey principal: %v", err)
 	}
 	journeyToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
-		PrincipalID: principal.ID, Name: "journey-public-dashboard", ExpiresAt: time.Now().Add(time.Hour),
+		PrincipalID: principal.ID,
+		Name:        "journey-public-dashboard",
+		Capabilities: []access.Capability{
+			access.CapabilityResourceRead,
+			access.CapabilityResourceEdit,
+			access.CapabilityResourcePublish,
+		},
+		ExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create journey API token: %v", err)
