@@ -46,7 +46,7 @@
     "test:windowed-table": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts windowed-table && bun test web/components/shared/windowed-table.dom.test.ts",
     "test:filter-menu": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts filter-menu && bun test web/components/shared/filter-menu.dom.test.ts",
     "test:datastar-inspector": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts datastar-inspector && bun test web/components/inspector/datastar-inspector.dom.test.ts",
-    "test:admin-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts admin-page && bun test web/components/admin/admin-page.dom.test.ts",
+    "test:admin-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts admin-page && bun test web/components/admin/admin-page.dom.test.ts web/components/admin/archived-chats.dom.test.ts",
     "test:code-editor": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts code-editor && bun test web/components/shared/code-editor.dom.test.ts",
     "test:markdown-view": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts markdown-view && bun test web/components/shared/markdown-view.dom.test.ts",
     "test:login-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts login-page && bun test web/components/login/login-page.dom.test.ts",

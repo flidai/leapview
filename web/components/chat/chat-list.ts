@@ -451,8 +451,14 @@ class LeapViewChatList extends LitElement {
     const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
     if (!items.length) return
     event.preventDefault()
-    const current = items.indexOf(event.composedPath().find((target): target is HTMLButtonElement => target instanceof HTMLButtonElement) ?? items[0])
-    const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1 + items.length) % items.length : (current - 1 + items.length) % items.length
+    const current = items.indexOf(event.composedPath().find((target): target is HTMLButtonElement => target instanceof HTMLButtonElement) as HTMLButtonElement)
+    const index = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowDown'
+          ? current < 0 ? 0 : (current + 1) % items.length
+          : current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length
     items[index].focus()
   }
 

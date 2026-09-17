@@ -494,6 +494,8 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
       trigger.click()
       await list.updateComplete
       const menu = row.querySelector('details') as HTMLDetailsElement
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const initialArrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
       const pin = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!
       pin.focus()
       pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
@@ -504,8 +506,9 @@ test('chat list row menu supports keyboard dismissal and dispatches actions', as
       await list.updateComplete
       const reopenedMenu = row.querySelector('details') as HTMLDetailsElement
       reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!.click()
-      return { arrowFocus, escaped, actions }
+      return { initialArrowFocus, arrowFocus, escaped, actions }
     })
+    expect(state.initialArrowFocus).toBe('Select')
     expect(state.arrowFocus).toBe('Rename')
     expect(state.escaped).toEqual({ open: false, focus: 'More actions for Revenue check' })
     expect(state.actions).toEqual([{ action: 'pin', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])

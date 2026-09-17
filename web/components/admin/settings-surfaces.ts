@@ -5,12 +5,13 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
-import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
+import type { AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditEventSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
 import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import '../shared/entity-multi-select'
 import type { EntityMultiSelectItem } from '../shared/entity-multi-select'
+import { currentPrincipalAvatarUrl, formValue, formatAccessDate, humanizeAccessValue, identitySourceLabel, initialsForValue, memberActionLabel, principalActivityLabel, principalInitials } from './settings-surface-helpers'
 import { tableStyles } from './settings-surface-styles'
 
 type DatastarFetchOwnerDetail = { type?: string; el?: Element }
@@ -450,66 +451,6 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
   }
   private removeMember(group: AccessGroupSignal, principalId: string, label: string): void { if (window.confirm(`Remove ${label} from ${group.name}?`)) this.emit({ action: 'remove_group_member', groupId: group.id, principalId }) }
   private deleteGroup(group: AccessGroupSignal): void { if (window.confirm(`Delete ${group.name}? Access granted through this group will be removed.`)) this.emit({ action: 'delete_group', groupId: group.id }) }
-}
-
-function identitySourceLabel(principal: AccessPrincipalSignal): string {
-  if (principal.identitySource === 'local') return 'Local'
-  if (principal.identityProvider) return principal.identityProvider.toUpperCase()
-  return principal.identitySource || 'System'
-}
-
-function principalInitials(principal: AccessPrincipalSignal): string {
-  return initialsForValue(principal.displayName || principal.email || 'User')
-}
-
-function currentPrincipalAvatarUrl(chrome: { sidebar?: { userAvatarUrl?: string } }, principalId: string): string {
-  const avatarUrl = chrome.sidebar?.userAvatarUrl?.trim() ?? ''
-  if (!avatarUrl) return ''
-  try {
-    const parts = new URL(avatarUrl, window.location.origin).pathname.split('/')
-    return parts[1] === 'profile' && parts[2] === 'avatars' && decodeURIComponent(parts[3] ?? '') === principalId ? avatarUrl : ''
-  } catch {
-    return ''
-  }
-}
-
-function initialsForValue(value: string): string {
-  const words = value.trim().split(/\s+/).filter(Boolean)
-  return (words.length > 1 ? `${words[0][0]}${words[1][0]}` : value.slice(0, 2)).toUpperCase()
-}
-
-function memberActionLabel(count: number): string {
-  if (count === 0) return 'Add members'
-  return `Add ${count} ${count === 1 ? 'member' : 'members'}`
-}
-
-function formatAccessDate(value?: string): string {
-  if (!value) return 'Never'
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return value
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(parsed)
-}
-
-function humanizeAccessValue(value: string): string {
-  const normalized = value.replace(/[._-]+/g, ' ').trim()
-  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : '—'
-}
-
-function principalActivityLabel(activity: AccessActivitySignal): string {
-  const actor = activity.actorName || 'System'
-  const labels: Record<string, string> = {
-    'principal.local_user.created': 'created the local user',
-    'principal.updated': 'updated the user profile',
-    'principal.local_password.reset': 'reset the local password',
-    'principal.blocked': 'blocked access',
-    'principal.unblocked': 'unblocked access',
-    'principal.sessions.revoked': 'revoked all sessions',
-  }
-  return `${actor} ${labels[activity.action] || humanizeAccessValue(activity.action).toLowerCase()}`
-}
-
-function formValue(form: HTMLFormElement, name: string): string {
-  return (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.value.trim() || ''
 }
 
 class LeapViewProjectRegistry extends DatastarLit(LitElement) {

@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"fmt"
+
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 )
 
 // CountServicePrincipalSecrets returns non-revoked secret counts for every
@@ -12,23 +14,13 @@ func (r *Repository) CountServicePrincipalSecrets(ctx context.Context) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `
-SELECT service_principal_id::text, COUNT(*)
-FROM access.service_principal_secret
-WHERE revoked_at IS NULL
-GROUP BY service_principal_id`)
+	rows, err := accessdb.New(db).CountServicePrincipalSecrets(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("count service principal secrets: %w", err)
 	}
-	defer rows.Close()
 	counts := map[string]int{}
-	for rows.Next() {
-		var principalID string
-		var count int
-		if err := rows.Scan(&principalID, &count); err != nil {
-			return nil, err
-		}
-		counts[principalID] = count
+	for _, row := range rows {
+		counts[principalUUID(row.ServicePrincipalID)] = int(row.SecretCount)
 	}
-	return counts, rows.Err()
+	return counts, nil
 }
