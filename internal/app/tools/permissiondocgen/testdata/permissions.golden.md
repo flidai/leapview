@@ -6,6 +6,8 @@ This reference is generated from LeapView's canonical Go permission catalog. It 
 
 Catalog profile: `leapview.permissions/v1`. Persisted credentials and assignments must retain this profile when they adopt typed permission pairs.
 
+Catalog presence defines stable vocabulary, not blanket runtime availability. `UI selectable` means a picker may offer the action only when its current authority provider supplies a matching target pair; unsupported or unqualified operations remain unavailable.
+
 ## Actions
 
 | Action | Family | Scope | Resource kinds | Check kinds | Prerequisites | Delegable | UI selectable | Description |

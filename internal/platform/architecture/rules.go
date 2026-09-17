@@ -32,7 +32,7 @@ type PackageRule struct {
 // import as a synchronous contract. Adapter and module packages are never
 // made public merely because their capability has an allowed edge.
 var PublicContractPrefixes = map[string][]string{
-	"access":        {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
+	"access":        {"pkg/authority", "internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
 	"agent":         {"internal/agent/api", "internal/agent/ui/signals"},
 	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
 	"dashboard":     {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/document", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/querymap", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
@@ -84,6 +84,7 @@ var SharedContractPrefixes = map[string][]string{
 	// canonical graph package, never an arbitrary project implementation
 	// subtree.
 	"access":       {"internal/project/graph", "internal/project/runtime"},
+	"platform":     {"pkg/authority"},
 	"admin":        {"internal/project/graph"},
 	"agent":        {"internal/project/graph"},
 	"analytics":    {"internal/project/graph", "internal/project/contracts"},
@@ -300,6 +301,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "desktop/native/windowspolicy", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/extension", Capability: "platform", Layer: LayerContract},
 	{Prefix: "pkg/agent", Capability: "agent", Layer: LayerContract},
+	{Prefix: "pkg/authority", Capability: "access", Layer: LayerContract},
 	{Prefix: "pkg/pagestream", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "pkg/duckdbsql", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "pkg/jobs", Capability: "platform", Layer: LayerPlatform},

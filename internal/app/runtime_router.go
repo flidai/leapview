@@ -17,7 +17,6 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -590,7 +589,7 @@ func buildApplicationSurfaces(
 		// Authoring is composed before the final metrics decorator. Bind the
 		// concrete governor now, after query authorization is installed, so direct
 		// draft preview cannot execute against a leased runtime without admission.
-		if governor, ok := metrics.(dataquery.Governor); ok {
+		if governor, ok := metrics.(analyticsmodule.QueryGovernor); ok {
 			capabilities.Authoring.SetPreviewGovernor(governor)
 		} else if runtimeConfig.RequireQueryAuthorization {
 			return fail(errors.New("governed dashboard preview query governor is unavailable"))
