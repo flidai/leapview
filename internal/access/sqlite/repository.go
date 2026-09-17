@@ -173,6 +173,7 @@ func mapAPIToken(row platformdb.ApiToken) access.APIToken {
 		ID:           row.ID,
 		PrincipalID:  row.PrincipalID,
 		Name:         row.Name,
+		Description:  row.Description,
 		Capabilities: capabilities,
 		ExpiresAt:    nullString(row.ExpiresAt),
 		CreatedAt:    row.CreatedAt,

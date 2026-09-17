@@ -78,7 +78,7 @@ func tokenSignal(value access.APIToken) TokenSignal {
 		capabilities = append(capabilities, string(capability))
 	}
 	return TokenSignal{
-		ID: value.ID, Name: value.Name, Capabilities: capabilities, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
+		ID: value.ID, Name: value.Name, Description: value.Description, Capabilities: capabilities, CreatedAt: value.CreatedAt, LastUsedAt: value.LastUsedAt,
 		ExpiresAt: value.ExpiresAt, RevokedAt: value.RevokedAt,
 	}
 }

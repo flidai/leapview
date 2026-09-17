@@ -48,7 +48,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
         {
           label: 'Access',
           items: [
-            { id: 'principals', label: 'Principals', href: '/admin/principals', icon: 'users' },
+            { id: 'principals', label: 'Users', href: '/admin/principals', icon: 'users' },
             { id: 'groups', label: 'Groups', href: '/admin/groups', icon: 'users-round' },
             { id: 'service-accounts', label: 'Service accounts', href: '/admin/service-accounts', icon: 'bot' },
             { id: 'authentication', label: 'Authentication', href: '/admin/authentication', icon: 'system' },

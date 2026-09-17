@@ -76,6 +76,7 @@ func TestAdminRoutesExposeOnlyPersonalSettingsToViewer(t *testing.T) {
 		{method: http.MethodGet, path: "/admin/profile", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/security", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/api-tokens", status: http.StatusOK},
+		{method: http.MethodGet, path: "/admin/api-tokens/new", status: http.StatusOK},
 		{method: http.MethodGet, path: "/admin/agent", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage", status: http.StatusForbidden},
 		{method: http.MethodGet, path: "/admin/storage/tables/model/orders", status: http.StatusForbidden},

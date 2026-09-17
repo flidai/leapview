@@ -14,6 +14,7 @@ import type {
 } from '../../generated/signals'
 
 type ProductSection = 'general' | 'authentication' | 'system'
+type StatusTone = 'positive' | 'neutral' | 'warning' | 'negative'
 
 const emptyProductSettings: ProductSettingsSignal = {
   active: 'general', canManage: false,
@@ -64,14 +65,16 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
 
   static styles = [settingsFieldStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; gap: var(--base-size-24); max-width: 72rem; }
-    .panel { display: grid; gap: 1rem; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: 1rem; }
+    .settings { display: grid; min-width: 0; gap: var(--base-size-24); max-width: var(--lv-page-content-max-width, 72rem); }
+    .panel { display: grid; min-width: 0; gap: var(--base-size-16); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-20); }
     .panel h2, .panel h3, .panel p { margin: 0; }
     .panel h2 { font: var(--lv-type-section-title); }
     .panel h3 { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+    .panel-heading { display: grid; min-width: 0; gap: var(--base-size-4); }
     .hint { color: var(--lv-fg-muted); font: var(--lv-type-caption); line-height: var(--base-text-lineHeight-snug); }
-    .row { display: grid; grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr); gap: .75rem; align-items: center; border-top: var(--lv-border-muted); padding-top: .75rem; }
-    .row:first-of-type { border-top: 0; padding-top: 0; }
+    .settings-rows { display: grid; min-width: 0; }
+    .settings-row, .row { display: grid; grid-template-columns: minmax(11rem, .7fr) minmax(0, 1.3fr); gap: var(--base-size-16); align-items: center; border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
+    .settings-row:first-child, .row:first-of-type { border-top: 0; padding-top: 0; }
     input[type="text"] { box-sizing: border-box; width: min(100%, 32rem); border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-bg-control); color: inherit; padding: .45rem .6rem; font: var(--lv-type-body-compact); }
     button.action { border: var(--lv-border-default); border-radius: var(--lv-radius-small); background: var(--lv-button-bg-rest); color: var(--lv-button-fg-rest); cursor: pointer; padding: .42rem .7rem; font: var(--lv-type-body-compact); }
     button.action.primary { border-color: var(--lv-bg-accent); background: var(--lv-bg-accent); color: var(--lv-fg-on-accent); }
@@ -92,15 +95,30 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     .file-action input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
     .about-links { display: flex; flex-wrap: wrap; gap: var(--base-size-16); }
     .about-links a { color: var(--lv-fg-accent); }
-    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: .65rem; }
-    .status-card { display: grid; gap: .3rem; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); padding: .7rem; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: var(--base-size-8); }
+    .status-card { display: grid; min-width: 0; gap: var(--base-size-4); border: var(--lv-border-muted); border-radius: var(--lv-radius-small); padding: var(--base-size-12); }
     .status-card strong { font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-    .status { font: var(--lv-type-caption); }
-    .status.enabled { color: var(--lv-fg-success); }
-    .status.disabled { color: var(--lv-fg-muted); }
-    .notice { border-radius: var(--lv-radius-small); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); padding: .6rem .7rem; font: var(--lv-type-caption); }
+    .status { overflow-wrap: anywhere; font: var(--lv-type-caption); }
+    .status-positive, .status.enabled { color: var(--lv-fg-success); }
+    .status-neutral, .status.disabled { color: var(--lv-fg-muted); }
+    .status-warning { color: var(--lv-fg-warning); }
+    .status-negative { color: var(--lv-fg-danger); }
+    .notice { border-radius: var(--lv-radius-small); background: var(--lv-bg-panel-muted); color: var(--lv-fg-muted); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-caption); }
     .message { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-    @media (max-width: 620px) { .row { grid-template-columns: 1fr; gap: .35rem; } }
+    @media (max-width: 760px) {
+      .settings { gap: var(--base-size-16); }
+      .panel { padding: var(--base-size-16); }
+      .settings-row, .row { grid-template-columns: 1fr; gap: var(--base-size-6); align-items: start; }
+      .inline { align-items: stretch; }
+      .inline input[type="text"] { flex: 1 1 12rem; min-width: 0; }
+    }
+    @media (max-width: 480px) {
+      .panel { padding: var(--base-size-12); }
+      .status-grid { grid-template-columns: 1fr; }
+      .inline { align-items: stretch; flex-direction: column; }
+      .inline input[type="text"], .inline .file-action, .inline button { width: 100%; }
+      .logo { align-items: flex-start; }
+    }
   `]
 
   private get settings(): ProductSettingsSignal {
@@ -128,7 +146,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
         ${settings.error ? html`<div class="notice" role="alert">${settings.error}</div>` : nothing}
         ${this.selectedSection === 'general' ? this.renderGeneral(settings.general, settings.canManage) : nothing}
         ${this.selectedSection === 'authentication' ? this.renderAuthentication(settings.authentication, settings.api) : nothing}
-        ${this.selectedSection === 'system' ? this.renderSystem(settings.system, settings.api) : nothing}
+        ${this.selectedSection === 'system' ? this.renderSystem(settings.system) : nothing}
         ${this.commandError ? html`<div class="notice" role="alert">${this.commandError}</div>` : nothing}
         ${this.message ? html`<div class="message" role="status">${this.message}</div>` : nothing}
       </div>
@@ -145,8 +163,10 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     const resetDisabled = !canManage || this.busy || (general.displayName === 'LeapView' && !general.logo)
     return html`
       <section class="panel" aria-label="Instance identity settings">
-        <h2>Instance identity</h2>
-        <p class="hint">Choose the name and logo shown in the application. Customized instances retain a subtle link back to LeapView.</p>
+        <div class="panel-heading">
+          <h2>Instance identity</h2>
+          <p class="hint">Choose the name and logo shown in the application. Customized instances retain a subtle link back to LeapView.</p>
+        </div>
         <div class="identity-preview" aria-label="Instance identity preview">
           ${general.logo
             ? html`<img src=${general.logo.url} alt="">`
@@ -156,92 +176,119 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
             <a class="attribution" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>
           </span>
         </div>
-        <div class="row">
-          <div class="settings-field"><label class="settings-label" for="product-instance-name">Instance name</label><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
-          <div class="inline">
-            <input id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
-            <button class="action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
+        <div class="settings-rows">
+          <div class="settings-row row">
+            <div class="settings-field"><label class="settings-label" for="product-instance-name">Instance name</label><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
+            <div class="inline">
+              <input id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
+              <button class="action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
+            </div>
           </div>
-        </div>
-        <div class="row">
-          <div class="settings-field"><span class="settings-label">Instance logo</span><span class="settings-description">JPEG, PNG, or WebP · 5 MB maximum</span></div>
-          <div class="inline">
-            ${general.logo ? html`<div class="logo"><img src=${general.logo.url} alt="Product logo"><span class="hint">${general.logo.width} × ${general.logo.height}</span></div>` : html`<span class="settings-value">No logo configured</span>`}
-            <label class=${`file-action ${!canManage || disabled ? 'disabled' : ''}`}>
-              <span>${general.logo ? 'Change logo' : 'Upload logo'}</span>
-              <input id="product-logo-upload" aria-label=${general.logo ? 'Change logo' : 'Upload logo'} type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
-            </label>
-            ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
+          <div class="settings-row row">
+            <div class="settings-field"><span class="settings-label">Instance logo</span><span class="settings-description">JPEG, PNG, or WebP · 5 MB maximum</span></div>
+            <div class="inline">
+              ${general.logo ? html`<div class="logo"><img src=${general.logo.url} alt="Product logo"><span class="hint">${general.logo.width} × ${general.logo.height}</span></div>` : html`<span class="settings-value">No logo configured</span>`}
+              <label class=${`file-action ${!canManage || disabled ? 'disabled' : ''}`}>
+                <span>${general.logo ? 'Change logo' : 'Upload logo'}</span>
+                <input id="product-logo-upload" aria-label=${general.logo ? 'Change logo' : 'Upload logo'} type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
+              </label>
+              ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
+            </div>
           </div>
-        </div>
-        <div class="row">
-          <div class="settings-field"><span class="settings-label">LeapView defaults</span><span class="settings-description">Restore the default name and remove the custom logo</span></div>
-          <button class="action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>
+          <div class="settings-row row">
+            <div class="settings-field"><span class="settings-label">LeapView defaults</span><span class="settings-description">Restore the default name and remove the custom logo</span></div>
+            <button class="action" type="button" ?disabled=${resetDisabled} @click=${this.resetIdentity}>Reset to LeapView</button>
+          </div>
         </div>
         ${!canManage ? html`<div class="notice">You have read-only access. Platform administrator access is required to change product identity.</div>` : nothing}
       </section>
       <section class="panel" aria-label="Instance details">
-        <h2>Instance details</h2>
-        <p class="hint">Read-only deployment metadata for this installation.</p>
-        <div class="row"><div class="settings-label">Instance ID</div><span class="settings-value">${general.instanceId || 'Unknown'}</span></div>
-        <div class="row"><div class="settings-label">Canonical origin</div><span class="settings-value">${general.canonicalOrigin || 'Unknown'}</span></div>
-        <div class="row"><div class="settings-label">Environment</div><span class="settings-value">${general.environment || 'Unknown'}</span></div>
-        <div class="row"><div class="settings-label">Last updated</div><span class="settings-value">${general.updatedAt || 'Unknown'} · revision ${general.revision || 'unknown'}</span></div>
+        <div class="panel-heading">
+          <h2>Instance details</h2>
+          <p class="hint">Read-only deployment metadata for this installation.</p>
+        </div>
+        <div class="settings-rows">
+          ${this.settingsRow('Instance ID', general.instanceId || 'Unknown')}
+          ${this.settingsRow('Canonical origin', general.canonicalOrigin || 'Unknown')}
+          ${this.settingsRow('Environment', general.environment || 'Unknown')}
+          ${this.settingsRow('Last updated', `${general.updatedAt || 'Unknown'} · revision ${general.revision || 'unknown'}`)}
+        </div>
       </section>
     `
   }
 
   private renderAuthentication(auth: ProductAuthenticationSignal, api: ProductAPIStatusSignal) {
     return html`
-      <section class="panel" aria-label="Authentication settings">
-        <h2>Authentication</h2>
-        <p class="hint">Deployment-managed authentication configuration. Secrets, issuer URLs, tenant IDs, and callback URLs are never exposed here.</p>
+      <section class="panel" aria-label="Sign-in and provisioning settings">
+        <div class="panel-heading">
+          <h2>Sign-in &amp; provisioning</h2>
+          <p class="hint">Review deployment-managed sign-in and provisioning capabilities. Secrets, issuer URLs, tenant IDs, and callback URLs are never exposed here.</p>
+        </div>
         <div class="notice">Managed by <strong>${auth.managedBy || 'deployment'}</strong>; configuration changes are made through deployment settings.</div>
         <div class="status-grid">
-          ${this.statusCard('Browser sign-in', auth.browserEnabled, auth.browserEnabled ? 'Enabled' : 'Disabled')}
-          ${this.statusCard('API-token-only mode', auth.apiTokenOnly, auth.apiTokenOnly ? 'Enabled' : 'Disabled')}
-          ${this.statusCard('Local credentials', auth.local.enabled, availabilityLabel(auth.local))}
-          ${this.statusCard('OIDC', auth.oidc.enabled, `${availabilityLabel(auth.oidc)}${auth.oidc.provider ? ` · ${auth.oidc.provider}` : ''}`)}
-          ${this.statusCard('Azure', auth.azure.enabled, availabilityLabel(auth.azure))}
-          ${this.statusCard('SCIM provisioning', auth.scim.enabled, availabilityLabel(auth.scim))}
+          ${this.statusCard('Browser sign-in', statusTone(auth.browserEnabled), auth.browserEnabled ? 'Enabled' : 'Disabled')}
+          ${this.statusCard('API-token-only mode', statusTone(auth.apiTokenOnly), auth.apiTokenOnly ? 'Enabled' : 'Disabled')}
+          ${this.statusCard('Local credentials', availabilityTone(auth.local), availabilityLabel(auth.local))}
+          ${this.statusCard('OIDC', availabilityTone(auth.oidc), `${availabilityLabel(auth.oidc)}${auth.oidc.provider ? ` · ${auth.oidc.provider}` : ''}`)}
+          ${this.statusCard('Azure', availabilityTone(auth.azure), availabilityLabel(auth.azure))}
+          ${this.statusCard('SCIM provisioning', availabilityTone(auth.scim), availabilityLabel(auth.scim))}
         </div>
-        <h3>API and protocol availability</h3>
+      </section>
+      <section class="panel" aria-label="API and protocols settings">
+        <div class="panel-heading">
+          <h2>API &amp; protocols</h2>
+          <p class="hint">Review deployment-managed API credentials, service identities, and protocol endpoints.</p>
+        </div>
         <div class="status-grid">
-          ${this.statusCard('Bearer credentials', api.bearerCredentials.enabled, availabilityLabel(api.bearerCredentials))}
-          ${this.statusCard('Service principals', api.servicePrincipals.enabled, availabilityLabel(api.servicePrincipals))}
-          ${this.statusCard('OAuth', api.oauth.enabled, availabilityLabel(api.oauth))}
-          ${this.statusCard('MCP', api.mcp.enabled, availabilityLabel(api.mcp))}
-          ${this.statusCard('External MCP issuer', api.externalMcpIssuer, api.externalMcpIssuer ? 'Configured' : 'Not configured')}
+          ${this.statusCard('Bearer credentials', availabilityTone(api.bearerCredentials), availabilityLabel(api.bearerCredentials))}
+          ${this.statusCard('Service principals', availabilityTone(api.servicePrincipals), availabilityLabel(api.servicePrincipals))}
+          ${this.statusCard('OAuth', availabilityTone(api.oauth), availabilityLabel(api.oauth))}
+          ${this.statusCard('MCP', availabilityTone(api.mcp), availabilityLabel(api.mcp))}
+          ${this.statusCard('External MCP issuer', statusTone(api.externalMcpIssuer), api.externalMcpIssuer ? 'Configured' : 'Not configured')}
         </div>
       </section>
     `
   }
 
-  private renderSystem(system: ProductSystemSignal, api: ProductAPIStatusSignal) {
+  private renderSystem(system: ProductSystemSignal) {
     const build = system.build
     const limits = system.limits
     const agent = system.agent
     return html`
-      <section class="panel" aria-label="System settings">
-        <h2>System</h2>
-        <p class="hint">Runtime health and safe operational metadata for this instance.</p>
-        <div class="status-grid">
-          ${this.statusCard('Runtime health', system.runtime.health === 'healthy', system.runtime.health || 'Unknown')}
-          ${this.statusCard('Control plane', system.runtime.controlPlane === 'available', system.runtime.controlPlane || 'Unknown')}
-          ${this.statusCard('Agent', agent.configured, agent.configured ? `${agent.provider || 'Configured'}${agent.modelConfigured ? ' · model ready' : ' · model missing'}` : 'Not configured')}
-          ${this.statusCard('Storage backend', Boolean(system.storageBackend), system.storageBackend || 'Unknown')}
+      <section class="panel" aria-label="Runtime health settings">
+        <div class="panel-heading">
+          <h2>Runtime health</h2>
+          <p class="hint">Runtime health and safe operational metadata for this instance.</p>
         </div>
-        <div class="row"><div class="settings-label">Instance ID</div><span class="settings-value">${system.instanceId || 'Unknown'}</span></div>
-        <div class="row"><div class="settings-label">Canonical origin</div><span class="settings-value">${system.canonicalOrigin || 'Unknown'}</span></div>
-        <div class="row"><div class="settings-label">Environment</div><span class="settings-value">${system.environment || 'Unknown'}</span></div>
-        <h3>Build</h3>
         <div class="status-grid">
-          ${this.statusCard('Version', Boolean(build.version), build.version || 'Unknown')}
-          ${this.statusCard('Revision', Boolean(build.revision), build.revision || 'Unknown')}
-          ${this.statusCard('Build time', Boolean(build.buildTime), build.buildTime || 'Unknown')}
-          ${this.statusCard('Build state', !build.dirty, build.dirty ? 'Dirty' : build.development ? 'Development' : 'Release')}
+          ${this.statusCard('Runtime health', runtimeTone(system.runtime.health), system.runtime.health || 'Unknown')}
+          ${this.statusCard('Control plane', runtimeTone(system.runtime.controlPlane, 'available'), system.runtime.controlPlane || 'Unknown')}
+          ${this.statusCard('Agent', agentTone(agent), agent.configured ? `${agent.provider || 'Configured'}${agent.modelConfigured ? ' · model ready' : ' · model missing'}` : 'Not configured')}
+          ${this.statusCard('Storage backend', system.storageBackend ? 'positive' : 'neutral', system.storageBackend || 'Unknown')}
         </div>
-        <h3>Limits</h3>
+        <div class="settings-rows">
+          ${this.settingsRow('Instance ID', system.instanceId || 'Unknown')}
+          ${this.settingsRow('Canonical origin', system.canonicalOrigin || 'Unknown')}
+          ${this.settingsRow('Environment', system.environment || 'Unknown')}
+        </div>
+      </section>
+      <section class="panel" aria-label="Build settings">
+        <div class="panel-heading">
+          <h2>Build</h2>
+          <p class="hint">Version and release metadata reported by the running instance.</p>
+        </div>
+        <div class="status-grid">
+          ${this.statusCard('Version', build.version ? 'neutral' : 'warning', build.version || 'Unknown')}
+          ${this.statusCard('Revision', build.revision ? 'neutral' : 'warning', build.revision || 'Unknown')}
+          ${this.statusCard('Build time', build.buildTime ? 'neutral' : 'warning', build.buildTime || 'Unknown')}
+          ${this.statusCard('Build state', build.dirty ? 'negative' : build.development ? 'warning' : 'positive', build.dirty ? 'Dirty' : build.development ? 'Development' : 'Release')}
+        </div>
+      </section>
+      <section class="panel" aria-label="Limits settings">
+        <div class="panel-heading">
+          <h2>Limits</h2>
+          <p class="hint">Configured query and managed-data budgets for this instance.</p>
+        </div>
         <div class="status-grid">
           ${this.limitCard('Query result rows', limits.queryResultMaxRows)}
           ${this.limitCard('Query result bytes', limits.queryResultMaxBytes)}
@@ -249,12 +296,12 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           ${this.limitCard('Managed-data file bytes', limits.managedDataMaxFileBytes)}
           ${this.limitCard('Managed-data revision bytes', limits.managedDataMaxRevisionBytes)}
         </div>
-        <h3>API and protocol</h3>
-        <p class="hint">${api.externalMcpIssuer ? 'External MCP issuer is available.' : 'External MCP issuer is not configured.'} API capabilities remain deployment-managed.</p>
       </section>
       <section class="panel" aria-label="About LeapView">
-        <h2>About LeapView</h2>
-        <p>Powered by LeapView, open-source dashboards-as-code business intelligence.</p>
+        <div class="panel-heading">
+          <h2>About LeapView</h2>
+          <p>Powered by LeapView, open-source dashboards-as-code business intelligence.</p>
+        </div>
         <div class="about-links">
           <a href="https://leapview.dev" target="_blank" rel="noreferrer">LeapView website</a>
           <a href="https://github.com/flidai/leapview" target="_blank" rel="noreferrer">View source</a>
@@ -264,8 +311,12 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private statusCard(label: string, enabled: boolean, value: string) {
-    return html`<div class="status-card"><strong>${label}</strong><span class=${`status ${enabled ? 'enabled' : 'disabled'}`}>${value}</span></div>`
+  private settingsRow(label: string, value: string) {
+    return html`<div class="settings-row"><div class="settings-field"><span class="settings-label">${label}</span></div><span class="settings-value">${value}</span></div>`
+  }
+
+  private statusCard(label: string, tone: StatusTone, value: string) {
+    return html`<div class="status-card"><strong>${label}</strong><span class=${`status status-${tone} ${tone === 'positive' ? 'enabled' : tone === 'neutral' ? 'disabled' : ''}`} data-status=${tone} role="status">${value}</span></div>`
   }
 
   private limitCard(label: string, value: number) {
@@ -341,6 +392,25 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
 function availabilityLabel(status: ProductAvailabilitySignal): string {
   if (!status.available) return 'Unavailable'
   return status.enabled ? 'Enabled' : 'Disabled'
+}
+
+function statusTone(enabled: boolean): StatusTone {
+  return enabled ? 'positive' : 'neutral'
+}
+
+function availabilityTone(status: ProductAvailabilitySignal): StatusTone {
+  if (!status.available) return 'neutral'
+  return status.enabled ? 'positive' : 'neutral'
+}
+
+function runtimeTone(value: string, healthyValue = 'healthy'): StatusTone {
+  if (!value) return 'neutral'
+  return value === healthyValue || value === 'available' ? 'positive' : 'negative'
+}
+
+function agentTone(agent: ProductSystemSignal['agent']): StatusTone {
+  if (!agent.configured) return 'neutral'
+  return agent.modelConfigured ? 'positive' : 'warning'
 }
 
 function formatLimit(value: number): string {

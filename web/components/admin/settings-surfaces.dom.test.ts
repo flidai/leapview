@@ -50,16 +50,110 @@ test('settings surfaces render typed signals and emit commands', async () => {
       await element.updateComplete
       let detail: unknown = null
       element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
-      ;((element.shadowRoot as ShadowRoot).querySelector('tbody button') as HTMLButtonElement).click()
+      const root = element.shadowRoot as ShadowRoot
+      const sharedList = root.querySelector('lv-entity-list')
+      ;(root.querySelector('.entity-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const displayNameLabel = root.querySelector('input[name="displayName"]')?.getAttribute('aria-label')
+      ;(root.querySelector('[data-service-account-dialog="create"] .modal-close') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
       return {
-        text: (element.shadowRoot as ShadowRoot).textContent?.replace(/\s+/g, ' ').trim(),
+        text: root.textContent?.replace(/\s+/g, ' ').trim(),
         detail,
-        displayNameLabel: (element.shadowRoot as ShadowRoot).querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
+        displayNameLabel,
+        hasSharedList: Boolean(sharedList),
+        customTableCount: root.querySelectorAll(':scope > .table-wrap').length,
+        pageHeading: root.querySelector('.page-header h1')?.textContent?.trim(),
       }
     })
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
-    expect(result.displayNameLabel).toBe('New account')
+    expect(result.displayNameLabel).toBe('Display name')
+    expect(result.hasSharedList).toBe(true)
+    expect(result.customTableCount).toBe(0)
+    expect(result.pageHeading).toBe('Service accounts')
+  } finally { await page.close() }
+})
+
+test('service account detail uses shared lists and focused credential confirmations', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts') && customElements.get('lv-select-menu'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = {
+        items: [{ id: 'svc-1', displayName: 'Production deploy', kind: 'service_principal', createdAt: '2026-08-01T10:00:00Z', updatedAt: '2026-08-02T11:00:00Z' }],
+        selectedId: 'svc-1',
+        secrets: [{ id: 'secret-1', servicePrincipalId: 'svc-1', name: 'CI pipeline', createdAt: '2026-08-03T12:00:00Z', expiresAt: '2026-11-01T23:59:59Z' }],
+        createdSecret: 'lv_service_secret_once', loading: false, hasMore: false,
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminServiceAccounts: state }, getPath: (path: string) => path === 'adminServiceAccounts' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-service-accounts') as any
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const commands: unknown[] = []
+      element.addEventListener('lv-service-account-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const initial = {
+        sharedDetail: Boolean(root.querySelector('.detail-surface .detail-sections')),
+        sharedCredentialList: Boolean(root.querySelector('lv-entity-list')),
+        ownTableCount: root.querySelectorAll(':scope > .table-wrap').length,
+        headings: Array.from(root.querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
+        secretNotice: root.querySelector('lv-one-time-secret')?.shadowRoot?.querySelector('[role="status"]')?.textContent?.replace(/\s+/g, ' ').trim(),
+        backHref: root.querySelector('.back-link')?.getAttribute('href'),
+      }
+
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Create credential')) as HTMLButtonElement).click()
+      await element.updateComplete
+      const secretDialog = root.querySelector('[data-service-account-dialog="secret"]') as HTMLDialogElement
+      const expiration = secretDialog.querySelector('lv-select-menu') as any
+      await expiration.updateComplete
+      const form = secretDialog.querySelector('form') as HTMLFormElement
+      ;(form.elements.namedItem('secretName') as HTMLInputElement).value = 'Warehouse sync'
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      const owner = document.querySelector('lv-admin-page') as Element
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: owner } }))
+      await element.updateComplete
+
+      ;(root.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      const revokeDialog = root.querySelector('[data-service-account-dialog="revoke"]') as HTMLDialogElement
+      ;(Array.from(revokeDialog.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('I understand')) as HTMLButtonElement).click()
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: owner } }))
+      await element.updateComplete
+
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('Delete service account')) as HTMLButtonElement).click()
+      await element.updateComplete
+      const deleteDialog = root.querySelector('[data-service-account-dialog="delete"]') as HTMLDialogElement
+      ;(Array.from(deleteDialog.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.includes('I understand')) as HTMLButtonElement).click()
+      await element.updateComplete
+      return {
+        initial,
+        expirationLabel: (expiration.shadowRoot as ShadowRoot).querySelector('.value')?.textContent?.trim(),
+        commands,
+        revokeTitle: revokeDialog.querySelector('h2')?.textContent?.trim(),
+        deleteTitle: deleteDialog.querySelector('h2')?.textContent?.trim(),
+      }
+    })
+    expect(result.initial).toEqual({
+      sharedDetail: true,
+      sharedCredentialList: true,
+      ownTableCount: 0,
+      headings: ['Overview', 'Credentials'],
+      secretNotice: expect.stringContaining('Copy this credential now'),
+      backHref: '/admin/service-accounts',
+    })
+    expect(result.expirationLabel).toMatch(/^90 days \(.+\)$/)
+    expect(result.commands).toHaveLength(3)
+    expect(result.commands[0]).toMatchObject({ action: 'create_secret', accountId: 'svc-1', secretName: 'Warehouse sync' })
+    expect((result.commands[0] as { expiresAt: string }).expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(result.commands[1]).toEqual({ action: 'revoke_secret', accountId: 'svc-1', secretId: 'secret-1' })
+    expect(result.commands[2]).toEqual({ action: 'delete', accountId: 'svc-1' })
+    expect(result.revokeTitle).toBe('Revoke this credential?')
+    expect(result.deleteTitle).toBe('Delete this service account?')
   } finally { await page.close() }
 })
 
@@ -106,7 +200,143 @@ test('service account and audit controls unlock when a no-op command finishes', 
         auditUnlocked: !((audit.shadowRoot as ShadowRoot).querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
-    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID'], accountUnlocked: true, auditUnlocked: true })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Resource ID', 'From', 'To'], accountUnlocked: true, auditUnlocked: true })
+  } finally { await page.close() }
+})
+
+test('audit log uses shared filters and record tables with readable event values', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-audit-log') && customElements.get('lv-record-table') && customElements.get('lv-select-menu'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = {
+        items: [
+          { id: 'event-1', action: 'service_principal_secret.created', principalId: 'admin-1', principalName: 'Platform Admin', principalEmail: 'admin@example.com', resourceKind: 'service_principal_secret', resourceId: 'secret-1', capability: 'manage_credentials', status: 'success', createdAt: '2026-08-02T11:00:00Z' },
+          { id: 'event-2', action: 'principal.blocked', resourceKind: 'principal', resourceId: 'user-1', status: 'failed', createdAt: '2026-08-01T09:30:00Z' },
+        ],
+        filters: {}, loadedCount: 2, loading: false, hasMore: true, nextCursor: 'cursor-2',
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAuditLog: state }, getPath: (path: string) => path === 'adminAuditLog' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-audit-log') as any
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const table = root.querySelector('lv-record-table') as HTMLElement
+      const commands: unknown[] = []
+      element.addEventListener('lv-audit-log-command', (event: CustomEvent) => commands.push(event.detail))
+      const actionMenu = root.querySelector('lv-select-menu') as any
+      await actionMenu.updateComplete
+      ;(actionMenu.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('.trigger')?.click()
+      await actionMenu.updateComplete
+      ;(actionMenu.shadowRoot as ShadowRoot).querySelector<HTMLButtonElement>('[data-value="principal.blocked"]')?.click()
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: document.querySelector('lv-admin-page') } }))
+      await element.updateComplete
+      const beforeLoadMore = {
+        headings: Array.from(root.querySelectorAll('h2')).map((heading) => heading.textContent?.trim()),
+        hasRecordTable: Boolean(table),
+        ownRawTables: root.querySelectorAll(':scope > .table-wrap, :scope > table').length,
+        filterMenus: root.querySelectorAll('lv-select-menu').length,
+        headers: Array.from(table.querySelectorAll('thead th')).map((header) => header.textContent?.replace(/\s+/g, ' ').trim()),
+        rows: Array.from(table.querySelectorAll('tbody tr')).map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+        loadMoreLabel: root.querySelector('.audit-load-more')?.textContent?.trim(),
+      }
+      ;(root.querySelector('.audit-load-more') as HTMLButtonElement).click()
+      return { beforeLoadMore, commands }
+    })
+    expect(result.beforeLoadMore.headings).toEqual([])
+    expect(result.beforeLoadMore.hasRecordTable).toBe(true)
+    expect(result.beforeLoadMore.ownRawTables).toBe(0)
+    expect(result.beforeLoadMore.filterMenus).toBe(2)
+    expect(result.beforeLoadMore.headers).toEqual(['Time', 'Action', 'Actor', 'Resource', 'Capability', 'Status'])
+    expect(result.beforeLoadMore.rows[0]).toContain('Service principal secret created')
+    expect(result.beforeLoadMore.rows[0]).toContain('Platform Admin')
+    expect(result.beforeLoadMore.rows[0]).toContain('admin@example.com')
+    expect(result.beforeLoadMore.rows[0]).not.toContain('admin-1')
+    expect(result.beforeLoadMore.rows[0]).not.toContain('2026-08-02T11:00:00Z')
+    expect(result.beforeLoadMore.rows[0]).not.toContain('service_principal_secret.created')
+    expect(result.beforeLoadMore.rows[0]).not.toContain('secret-1')
+    expect(result.beforeLoadMore.rows[0]).toContain('Manage credentials')
+    expect(result.beforeLoadMore.rows[0]).toContain('Succeeded')
+    expect(result.beforeLoadMore.rows[1]).toContain('System')
+    expect(result.beforeLoadMore.loadMoreLabel).toBe('Load more')
+    expect(result.commands[0]).toEqual({ action: 'filter', filters: { action: 'principal.blocked' } })
+    expect(result.commands[1]).toEqual({ action: 'load_more', filters: {}, pageToken: 'cursor-2' })
+  } finally { await page.close() }
+})
+
+test('audit rows open a non-modal detail drawer and quick presets keep the command contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-audit-log') && customElements.get('lv-drawer'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const state = {
+        items: [{
+          id: 'event-detail-1', action: 'principal.blocked', principalId: 'admin-1', principalName: 'Platform Admin', principalEmail: 'admin@example.com', projectId: 'sales',
+          resourceKind: 'principal', resourceId: 'user-1', capability: 'manage_identity', status: 'failed',
+          requestId: 'request-1', correlationId: 'correlation-1', metadata: { reason: 'too many attempts', count: 3 },
+          createdAt: '2026-08-02T11:00:00.123Z',
+        }],
+        filters: {}, loadedCount: 1, loading: false, hasMore: false,
+      }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAuditLog: state }, getPath: (path: string) => path === 'adminAuditLog' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const element = document.querySelector('lv-audit-log') as any
+      element.requestUpdate(); await element.updateComplete
+      const root = element.shadowRoot as ShadowRoot
+      const commands: unknown[] = []
+      element.addEventListener('lv-audit-log-command', (event: CustomEvent) => commands.push(event.detail))
+
+      ;(root.querySelector('tbody tr.record-row') as HTMLElement).click()
+      await element.updateComplete
+      const drawer = root.querySelector('lv-drawer') as any
+      const drawerPanel = drawer?.shadowRoot?.querySelector('.drawer') as HTMLElement | null
+      const drawerText = drawer?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+      const rawMetadata = drawer?.querySelector('.audit-drawer-metadata') as HTMLDetailsElement | null
+      rawMetadata?.querySelector('summary')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await element.updateComplete
+
+      const failedPreset = root.querySelector<HTMLButtonElement>('[data-audit-preset="failed"]')
+      failedPreset?.click()
+      const failedCommand = commands.at(-1) as { action?: string; filters?: Record<string, unknown> }
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: document.querySelector('lv-admin-page') } }))
+      await element.updateComplete
+      const drawerClose = (drawer?.shadowRoot as ShadowRoot | null)?.querySelector('.close') as HTMLButtonElement | null
+      drawerClose?.click()
+      await element.updateComplete
+      const drawerLinks = drawer?.querySelectorAll('.audit-drawer-fact a') as NodeListOf<HTMLAnchorElement> | undefined
+
+      return {
+        drawerText,
+        rawMetadataOpen: rawMetadata?.open,
+        drawerIsNonModal: drawer?.modal === false && drawerPanel?.getAttribute('aria-modal') === null,
+        actorHref: drawer?.querySelector('.audit-drawer-fact a')?.getAttribute('href'),
+        resourceHref: drawerLinks?.[drawerLinks.length - 1]?.getAttribute('href'),
+        presetLabels: Array.from(root.querySelectorAll('[data-audit-preset]')).map((button) => button.textContent?.trim()),
+        failedCommand,
+        failedRows: root.querySelectorAll('tbody tr.record-row').length,
+        drawerClosed: !root.querySelector('lv-drawer'),
+      }
+    })
+    expect(result.drawerText).toContain('Principal blocked')
+    expect(result.drawerText).toContain('Platform Admin')
+    expect(result.drawerText).toContain('admin@example.com')
+    expect(result.drawerText).toContain('admin-1')
+    expect(result.drawerText).toContain('event-detail-1')
+    expect(result.drawerText).toContain('2026-08-02T11:00:00.123Z')
+    expect(result.drawerText).toContain('Manage identity')
+    expect(result.drawerText).toContain('Failed')
+    expect(result.drawerText).toContain('Raw metadata')
+    expect(result.rawMetadataOpen).toBe(true)
+    expect(result.drawerIsNonModal).toBe(true)
+    expect(result.actorHref).toBe('/admin/principals/admin-1')
+    expect(result.resourceHref).toBe('/admin/principals/user-1')
+    expect(result.presetLabels).toEqual(['Security', 'Access changes', 'Credentials', 'Failed events'])
+    expect(result.failedCommand).toEqual({ action: 'filter', filters: {} })
+    expect(result.failedRows).toBe(1)
+    expect(result.drawerClosed).toBe(true)
   } finally { await page.close() }
 })
 

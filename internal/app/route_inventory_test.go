@@ -87,7 +87,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "128aa4dd4f1c560d0332e54bedfc91760dfdb244c6abe8ec5a24f0364eb0188e"
+	const expectedRouteContractDigest = "0c47502a0684ca96eda406a329fce5cf53f0374897a981dec935bbd12ecbedc9"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -136,7 +136,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	switch {
 	case strings.HasPrefix(path, "/product/logo/"):
 		authenticated.owner = "admin"
-	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/personal-settings/command":
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/personal-settings/command":
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
@@ -253,6 +253,7 @@ GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
 GET /admin
 GET /admin/api-tokens
+GET /admin/api-tokens/new
 GET /admin/agent
 GET /admin/audit
 GET /admin/authentication
