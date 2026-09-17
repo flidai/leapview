@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,9 +14,10 @@ import (
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	apiidempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
+	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -86,13 +86,9 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 }
 
 func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "admin-publication-replay.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
+	pool := postgrestest.Open(t, operationpostgres.ApplySchema)
 	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
-		Store:         apiidempotencysqlite.NewStore(store.SQLDB()),
+		Store:         apiidempotencypostgres.NewStore(pool),
 		CursorSigning: cursorsigning.NewEphemeralInitializer(),
 		AuthoritativeScope: func(*http.Request) (apiprotocol.AuthoritativeScope, error) {
 			return apiprotocol.AuthoritativeScope{TargetID: "target:test", ProjectID: "project:server-bound", Environment: "test", GenerationID: "generation:test"}, nil

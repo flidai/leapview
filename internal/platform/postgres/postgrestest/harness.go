@@ -24,6 +24,7 @@ import (
 	"time"
 
 	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
@@ -331,6 +332,42 @@ type Database struct {
 	h     *Harness
 	Name  string
 	admin *pgxpool.Pool
+}
+
+// Schema applies one capability-owned schema inside the fixture transaction.
+// Keeping the callback shape here lets tests compose only the PostgreSQL
+// authorities they exercise without rebuilding a shared control-plane store.
+type Schema func(context.Context, pgx.Tx) error
+
+// Open starts an isolated PostgreSQL database, applies the supplied capability
+// schemas atomically, and returns its administrator pool. Tests that need role
+// qualification should continue to provision explicit roles and pools instead.
+func Open(t *testing.T, schemas ...Schema) *pgxpool.Pool {
+	t.Helper()
+	h := Start(t)
+	database := h.NewDatabase(t, "")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatalf("open PostgreSQL test pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin PostgreSQL test schema transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	for _, apply := range schemas {
+		if apply == nil {
+			t.Fatal("nil PostgreSQL test schema")
+		}
+		if err := apply(t.Context(), tx); err != nil {
+			t.Fatalf("apply PostgreSQL test schema: %v", err)
+		}
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit PostgreSQL test schema transaction: %v", err)
+	}
+	return pool
 }
 
 // NewDatabase creates one isolated database and arranges deterministic FORCE

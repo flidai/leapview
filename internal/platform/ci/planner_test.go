@@ -362,7 +362,7 @@ func TestCurrentPRSelection(t *testing.T) {
 		path              string
 		required, skipped []string
 	}{
-		{"internal/access/sqlite/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "warehouse-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
+		{"internal/access/postgres/session.go", []string{"go-packages-validation", "go-application-validation", "postgres-isolation-validation", "warehouse-validation", "spatial-tile-benchmarks"}, []string{"apigen-validation", "frontend-validation"}},
 		{"web/components/chat/chat-page.ts", []string{"frontend-validation"}, []string{"go-application-validation", "postgres-isolation-validation"}},
 		{"docs/articles/start/installation.md", []string{"docs-validation", "frontend-validation"}, []string{"go-application-validation", "spatial-tile-benchmarks"}},
 		{"api/signals/main.tsp", []string{"apigen-validation", "go-packages-validation", "go-application-validation", "frontend-validation", "docs-validation"}, nil},
@@ -402,7 +402,7 @@ func TestQualitySelectionKeepsCrossLanguageCoverageForNonBackendPlans(t *testing
 		{name: "frontend", changes: []Change{{Status: "M", Paths: []string{"web/components/chat/chat-page.ts"}}}, quality: true},
 		{name: "site", changes: []Change{{Status: "M", Paths: []string{"site/content/index.md"}}}, quality: true},
 		{name: "docs", changes: []Change{{Status: "M", Paths: []string{"README.md"}}}, quality: true},
-		{name: "backend", changes: []Change{{Status: "M", Paths: []string{"internal/access/sqlite/session.go"}}}, packages: true},
+		{name: "backend", changes: []Change{{Status: "M", Paths: []string{"internal/access/postgres/session.go"}}}, packages: true},
 		{name: "generated contract", changes: []Change{{Status: "M", Paths: []string{"api/signals/main.tsp"}}}, packages: true},
 		{name: "shared", changes: []Change{{Status: "M", Paths: []string{"web/components/shared/datastar-lit.ts"}}}, quality: true},
 		{name: "unknown", changes: []Change{{Status: "M", Paths: []string{"mystery/new-format"}}}, packages: true},
@@ -431,7 +431,7 @@ func TestQualitySelectionKeepsCrossLanguageCoverageForNonBackendPlans(t *testing
 }
 
 func TestPRRenameDeleteAndSharedBrowserConsumers(t *testing.T) {
-	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/sqlite/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
+	p := PlanChanges(Input{Event: "pull_request", PullRequestNumber: 1}, []Change{{Status: "R100", Paths: []string{"internal/access/postgres/deleted_test.go", "docs/articles/moved.md"}}, {Status: "D", Paths: []string{"web/components/shared/datastar-runtime.ts"}}})
 	if !p.PR.Effective.GoApplication || !p.PR.Effective.Warehouse || !p.PR.Effective.Docs || !reflect.DeepEqual(p.PR.Effective.Frontend, FullPRJobs().Frontend) {
 		t.Fatalf("lost dependency union: %+v", p.PR)
 	}

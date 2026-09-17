@@ -20,7 +20,6 @@ var fai907EqualityInventory = map[string][]string{
 	"internal/project/contracts/generate/main.go":          {"sameStrings"},
 	"internal/refresh/module/postgres_persistence.go":      {"sameStringSlice"},
 	"internal/refresh/postgres/repository.go":              {"slicesEqual"},
-	"internal/refresh/sqlite/runs.go":                      {"sameStrings"},
 	"internal/analytics/query/aggregate_plan_ir.go":        {"sameStringSlice"},
 	"internal/analytics/query/semantic_access_planner.go":  {"sameSemanticAccessRoute"},
 	"internal/analytics/query/planir/graph_validation.go":  {"sameJoinKeys", "sameOrdered", "sameFields", "sameMetrics"},

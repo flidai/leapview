@@ -59,7 +59,7 @@ func TestPipelineRunResponseForRejectsDependencyRun(t *testing.T) {
 	}
 }
 
-func TestPipelineRunResponseForNormalizesSQLiteTimestamps(t *testing.T) {
+func TestPipelineRunResponseForNormalizesTimestamps(t *testing.T) {
 	response, ok := PipelineRunResponseFor(refreshrun.RunRecord{
 		ID: "run_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh",
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,

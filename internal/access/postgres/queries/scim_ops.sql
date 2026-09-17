@@ -25,6 +25,13 @@ WHERE provider = 'scim' AND tenant_id = ''
   AND subject = sqlc.arg(subject) AND revoked_at IS NULL
 FOR UPDATE;
 
+-- name: FindSCIMPrincipalByID :one
+SELECT principal_id
+FROM access.external_identity
+WHERE provider = 'scim' AND tenant_id = ''
+  AND principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
+FOR UPDATE;
+
 -- name: InsertSCIMPrincipal :exec
 INSERT INTO access.principal(id, principal_type, status, email, display_name)
 VALUES (sqlc.arg(id)::uuid, 'user', sqlc.arg(status), sqlc.arg(email), sqlc.arg(display_name));
@@ -35,15 +42,17 @@ INSERT INTO access.external_identity
 VALUES (sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, 'scim', '', sqlc.arg(subject),
         sqlc.arg(user_name), sqlc.arg(external_id), sqlc.arg(email), sqlc.arg(display_name));
 
--- name: UpdateSCIMExternalIdentity :exec
+-- name: UpdateSCIMExternalIdentity :one
 UPDATE access.external_identity
-SET user_name = sqlc.arg(user_name),
-    external_id = sqlc.arg(external_id),
-    email = sqlc.arg(email),
-    display_name = sqlc.arg(display_name),
+SET user_name = CASE WHEN sqlc.arg(user_name)::text = '' THEN user_name ELSE sqlc.arg(user_name)::text END,
+    external_id = CASE WHEN sqlc.arg(external_id)::text = '' THEN external_id ELSE sqlc.arg(external_id)::text END,
+    subject = CASE WHEN sqlc.arg(external_id)::text = '' THEN subject ELSE sqlc.arg(external_id)::text END,
+    email = CASE WHEN sqlc.arg(email)::text = '' THEN email ELSE sqlc.arg(email)::text END,
+    display_name = CASE WHEN sqlc.arg(display_name)::text = '' THEN display_name ELSE sqlc.arg(display_name)::text END,
     updated_at = clock_timestamp()
 WHERE provider = 'scim' AND tenant_id = ''
-  AND subject = sqlc.arg(subject) AND revoked_at IS NULL;
+  AND principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
+RETURNING external_id;
 
 -- name: UpdateSCIMPrincipal :exec
 UPDATE access.principal

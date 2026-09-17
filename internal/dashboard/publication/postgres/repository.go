@@ -77,14 +77,7 @@ func New(db DBTX, audit AuditPort, events EventPort) (*Repository, error) {
 	return &Repository{db: db, q: publicationdb.New(db), audit: audit, events: events, native: true}, nil
 }
 func NewRepository(db DBTX) *Repository { return &Repository{db: db, q: publicationdb.New(db)} }
-
-// NewRepositoryWithAudit wires publication mutations to Access' narrow
-// transaction-scoped audit-intent port. The recorder participates in the
-// transaction opened by this repository and never commits or rolls it back.
-func NewRepositoryWithAudit(db DBTX, audit AuditPort) *Repository {
-	return &Repository{db: db, q: publicationdb.New(db), audit: audit}
-}
-func (r *Repository) IsNative() bool { return r != nil && r.native }
+func (r *Repository) IsNative() bool    { return r != nil && r.native }
 
 //go:embed schema.sql
 var schemaSQL string

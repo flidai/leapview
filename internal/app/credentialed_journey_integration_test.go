@@ -14,7 +14,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
 	"github.com/flidai/leapview/internal/analytics/model"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
@@ -38,7 +37,7 @@ import (
 func TestCredentialedBrowserAndPipelineJourney(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	repo := store.fixture.Graph.Access
 	created, err := repo.CreateLocalUser(ctx, access.LocalUserInput{
 		Email: "journey-user@example.test", DisplayName: "Journey User", Password: "journey-password",
 	})

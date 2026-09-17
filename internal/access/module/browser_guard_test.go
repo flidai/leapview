@@ -6,14 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 type browserGuardRepository struct {
@@ -110,12 +107,7 @@ func TestAuthenticateRejectsMissingPrincipal(t *testing.T) {
 }
 
 func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	repository := testStore(t).repository
 	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
@@ -141,12 +133,7 @@ func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) 
 }
 
 func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	repository := testStore(t).repository
 	auth := mustNewAuth(t, repository, AuthConfig{LocalAuth: true})
 	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
 	if err != nil {
@@ -252,13 +239,8 @@ func TestRequirePlatformAdminAllowsDevelopmentBypassWithoutRepository(t *testing
 }
 
 func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocation(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "platform-user", Email: "platform@example.test", DisplayName: "Platform User"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "platform@example.test", DisplayName: "Platform User"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,13 +290,8 @@ func TestRequirePlatformAdminAttenuatesDynamicAndDenyAllTokensAndHonorsRevocatio
 }
 
 func TestRequirePlatformAdminIgnoresProjectSnapshotWithoutDurableRole(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{ID: "project-admin-only", Email: "project-admin@example.test"})
+	repository := testStore(t).repository
+	principal, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{Email: "project-admin@example.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,13 +317,8 @@ func TestRequirePlatformAdminIgnoresProjectSnapshotWithoutDurableRole(t *testing
 }
 
 func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "attenuated-admin", Email: "attenuated@example.test", Role: access.PlatformRoleAdmin})
+	repository := testStore(t).repository
+	principal, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{Email: "attenuated@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}

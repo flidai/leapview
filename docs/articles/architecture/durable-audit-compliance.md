@@ -24,34 +24,17 @@ The current producer-by-producer contract is maintained in the machine-readable
 the repository decision log. The inventory is an implementation map, not a
 promise that every existing best-effort producer has already been upgraded.
 
-## Local fixture mutation handoff
+## Transactional mutation evidence
 
-The isolated local/evaluation SQLite fixture path can record a canonical audit
-intent in the same transaction. This is not a production authority or a
-PostgreSQL compatibility path. Production capability mutations insert immutable
-audit evidence directly in their caller-owned PostgreSQL transactions. In the
-local fixture, the Access-owned outbox assigns a stable event identity and
-payload digest, enforces per-aggregate ordering, and rejects an idempotency-key
-reuse with different content. A successful commit therefore leaves either both
-the domain transition and its audit intent, or neither.
+Capability mutations insert immutable audit evidence directly in their
+caller-owned PostgreSQL transactions. The Access-owned recorder canonicalizes
+the intent, assigns a stable event identity and payload digest, and rejects an
+idempotency-key reuse with different content. A successful commit therefore
+leaves either both the domain transition and its audit event, or neither. There
+is no same-database audit outbox or second control-plane implementation.
 
-The source write also fails closed when the instance reaches the bounded
-undelivered-intent capacity. Delivered handoff rows do not consume that bound
-and are removed by the audit retention window; lowering backlog pressure never
-permits pending or terminal evidence to be discarded.
-
-The Access dispatcher leases pending intents with a generation fence and
-materializes the final `audit_events` row in the same transaction that marks the
-intent delivered. Delivery is physically at-least-once but logically exactly
-once by event ID. An expired lease is reclaimable after a crash; a stale worker
-cannot complete, retry, or terminate it. Transient failures use bounded
-exponential backoff. Exhausted attempts become `poison`, while an integrity or
-payload conflict becomes `quarantined`; neither state is silently skipped.
-
-System actions may have no principal or capability. If a named principal is
-deleted before delivery, the final event follows the audit table's nullable
-foreign-key policy while the retained outbox row preserves the original actor
-identity until its delivered-row retention window expires.
+System actions may have no principal or capability. The audit table's nullable
+foreign-key policy preserves evidence if a named principal is later deleted.
 
 ## Evidence boundaries
 

@@ -3,11 +3,9 @@ package control_test
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,28 +13,16 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
-	managedsqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
+	managedpostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/flidai/leapview/internal/manageddata/storage/filesystem"
-	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 )
 
-func TestFilesystemAndSQLiteConcurrentFinalizeIsAtomicIdempotentAndDetectsLoss(t *testing.T) {
+func TestFilesystemAndPostgresConcurrentFinalizeIsAtomicIdempotentAndDetectsLoss(t *testing.T) {
 	ctx := t.Context()
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "leapview.db")+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(10000)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(8)
-	t.Cleanup(func() { _ = database.Close() })
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpContext(ctx, database, "../../platform/migrations"); err != nil {
-		t.Fatalf("migrate platform store: %v", err)
-	}
-	repo := managedsqlite.NewRepository(database)
+	database := postgrestest.Open(t, managedpostgres.ApplySchema)
+	repo := managedpostgres.New(database)
 	blobs, err := filesystem.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +35,7 @@ func TestFilesystemAndSQLiteConcurrentFinalizeIsAtomicIdempotentAndDetectsLoss(t
 	}
 	service, err := control.New(repo, blobs, control.Config{
 		Limits:    manageddata.Limits{MaxFiles: 10, MaxFileBytes: 1 << 20, MaxRevisionBytes: 1 << 20},
-		UploadTTL: time.Hour, VerifyConcurrency: 4, Transport: &fakeTransport{backend: "local"},
+		UploadTTL: time.Hour, VerifyConcurrency: 4, Transport: &fakeTransport{backend: "local"}, CleanupAcker: testCleanupAcker{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +90,7 @@ func TestFilesystemAndSQLiteConcurrentFinalizeIsAtomicIdempotentAndDetectsLoss(t
 		t.Fatalf("media type = %q", file.MediaType)
 	}
 	var revisionCount int
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM managed_data_revisions WHERE collection_id = ?`, results[0].Revision.Collection.ID).Scan(&revisionCount); err != nil {
+	if err := database.QueryRow(ctx, `SELECT count(*) FROM managed_data.revision WHERE collection_id = $1`, results[0].Revision.Collection.ID).Scan(&revisionCount); err != nil {
 		t.Fatal(err)
 	}
 	if revisionCount != 1 {
@@ -126,21 +112,10 @@ func TestFilesystemAndSQLiteConcurrentFinalizeIsAtomicIdempotentAndDetectsLoss(t
 
 func TestTerminalCleanupIsBoundedAndDoesNotStarveLaterSessions(t *testing.T) {
 	ctx := t.Context()
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "cleanup.db")+"?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = database.Close() })
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpContext(ctx, database, "../../platform/migrations"); err != nil {
-		t.Fatal(err)
-	}
-	repo := managedsqlite.NewRepository(database)
+	database := postgrestest.Open(t, managedpostgres.ApplySchema)
+	repo := newTestCleanupRepository(managedpostgres.New(database))
 	transport := &fakeTransport{backend: "local"}
-	service, err := control.New(repo, &fakeBlobStore{blobs: map[string]storage.Blob{}}, control.Config{Limits: manageddata.Limits{MaxFiles: 1, MaxFileBytes: 10, MaxRevisionBytes: 10}, UploadTTL: time.Hour, Transport: transport})
+	service, err := control.New(repo, &fakeBlobStore{blobs: map[string]storage.Blob{}}, control.Config{Limits: manageddata.Limits{MaxFiles: 1, MaxFileBytes: 10, MaxRevisionBytes: 10}, UploadTTL: time.Hour, Transport: transport, CleanupAcker: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,21 +144,10 @@ func TestTerminalCleanupIsBoundedAndDoesNotStarveLaterSessions(t *testing.T) {
 
 func TestTerminalCleanupRetriesTransientTransportFailure(t *testing.T) {
 	ctx := t.Context()
-	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "cleanup-retry.db")+"?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = database.Close() })
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.UpContext(ctx, database, "../../platform/migrations"); err != nil {
-		t.Fatal(err)
-	}
-	repo := managedsqlite.NewRepository(database)
+	database := postgrestest.Open(t, managedpostgres.ApplySchema)
+	repo := newTestCleanupRepository(managedpostgres.New(database))
 	transport := &fakeTransport{backend: "local", abortErr: errors.New("transient cleanup")}
-	service, err := control.New(repo, &fakeBlobStore{blobs: map[string]storage.Blob{}}, control.Config{Limits: manageddata.Limits{MaxFiles: 1, MaxFileBytes: 10, MaxRevisionBytes: 10}, UploadTTL: time.Hour, Transport: transport})
+	service, err := control.New(repo, &fakeBlobStore{blobs: map[string]storage.Blob{}}, control.Config{Limits: manageddata.Limits{MaxFiles: 1, MaxFileBytes: 10, MaxRevisionBytes: 10}, UploadTTL: time.Hour, Transport: transport, CleanupAcker: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,4 +167,46 @@ func TestTerminalCleanupRetriesTransientTransportFailure(t *testing.T) {
 	if err != nil || second.Cleaned != 1 || second.CleanupFailures != 0 {
 		t.Fatalf("second retry pass = %#v, err=%v", second, err)
 	}
+}
+
+type testCleanupAcker struct{}
+
+func (testCleanupAcker) MarkUploadCleanupComplete(context.Context, manageddata.UploadID) error {
+	return nil
+}
+
+// testCleanupRepository keeps the service-level cleanup tests focused on
+// batching and retry behavior. The dedicated PostgreSQL repository tests use
+// the separately authenticated maintenance role that persists this evidence.
+type testCleanupRepository struct {
+	*managedpostgres.Repository
+	mu      sync.Mutex
+	cleaned map[manageddata.UploadID]struct{}
+}
+
+func newTestCleanupRepository(repo *managedpostgres.Repository) *testCleanupRepository {
+	return &testCleanupRepository{Repository: repo, cleaned: make(map[manageddata.UploadID]struct{})}
+}
+
+func (r *testCleanupRepository) ListUploadSessionsForCleanup(ctx context.Context, _ int64) ([]manageddata.UploadSession, error) {
+	sessions, err := r.Repository.ListUploadSessionsForCleanup(ctx, 1000)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	remaining := sessions[:0]
+	for _, session := range sessions {
+		if _, ok := r.cleaned[session.ID]; !ok {
+			remaining = append(remaining, session)
+		}
+	}
+	return remaining, nil
+}
+
+func (r *testCleanupRepository) MarkUploadCleanupComplete(_ context.Context, id manageddata.UploadID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleaned[id] = struct{}{}
+	return nil
 }

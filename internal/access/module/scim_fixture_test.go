@@ -2,19 +2,20 @@ package module
 
 import (
 	"net/http"
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type fakeMetrics struct{}
 
 type assemblyConfig struct {
-	store           *platform.Store
+	store           *accessTestStore
 	AccessRepo      access.Repository
 	SCIMBearerToken string
 	RateLimits      apihttpmiddleware.RateLimitConfig
@@ -26,23 +27,28 @@ func (a *scimTestHarness) Routes() http.Handler { return a.handler }
 
 type RateLimitConfig = apihttpmiddleware.RateLimitConfig
 
-func testStore(t *testing.T) *platform.Store {
+type accessTestStore struct {
+	pool       *pgxpool.Pool
+	repository *accesspostgres.Repository
+}
+
+func testStore(t *testing.T) *accessTestStore {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	repository, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("access-test-key", 3))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+	return &accessTestStore{pool: pool, repository: repository}
 }
 
-func testStoreOptions(store *platform.Store, config assemblyConfig) assemblyConfig {
+func testStoreOptions(store *accessTestStore, config assemblyConfig) assemblyConfig {
 	config.store = store
 	return config
 }
 
-func testAccessRepository(store *platform.Store) access.Repository {
-	return accesssqlite.NewRepository(store.SQLDB())
+func testAccessRepository(store *accessTestStore) access.Repository {
+	return store.repository
 }
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
