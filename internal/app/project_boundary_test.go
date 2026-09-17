@@ -241,7 +241,7 @@ func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 		withSnapshot bool
 	}{
 		{
-			name: "query", path: "/api/v1/semantic-models/test/query", validStatus: http.StatusOK,
+			name: "query", path: "/api/v1/semantic-models/test/query", validStatus: http.StatusNotFound,
 			validBody:  `{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
 			forgedBody: `{"projectId":"project:foreign","dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
 		},

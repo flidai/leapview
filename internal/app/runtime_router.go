@@ -17,6 +17,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	apiapigenruntime "github.com/flidai/leapview/internal/app/api/apigenruntime"
@@ -585,6 +586,16 @@ func buildApplicationSurfaces(
 			AuditRecorder:         canonicalAuditRecorder,
 		})
 	}
+	if capabilities.Authoring != nil {
+		// Authoring is composed before the final metrics decorator. Bind the
+		// concrete governor now, after query authorization is installed, so direct
+		// draft preview cannot execute against a leased runtime without admission.
+		if governor, ok := metrics.(dataquery.Governor); ok {
+			capabilities.Authoring.SetPreviewGovernor(governor)
+		} else if runtimeConfig.RequireQueryAuthorization {
+			return fail(errors.New("governed dashboard preview query governor is unavailable"))
+		}
+	}
 	var queryAuditProvider adminmodule.QueryAuditReaderProvider
 	var queryAuditRecorder dashboardmodule.QueryAuditRecorder
 	if workflow.QueryAudit != nil {
@@ -779,6 +790,12 @@ func buildApplicationSurfaces(
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			return projecthttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 		},
+		CurrentCredential: func(r *http.Request) (access.APICredential, bool) {
+			if r == nil {
+				return access.APICredential{}, false
+			}
+			return accessmodule.APICredentialFromContext(r.Context())
+		},
 		AuthorizeCreateDashboard: func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
@@ -790,6 +807,9 @@ func buildApplicationSurfaces(
 			project, err := access.NewResourceRef(projectID, projectgraph.KindProjectNamespace)
 			if err != nil {
 				return false, err
+			}
+			if capability == access.CapabilityResourceEdit {
+				return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability, access.ActionDashboardCreate)
 			}
 			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
 		},
@@ -828,6 +848,17 @@ func buildApplicationSurfaces(
 				return nil, err
 			}
 			return snapshot.EffectiveCapabilities(subjects)
+		})
+		routes.accessModule.SetCurrentEffectivePermissionOptions(func(ctx context.Context, principalID string) ([]access.PermissionPair, error) {
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
+			if err != nil {
+				return nil, err
+			}
+			snapshot, err := authorizationSnapshot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return snapshot.EffectiveTypedPermissionOptions(subjects)
 		})
 		routes.accessModule.SetCurrentProjectID(runtime.resolveProjectID)
 		if routes.managedDataModule != nil {
@@ -1217,6 +1248,16 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 				},
+				AuthorizeTypedDashboardAction: func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, bool, error) {
+					resource, err := access.NewResourceRef(dashboardID, projectgraph.KindDashboard)
+					if err != nil {
+						return true, false, err
+					}
+					typed, allowed := typedPermissionDecision(ctx, projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+						return action, true
+					})
+					return typed, allowed, nil
+				},
 				CurrentUsagePrincipal: func(r *http.Request) (string, bool) {
 					principal, ok := routes.accessModule.CurrentPrincipal(r)
 					if !ok || !principal.IsHuman() {
@@ -1579,16 +1620,17 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return platform.auth.APICredential(r)
 			},
-			CurrentEffectiveCapabilities: routes.accessModule.CurrentEffectiveCapabilities,
-			PlatformAdmin:                routes.accessModule.IsPlatformAdmin,
-			CurrentProjectID:             runtime.resolveProjectID,
-			Publications:                 routes.dashboardModule,
-			AgentConfigCommand:           routes.agentModule.UICommandBindings().UpdateConfig,
-			PublicationCommands:          routes.dashboardModule.PublicationCommandBindings(),
-			AuthConfigured:               platform.auth != nil,
-			LocalPasswordEnabled:         localPasswordEnabled,
-			AccessConfigured:             accessReader != nil,
-			Storage:                      storageConfig,
+			CurrentEffectiveCapabilities:      routes.accessModule.CurrentEffectiveCapabilities,
+			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
+			PlatformAdmin:                     routes.accessModule.IsPlatformAdmin,
+			CurrentProjectID:                  runtime.resolveProjectID,
+			Publications:                      routes.dashboardModule,
+			AgentConfigCommand:                routes.agentModule.UICommandBindings().UpdateConfig,
+			PublicationCommands:               routes.dashboardModule.PublicationCommandBindings(),
+			AuthConfigured:                    platform.auth != nil,
+			LocalPasswordEnabled:              localPasswordEnabled,
+			AccessConfigured:                  accessReader != nil,
+			Storage:                           storageConfig,
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},

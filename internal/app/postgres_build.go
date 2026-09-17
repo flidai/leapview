@@ -56,6 +56,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -373,7 +374,31 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if err != nil {
 		return fail(err)
 	}
-	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: production, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, RiverJobTimeout: cfg.JobExecutionTimeout, Logger: slog.Default(), Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
+	var authorityRevalidator jobs.AuthorityRevalidator
+	if production {
+		tokenEvidence, evidenceSupported := accessBundle.Repository.(access.APITokenAuthorityEvidenceReader)
+		if !evidenceSupported {
+			return fail(errors.New("PostgreSQL access repository does not support async token authority evidence"))
+		}
+		sessionEvidence, sessionEvidenceSupported := accessBundle.Repository.(access.SessionAuthorityEvidenceReader)
+		if !sessionEvidenceSupported {
+			return fail(errors.New("PostgreSQL access repository does not support browser-session authority evidence"))
+		}
+		authorityRevalidator = newCallerAuthorityRevalidator(tokenEvidence, sessionEvidence, func(authCtx context.Context, principalID string, projectID projectgraph.ResourceID, environment string, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			if runtimeHost == nil {
+				return false, errors.New("active runtime host is unavailable")
+			}
+			if string(runtimeHost.Environment()) != environment {
+				return false, errors.New("active runtime environment does not match job authority")
+			}
+			return authorizeProjectResources(authCtx, accessBundle.Module, runtimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
+		})
+	}
+	var requiredAuthorityKinds map[string]struct{}
+	if production {
+		requiredAuthorityKinds = map[string]struct{}{"refresh_pipeline": {}}
+	}
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: production, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, RiverJobTimeout: cfg.JobExecutionTimeout, Logger: slog.Default(), AuthorityRevalidator: authorityRevalidator, RequiredAuthorityKinds: requiredAuthorityKinds, Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
 	if err != nil {
 		return fail(err)
 	}

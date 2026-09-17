@@ -649,10 +649,50 @@ func dashboardQueryFilters(
 	if err := decodeDashboardSelectionState(rawSelections, &filters.Selections); err != nil {
 		return dashboard.Filters{}, fmt.Errorf("interactionSelections: %w", err)
 	}
+	for index, selection := range filters.Selections {
+		if err := validateDashboardInteractionSource(definition, pageID, selection.SourceKind, selection.SourceID, selection.InteractionKind); err != nil {
+			return dashboard.Filters{}, fmt.Errorf("interactionSelections[%d]: %w", index, err)
+		}
+	}
 	if err := decodeDashboardSelectionState(rawSpatialSelections, &filters.SpatialSelections); err != nil {
 		return dashboard.Filters{}, fmt.Errorf("spatialSelections: %w", err)
 	}
+	for index, selection := range filters.SpatialSelections {
+		if err := validateDashboardInteractionSource(definition, pageID, "visual", selection.VisualID, selection.InteractionID); err != nil {
+			return dashboard.Filters{}, fmt.Errorf("spatialSelections[%d]: %w", index, err)
+		}
+	}
 	return filters, nil
+}
+
+// validateDashboardInteractionSource keeps API query filters tied to the
+// server-owned visual interaction graph. Runtime semantic validation still
+// checks the interaction mappings against the resolved model; this boundary
+// prevents a caller from borrowing an interaction source from another page or
+// inventing a non-visual source before execution begins.
+func validateDashboardInteractionSource(definition dashboarddefinition.Definition, pageID, sourceKind, sourceID, interactionID string) error {
+	if strings.TrimSpace(sourceKind) != "visual" {
+		return fmt.Errorf("source kind %q is not allowed", sourceKind)
+	}
+	if strings.TrimSpace(sourceID) == "" {
+		return fmt.Errorf("source visual ID is required")
+	}
+	if strings.TrimSpace(interactionID) == "" {
+		return fmt.Errorf("interaction ID is required for visual %q", sourceID)
+	}
+	if _, ok := definition.Visualizations[sourceID]; !ok {
+		return fmt.Errorf("unknown source visual %q", sourceID)
+	}
+	page, ok := definition.PageOrDefault(pageID)
+	if !ok || (pageID != "" && page.ID != pageID) {
+		return fmt.Errorf("unknown dashboard page %q", pageID)
+	}
+	for _, component := range page.Visuals {
+		if component.Visual == sourceID {
+			return nil
+		}
+	}
+	return fmt.Errorf("source visual %q is not on page %q", sourceID, page.ID)
 }
 
 func decodeDashboardSelectionState[T any](raw []map[string]any, target *[]T) error {

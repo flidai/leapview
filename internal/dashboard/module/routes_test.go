@@ -13,11 +13,18 @@ import (
 func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T) {
 	router := chi.NewRouter()
 	var capabilities []access.Capability
+	commandGuards := 0
 	identityResources := func(capability access.Capability, _ func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
 		capabilities = append(capabilities, capability)
 		return next
 	}
-	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{ProtectWithResources: identityResources})
+	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{
+		ProtectWithResources: identityResources,
+		ProtectWithAuthoringCommand: func(next http.HandlerFunc) http.HandlerFunc {
+			commandGuards++
+			return next
+		},
+	})
 
 	want := map[string]bool{
 		"GET /dashboards/new":                               false,
@@ -50,6 +57,9 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	}
 	if len(capabilities) < 10 {
 		t.Fatalf("captured %d route capabilities, want at least 10", len(capabilities))
+	}
+	if commandGuards != 1 {
+		t.Fatalf("body-dependent command guards = %d, want 1", commandGuards)
 	}
 	for index, wantCapability := range []access.Capability{
 		access.CapabilityResourceRead,

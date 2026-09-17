@@ -239,10 +239,10 @@ func (m *Module) capabilityAllowed(r *http.Request, principalID, projectID strin
 		}
 		return false, nil
 	}
-	// A nil token capability list is dynamic and inherits the current snapshot;
-	// an explicit empty list denies every capability.
+	// A nil token capability list is an invalid/legacy persisted form and
+	// denies every capability; an explicit empty list does the same.
 	if credential.Token.Capabilities == nil {
-		return true, nil
+		return false, nil
 	}
 	for _, capability := range credential.Token.Capabilities {
 		if capability == required {

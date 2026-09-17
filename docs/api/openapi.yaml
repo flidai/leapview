@@ -15219,6 +15219,15 @@ paths:
                     id: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
                     name: example
+                    permissionProfile: leapview.permissions/v1
+                    permissions:
+                      - action: dashboard.read
+                        profile: leapview.permissions/v1
+                        target:
+                          projectId: project:analytics
+                          resourceId: dashboard:sales
+                          resourceKind: dashboard
+                          scope: resource
                     revokedAt: "2026-01-02T15:04:05Z"
                 page:
                   nextCursor: example
@@ -15495,6 +15504,15 @@ paths:
                   id: example
                   lastUsedAt: "2026-01-02T15:04:05Z"
                   name: example
+                  permissionProfile: leapview.permissions/v1
+                  permissions:
+                    - action: dashboard.read
+                      profile: leapview.permissions/v1
+                      target:
+                        projectId: project:analytics
+                        resourceId: dashboard:sales
+                        resourceKind: dashboard
+                        scope: resource
                   revokedAt: "2026-01-02T15:04:05Z"
                 token: example
         '400':
@@ -15741,10 +15759,16 @@ paths:
             schema:
               $ref: '#/components/schemas/APITokenCreateRequest'
             example:
-              capabilities:
-                - PLATFORM_ADMIN
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -60470,30 +60494,42 @@ components:
       type: object
       required:
         - name
-        - capabilities
+        - permissions
       properties:
         name:
           type: string
           example: example
-        capabilities:
+        permissions:
           type: array
           items:
-            $ref: '#/components/schemas/Capability'
-          description: Required explicit attenuation allowlist. An empty list creates
-            an authentication-only token; omitted or null capabilities are invalid.
-            PLATFORM_ADMIN attenuates durable instance administration and does not
-            grant the role.
+            $ref: '#/components/schemas/PermissionPair'
+          description: Required explicit action-target attenuation pairs. An empty
+            list creates an authentication-only token; omitted or null permissions
+            are invalid. A pair's catalog profile and target are persisted without
+            expanding independent action/resource lists.
           example:
-            - PLATFORM_ADMIN
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         expiresAt:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        capabilities:
-          - PLATFORM_ADMIN
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
     APITokenCreateResponse:
       type: object
       required:
@@ -60514,6 +60550,15 @@ components:
           id: example
           lastUsedAt: "2026-01-02T15:04:05Z"
           name: example
+          permissionProfile: leapview.permissions/v1
+          permissions:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
           revokedAt: "2026-01-02T15:04:05Z"
         token: example
     APITokenListResponse:
@@ -60534,6 +60579,15 @@ components:
               id: example
               lastUsedAt: "2026-01-02T15:04:05Z"
               name: example
+              permissionProfile: leapview.permissions/v1
+              permissions:
+                - action: dashboard.read
+                  profile: leapview.permissions/v1
+                  target:
+                    projectId: project:analytics
+                    resourceId: dashboard:sales
+                    resourceKind: dashboard
+                    scope: resource
               revokedAt: "2026-01-02T15:04:05Z"
         page:
           $ref: '#/components/schemas/PageInfo'
@@ -60546,6 +60600,15 @@ components:
             id: example
             lastUsedAt: "2026-01-02T15:04:05Z"
             name: example
+            permissionProfile: leapview.permissions/v1
+            permissions:
+              - action: dashboard.read
+                profile: leapview.permissions/v1
+                target:
+                  projectId: project:analytics
+                  resourceId: dashboard:sales
+                  resourceKind: dashboard
+                  scope: resource
             revokedAt: "2026-01-02T15:04:05Z"
         page:
           nextCursor: example
@@ -60554,7 +60617,7 @@ components:
       required:
         - id
         - name
-        - capabilities
+        - permissions
         - createdAt
       properties:
         id:
@@ -60563,12 +60626,30 @@ components:
         name:
           type: string
           example: example
+        permissionProfile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+          description: The versioned catalog profile for typed action-target permissions.
+            Legacy capability-only rows omit this value.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionPair'
+          description: The exact action-target pairs persisted for this token. Legacy
+            capability-only rows expose an explicit empty array.
+          example:
+            - action: dashboard.read
+              profile: leapview.permissions/v1
+              target:
+                projectId: project:analytics
+                resourceId: dashboard:sales
+                resourceKind: dashboard
+                scope: resource
         capabilities:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
-          description: The explicit capability allowlist persisted for this token.
-            Legacy NULL values are returned as an empty deny-all list.
+          description: Legacy capability allowlist retained during migration. Legacy
+            NULL values are returned as an empty deny-all list.
           example:
             - PLATFORM_ADMIN
         expiresAt:
@@ -60595,6 +60676,15 @@ components:
         id: example
         lastUsedAt: "2026-01-02T15:04:05Z"
         name: example
+        permissionProfile: leapview.permissions/v1
+        permissions:
+          - action: dashboard.read
+            profile: leapview.permissions/v1
+            target:
+              projectId: project:analytics
+              resourceId: dashboard:sales
+              resourceKind: dashboard
+              scope: resource
         revokedAt: "2026-01-02T15:04:05Z"
     AgentCommandAuditPayload:
       type: object
@@ -73288,6 +73378,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Capability'
+          description: Project-scoped capabilities from the active authorization snapshot.
+            Durable instance/platform authority is intentionally reported through
+            its separate administration contract.
           example:
             - PLATFORM_ADMIN
       example:
@@ -75830,6 +75923,132 @@ components:
         kind: example
         maximumFractionDigits: 1
         minimumFractionDigits: 1
+    PermissionAction:
+      type: string
+      enum:
+        - dashboard.read
+        - dashboard.create
+        - dashboard.update
+        - dashboard.delete
+        - dashboard.publish
+        - semantic.read
+        - semantic.query
+        - semantic.consume
+        - semantic.create
+        - semantic.update
+        - semantic.delete
+        - source.read
+        - source.create
+        - source.update
+        - source.delete
+        - model.read
+        - model.create
+        - model.update
+        - model.delete
+        - pipeline.read
+        - pipeline.create
+        - pipeline.run
+        - pipeline.update
+        - pipeline.delete
+        - connection.read
+        - connection.create
+        - connection.use
+        - connection.manage
+        - resource.share
+        - delivery.read
+        - delivery.plan
+        - delivery.build
+        - delivery.publish
+        - delivery.approve
+        - delivery.activate
+        - delivery.rollback
+        - project.settings.read
+        - project.settings.update
+        - project.access.read
+        - project.access.manage
+        - project.access.delegate
+        - audit.read
+        - workload.delegate
+        - platform.settings.read
+        - platform.settings.update
+        - platform.access.read
+        - platform.access.manage
+        - platform.audit.read
+      description: |-
+        Typed action identities for the versioned resource-authorization catalog.
+        Current-user token creation uses these paired action/target values. The
+        legacy Capability enum remains only for compatibility and bootstrap flows.
+      example: dashboard.read
+    PermissionCatalogProfile:
+      type: string
+      enum:
+        - leapview.permissions/v1
+      description: The catalog profile pinned by a typed permission pair.
+      example: leapview.permissions/v1
+    PermissionPair:
+      type: object
+      required:
+        - action
+        - target
+        - profile
+      properties:
+        action:
+          $ref: '#/components/schemas/PermissionAction'
+        target:
+          $ref: '#/components/schemas/PermissionTarget'
+        profile:
+          $ref: '#/components/schemas/PermissionCatalogProfile'
+      description: Preserve the action/target relationship through authorization boundaries.
+      example:
+        action: dashboard.read
+        profile: leapview.permissions/v1
+        target:
+          projectId: project:analytics
+          resourceId: dashboard:sales
+          resourceKind: dashboard
+          scope: resource
+    PermissionScope:
+      type: string
+      enum:
+        - instance
+        - project
+        - resource
+      example: instance
+    PermissionTarget:
+      type: object
+      required:
+        - scope
+      properties:
+        scope:
+          $ref: '#/components/schemas/PermissionScope'
+        instanceId:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        resourceKind:
+          $ref: '#/components/schemas/ResourceKind'
+        resourceId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        includeFuture:
+          type: boolean
+          example: true
+      description: |-
+        The audience and resource half of one typed permission pair. The optional
+        fields are structurally constrained by scope and action at runtime.
+      example:
+        projectId: project:analytics
+        resourceId: dashboard:sales
+        resourceKind: dashboard
+        scope: resource
     PivotDashboardQuery:
       type: object
       allOf:

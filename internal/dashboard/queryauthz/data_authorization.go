@@ -41,11 +41,10 @@ type Options struct {
 	PrincipalFromContext      func(context.Context) (Principal, bool)
 	CredentialFromContext     func(context.Context) (access.APICredential, bool)
 	AuditRecorder             access.CanonicalAuditRecorder
-	// SemanticConsumption is the local compatibility binding for the future
-	// semantic.consume action. Until that action is present in the global
-	// catalog, dashboard semantic execution uses RESOURCE_USE on the exact
-	// SemanticModel. Keeping the requirement here makes the second check
-	// explicit without widening the global permission vocabulary.
+	// SemanticConsumption is the bounded compatibility binding between the
+	// catalog's semantic.consume action and the still-legacy principal grants.
+	// Dashboard execution requires RESOURCE_USE on the exact SemanticModel as
+	// well as a matching typed credential pair when a typed token is present.
 	SemanticConsumption SemanticConsumptionRequirement
 }
 
@@ -366,7 +365,7 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, capabilityAction) {
+	if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsDataQuery(ctx, snapshot, principalID, credential.Token, request, objects, capabilityAction) {
 		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction, Credential: true}
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
@@ -1335,7 +1334,9 @@ func (m Metrics) capabilityAllowed(ctx context.Context, snapshot accesssnapshot.
 
 func (m Metrics) tokenAllowsCapability(ctx context.Context, snapshot accesssnapshot.AuthorizationSnapshot, principalID string, token access.APIToken, capability access.Capability) bool {
 	if token.Capabilities == nil {
-		return true
+		// A missing token allowlist is an invalid/legacy persisted form. It
+		// must never fall back to the principal's current authority.
+		return false
 	}
 	allowed, err := m.capabilityAllowed(ctx, snapshot, principalID, token, capability)
 	if err == nil && allowed {

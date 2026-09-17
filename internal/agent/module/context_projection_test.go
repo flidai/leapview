@@ -129,10 +129,10 @@ func TestContextCredentialUsesCanonicalCapability(t *testing.T) {
 	}
 }
 
-func TestContextCredentialPreservesDynamicAndDenyAllTokenSemantics(t *testing.T) {
-	dynamic := agent.Scope{Credential: agent.CredentialScope{Restricted: true}}
-	if !contextCredentialAllowsCapability(dynamic, access.CapabilityResourceRead) {
-		t.Fatal("dynamic token scope should defer to the active authorization snapshot")
+func TestContextCredentialRejectsOmittedAndDenyAllTokenScopes(t *testing.T) {
+	omitted := agent.Scope{Credential: agent.CredentialScope{Restricted: true}}
+	if contextCredentialAllowsCapability(omitted, access.CapabilityResourceRead) {
+		t.Fatal("omitted token scope unexpectedly authorized")
 	}
 	denyAll := agent.Scope{Credential: agent.CredentialScope{Restricted: true, Capabilities: []string{}}}
 	if contextCredentialAllowsCapability(denyAll, access.CapabilityResourceRead) {

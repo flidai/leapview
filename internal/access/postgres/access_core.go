@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -937,6 +938,69 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
 	return r.PrincipalByID(ctx, principalUUID(row.ID))
 }
+
+// CredentialForSessionToken resolves browser authentication into non-secret
+// session evidence. The bearer cookie is verified here and never returned to
+// callers or persisted in an async job envelope.
+func (r *Repository) CredentialForSessionToken(ctx context.Context, token string) (access.Session, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return access.Session{}, err
+	}
+	fingerprint := r.secretFingerprint(token)
+	row, err := accessdb.New(db).FindBrowserSession(ctx, fingerprint)
+	if err != nil {
+		return access.Session{}, err
+	}
+	if !hmac.Equal(row.TokenFingerprint, fingerprint) || !verifySecret(token, row.Verifier) {
+		return access.Session{}, pgx.ErrNoRows
+	}
+	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
+	return access.Session{
+		ID: principalUUID(row.SessionID), PrincipalID: principalUUID(row.ID), Kind: access.SessionKindBrowser,
+		TokenFingerprint: hex.EncodeToString(row.TokenFingerprint), ExpiresAt: principalTimestamp(row.ExpiresAt),
+	}, nil
+}
+
+// SessionAuthorityEvidence revalidates a browser session by its durable ID
+// and captured fingerprint. It deliberately has no bearer-token parameter;
+// revocation/expiry is checked against PostgreSQL at dequeue time.
+func (r *Repository) SessionAuthorityEvidence(ctx context.Context, principalID, sessionID, fingerprint string, now time.Time) (access.Session, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return access.Session{}, err
+	}
+	principalID, err = uuidID("principal id", principalID)
+	if err != nil {
+		return access.Session{}, access.ErrForbidden
+	}
+	sessionID, err = uuidID("session id", sessionID)
+	if err != nil {
+		return access.Session{}, access.ErrForbidden
+	}
+	fingerprintBytes, err := hex.DecodeString(strings.TrimSpace(fingerprint))
+	if err != nil || len(fingerprintBytes) != sha256.Size {
+		return access.Session{}, access.ErrForbidden
+	}
+	row, err := accessdb.New(db).FindBrowserSession(ctx, fingerprintBytes)
+	if err != nil {
+		return access.Session{}, err
+	}
+	if principalUUID(row.ID) != principalID || principalUUID(row.SessionID) != sessionID || !hmac.Equal(row.TokenFingerprint, fingerprintBytes) {
+		return access.Session{}, access.ErrForbidden
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if !row.ExpiresAt.Valid || !row.ExpiresAt.Time.After(now.UTC()) {
+		return access.Session{}, access.ErrForbidden
+	}
+	return access.Session{
+		ID: sessionID, PrincipalID: principalID, Kind: access.SessionKindBrowser,
+		TokenFingerprint: hex.EncodeToString(row.TokenFingerprint), ExpiresAt: principalTimestamp(row.ExpiresAt),
+	}, nil
+}
+
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
 	if err != nil {
@@ -1023,16 +1087,17 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 }
 
 func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
-	// Repository callers below the HTTP/service boundary may omit this field.
-	// Persist that form as an explicit deny-all list; only request validation
-	// treats omission as an invalid public contract.
 	if caps == nil {
-		caps = []access.Capability{}
+		return nil, access.ErrTokenCapabilitiesRequired
 	}
 	if err := access.ValidateTokenCapabilities(caps, access.CanonicalCapabilities()); err != nil {
 		return nil, err
 	}
 	return json.Marshal(caps)
+}
+
+func permissionsJSON(permissions []access.PermissionPair) ([]byte, error) {
+	return access.EncodePermissionPairs(permissions)
 }
 
 func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (bool, error) {
@@ -1108,6 +1173,67 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	row, e := r.apiToken(ctx, id)
 	return tok, row, e
 }
+
+func (r *Repository) CreateScopedAPITokenWithMetadata(ctx context.Context, in access.ScopedAPITokenInput) (string, access.APIToken, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	pid, err := uuidID("principal id", in.PrincipalID)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	name, err := bounded(strings.TrimSpace(in.Name), "token name", 255)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	permissions, err := permissionsJSON(in.Permissions)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	tok, err := tokenSecret("lv_pat_")
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	ver, err := secretVerifier(tok)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	id, err := newUUID()
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	tokenID, err := pgUUID(id)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	profile := access.PermissionCatalogProfile
+	tag, err := accessdb.New(db).CreateScopedAPIToken(ctx, accessdb.CreateScopedAPITokenParams{
+		ID: tokenID, PrincipalID: principalID, Name: name,
+		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver,
+		PermissionProfile: &profile, Permissions: permissions, ExpiresAt: pgTimestamp(in.ExpiresAt),
+	})
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		valid, checkErr := databaseExpiryValid(ctx, db, in.ExpiresAt)
+		if checkErr != nil {
+			return "", access.APIToken{}, checkErr
+		}
+		if !valid {
+			return "", access.APIToken{}, fmt.Errorf("api token expiry is invalid")
+		}
+		return "", access.APIToken{}, pgx.ErrNoRows
+	}
+	row, err := r.apiToken(ctx, id)
+	return tok, row, err
+}
+
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
 	parsedID, err := pgUUID(id)
@@ -1118,9 +1244,19 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name, TokenFingerprint: hex.EncodeToString(row.TokenFingerprint),
 		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
 		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
+	if row.PermissionProfile != nil {
+		permissions, err := access.DecodePermissionPairs(row.Permissions)
+		if err != nil {
+			return access.APIToken{}, fmt.Errorf("decode API token permissions: %w", err)
+		}
+		t.PermissionProfile = *row.PermissionProfile
+		t.Permissions = permissions
+		t.Capabilities = []access.Capability{}
+		return t, nil
+	}
 	// NULL/null is a legacy omitted scope. It is deliberately represented as
 	// explicit deny-all so old credentials cannot regain current authority.
 	t.Capabilities = []access.Capability{}
@@ -1131,6 +1267,40 @@ func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, 
 		}
 	}
 	return t, nil
+}
+
+// APITokenAuthorityEvidence resolves the immutable token identity required by
+// caller-authority jobs. It never accepts a bearer secret or request-held
+// capability list; lifecycle and principal state are checked from durable
+// PostgreSQL rows at the supplied instant.
+func (r *Repository) APITokenAuthorityEvidence(ctx context.Context, principalID, tokenID string, now time.Time) (access.APIToken, error) {
+	principalID = strings.TrimSpace(principalID)
+	tokenID = strings.TrimSpace(tokenID)
+	if principalID == "" || tokenID == "" {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	token, err := r.apiToken(ctx, tokenID)
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	if token.ID != tokenID || token.PrincipalID != principalID || token.TokenFingerprint == "" || token.RevokedAt != "" {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, token.ExpiresAt)
+	if err != nil || !expiresAt.After(now.UTC()) {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	principal, err := r.PrincipalByID(ctx, principalID)
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	if principal.AccessDisabled() {
+		return access.APIToken{}, access.ErrForbidden
+	}
+	return token, nil
 }
 func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (access.APIToken, error) {
 	db, err := r.requireDB()
@@ -1554,3 +1724,4 @@ func (r *Repository) RevokeDesktopSession(ctx context.Context, tok, instanceID, 
 
 var _ access.PlatformAdminReader = (*Repository)(nil)
 var _ access.DesktopSessionRepository = (*Repository)(nil)
+var _ access.SessionAuthorityEvidenceReader = (*Repository)(nil)

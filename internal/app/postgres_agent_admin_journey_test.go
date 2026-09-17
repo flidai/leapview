@@ -56,7 +56,7 @@ func TestPostgresAgentAdminJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create owner API token: %v", err)
 	}
-	viewerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: viewer.ID, Name: "journey-viewer", ExpiresAt: time.Now().Add(time.Hour)})
+	viewerToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: viewer.ID, Name: "journey-viewer", Capabilities: []access.Capability{}, ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create viewer API token: %v", err)
 	}

@@ -5,21 +5,26 @@ using LeapViewAPI.Protocol;
 namespace LeapViewAPI.Access;
 
 model EffectiveCapabilitiesResponse {
+  @doc("Project-scoped capabilities from the active authorization snapshot. Durable instance/platform authority is intentionally reported through its separate administration contract.")
   capabilities: Capability[];
 }
 
 model APITokenCreateRequest {
   name: string;
-  @doc("Required explicit attenuation allowlist. An empty list creates an authentication-only token; omitted or null capabilities are invalid. PLATFORM_ADMIN attenuates durable instance administration and does not grant the role.")
-  capabilities: Capability[];
+  @doc("Required explicit action-target attenuation pairs. An empty list creates an authentication-only token; omitted or null permissions are invalid. A pair's catalog profile and target are persisted without expanding independent action/resource lists.")
+  permissions: PermissionPair[];
   expiresAt?: utcDateTime;
 }
 
 model APITokenResponse {
   id: string;
   name: string;
-  @doc("The explicit capability allowlist persisted for this token. Legacy NULL values are returned as an empty deny-all list.")
-  capabilities: Capability[];
+  @doc("The versioned catalog profile for typed action-target permissions. Legacy capability-only rows omit this value.")
+  permissionProfile?: PermissionCatalogProfile;
+  @doc("The exact action-target pairs persisted for this token. Legacy capability-only rows expose an explicit empty array.")
+  permissions: PermissionPair[];
+  @doc("Legacy capability allowlist retained during migration. Legacy NULL values are returned as an empty deny-all list.")
+  capabilities?: Capability[];
   expiresAt?: utcDateTime;
   revokedAt?: utcDateTime;
   createdAt: utcDateTime;

@@ -54,9 +54,19 @@ type Config struct {
 	// inject a complete PostgreSQL bundle.
 	Persistence *Persistence
 	// Production requires the typed PostgreSQL persistence bundle.
-	Production          bool
-	HTTP                HTTPConfig
-	Authorization       AuthorizationConfig
+	Production    bool
+	HTTP          HTTPConfig
+	Authorization AuthorizationConfig
+	// CurrentCredential resolves the request-bound credential evidence used to
+	// bind protected refresh work to its initiating token. It is required by
+	// native production queue paths; infrastructure credentials are not used.
+	CurrentCredential func(context.Context) (access.APICredential, bool)
+	// CurrentSessionEvidence resolves non-secret browser-session evidence from
+	// its dedicated request context. Browser sessions are not API credentials.
+	CurrentSessionEvidence func(context.Context) (access.CredentialEvidence, bool)
+	// RequireAuthority enables the durable authority envelope requirement for
+	// native production refresh admissions.
+	RequireAuthority    bool
 	Service             refreshrun.Service
 	Artifacts           refreshrun.ArtifactLoader
 	Admission           workload.Admitter
@@ -103,24 +113,26 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler             materializehttp.Handler
-	runs                RunPersistence
-	schedules           refreshschedule.Repository
-	service             refreshrun.Service
-	refreshClock        refreshschedule.Clock
-	scheduler           Scheduler
-	reconcileSchedules  func(context.Context) error
-	scheduleInterval    time.Duration
-	leaseTimeout        time.Duration
-	logger              *slog.Logger
-	events              EventStore
-	durableAudit        bool
-	refreshExecution    apigencommand.AsyncExecutionContract
-	resolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
-	publishedVersion    PublishedDataVersionResolver
-	recoveryLifecycle   *RecoveryLifecycle
-	recoveryInterval    time.Duration
-	runFinishedCallback func(context.Context, refreshrun.JobRecord)
+	handler                materializehttp.Handler
+	runs                   RunPersistence
+	schedules              refreshschedule.Repository
+	service                refreshrun.Service
+	refreshClock           refreshschedule.Clock
+	scheduler              Scheduler
+	reconcileSchedules     func(context.Context) error
+	scheduleInterval       time.Duration
+	leaseTimeout           time.Duration
+	logger                 *slog.Logger
+	events                 EventStore
+	durableAudit           bool
+	refreshExecution       apigencommand.AsyncExecutionContract
+	resolveIdentity        func(context.Context) (projectgraph.ServingIdentity, error)
+	currentCredential      func(context.Context) (access.APICredential, bool)
+	currentSessionEvidence func(context.Context) (access.CredentialEvidence, bool)
+	publishedVersion       PublishedDataVersionResolver
+	recoveryLifecycle      *RecoveryLifecycle
+	recoveryInterval       time.Duration
+	runFinishedCallback    func(context.Context, refreshrun.JobRecord)
 
 	mu         sync.Mutex
 	background context.Context
@@ -188,11 +200,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		// inside the same transaction as the operation, run tree, queue job, and
 		// initial lifecycle event. It therefore satisfies the transactional
 		// command guarantee without the legacy post-commit audit recorder.
-		durableAudit:      durableRefreshAudit(config),
-		refreshExecution:  refreshExecution,
-		resolveIdentity:   config.ResolveIdentity,
-		publishedVersion:  config.PublishedVersion,
-		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
+		durableAudit:           durableRefreshAudit(config),
+		refreshExecution:       refreshExecution,
+		resolveIdentity:        config.ResolveIdentity,
+		currentCredential:      config.CurrentCredential,
+		currentSessionEvidence: config.CurrentSessionEvidence,
+		publishedVersion:       config.PublishedVersion,
+		recoveryLifecycle:      config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
 	m.runFinishedCallback = m.runFinished(config.RunFinished)
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
@@ -236,6 +250,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	m.runs = persistence.Runs
 	m.schedules = persistence.Schedules
 	m.service = config.Service
+	m.service.RequireAuthority = m.service.RequireAuthority || config.RequireAuthority || config.Production
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
 	}
@@ -278,10 +293,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		if fromContext, ok := refreshrun.AuditIntentFromContext(ctx); ok {
 			intent = &fromContext
 		}
+		authority, authorityErr := m.captureAuthority(ctx, identity, pipelineIDValue, principalID)
+		if authorityErr != nil {
+			return refreshrun.RunRecord{}, authorityErr
+		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
-			AuditIntent: intent, IdempotencyKey: idempotencyKey,
+			AuditIntent: intent, IdempotencyKey: idempotencyKey, Authority: authority,
 		})
 		if err != nil {
 			err = classifyQueueAdmissionError(err)
@@ -295,6 +314,80 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return result.Run, err
 	}
 	return m, nil
+}
+
+// captureAuthority binds a native refresh invocation to the credential that
+// initiated it. The queue transport's identity is not authority: only the
+// request credential's durable ID, fingerprint, expiry, and exact pipeline
+// permission are persisted. Scheduler/delegated producers remain unsupported
+// until an explicit grant verifier is composed.
+func (m *Module) captureAuthority(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, principalID string) (jobs.AuthorityEnvelope, error) {
+	if m == nil || !m.service.RequireAuthority {
+		return jobs.AuthorityEnvelope{}, nil
+	}
+	var credential access.APICredential
+	apiOK := false
+	if m.currentCredential != nil {
+		credential, apiOK = m.currentCredential(ctx)
+	}
+	class := jobs.CredentialClassAPIToken
+	credentialID := credential.Token.ID
+	credentialFingerprint := credential.Token.TokenFingerprint
+	expiresAtValue := credential.Token.ExpiresAt
+	principalForCredential := credential.Token.PrincipalID
+	if !apiOK {
+		if m.currentSessionEvidence == nil {
+			return jobs.AuthorityEnvelope{}, access.ErrForbidden
+		}
+		evidence, sessionOK := m.currentSessionEvidence(ctx)
+		if !sessionOK {
+			return jobs.AuthorityEnvelope{}, access.ErrForbidden
+		}
+		class = jobs.CredentialClassSession
+		credentialID = evidence.ID
+		credentialFingerprint = evidence.Fingerprint
+		expiresAtValue = evidence.ExpiresAt.Format(time.RFC3339Nano)
+		principalForCredential = evidence.PrincipalID
+	} else if credential.Authoring != nil {
+		return jobs.AuthorityEnvelope{}, access.ErrForbidden
+	}
+	if strings.TrimSpace(credentialID) == "" || strings.TrimSpace(credentialFingerprint) == "" {
+		return jobs.AuthorityEnvelope{}, access.ErrForbidden
+	}
+	if principalForCredential != principalID {
+		return jobs.AuthorityEnvelope{}, access.ErrForbidden
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiresAtValue)
+	if err != nil || !expiresAt.After(time.Now().UTC()) {
+		return jobs.AuthorityEnvelope{}, access.ErrForbidden
+	}
+	resource, err := access.NewResourceRef(pipelineID, projectgraph.KindPipeline)
+	if err != nil {
+		return jobs.AuthorityEnvelope{}, err
+	}
+	pair, err := access.NewExactPermissionPair(access.ActionPipelineRun, identity.ProjectID, resource)
+	if err != nil {
+		return jobs.AuthorityEnvelope{}, err
+	}
+	if class == jobs.CredentialClassAPIToken {
+		// Only a typed credential may initiate a protected refresh. Legacy
+		// capability rows have no action/resource audience and must not be
+		// converted into a newly durable pipeline.run authority pair.
+		if credential.Token.PermissionProfile != access.PermissionCatalogProfile || !access.PermissionSetAllows(credential.Token.Permissions, pair) {
+			return jobs.AuthorityEnvelope{}, access.ErrForbidden
+		}
+	}
+	authority := jobs.AuthorityEnvelope{
+		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
+		ActorPrincipalID: principalID, ExecutionPrincipalID: principalID,
+		Credential:  &jobs.CredentialEvidence{Class: class, ID: credentialID, Fingerprint: credentialFingerprint, ExpiresAt: expiresAt.UTC()},
+		Target:      jobs.AuthorityTarget{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, ResourceKind: string(projectgraph.KindPipeline), ResourceID: pipelineID.String()},
+		Permissions: []access.PermissionPair{pair},
+	}
+	if err := authority.Validate(); err != nil {
+		return jobs.AuthorityEnvelope{}, fmt.Errorf("capture refresh authority: %w", err)
+	}
+	return authority, nil
 }
 
 // JobHandlers maps refresh pipeline execution into River. Dependency child
@@ -377,12 +470,17 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 			return errors.New("refresh retry is invalid")
 		}
 	}
+	authority, err := m.captureAuthority(ctx, identity, pipeline, principalID)
+	if err != nil {
+		return err
+	}
 	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
 	// validated above for UI safety, but it is not retained as mutable execution
 	// state on the new immutable pipeline occurrence.
 	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 		Identity: identity, PipelineID: pipeline, PrincipalID: principalID,
 		EstimatedMemoryBytes: 1, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
+		Authority: authority,
 	})
 	if err != nil {
 		return err

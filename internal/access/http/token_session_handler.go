@@ -63,9 +63,9 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	var input struct {
-		Name         string          `json:"name"`
-		Capabilities json.RawMessage `json:"capabilities"`
-		ExpiresAt    string          `json:"expiresAt"`
+		Name        string          `json:"name"`
+		Permissions json.RawMessage `json:"permissions"`
+		ExpiresAt   string          `json:"expiresAt"`
 	}
 	if err := decodeStrictJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -85,67 +85,60 @@ func (h Handler) CreateCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeJSONError(w, err, stdhttp.StatusInternalServerError)
 		return
 	}
-	if len(input.Capabilities) == 0 || string(input.Capabilities) == "null" {
-		writeJSONError(w, access.ErrTokenCapabilitiesRequired, stdhttp.StatusBadRequest)
+	// New credentials always use typed action-target pairs. Legacy capability
+	// rows remain readable for migration/bootstrap only; public issuance cannot
+	// create a second unscoped credential population after the migration.
+	if input.Permissions == nil || string(input.Permissions) == "null" {
+		writeJSONError(w, access.ErrTokenPermissionsNeeded, stdhttp.StatusBadRequest)
 		return
 	}
-	var rawCapabilities []string
-	if err := json.Unmarshal(input.Capabilities, &rawCapabilities); err != nil || rawCapabilities == nil {
-		writeJSONError(w, access.ErrTokenCapabilitiesRequired, stdhttp.StatusBadRequest)
-		return
-	}
-	capabilities := make([]access.Capability, 0, len(rawCapabilities))
-	needsProjectCapabilities := false
-	for _, raw := range rawCapabilities {
-		capability, parseErr := access.ParseCapability(strings.TrimSpace(raw))
-		if parseErr != nil {
-			writeJSONError(w, parseErr, stdhttp.StatusBadRequest)
+	{
+		permissions, err := access.DecodePermissionPairs(input.Permissions)
+		if err != nil {
+			writeJSONError(w, err, stdhttp.StatusBadRequest)
 			return
 		}
-		capabilities = append(capabilities, capability)
-		if capability != access.CapabilityPlatformAdmin {
-			needsProjectCapabilities = true
+		credential, credentialOK := h.currentCredential(r)
+		if credentialOK && strings.TrimSpace(credential.Token.ID) != "" {
+			if err := access.ValidateTokenPermissionAttenuation(credential.Token, permissions); err != nil {
+				writeJSONError(w, err, stdhttp.StatusForbidden)
+				return
+			}
+		} else if len(permissions) > 0 {
+			if h.CurrentEffectivePermissionOptions == nil {
+				writeJSONError(w, fmt.Errorf("effective typed permission authority is unavailable"), stdhttp.StatusServiceUnavailable)
+				return
+			}
+			authority, authorityErr := h.CurrentEffectivePermissionOptions(r.Context(), principal.ID)
+			if authorityErr != nil {
+				writeJSONError(w, authorityErr, stdhttp.StatusServiceUnavailable)
+				return
+			}
+			if authorityErr := access.ValidatePermissionPairsAgainstAuthority(authority, permissions); authorityErr != nil {
+				writeJSONError(w, authorityErr, stdhttp.StatusForbidden)
+				return
+			}
 		}
-	}
-	effective := []access.Capability{}
-	if h.CurrentEffectiveCapabilities != nil && needsProjectCapabilities {
-		var effectiveErr error
-		effective, effectiveErr = h.CurrentEffectiveCapabilities(r.Context(), principal.ID)
-		if effectiveErr != nil {
-			writeJSONError(w, effectiveErr, stdhttp.StatusBadRequest)
+		var secret string
+		var token access.APIToken
+		err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
+			scoped, ok := tx.(access.ScopedAPITokenRepository)
+			if !ok {
+				return auditInput(r, "api_token.created", principal.ID, "api_token", "", "", "failure", nil), fmt.Errorf("typed API token repository is unavailable")
+			}
+			var mutationErr error
+			secret, token, mutationErr = scoped.CreateScopedAPITokenWithMetadata(r.Context(), access.ScopedAPITokenInput{
+				PrincipalID: principal.ID, Name: input.Name, Permissions: permissions, ExpiresAt: expires,
+			})
+			return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
+		})
+		if err != nil {
+			writeJSONError(w, err, stdhttp.StatusBadRequest)
 			return
 		}
-	}
-	if containsCapability(capabilities, access.CapabilityPlatformAdmin) && h.PlatformAdmin != nil {
-		platformAdmin, platformErr := h.PlatformAdmin(r.Context(), principal.ID)
-		if platformErr != nil {
-			writeJSONError(w, platformErr, stdhttp.StatusBadRequest)
-			return
-		}
-		if platformAdmin {
-			effective = append(effective, access.CapabilityPlatformAdmin)
-		}
-	}
-	if h.CurrentEffectiveCapabilities == nil && len(capabilities) > 0 && !containsCapability(capabilities, access.CapabilityPlatformAdmin) {
-		writeJSONError(w, fmt.Errorf("effective project capabilities are unavailable"), stdhttp.StatusBadRequest)
+		writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": secret, "apiToken": apiTokenDTO(token)})
 		return
 	}
-	if validateErr := access.ValidateTokenCapabilities(capabilities, effective); validateErr != nil {
-		writeJSONError(w, validateErr, stdhttp.StatusBadRequest)
-		return
-	}
-	var secret string
-	var token access.APIToken
-	err = executeAuditedMutation(r, repo, accessgen.GenCommandOperationCreateCurrentAPIToken(), func(tx access.Repository) (access.AuditEventInput, error) {
-		var mutationErr error
-		secret, token, mutationErr = tx.CreateAPITokenWithMetadata(r.Context(), access.APITokenInput{PrincipalID: principal.ID, Name: input.Name, Capabilities: capabilities, ExpiresAt: expires})
-		return auditInput(r, "api_token.created", principal.ID, "api_token", token.ID, "", "success", nil), mutationErr
-	})
-	if err != nil {
-		writeJSONError(w, err, stdhttp.StatusBadRequest)
-		return
-	}
-	writeSecretJSON(w, stdhttp.StatusCreated, map[string]any{"token": secret, "apiToken": apiTokenDTO(token)})
 }
 
 func (h Handler) RevokeCurrentAPIToken(w stdhttp.ResponseWriter, r *stdhttp.Request) {

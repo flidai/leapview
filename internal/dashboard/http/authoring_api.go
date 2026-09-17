@@ -1183,6 +1183,23 @@ func authoringCommandCapability(command authoring.Command) access.Capability {
 	return capability
 }
 
+func authoringCommandTypedAction(command authoring.Command) (access.Action, bool) {
+	action, err := command.RequiredAction()
+	if err != nil {
+		return "", false
+	}
+	switch action {
+	case authoring.AuthorizationActionEdit:
+		return access.ActionDashboardUpdate, true
+	case authoring.AuthorizationActionPublish:
+		return access.ActionDashboardPublish, true
+	case authoring.AuthorizationActionArchive:
+		return access.ActionDashboardDelete, true
+	default:
+		return "", false
+	}
+}
+
 func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempotencyKey, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, requestID, correlationID string) (access.AuditIntent, error) {
 	if contract.Guarantee != apigencommand.GuaranteeTransactional {
 		return access.AuditIntent{}, fmt.Errorf("dashboard authoring operation %q does not provide transactional auditing", contract.OperationID)

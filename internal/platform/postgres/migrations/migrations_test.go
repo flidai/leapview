@@ -27,7 +27,7 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 			sqlFiles = append(sqlFiles, entry.Name())
 		}
 	}
-	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_platform_admin_token_capability.sql"; got != want {
+	if got, want := strings.Join(sqlFiles, ","), "001_control_plane.sql,002_project_free_source_bundle.sql,003_dashboard_authoring_runtime_lock.sql,004_dashboard_authoring_capability_evidence.sql,005_resource_uid_registry.sql,006_recovery_successor_v3.sql,007_contract_publication_evidence.sql,008_managed_provider_version_observation.sql,009_managed_data_retention_lifecycle.sql,010_remove_unreachable_fenced_attempt_state.sql,011_agent_conversation_transcript_revision.sql,012_recovery_capture_core_transport.sql,013_agent_conversation_delete.sql,014_release_policy_authority.sql,015_oci_artifact_admission_authority.sql,016_migration_capability_authority.sql,017_target_authorization_policy.sql,018_refresh_run_notifications.sql,019_refresh_schedule_notifications.sql,020_release_transition_operation.sql,021_platform_admin_token_capability.sql,022_typed_api_token_permissions.sql,023_job_authority_envelope.sql"; got != want {
 		t.Fatalf("embedded Goose migrations = %v", sqlFiles)
 	}
 	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
@@ -48,6 +48,57 @@ func TestEmbeddedGooseBaselineIsImmutableAndForwardMigrationsAreOrdered(t *testi
 		if strings.Contains(strings.ToLower(text), strings.ToLower(forbidden)) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
+	}
+}
+
+func TestJobAuthorityEnvelopeMigrationMakesEvidenceImmutable(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "023_job_authority_envelope.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS authority_envelope jsonb NOT NULL",
+		"CHECK (jsonb_typeof(authority_envelope) = 'object')",
+		"ALTER COLUMN authority_envelope DROP DEFAULT",
+		"OLD.authority_envelope",
+		"NEW.authority_envelope",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("job authority migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("job authority envelope migration must restore the migrator role")
+	}
+}
+
+func TestTypedTokenPermissionMigrationRevokesUnscopedLegacyCredentials(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "022_typed_api_token_permissions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration := string(contents)
+	for _, required := range []string{
+		"access.valid_permission_pairs",
+		"permission_profile text",
+		"permissions jsonb",
+		"legacy_scope_cannot_be_safely_converted",
+		"UPDATE access.api_token",
+		"SET revoked_at = clock_timestamp()",
+		"OLD.permission_profile IS DISTINCT FROM NEW.permission_profile",
+		"OLD.permissions IS DISTINCT FROM NEW.permissions",
+		"typed API token permission migration revokes unsafe legacy credentials and is irreversible",
+	} {
+		if !strings.Contains(migration, required) {
+			t.Errorf("typed API token migration missing %q", required)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(migration), "RESET ROLE;") {
+		t.Error("typed API token migration must restore the migrator role")
+	}
+	if down := migration[strings.Index(migration, "-- +goose Down"):]; strings.Contains(strings.ToUpper(down), "DROP COLUMN") {
+		t.Error("typed API token migration must refuse destructive rollback after revocation")
 	}
 }
 

@@ -111,6 +111,23 @@ func authorizeProjectResources(
 	})
 }
 
+func authorizeProjectResourcesWithTypedAction(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	capability access.Capability,
+	action access.Action,
+) (bool, error) {
+	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, false, func(access.ResourceRef) access.Capability {
+		return capability
+	}, func(access.ResourceRef) (access.Action, bool) {
+		return action, true
+	})
+}
+
 func authorizeDeliveryProjectResources(
 	ctx context.Context,
 	accessModule canonicalAccessModule,
@@ -134,6 +151,7 @@ func authorizeProjectResourcesWithCapability(
 	resources []access.ResourceRef,
 	_ bool,
 	capabilityFor func(access.ResourceRef) access.Capability,
+	typedActionFor ...func(access.ResourceRef) (access.Action, bool),
 ) (bool, error) {
 	if accessModule == nil || runtimeHost == nil {
 		return false, fmt.Errorf("authorization modules are required")
@@ -170,6 +188,22 @@ func authorizeProjectResourcesWithCapability(
 	if err != nil {
 		return false, err
 	}
+	var typedActionResolver func(access.ResourceRef) (access.Action, bool)
+	if len(typedActionFor) > 1 {
+		return false, fmt.Errorf("at most one typed action resolver is supported")
+	}
+	if len(typedActionFor) == 1 {
+		typedActionResolver = typedActionFor[0]
+	}
+	var typed, allowed bool
+	if typedActionResolver != nil {
+		typed, allowed = typedPermissionDecision(ctx, projectID, resources, typedActionResolver)
+	} else {
+		typed, allowed = typedDashboardReadDecision(ctx, projectID, resources, capabilityFor)
+	}
+	if typed && !allowed {
+		return false, nil
+	}
 	snapshot := authorizedLease.AuthorizationSnapshot()
 	if snapshot.Identity() != lease.Identity() {
 		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
@@ -203,6 +237,77 @@ func authorizeProjectResourcesWithCapability(
 		}
 	}
 	return true, nil
+}
+
+func typedPermissionPair(action access.Action, projectID projectgraph.ResourceID, resource access.ResourceRef) (access.PermissionPair, error) {
+	definition, ok := access.Permission(action)
+	if !ok {
+		return access.PermissionPair{}, access.ErrUnknownPermissionAction
+	}
+	checkKind := false
+	for _, kind := range definition.CheckKinds {
+		if kind == resource.Kind() {
+			checkKind = true
+			break
+		}
+	}
+	if !checkKind {
+		return access.PermissionPair{}, fmt.Errorf("typed action %q cannot check resource kind %q", action, resource.Kind())
+	}
+	if definition.Scope == access.PermissionScopeProject {
+		return access.NewProjectPermissionPair(action, projectID)
+	}
+	if definition.Scope == access.PermissionScopeResource {
+		return access.NewExactPermissionPair(action, projectID, resource)
+	}
+	return access.PermissionPair{}, fmt.Errorf("typed action %q has unsupported scope %q", action, definition.Scope)
+}
+
+func typedPermissionDecision(
+	ctx context.Context,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	actionFor func(access.ResourceRef) (access.Action, bool),
+) (typed bool, allowed bool) {
+	credential, found := accessmodule.APICredentialFromContext(ctx)
+	if !found || strings.TrimSpace(credential.Token.ID) == "" ||
+		(credential.Token.PermissionProfile == "" && credential.Token.Permissions == nil) {
+		return false, false
+	}
+	if len(resources) == 0 || actionFor == nil {
+		return true, false
+	}
+	for _, resource := range resources {
+		action, mapped := actionFor(resource)
+		if !mapped {
+			return true, false
+		}
+		pair, err := typedPermissionPair(action, projectID, resource)
+		if err != nil || !access.PermissionSetAllows(credential.Token.Permissions, pair) {
+			return true, false
+		}
+	}
+	return true, true
+}
+
+// typedDashboardReadDecision binds the dashboard Viewer operation to the
+// typed dashboard.read action. It is intentionally narrow: this helper is
+// used by the browser/API dashboard resource-read callback, and does not
+// infer typed authority for mutations or unrelated resource families.
+// Legacy API tokens and browser sessions retain their existing snapshot
+// capability path until their operation contracts are migrated explicitly.
+func typedDashboardReadDecision(
+	ctx context.Context,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	capabilityFor func(access.ResourceRef) access.Capability,
+) (typed bool, allowed bool) {
+	return typedPermissionDecision(ctx, projectID, resources, func(resource access.ResourceRef) (access.Action, bool) {
+		if resource.Kind() != projectgraph.KindDashboard || capabilityFor == nil || capabilityFor(resource) != access.CapabilityResourceRead {
+			return "", false
+		}
+		return access.ActionDashboardRead, true
+	})
 }
 
 // authorizeProjectRole evaluates a project-wide role binding against the
@@ -262,6 +367,17 @@ func protectProjectResources(
 	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
+	return protectProjectResourcesWithTypedAction(accessModule, runtimeHost, capability, "", resolve, next)
+}
+
+func protectProjectResourcesWithTypedAction(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	capability access.Capability,
+	action access.Action,
+	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
+	next http.HandlerFunc,
+) http.HandlerFunc {
 	if accessModule == nil || runtimeHost == nil || resolve == nil {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -293,7 +409,15 @@ func protectProjectResources(
 			next(w, r)
 			return
 		}
-		allowed, err := authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
+		var allowed bool
+		var err error
+		if action == "" {
+			allowed, err = authorizeProjectResources(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, capability)
+		} else {
+			allowed, err = authorizeProjectResourcesWithCapability(r.Context(), accessModule, runtimeHost, principal.ID, projectID, resources, false, func(access.ResourceRef) access.Capability {
+				return capability
+			}, func(access.ResourceRef) (access.Action, bool) { return action, true })
+		}
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
@@ -322,6 +446,17 @@ func protectProjectAuthoringResource(
 	capability access.Capability,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
+	return protectProjectAuthoringResourceWithTypedAction(accessModule, runtimeHost, authorizer, capability, "", next)
+}
+
+func protectProjectAuthoringResourceWithTypedAction(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	authorizer repositoryDashboardAuthorizer,
+	capability access.Capability,
+	typedAction access.Action,
+	next http.HandlerFunc,
+) http.HandlerFunc {
 	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -346,6 +481,20 @@ func protectProjectAuthoringResource(
 		if principal.DevBypass {
 			next(w, r)
 			return
+		}
+		if typedAction != "" {
+			resource, resourceErr := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+			if resourceErr != nil {
+				http.NotFound(w, r)
+				return
+			}
+			typed, allowed := typedPermissionDecision(r.Context(), projectID, []access.ResourceRef{resource}, func(access.ResourceRef) (access.Action, bool) {
+				return typedAction, true
+			})
+			if typed && !allowed {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
 		}
 		var err error
 		if capability == access.CapabilityResourceManage {

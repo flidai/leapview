@@ -1,6 +1,7 @@
 import {
   getAllTags,
   getDoc,
+  getExamples,
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
@@ -10,6 +11,7 @@ import {
   getSummary,
   isArrayModelType,
   isRecordModelType,
+  serializeValueAsJson,
   type EmitContext,
   type Enum,
   type Model,
@@ -275,6 +277,7 @@ interface Schema {
   discriminator?: { property_name: string; mapping: Record<string, string> };
   enum?: string[];
   exact_numbers?: boolean;
+  example?: unknown;
   extensions?: Record<string, unknown>;
 }
 
@@ -520,6 +523,10 @@ class IRBuilder {
     const doc = getDoc(this.program, model);
     if (doc) {
       schema.description = doc;
+    }
+    const examples = getExamples(this.program, model);
+    if (examples.length > 0) {
+      schema.example = serializeValueAsJson(this.program, examples[0].value, model);
     }
     const extensions = validatedMetadata(this.program, this, model);
     if (extensions) {

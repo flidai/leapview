@@ -24,6 +24,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type analyticsCapabilityBundle struct {
@@ -138,13 +139,15 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 }
 
 type workloadCapabilityConfig struct {
-	Persistence     *jobsmodule.Persistence
-	Workload        workloadmodule.Config
-	Production      bool
-	LeaseTimeout    time.Duration
-	RiverJobTimeout time.Duration
-	Logger          *slog.Logger
-	NodeID          string
+	Persistence            *jobsmodule.Persistence
+	Workload               workloadmodule.Config
+	Production             bool
+	LeaseTimeout           time.Duration
+	RiverJobTimeout        time.Duration
+	Logger                 *slog.Logger
+	NodeID                 string
+	AuthorityRevalidator   jobs.AuthorityRevalidator
+	RequiredAuthorityKinds map[string]struct{}
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
@@ -162,7 +165,9 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
 		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, RiverJobTimeout: cfg.RiverJobTimeout, Logger: cfg.Logger,
-		OwnerID: cfg.NodeID,
+		OwnerID:                cfg.NodeID,
+		AuthorityRevalidator:   cfg.AuthorityRevalidator,
+		RequiredAuthorityKinds: cfg.RequiredAuthorityKinds,
 	})
 	if err != nil {
 		controller.Close()

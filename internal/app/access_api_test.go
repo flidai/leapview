@@ -198,7 +198,7 @@ func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T)
 	}
 }
 
-func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
+func TestCurrentAPITokenLegacyCreateIsRejectedAndRevokeRecordsAudit(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
@@ -208,6 +208,7 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 		Name:         "auth",
 		Capabilities: []access.Capability{access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
+	_, revocableToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: owner.ID, Name: "revocable"})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -218,29 +219,18 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	createReq.Header.Set("Idempotency-Key", "create-audited-api-token")
 	createRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(createRec, createReq)
-	if createRec.Code != http.StatusCreated {
-		t.Fatalf("create api token status = %d, want %d body=%s", createRec.Code, http.StatusCreated, createRec.Body.String())
-	}
-	var created struct {
-		APIToken struct {
-			ID string `json:"id"`
-		} `json:"apiToken"`
-	}
-	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode created api token: %v body=%s", err, createRec.Body.String())
-	}
-	if created.APIToken.ID == "" {
-		t.Fatalf("created api token missing id: %s", createRec.Body.String())
+	if createRec.Code != http.StatusBadRequest {
+		t.Fatalf("legacy create status = %d, want %d body=%s", createRec.Code, http.StatusBadRequest, createRec.Body.String())
 	}
 	createdEvents, err := repo.ListAuditEvents(ctx, access.AuditEventFilter{PrincipalID: owner.ID, Action: "api_token.created"})
 	if err != nil {
 		t.Fatalf("list create audit events: %v", err)
 	}
-	if len(createdEvents) != 1 || createdEvents[0].ResourceID != created.APIToken.ID || createdEvents[0].PrincipalID != owner.ID {
-		t.Fatalf("api_token.created audit = %#v, want target %q actor %q", createdEvents, created.APIToken.ID, owner.ID)
+	if len(createdEvents) != 0 {
+		t.Fatalf("rejected legacy creation wrote audit success events: %#v", createdEvents)
 	}
 
-	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/me/api-tokens/"+created.APIToken.ID, nil)
+	revokeReq := httptest.NewRequest(http.MethodDelete, "/api/v1/me/api-tokens/"+revocableToken.ID, nil)
 	revokeReq.Header.Set("Authorization", "Bearer "+authSecret)
 	revokeReq.Header.Set("Accept", "application/json")
 	revokeRec := httptest.NewRecorder()
@@ -252,33 +242,8 @@ func TestCurrentAPITokenCreateAndRevokeRecordsAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list revoke audit events: %v", err)
 	}
-	if len(revokedEvents) != 1 || revokedEvents[0].ResourceID != created.APIToken.ID || revokedEvents[0].PrincipalID != owner.ID {
-		t.Fatalf("api_token.revoked audit = %#v, want target %q actor %q", revokedEvents, created.APIToken.ID, owner.ID)
-	}
-}
-
-func TestCurrentAPITokenCreateRejectsExpiredExpiry(t *testing.T) {
-	store := testStore(t)
-	ctx := context.Background()
-	owner := testPlatformPrincipal(t, ctx, store, "expired-token-owner@example.com", "Expired Token Owner")
-	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID:  owner.ID,
-		Name:         "auth",
-		Capabilities: []access.Capability{access.CapabilityResourceManage},
-	})
-	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
-
-	expiresAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/api-tokens", strings.NewReader(`{"name":"expired-api-token","capabilities":[],"expiresAt":"`+expiresAt+`"}`))
-	req.Header.Set("Authorization", "Bearer "+authSecret)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", "reject-expired-api-token")
-	rec := httptest.NewRecorder()
-	server.Routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("create expired api token status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	if len(revokedEvents) != 1 || revokedEvents[0].ResourceID != revocableToken.ID || revokedEvents[0].PrincipalID != owner.ID {
+		t.Fatalf("api_token.revoked audit = %#v, want target %q actor %q", revokedEvents, revocableToken.ID, owner.ID)
 	}
 }
 
@@ -333,7 +298,7 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 	}
 }
 
-func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
+func TestServicePrincipalSecretMintingResponseDisablesHTTPStorage(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	repo := testAccessRepository(store)
@@ -356,14 +321,6 @@ func TestSecretMintingResponsesDisableHTTPStorage(t *testing.T) {
 		wantStatus    int
 		secretMarkers []string
 	}{
-		{
-			name:       "api token",
-			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/me/api-tokens", authSecret, `{"name":"deploy","capabilities":["RESOURCE_USE"]}`),
-			wantStatus: http.StatusCreated,
-			secretMarkers: []string{
-				`"token":`,
-			},
-		},
 		{
 			name:       "service principal secret",
 			req:        secretCacheJSONRequest(http.MethodPost, "/api/v1/service-principals/"+servicePrincipal.ID+"/secrets", authSecret, `{"name":"deploy"}`),

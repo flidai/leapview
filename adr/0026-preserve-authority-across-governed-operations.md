@@ -4,7 +4,8 @@ Status: accepted
 
 Decision date: 2026-09-17
 
-Implementation: pending
+Implementation: partial — restricted dashboard consumption and caller-authority
+Pipeline refresh slices; delegated execution and lifecycle qualification pending
 
 Deciders: LeapView maintainers
 
@@ -21,6 +22,37 @@ Related: [ADR-0007](0007-adopt-plan-driven-project-delivery.md);
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md);
 [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md);
 [Resource authorization authority flow](specifications/resource-authorization-authority-flow.md)
+
+## Implementation status
+
+The restricted-dashboard slice now distinguishes saved-content consumption
+from arbitrary query construction. Published dashboard execution requires an
+exact `dashboard.read` credential pair and `semantic.consume` on every selected
+SemanticModel in addition to the existing principal grants and semantic policy.
+API, agent, Explorer, and preview query construction requires
+`semantic.query`, whose catalog prerequisite independently requires
+`semantic.consume`. Draft previews retain their authoring gate, and dashboard
+interaction input is validated against the server-owned revision rather than
+accepting a caller-supplied query shape.
+
+The first asynchronous slice persists an immutable authority envelope with a
+manual Pipeline refresh. It records an exact `pipeline.run` pair, actor,
+execution principal, target, and non-secret browser-session or typed-token
+evidence. The envelope participates in the job request digest and is
+revalidated against live credential lifecycle and current exact resource
+authority before worker admission. Unknown credential classes, missing
+evidence, legacy token scopes, expiry, revocation, and changed permission
+ceilings fail closed. Existing job kinds retain a migration sentinel; only
+`refresh_pipeline` currently requires this envelope.
+
+Delegated workload execution is represented in the envelope but intentionally
+unsupported by the native revalidator. There is no execution-grant repository,
+approved dependency/destination closure, scheduler authority, per-protected-unit
+or output-boundary revalidation, grant-administration envelope, or completed
+security-revision concurrency matrix yet. Release, deployment, managed-data,
+agent, and approval jobs have not migrated to this authority contract. The
+companion specification's ledger is authoritative for the remaining evidence;
+these slices must not be described as security-complete.
 
 ## Context and problem statement
 

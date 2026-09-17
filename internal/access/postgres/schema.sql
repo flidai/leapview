@@ -611,6 +611,61 @@ BEGIN
     RETURN TRUE;
 END $$;
 
+CREATE FUNCTION access.valid_permission_pairs(profile text, value jsonb)
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE item jsonb; target jsonb; action_name text; target_scope text; seen_items jsonb := '[]'::jsonb;
+BEGIN
+    IF profile IS NULL OR value IS NULL THEN RETURN profile IS NULL AND value IS NULL; END IF;
+    IF profile <> 'leapview.permissions/v1' OR jsonb_typeof(value) <> 'array' THEN RETURN FALSE; END IF;
+    IF jsonb_array_length(value) > 256 OR octet_length(value::text) > 65536 THEN RETURN FALSE; END IF;
+    FOR item IN SELECT jsonb_array_elements(value) LOOP
+        IF jsonb_typeof(item) <> 'object' OR item->>'profile' <> profile OR jsonb_typeof(item->'target') <> 'object' THEN RETURN FALSE; END IF;
+        IF seen_items @> jsonb_build_array(item) THEN RETURN FALSE; END IF;
+        seen_items := seen_items || jsonb_build_array(item);
+        action_name := item->>'action'; target := item->'target'; target_scope := target->>'scope';
+        IF action_name NOT IN (
+            'dashboard.read','dashboard.create','dashboard.update','dashboard.delete','dashboard.publish',
+            'semantic.read','semantic.query','semantic.consume','semantic.create','semantic.update','semantic.delete',
+            'source.read','source.create','source.update','source.delete','model.read','model.create','model.update','model.delete',
+            'pipeline.read','pipeline.create','pipeline.run','pipeline.update','pipeline.delete',
+            'connection.read','connection.create','connection.use','connection.manage','resource.share',
+            'delivery.read','delivery.plan','delivery.build','delivery.publish','delivery.approve','delivery.activate','delivery.rollback',
+            'project.settings.read','project.settings.update','project.access.read','project.access.manage','project.access.delegate','audit.read',
+            'workload.delegate','platform.settings.read','platform.settings.update','platform.access.read','platform.access.manage','platform.audit.read'
+        ) THEN RETURN FALSE; END IF;
+        IF target_scope = 'instance' THEN
+            IF action_name NOT LIKE 'platform.%' OR COALESCE(target->>'instanceId','') = ''
+               OR target ? 'projectId' OR target ? 'resourceKind' OR target ? 'resourceId' OR target ? 'includeFuture' THEN RETURN FALSE; END IF;
+        ELSIF target_scope = 'project' THEN
+            IF action_name LIKE 'platform.%' OR COALESCE(target->>'projectId','') = '' OR target ? 'instanceId' OR target ? 'resourceId' THEN RETURN FALSE; END IF;
+            IF COALESCE((target->>'includeFuture')::boolean, FALSE) THEN
+                IF COALESCE(target->>'resourceKind','') NOT IN ('connection','source','model','semantic_model','pipeline','dashboard')
+                   OR action_name LIKE '%.create' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read' THEN RETURN FALSE; END IF;
+            ELSE
+                IF target ? 'resourceKind' OR target ? 'includeFuture'
+                   OR NOT (action_name LIKE '%.create' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read') THEN RETURN FALSE; END IF;
+            END IF;
+        ELSIF target_scope = 'resource' THEN
+            IF action_name LIKE 'platform.%' OR action_name LIKE 'project.%' OR action_name LIKE 'delivery.%' OR action_name = 'audit.read'
+               OR action_name LIKE '%.create' OR COALESCE(target->>'projectId','') = ''
+               OR COALESCE(target->>'resourceKind','') NOT IN ('connection','source','model','semantic_model','pipeline','dashboard')
+               OR COALESCE(target->>'resourceId','') = '' OR target ? 'instanceId' OR target ? 'includeFuture' THEN RETURN FALSE; END IF;
+        ELSE RETURN FALSE;
+        END IF;
+        IF target ? 'resourceKind' AND (
+            (action_name LIKE 'dashboard.%' AND target->>'resourceKind' <> 'dashboard')
+            OR (action_name LIKE 'semantic.%' AND target->>'resourceKind' <> 'semantic_model')
+            OR (action_name LIKE 'source.%' AND target->>'resourceKind' <> 'source')
+            OR (action_name LIKE 'model.%' AND target->>'resourceKind' <> 'model')
+            OR (action_name LIKE 'pipeline.%' AND target->>'resourceKind' <> 'pipeline')
+            OR (action_name LIKE 'connection.%' AND target->>'resourceKind' <> 'connection')
+            OR (action_name = 'workload.delegate' AND target->>'resourceKind' <> 'pipeline')
+        ) THEN RETURN FALSE; END IF;
+    END LOOP;
+    RETURN TRUE;
+EXCEPTION WHEN invalid_text_representation THEN RETURN FALSE;
+END $$;
+
 CREATE TABLE access.api_token (
     id uuid PRIMARY KEY,
     principal_id uuid NOT NULL REFERENCES access.principal(id),
@@ -618,12 +673,17 @@ CREATE TABLE access.api_token (
     token_fingerprint bytea NOT NULL UNIQUE,
     verifier bytea NOT NULL,
     capabilities jsonb CHECK (access.valid_capabilities(capabilities)),
+    permission_profile text,
+    permissions jsonb,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_used_at timestamptz,
     revoked_at timestamptz,
     CHECK (octet_length(token_fingerprint)=32),
     CHECK (octet_length(verifier) BETWEEN 32 AND 512),
+    CHECK (access.valid_permission_pairs(permission_profile, permissions)),
+    CHECK ((permission_profile IS NULL AND permissions IS NULL)
+        OR (permission_profile = 'leapview.permissions/v1' AND capabilities IS NULL)),
     CHECK (expires_at > created_at AND expires_at <= created_at + interval '365 days')
 );
 CREATE INDEX access_api_token_principal_idx ON access.api_token(principal_id, created_at DESC);
@@ -681,7 +741,7 @@ BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.provider<>N
 CREATE OR REPLACE FUNCTION access.reject_session_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.kind<>NEW.kind OR OLD.instance_id<>NEW.instance_id OR OLD.profile_id<>NEW.profile_id OR OLD.client_id<>NEW.client_id OR OLD.created_at<>NEW.created_at OR OLD.absolute_expires_at IS DISTINCT FROM NEW.absolute_expires_at THEN RAISE EXCEPTION 'session identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_token_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.name<>NEW.name OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'API token identity is immutable'; END IF; RETURN NEW; END; $$;
+BEGIN IF OLD.id<>NEW.id OR OLD.principal_id<>NEW.principal_id OR OLD.name<>NEW.name OR OLD.token_fingerprint<>NEW.token_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.capabilities IS DISTINCT FROM NEW.capabilities OR OLD.permission_profile IS DISTINCT FROM NEW.permission_profile OR OLD.permissions IS DISTINCT FROM NEW.permissions OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'API token identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_service_secret_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.id<>NEW.id OR OLD.service_principal_id<>NEW.service_principal_id OR OLD.name<>NEW.name OR OLD.secret_fingerprint<>NEW.secret_fingerprint OR OLD.verifier<>NEW.verifier OR OLD.expires_at<>NEW.expires_at OR OLD.created_at<>NEW.created_at THEN RAISE EXCEPTION 'service secret identity is immutable'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_credential_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -1172,6 +1232,7 @@ BEGIN
         EXECUTE 'REVOKE UPDATE ON access.authorization_policy_revision, access.authorization_policy_role_binding, access.authorization_policy_operation FROM leapview_control_runtime';
         EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_permission_pairs(text, jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
         EXECUTE 'REVOKE DELETE ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_runtime';

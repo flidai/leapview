@@ -412,8 +412,11 @@ func resolvedVisualMetadata(component dashboard.PageVisual, visualID string, vis
 }
 
 func contextCredentialAllowsCapability(scope agent.Scope, capability access.Capability) bool {
-	if !scope.Credential.Restricted || scope.Credential.Capabilities == nil {
+	if !scope.Credential.Restricted {
 		return true
+	}
+	if scope.Credential.Capabilities == nil {
+		return false
 	}
 	for _, allowed := range scope.Credential.Capabilities {
 		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {

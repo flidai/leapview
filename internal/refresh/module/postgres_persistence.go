@@ -721,6 +721,7 @@ func toPostgresRunInput(input refreshrun.RunInput) (refreshpostgres.RunInput, er
 		TriggerType: input.TriggerType, InvocationSource: input.InvocationSource, TriggerID: input.TriggerID, ConcurrencyPolicy: input.ConcurrencyPolicy,
 		OccurrenceID: input.OccurrenceID, NominalTime: nominal, PlanDigest: input.PipelinePlan.Digest, ArtifactDigest: input.PipelinePlan.ArtifactDigest,
 		MatchingScheduleIDs: append([]string(nil), input.MatchingScheduleIDs...), MaterializationScope: append([]string(nil), input.PipelinePlan.MaterializationScope...), PrincipalID: input.PrincipalID,
+		Authority: input.Authority,
 	}, nil
 }
 

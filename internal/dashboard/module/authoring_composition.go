@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringaccessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -42,6 +43,7 @@ type AuthoringConfig struct {
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
 	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
+	PreviewGovernor            dataquery.Governor
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -96,11 +98,12 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("build dashboard authoring service: %w", err)
 	}
 	application, err := authoringapplication.New(authoringapplication.Options{
-		Authoring:      service,
-		Repository:     repository,
-		Authorizer:     authorizer,
-		Compiler:       compiler,
-		AcquireRuntime: config.AcquireRuntime,
+		Authoring:       service,
+		Repository:      repository,
+		Authorizer:      authorizer,
+		Compiler:        compiler,
+		AcquireRuntime:  config.AcquireRuntime,
+		PreviewGovernor: config.PreviewGovernor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring application: %w", err)

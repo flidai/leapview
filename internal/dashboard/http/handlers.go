@@ -237,25 +237,29 @@ type Handler struct {
 	CurrentUsagePrincipal      func(r *nethttp.Request) (string, bool)
 	RecordDashboardView        func(context.Context, usage.View) error
 	AuthorizeListResource      func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
-	CSRFToken                  func(r *nethttp.Request) string
-	Layout                     func(r *nethttp.Request) webpage.Provider
-	Presentation               reportui.Presentation
-	Assets                     staticasset.Resolver
-	Environment                func(*nethttp.Request) string
-	DataRefreshedAt            func(context.Context, string, string, string) string
-	QueryFreshness             func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard               func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare       SharedCommandPrepare
-	SessionStore               dashboardsession.Store
-	SessionKey                 SessionKeyFactory
-	OptionCursorSecret         []byte
-	OptionCache                *dashboardfilter.OptionCache
-	AgentBootstrap             func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands              reportui.AgentCommandBindings
-	RouteScope                 reportui.RouteScope
-	StreamNamespace            string
-	SpatialTileStreamClosed    func(Metrics, string)
-	Authoring                  AuthoringApplication
+	// AuthorizeTypedDashboardAction evaluates the request credential's exact
+	// dashboard action pair. It returns typed=false for browser sessions so
+	// durable authoring authorization remains the source of truth there.
+	AuthorizeTypedDashboardAction func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (typed bool, allowed bool, err error)
+	CSRFToken                     func(r *nethttp.Request) string
+	Layout                        func(r *nethttp.Request) webpage.Provider
+	Presentation                  reportui.Presentation
+	Assets                        staticasset.Resolver
+	Environment                   func(*nethttp.Request) string
+	DataRefreshedAt               func(context.Context, string, string, string) string
+	QueryFreshness                func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard                  func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare          SharedCommandPrepare
+	SessionStore                  dashboardsession.Store
+	SessionKey                    SessionKeyFactory
+	OptionCursorSecret            []byte
+	OptionCache                   *dashboardfilter.OptionCache
+	AgentBootstrap                func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands                 reportui.AgentCommandBindings
+	RouteScope                    reportui.RouteScope
+	StreamNamespace               string
+	SpatialTileStreamClosed       func(Metrics, string)
+	Authoring                     AuthoringApplication
 }
 
 func (h Handler) catalogWithDashboardAppearance(ctx context.Context, source dashboard.Catalog, dashboardID string) dashboard.Catalog {

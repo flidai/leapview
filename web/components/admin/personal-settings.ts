@@ -4,6 +4,7 @@ import { Camera, Check, ChevronDown, Plus, Search, Trash2, X } from 'lucide'
 import type {
   PersonalAuthoringSessionSignal,
   PersonalCapabilityOptionSignal,
+  PersonalPermissionPairSignal,
   PersonalSessionSignal,
   PersonalSettingsSignal,
   PersonalTokenSignal,
@@ -18,7 +19,7 @@ const emptySettings: PersonalSettingsSignal = {
   active: 'profile',
   profile: { id: '', email: '', displayName: '', theme: 'system', identitySource: '', canEditDisplayName: false, hasLocalPassword: false },
   security: { localPasswordEnabled: false, sessions: [], authoringSessions: [] },
-  tokens: { items: [], capabilities: [] },
+  tokens: { items: [], capabilities: [], permissionOptionsReady: false },
 }
 
 type ThemeOption = {
@@ -33,7 +34,7 @@ type TokenPermissionAccess = 'read' | 'write' | 'fixed'
 type TokenPermissionAccessOption = {
   value: TokenPermissionAccess
   label: string
-  capabilities: string[]
+  permissions: PersonalPermissionPairSignal[]
 }
 
 type TokenPermissionDefinition = {
@@ -535,7 +536,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                                 `
                               })}
                             </div>
-                          `) : html`<div class="permission-empty">No permissions match your search.</div>`}
+                          `) : html`<div class="permission-empty">${tokens.permissionOptionsReady && permissions.length === 0 ? 'No authorized action-target permissions are available.' : 'No permissions match your search.'}</div>`}
                         </div>
                       </div>
                     ` : nothing}
@@ -549,8 +550,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
             </form>
           </div>
         </div>
-        <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.capabilities)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
-        ${this.tokenConfirmOpen && this.tokenConfirmation ? html`<dialog id="token-confirm" aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation}><div class="card"><div class="row"><div class="settings-field"><h3 id="token-confirm-title">Generate this token?</h3><span class="settings-description">It will expire ${this.tokenConfirmation.label}. The secret is displayed once and cannot be recovered.</span></div></div><div class="row actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" @click=${this.confirmTokenCreation}>Generate token</button></div></div></dialog>` : nothing}
+		<div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
+		${this.tokenConfirmOpen && this.tokenConfirmation ? html`<dialog id="token-confirm" aria-labelledby="token-confirm-title" @cancel=${this.cancelTokenConfirmation}><div class="card"><div class="row"><div class="settings-field"><h3 id="token-confirm-title">Generate this token?</h3><span class="settings-description">It will expire ${this.tokenConfirmation.label}. The secret is displayed once and cannot be recovered.</span></div></div><div class="row actions"><button type="button" @click=${this.cancelTokenConfirmation}>Cancel</button><button class="primary" type="button" @click=${this.confirmTokenCreation}>Generate token</button></div></div></dialog>` : nothing}
       </section>
     `
   }
@@ -609,9 +610,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     `
   }
 
-  private renderToken(token: PersonalTokenSignal, capabilities: PersonalCapabilityOptionSignal[]) {
-    const options = new Map(capabilities.map((capability) => [capability.value, capability.label]))
-    const labels = token.capabilities.map((capability) => options.get(capability) ?? humanizeCapability(capability))
+  private renderToken(token: PersonalTokenSignal) {
+    const labels = token.permissions.map((permission) => formatPermissionPair(permission))
     return html`<div class="row"><div class="settings-field"><span class="settings-label">${token.name}</span><span class="settings-description">${labels.join(', ') || 'No project or resource authority'} · Created ${formatDate(token.createdAt)}${token.expiresAt ? ` · Expires ${formatDate(token.expiresAt)}` : ''}</span></div>${token.revokedAt ? html`<span class="muted">Revoked</span>` : html`<button class="danger" type="button" @click=${() => this.revokeToken(token.id)}>Revoke</button>`}</div>`
   }
 
@@ -666,9 +666,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private createToken = (event: Event): void => {
     event.preventDefault()
     if (!this.tokenName.trim()) return
-    let expiresAt = ''
-    if (this.tokenExpiryPreset === 'custom') {
-      expiresAt = localDateTimeToRFC3339(this.tokenExpires)
+	let expiresAt = ''
+	if (this.tokenExpiryPreset === 'custom') {
+	  expiresAt = localDateTimeToRFC3339(this.tokenExpires)
     } else {
       const expiryDays = Number(this.tokenExpiryPreset)
       if (!Number.isFinite(expiryDays) || expiryDays <= 0) return
@@ -680,10 +680,14 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private confirmTokenCreation = (): void => {
-    if (!this.tokenConfirmation || this.tokenCreatePending) return
-    const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: this.tokenConfirmation.expiresAt }
-    const capabilities = this.selectedTokenCapabilities()
-    command.capabilities = capabilities
+	if (!this.tokenConfirmation || this.tokenCreatePending) return
+	const command: Record<string, unknown> = {
+	  action: 'create',
+	  name: this.tokenName.trim(),
+	  expiresAt: this.tokenConfirmation.expiresAt,
+	  // An explicit empty array creates an authentication-only credential.
+	  permissions: this.selectedTokenPermissions(),
+	}
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
     this.tokenConfirmOpen = false
@@ -898,12 +902,19 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.tokenPermissionSelections = { ...this.tokenPermissionSelections, [permission.id]: access.value }
     this.closeTokenPermissionAccessMenu(true)
   }
-  private selectedTokenCapabilities(): string[] {
-    const selected = new Set(tokenPermissionDefinitions(this.settings.tokens.capabilities).flatMap((permission) => {
+  private selectedTokenPermissions(): PersonalPermissionPairSignal[] {
+    const seen = new Set<string>()
+    const selected: PersonalPermissionPairSignal[] = []
+    for (const permission of tokenPermissionDefinitions(this.settings.tokens.capabilities)) {
       const access = this.tokenPermissionAccess(permission)
-      return access?.capabilities ?? []
-    }))
-    return this.settings.tokens.capabilities.map((capability) => capability.value).filter((capability) => selected.has(capability))
+      for (const pair of access?.permissions ?? []) {
+        const key = JSON.stringify(pair)
+        if (seen.has(key)) continue
+        seen.add(key)
+        selected.push(pair)
+      }
+    }
+    return selected
   }
   private toggleTokenPermissionAccessMenu(permissionID: string): void {
     if (this.tokenPermissionAccessMenu === permissionID) this.closeTokenPermissionAccessMenu()
@@ -952,54 +963,19 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 }
 
-function tokenPermissionDefinitions(capabilities: PersonalCapabilityOptionSignal[]): TokenPermissionDefinition[] {
-  const options = new Map(capabilities.map((capability) => [capability.value, capability]))
-  const permissions: TokenPermissionDefinition[] = []
-  const addFixedPermission = (
-    id: string,
-    capabilityValue: string,
-  ): void => {
-    const capability = options.get(capabilityValue)
-    if (!capability) return
-    permissions.push({
-      id,
-      label: capability.label,
-      description: capability.description,
-      category: capability.category,
-      searchText: `${capability.value} ${capability.label} ${capability.description}`,
-      access: [{ value: 'fixed', label: capability.label, capabilities: [capability.value] }],
-    })
-  }
-
-  addFixedPermission('project-administration', 'PROJECT_ADMIN')
-  addFixedPermission('platform-administration', 'PLATFORM_ADMIN')
-
-  const use = options.get('RESOURCE_USE')
-  const read = options.get('RESOURCE_READ')
-  const edit = options.get('RESOURCE_EDIT')
-  if (use || read || edit) {
-    const access: TokenPermissionAccessOption[] = []
-    const readCapabilities = [use?.value, read?.value].filter((value): value is string => Boolean(value))
-    const readOptions = [use, read].filter((capability): capability is PersonalCapabilityOptionSignal => Boolean(capability))
-    if (readCapabilities.length) access.push({ value: 'read', label: joinCapabilityLabels(readOptions), capabilities: uniqueCapabilities(readCapabilities) })
-    if (edit) {
-      const writeOptions = [...readOptions, edit]
-      access.push({ value: 'write', label: joinCapabilityLabels(writeOptions), capabilities: uniqueCapabilities([...readCapabilities, edit.value]) })
-    }
-    permissions.push({
-      id: 'resource-content',
-      label: 'Resource access',
-      description: `Select the exact resource capabilities to persist: ${joinCapabilityLabels([use, read, edit].filter((capability): capability is PersonalCapabilityOptionSignal => Boolean(capability)))}.`,
-      category: use?.category ?? read?.category ?? edit?.category ?? 'Resource',
-      searchText: [use, read, edit].filter(Boolean).map((capability) => `${capability?.value} ${capability?.label} ${capability?.description}`).join(' '),
-      access,
-    })
-  }
-
-  addFixedPermission('resource-management', 'RESOURCE_MANAGE')
-  addFixedPermission('resource-sharing', 'RESOURCE_SHARE')
-  addFixedPermission('resource-publishing', 'RESOURCE_PUBLISH')
-  return permissions
+function tokenPermissionDefinitions(options: PersonalCapabilityOptionSignal[]): TokenPermissionDefinition[] {
+  return options.flatMap((option, index) => {
+    const permissions = uniquePermissionPairs(option.permissions ?? [])
+    if (!permissions.length) return []
+    return [{
+      id: `typed-${index}`,
+      label: option.label,
+      description: option.description,
+      category: option.category,
+      searchText: `${option.value} ${option.label} ${option.description}`,
+      access: [{ value: 'fixed', label: option.label, permissions }],
+    }]
+  })
 }
 
 function groupTokenPermissions(permissions: TokenPermissionDefinition[]): Array<[string, TokenPermissionDefinition[]]> {
@@ -1012,15 +988,25 @@ function groupTokenPermissions(permissions: TokenPermissionDefinition[]): Array<
   return [...groups.entries()]
 }
 
-function uniqueCapabilities(capabilities: string[]): string[] {
-  return [...new Set(capabilities)]
+function uniquePermissionPairs(permissions: PersonalPermissionPairSignal[]): PersonalPermissionPairSignal[] {
+  const seen = new Set<string>()
+  return permissions.filter((permission) => {
+    const key = JSON.stringify(permission)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
-function joinCapabilityLabels(capabilities: PersonalCapabilityOptionSignal[]): string {
-  const labels = capabilities.map((capability) => capability.label)
-  if (labels.length <= 1) return labels[0] ?? 'No resource capabilities'
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`
-  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
+function formatPermissionPair(permission: PersonalPermissionPairSignal): string {
+  const target = permission.target.resourceId
+    ? `${permission.target.resourceKind ?? 'resource'} ${permission.target.resourceId}`
+    : permission.target.projectId
+      ? `Project ${permission.target.projectId}`
+      : permission.target.instanceId
+        ? `Instance ${permission.target.instanceId}`
+        : permission.target.scope
+  return `${permission.action} · ${target}`
 }
 
 function themeOption(value: string): ThemeOption {
@@ -1030,10 +1016,6 @@ function themeOption(value: string): ThemeOption {
 function usernameFromEmail(email: string): string {
   const localPart = email.split('@', 1)[0]?.trim().toLocaleLowerCase() ?? ''
   return localPart.replace(/[^a-z0-9._-]+/g, '.').replace(/^[._-]+|[._-]+$/g, '') || 'user'
-}
-
-function humanizeCapability(value: string): string {
-  return value.toLocaleLowerCase().split('_').filter(Boolean).map((part, index) => index === 0 ? `${part.charAt(0).toLocaleUpperCase()}${part.slice(1)}` : part).join(' ')
 }
 
 function formatDate(value: string): string {

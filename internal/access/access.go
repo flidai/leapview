@@ -424,17 +424,56 @@ type APITokenInput struct {
 	ExpiresAt    time.Time
 }
 
+// ScopedAPITokenInput is the ADR-0025 credential contract. Permissions is
+// required: nil is omission and invalid, while an explicit empty slice creates
+// an identity-only token. The legacy APITokenInput remains only for bounded
+// migration/bootstrap callers until generic capabilities are retired.
+type ScopedAPITokenInput struct {
+	PrincipalID string
+	Name        string
+	Permissions []PermissionPair
+	ExpiresAt   time.Time
+}
+
 const APITokenNameInitialPublisher = "initial-publisher"
 
 type APIToken struct {
-	ID           string
-	PrincipalID  string
-	Name         string
-	Capabilities []Capability
-	ExpiresAt    string
-	CreatedAt    string
-	LastUsedAt   string
-	RevokedAt    string
+	ID          string
+	PrincipalID string
+	Name        string
+	// TokenFingerprint is the non-secret durable fingerprint used to bind
+	// queued caller authority back to the initiating credential. It is never a
+	// bearer secret and is not exposed by token presentation DTOs.
+	TokenFingerprint  string
+	Capabilities      []Capability
+	PermissionProfile string
+	Permissions       []PermissionPair
+	ExpiresAt         string
+	CreatedAt         string
+	LastUsedAt        string
+	RevokedAt         string
+}
+
+// APITokenAuthorityEvidenceReader resolves a token by immutable evidence for
+// asynchronous revalidation. Implementations must check token lifecycle and
+// the bound principal at the supplied instant; callers must still validate
+// the returned permission ceiling against their operation envelope.
+type APITokenAuthorityEvidenceReader interface {
+	APITokenAuthorityEvidence(context.Context, string, string, time.Time) (APIToken, error)
+}
+
+// SessionAuthorityEvidenceReader resolves a browser session by its durable
+// non-secret identity. Revalidation must provide the fingerprint captured at
+// authentication time; it must never retain or replay the bearer cookie.
+type SessionAuthorityEvidenceReader interface {
+	SessionAuthorityEvidence(context.Context, string, string, string, time.Time) (Session, error)
+}
+
+// ScopedAPITokenRepository is implemented only by the native PostgreSQL
+// authority. The retained SQLite fixture deliberately does not acquire this
+// production credential contract while it is being removed.
+type ScopedAPITokenRepository interface {
+	CreateScopedAPITokenWithMetadata(context.Context, ScopedAPITokenInput) (string, APIToken, error)
 }
 
 // BootstrapAPITokenEvidenceReader is the narrow durable revalidation port
@@ -454,13 +493,17 @@ type APICredential struct {
 type CredentialEvidence struct {
 	Class       string
 	ID          string
+	Fingerprint string
 	PrincipalID string
 	ExpiresAt   time.Time
 }
 
 type Session struct {
-	ID                string
-	PrincipalID       string
+	ID          string
+	PrincipalID string
+	// TokenFingerprint is non-secret evidence used only to bind an async job
+	// back to the browser session that initiated it.
+	TokenFingerprint  string
 	Kind              SessionKind
 	InstanceID        string
 	ProfileID         string

@@ -7,10 +7,10 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestAgentCredentialScopePreservesTokenAttenuation(t *testing.T) {
-	dynamic := agentCredentialScope(access.APICredential{Token: access.APIToken{ID: "token-dynamic"}})
-	if !dynamic.Restricted || dynamic.Capabilities != nil {
-		t.Fatalf("dynamic token scope = %#v", dynamic)
+func TestAgentCredentialScopeRejectsOmittedTokenCapabilities(t *testing.T) {
+	omitted := agentCredentialScope(access.APICredential{Token: access.APIToken{ID: "token-omitted"}})
+	if !omitted.Restricted || omitted.Capabilities == nil || len(omitted.Capabilities) != 0 {
+		t.Fatalf("omitted token scope = %#v", omitted)
 	}
 
 	denyAll := agentCredentialScope(access.APICredential{Token: access.APIToken{ID: "token-deny", Capabilities: []access.Capability{}}})

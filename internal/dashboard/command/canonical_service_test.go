@@ -197,6 +197,19 @@ func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
 	}
 }
 
+func TestPrepareVisualWindowRejectsVisualOutsideActivePage(t *testing.T) {
+	definition := testDashboardDefinition()
+	request := dashboard.VisualizationWindowRequest{
+		VisualID: "boolean_chart", SpecRevision: definition.Visualizations["boolean_chart"].SpecRevision,
+		RequestSeq: 1, Limit: 10, BlockID: "a",
+	}
+	if _, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareVisualWindow(
+		Request{DashboardID: "dash", PageID: "overview", VisualWindowCommand: request}, dashboard.Filters{}.WithDefaults(),
+	); err == nil {
+		t.Fatal("visual from another dashboard page was accepted")
+	}
+}
+
 func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testing.T) {
 	definition := testDashboardDefinition()
 	authoritative := dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "existing", InteractionKind: "interaction-0"}}, ServingStateID: "serving-test", CompiledState: &dashboardfilter.State{}, DataRevisions: map[string]int64{"chart": 1, "orders": 7}}.WithDefaults()

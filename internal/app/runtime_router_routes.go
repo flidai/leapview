@@ -188,11 +188,23 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 			adminGuard.BrowserMutationMiddleware = dependencies.apiProtocol.BrowserMutationMiddleware
 		}
 		dependencies.admin.MountAuthenticated(r, adminGuard)
-		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(dependencies.access, dependencies.runtimeHost, capability, resolve, next)
-		}, ProtectWithAuthoring: func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectAuthoringResource(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), capability, next)
-		}})
+		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{
+			ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectResources(dependencies.access, dependencies.runtimeHost, capability, resolve, next)
+			},
+			ProtectWithResourceAction: func(capability access.Capability, action access.Action, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectResourcesWithTypedAction(dependencies.access, dependencies.runtimeHost, capability, action, resolve, next)
+			},
+			ProtectWithAuthoring: func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectAuthoringResource(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), capability, next)
+			},
+			ProtectWithAuthoringAction: func(capability access.Capability, action access.Action, next http.HandlerFunc) http.HandlerFunc {
+				return protectProjectAuthoringResourceWithTypedAction(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), capability, action, next)
+			},
+			ProtectWithAuthoringCommand: func(next http.HandlerFunc) http.HandlerFunc {
+				return dependencies.access.Authenticate(next).ServeHTTP
+			},
+		})
 		dependencies.access.MountAuthenticatedBrowser(r)
 	})
 }

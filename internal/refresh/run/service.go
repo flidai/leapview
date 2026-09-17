@@ -16,6 +16,7 @@ import (
 	refreshplan "github.com/flidai/leapview/internal/refresh/plan"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 // ServingStateReader is the immutable read surface needed to resolve the
@@ -111,6 +112,9 @@ type Service struct {
 	Artifacts                      ArtifactLoader
 	Publisher                      Publisher
 	Publication                    CanonicalPublicationUnitOfWork
+	// RequireAuthority is enabled by native production composition. It rejects
+	// new refresh admissions that omit the durable caller/delegated envelope.
+	RequireAuthority               bool
 }
 
 type ServingState struct {
@@ -158,6 +162,9 @@ type QueuePipelineInput struct {
 	// IdempotencyKey is carried only by an explicitly keyed manual command.
 	// Scheduled and UI retries leave it empty and therefore create fresh runs.
 	IdempotencyKey string
+	// Authority is the immutable caller/delegated envelope captured before
+	// native refresh admission. Production callers must provide caller evidence.
+	Authority jobs.AuthorityEnvelope
 }
 
 // IdempotentRunTreeRepository is an optional read fast-path for native
@@ -255,6 +262,14 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	if input.PrincipalID == "" {
 		return QueueAssetResult{}, fmt.Errorf("refresh principal id is required")
+	}
+	if s.RequireAuthority {
+		if input.Authority.IsZero() {
+			return QueueAssetResult{}, fmt.Errorf("refresh authority envelope is required")
+		}
+		if err := input.Authority.Validate(); err != nil {
+			return QueueAssetResult{}, fmt.Errorf("refresh authority envelope: %w", err)
+		}
 	}
 	if err := ValidateGroupIDs(input.GroupIDs); err != nil {
 		return QueueAssetResult{}, err
@@ -380,7 +395,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.Occurrence != nil {
 		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
 	}
-	rootInput := RunInput{RunID: input.RunID, Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TargetRevision: targetRevision, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), AuditIntent: input.AuditIntent}
+	rootInput := RunInput{RunID: input.RunID, Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TargetRevision: targetRevision, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), Authority: input.Authority, AuditIntent: input.AuditIntent}
 	dependencyTargets := make([]projectgraph.ResourceID, 0, len(plan.DependencyTables))
 	for _, table := range plan.DependencyTables {
 		targetID, parseErr := projectgraph.NewResourceID(table)

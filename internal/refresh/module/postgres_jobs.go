@@ -135,6 +135,7 @@ func (a *PostgresJobsAdapter) EnqueueRefreshTx(ctx context.Context, tx refreshpo
 		ResourceKind:         refreshJobResourceKind,
 		ResourceID:           runID,
 		EstimatedMemoryBytes: input.EstimatedMemoryBytes,
+		Authority:            input.Authority,
 		Payload:              payload,
 	})
 	if err != nil {

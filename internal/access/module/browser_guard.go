@@ -68,6 +68,10 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
 		if credential != nil {
 			ctx = context.WithValue(ctx, apiCredentialContextKey{}, *credential)
+		} else if m.auth != nil {
+			if evidence, found := m.auth.sessionEvidence(r, principal.ID); found {
+				ctx = withSessionCredentialEvidence(ctx, evidence)
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

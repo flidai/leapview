@@ -477,6 +477,21 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	// idempotency identity. X-Request-ID remains a distinct transport
 	// correlation value, matching the headless authoring API contract.
 	command.ID = authoring.CommandID(idempotencyKey)
+	if h.AuthorizeTypedDashboardAction != nil {
+		action, _ := authoringCommandTypedAction(command)
+		typed, allowed, authErr := h.AuthorizeTypedDashboardAction(r.Context(), project, projectgraph.ResourceID(dashboardID), action)
+		if authErr != nil {
+			writeBuilderError(w, r, authErr)
+			return
+		}
+		// An unrecognized action is intentionally passed as the zero action: a
+		// typed credential then fails closed, while a browser session continues
+		// to the domain command's own closed-union and durable authorization.
+		if typed && !allowed {
+			writeBuilderError(w, r, access.ErrForbidden)
+			return
+		}
+	}
 	err = executeAuthoringUIMutation(r, "executeDashboardAuthoringCommand", project.String(), idempotencyKey, actorID, command.DashboardID.String(), command.DraftID.String(), authoring.OriginUI, authoringCommandCapability(command), nil, func(ctx context.Context) error {
 		if command.IsBuilderIntent() {
 			_, mutationErr := h.Authoring.ExecuteIntent(ctx, application.IntentRequest{ProjectID: project, ActorID: actorID, Command: command})

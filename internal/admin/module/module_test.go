@@ -211,14 +211,14 @@ func TestCapabilityAllowedIntersectsSnapshotAndCredentialScope(t *testing.T) {
 	}
 }
 
-func TestCapabilityAllowedPreservesTokenDynamicAndDenyAll(t *testing.T) {
+func TestCapabilityAllowedRejectsTokenOmissionAndDenyAll(t *testing.T) {
 	m := &Module{currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
 		return []access.Capability{access.CapabilityResourcePublish}, nil
 	}}
 	r := httptest.NewRequest(http.MethodPost, "/", nil)
-	dynamic := access.APICredential{Token: access.APIToken{Capabilities: nil}}
-	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, dynamic, true); err != nil || !ok {
-		t.Fatalf("dynamic token allowed = %v, err=%v", ok, err)
+	omitted := access.APICredential{Token: access.APIToken{Capabilities: nil}}
+	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, omitted, true); err != nil || ok {
+		t.Fatalf("omitted token allowlist allowed = %v, err=%v", ok, err)
 	}
 	denyAll := access.APICredential{Token: access.APIToken{Capabilities: []access.Capability{}}}
 	if ok, err := m.capabilityAllowed(r, "principal", "sales", access.CapabilityResourcePublish, denyAll, true); err != nil || ok {

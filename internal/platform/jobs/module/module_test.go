@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -74,6 +76,126 @@ func TestHandlerExecutionLeaseTimeoutOverridesModuleFallback(t *testing.T) {
 	defaults, err := (&Module{}).riverWorkerTiming(jobs.HandlerFunc{JobKind: "release.finalize"})
 	if err != nil || defaults.executionTimeout != river.JobTimeoutDefault || defaults.rescueAfter != riverDefaultRescueAfter {
 		t.Fatalf("default worker timing = %#v, %v; want River's 1m execution and 1h rescue defaults", defaults, err)
+	}
+}
+
+func TestQueuedJobCredentialRevocationClosesBeforeAdmissionAndHandler(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "jobs_authority_revalidation")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := migrations.ApplyRiver(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revoked atomic.Bool
+	var revalidations atomic.Int32
+	var admissions atomic.Int32
+	var handlers atomic.Int32
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence, Production: true, OwnerID: "authority-revalidation-test",
+		AuthorityRevalidator: jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error {
+			revalidations.Add(1)
+			if revoked.Load() {
+				return errors.New("credential revoked")
+			}
+			return nil
+		}),
+		Admission: jobs.AdmitterFunc(func(ctx context.Context, _ jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
+			admissions.Add(1)
+			return testAdmissionLease{ctx: ctx}, nil
+		}),
+		PollInterval: 5 * time.Millisecond, LeaseTimeout: time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "release.finalize",
+		Run:     func(context.Context, jobs.Job) error { handlers.Add(1); return nil },
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = module.Stop(context.Background()) })
+	revoked.Store(true)
+	authority := moduleTestAuthority(t, time.Now().Add(time.Hour))
+	job, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: "queued-revoked-credential", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: "principal-a",
+		PartitionKey: "project-a", ResourceKind: "release", ResourceID: "release-a", EstimatedMemoryBytes: 1,
+		Payload: []byte(`{"release":"release-a"}`), Authority: authority,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := waitForProductStatus(t, module, job.ID, jobs.StatusFailed)
+	if !strings.Contains(failed.ErrorJSON, "ASYNC_JOB_AUTHORITY_INVALID") {
+		t.Fatalf("revoked credential failure evidence = %q", failed.ErrorJSON)
+	}
+	if revalidations.Load() == 0 {
+		t.Fatal("queued job was not revalidated")
+	}
+	if admissions.Load() != 0 || handlers.Load() != 0 {
+		t.Fatalf("revoked queued job crossed boundary: admissions=%d handlers=%d", admissions.Load(), handlers.Load())
+	}
+}
+
+func TestAuthorityRevalidationRejectsExpiredCallerAndUnsupportedDelegation(t *testing.T) {
+	m := &Module{config: Config{AuthorityRevalidator: jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error { return nil })}}
+	if err := m.revalidateAuthority(t.Context(), "refresh_pipeline", moduleTestAuthority(t, time.Now().Add(-time.Second))); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("expired caller authority error = %v", err)
+	}
+	delegated := moduleTestAuthority(t, time.Now().Add(time.Hour))
+	delegated.Mode = jobs.DelegatedWorkloadMode
+	delegated.ExecutionPrincipalID = "workload-a"
+	delegated.Credential = nil
+	delegated.ExecutionGrant = &jobs.ExecutionGrantEvidence{ID: "grant-a", Fingerprint: "grant-fp", ExpiresAt: time.Now().Add(time.Hour)}
+	m.config.AuthorityRevalidator = nil
+	if err := m.revalidateAuthority(t.Context(), "refresh_pipeline", delegated); !errors.Is(err, jobs.ErrAuthorityRevalidator) {
+		t.Fatalf("delegated authority without revalidator error = %v", err)
+	}
+}
+
+func TestUnmigratedZeroAuthorityRetainsExistingContract(t *testing.T) {
+	m := &Module{config: Config{
+		RequiredAuthorityKinds: map[string]struct{}{"refresh_pipeline": {}},
+		AuthorityRevalidator: jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error {
+			return errors.New("should not be called for omitted unmigrated authority")
+		}),
+	}}
+	if err := m.revalidateAuthority(t.Context(), "release.finalize", jobs.AuthorityEnvelope{}); err != nil {
+		t.Fatalf("unmigrated zero authority error = %v", err)
+	}
+	if err := m.revalidateAuthority(t.Context(), "refresh_pipeline", jobs.AuthorityEnvelope{}); !errors.Is(err, jobs.ErrAuthorityRequired) {
+		t.Fatalf("migrated zero authority error = %v, want required", err)
+	}
+}
+
+func moduleTestAuthority(t *testing.T, expiresAt time.Time) jobs.AuthorityEnvelope {
+	t.Helper()
+	pair, err := access.NewProjectPermissionPair(access.ActionDeliveryPublish, "project-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return jobs.AuthorityEnvelope{
+		Profile: jobs.AuthorityEnvelopeProfile, Mode: jobs.CallerAuthorityMode,
+		ActorPrincipalID: "principal-a", ExecutionPrincipalID: "principal-a",
+		Credential:  &jobs.CredentialEvidence{Class: jobs.CredentialClassAPIToken, ID: "token-a", Fingerprint: "fp-a", ExpiresAt: expiresAt},
+		Target:      jobs.AuthorityTarget{InstanceID: "instance-a", ProjectID: "project-a", Environment: "production", ResourceKind: "release", ResourceID: "release-a"},
+		Permissions: []access.PermissionPair{pair},
 	}
 }
 

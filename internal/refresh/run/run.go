@@ -13,6 +13,7 @@ import (
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (
@@ -104,6 +105,9 @@ type RunInput struct {
 	ParentRunID          string
 	JobKind              string
 	PayloadJSON          string
+	// Authority is captured by the authenticated producer and carried through
+	// native refresh admission into the canonical product job.
+	Authority            jobs.AuthorityEnvelope
 	AuditIntent          *access.AuditIntent
 }
 

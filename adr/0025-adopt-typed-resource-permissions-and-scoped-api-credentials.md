@@ -8,7 +8,8 @@ typed resource actions and credential attenuation remain the foundation.
 
 Decision date: 2026-09-17
 
-Implementation: pending
+Implementation: partial — typed credential and dashboard-consumption slices;
+full catalog enforcement and grant migration pending
 
 Deciders: LeapView maintainers
 
@@ -26,6 +27,36 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md);
 [ADR-0018](0018-retain-project-as-the-durable-deployment-namespace.md);
 [ADR-0021](0021-adopt-a-local-first-analytics-development-workflow.md)
+
+## Implementation status
+
+The first vertical slice is implemented without claiming completion of this
+decision. LeapView now has the versioned `leapview.permissions/v1` catalog,
+validated action/target pairs and prerequisites, named role expansions,
+generated permission documentation, PostgreSQL typed-token persistence, and a
+typed personal-token picker. New public token issuance requires an explicit
+permission array; omission fails, an empty array creates an authentication-only
+credential, and a restricted token cannot mint a broader child. Migration 022
+revokes active legacy API tokens with an explicit audit outcome because their
+generic capability lists cannot be converted to resource pairs without
+widening authority.
+
+The compatibility projection is intentionally narrow: it derives exact
+`dashboard.read` and `semantic.consume` options from the active authorization
+snapshot, and `pipeline.run` only from an exact legacy Pipeline grant. It never
+turns a broad legacy Project role into operational, sharing, delivery,
+administrative, or platform authority. Typed credentials now bound qualified
+dashboard/semantic reads, project-catalog discovery, and dashboard authoring
+operations; routes without a typed mapping fail closed.
+
+This is not the durable grant/role migration. Principal grants and role
+bindings still use the legacy capability model, most generated APIs and the CLI
+authoring profile still use that compatibility vocabulary, and sharing,
+delivery, platform administration, delegated workloads, and complete
+browser/REST/CLI/agent/MCP parity remain pending. The Go catalog is the runtime
+authority; TypeSpec and the PostgreSQL constraint mechanically validate copies
+of its current vocabulary but are not yet generated from it. Completion still
+requires every Confirmation item below and the ADR-0026 acceptance ledger.
 
 ## Context and problem statement
 

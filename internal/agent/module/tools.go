@@ -243,8 +243,11 @@ func (m *Module) recordToolAudit(ctx context.Context, scope agentcap.Scope, capa
 
 func agentCredentialAllowsCapability(scope agentcap.Scope, capability access.Capability) bool {
 	credential := scope.Credential
-	if !credential.Restricted || credential.Capabilities == nil {
+	if !credential.Restricted {
 		return true
+	}
+	if credential.Capabilities == nil {
+		return false
 	}
 	for _, allowed := range credential.Capabilities {
 		if strings.EqualFold(strings.TrimSpace(allowed), string(capability)) {

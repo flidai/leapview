@@ -11,15 +11,47 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-// SemanticConsumeAction is the target action name from ADR-0026. It is kept
-// as a string in this package until the global action catalog grows the
-// corresponding typed capability.
-const SemanticConsumeAction = "semantic.consume"
+// SemanticConsumeAction preserves the local dashboard-consumer contract while
+// the persisted principal grants remain on the legacy capability vocabulary.
+// Typed credentials are checked against access.ActionSemanticConsume below.
+const SemanticConsumeAction = string(access.ActionSemanticConsume)
+
+// semanticPermissionAction selects the typed action for a governed semantic
+// request. Dashboard-generated requests consume an already approved query
+// shape. API, agent, explorer, and preview requests construct a new query and
+// therefore require semantic.query; PermissionSetAllows supplies its explicit
+// semantic.consume prerequisite. Requests without an execution surface are
+// retained for the legacy internal call sites until those callers carry
+// operation metadata.
+func semanticPermissionAction(request dataquery.Query) (access.Action, bool) {
+	if request.Surface == dataquery.SurfacePublicDashboard || !isSemanticQueryKind(request.Kind) {
+		return "", false
+	}
+	if request.Surface == dataquery.SurfaceDashboard {
+		return access.ActionSemanticConsume, true
+	}
+	if request.Surface == "" && request.Operation == "" {
+		return "", false
+	}
+	return access.ActionSemanticQuery, true
+}
+
+func isSemanticQueryKind(kind dataquery.Kind) bool {
+	switch kind {
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows,
+		dataquery.KindSemanticHistogram, dataquery.KindSemanticDistribution,
+		dataquery.KindSemanticSpatialTile, dataquery.KindSemanticSpatialTileBudget,
+		dataquery.KindSemanticSpatialMetadata:
+		return true
+	default:
+		return false
+	}
+}
 
 // SemanticConsumptionRequirement describes the explicit semantic-consume
 // fence used by governed dashboard execution. Capability is deliberately
-// injectable so the compatibility binding can move to the typed global action
-// without changing dashboard query control flow.
+// injectable so the legacy principal-grant projection remains explicit while
+// typed credentials use the catalog action without changing query control flow.
 type SemanticConsumptionRequirement struct {
 	Action     string
 	Capability access.Capability
@@ -114,13 +146,84 @@ func (m Metrics) requireSemanticConsumption(
 			return err
 		}
 		if allowed {
-			if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsCapability(ctx, snapshot, principalID, credential.Token, requirement.Capability) {
+			if credential, ok := m.currentCredential(ctx); ok && !m.tokenAllowsSemanticConsumption(ctx, snapshot, principalID, credential.Token, request, semanticModel, requirement.Capability) {
 				return DeniedError{PrincipalID: principalID, Capability: requirement.Capability, Credential: true}
 			}
 			return nil
 		}
 	}
 	return DeniedError{PrincipalID: principalID, Capability: requirement.Capability}
+}
+
+// tokenAllowsSemanticConsumption is the compatibility binding for the
+// explicit semantic.consume fence. Typed credentials are evaluated against an
+// exact action/resource pair. Legacy capability tokens remain accepted only
+// for dashboard/preview consumption; they cannot be used to submit an
+// arbitrary semantic.query request.
+func (m Metrics) tokenAllowsSemanticConsumption(
+	ctx context.Context,
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	principalID string,
+	token access.APIToken,
+	request dataquery.Query,
+	semanticModel access.ResourceRef,
+	legacyCapability access.Capability,
+) bool {
+	action, typed := semanticPermissionAction(request)
+	if typed {
+		if token.PermissionProfile == "" && token.Permissions == nil && action == access.ActionSemanticQuery &&
+			(request.Operation == dataquery.OperationAPIPreview || request.Operation == dataquery.OperationPreviewWindow) {
+			return m.tokenAllowsCapability(ctx, snapshot, principalID, token, legacyCapability)
+		}
+		return m.tokenAllowsSemanticAction(request, token, semanticModel, action)
+	}
+	return m.tokenAllowsCapability(ctx, snapshot, principalID, token, legacyCapability)
+}
+
+func (m Metrics) tokenAllowsDataQuery(
+	ctx context.Context,
+	snapshot accesssnapshot.AuthorizationSnapshot,
+	principalID string,
+	token access.APIToken,
+	request dataquery.Query,
+	objects []access.ResourceRef,
+	legacyCapability access.Capability,
+) bool {
+	action, typed := semanticPermissionAction(request)
+	if !typed {
+		return m.tokenAllowsCapability(ctx, snapshot, principalID, token, legacyCapability)
+	}
+	semanticModel, ok := canonicalResourceForObjects(objects, request.ModelID, projectgraph.KindSemanticModel)
+	if !ok {
+		return false
+	}
+	if token.PermissionProfile != "" || token.Permissions != nil {
+		return m.tokenAllowsSemanticAction(request, token, semanticModel, action)
+	}
+	// The legacy token vocabulary has no arbitrary-query action. Retain its
+	// prior RESOURCE_USE binding only for preview's existing consume fence;
+	// callers must use a typed semantic.query grant for a new query shape.
+	if action == access.ActionSemanticQuery && request.Operation != dataquery.OperationAPIPreview && request.Operation != dataquery.OperationPreviewWindow {
+		return false
+	}
+	return m.tokenAllowsCapability(ctx, snapshot, principalID, token, access.CapabilityResourceUse)
+}
+
+func (m Metrics) tokenAllowsSemanticAction(request dataquery.Query, token access.APIToken, semanticModel access.ResourceRef, action access.Action) bool {
+	// PermissionProfile or Permissions marks the typed credential contract.
+	// A typed token with omitted permissions, or an unsupported profile, is
+	// invalid and must not fall back to the principal's legacy capabilities.
+	if token.PermissionProfile == "" && token.Permissions == nil {
+		return false
+	}
+	if token.PermissionProfile != access.PermissionCatalogProfile {
+		return false
+	}
+	pair, err := access.NewExactPermissionPair(action, request.ProjectID, semanticModel)
+	if err != nil {
+		return false
+	}
+	return access.PermissionSetAllows(token.Permissions, pair)
 }
 
 func canonicalResourceForObjects(objects []access.ResourceRef, id string, kind projectgraph.Kind) (access.ResourceRef, bool) {

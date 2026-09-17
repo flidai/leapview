@@ -263,6 +263,18 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	}
 }
 
+func TestServiceQueuePipelineRefreshRejectsOmittedAuthorityWhenRequired(t *testing.T) {
+	service := canonicalQueueService(newFakeRepo())
+	service.RequireAuthority = true
+	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+	})
+	if err == nil || !strings.Contains(err.Error(), "authority envelope is required") {
+		t.Fatalf("omitted authority error = %v", err)
+	}
+}
+
 func TestServiceQueuePipelineRefreshTerminalReplayBypassesPreflight(t *testing.T) {
 	repo := newFakeRepo()
 	replayedIdentity := serviceIdentity

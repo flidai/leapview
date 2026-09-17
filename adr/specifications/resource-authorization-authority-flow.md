@@ -1,6 +1,6 @@
 # Resource authorization authority flow
 
-Status: target contract; implementation and qualification pending.
+Status: partially implemented; qualification ledger below remains authoritative.
 
 Governing decisions: [ADR-0025](../0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md)
 and [ADR-0026](../0026-preserve-authority-across-governed-operations.md).
@@ -283,7 +283,9 @@ execution must not discover an unchecked extra dependency after approval.
 
 ## Qualification sequence and acceptance evidence
 
-All cases below are required target evidence, not reported passing tests.
+The status column records the 2026-09-17 implementation milestone. `Implemented`
+means the stated narrow case has executable evidence; `Partial` means only the
+listed slice exists. It does not waive the remaining clauses in that row.
 
 1. Correct misleading token selection and platform scope leakage as isolated
    security work; establish enough catalog coverage for the first slice.
@@ -294,21 +296,21 @@ All cases below are required target evidence, not reported passing tests.
 4. Expand operation/catalog coverage and complete the versioned migration only
    after these cross-boundary invariants have executable evidence.
 
-| ID | Required negative and lifecycle evidence |
-| --- | --- |
-| AF-01 | Dashboard read without consume denies data; consume without query cannot submit arbitrary queries; forged interaction/query payloads fail. |
-| AF-02 | Editing/draft preview cannot bypass query authority or row/member restrictions; added model dependencies need explicit consumption scope. |
-| AF-03 | Restricted attributes change from all regions to EMEA during query/cache/coalescing; no later output boundary releases a global cached result. |
-| AF-04 | Caller token expires while queued or running; next protected unit/output fails. Explicit workload execution survives initiator expiry only under its documented dispatch/lifetime rules. |
-| AF-05 | Editor changes pipeline SQL, referenced model, binding, destination, or run-as identity; approved privileged schedule cannot execute the changed closure. |
-| AF-06 | Disabled workload principal, expired/revoked execution grant, or broadened role never yields authority outside the currently valid grant. Triggering does not expose privileged results/logs. |
-| AF-07 | Restricted access-admin credential cannot escalate through role binding, group membership, controlled service principals, credentials, attributes, or workload delegation. |
-| AF-08 | Ordinary share survives issuer loss as documented; explicit revocation works; no onward sharing or delete/recreate resurrection. |
-| AF-09 | Old generation, rollback, and long reader obey current eligibility/restrictions; already committed activation reconciliation remains replay-safe. |
-| AF-10 | Real concurrent security-write/mutation/dispatch/output tests establish commit and release ordering, bounded in-flight exceptions, and fail-closed authority/audit failures. |
-| AF-11 | Create-only receipt does not leak resource content or confer follow-on authority; role/action/prerequisite revisions cannot silently widen existing grants or tokens. |
-| AF-12 | Search, pagination, totals, facets, autocomplete, dependency previews, and denial explanations do not disclose unauthorized resources or members. |
-| AF-13 | Compound operations reject mixed snapshots; delivery separates changed objects from dependencies; action/resource pairings never cross-expand. |
+| ID | Status | Required negative and lifecycle evidence |
+| --- | --- | --- |
+| AF-01 | Implemented for typed private dashboard/API paths | Dashboard read without consume denies data; consume without query cannot submit arbitrary queries; forged interaction/query payloads fail. Public/embed remains outside the qualified typed slice. |
+| AF-02 | Partial | Draft preview requires authoring plus query/consume and preserves semantic policy. Full dependency-change and every authoring-surface matrix remains pending. |
+| AF-03 | Pending | Restricted attributes change from all regions to EMEA during query/cache/coalescing; no later output boundary releases a global cached result. |
+| AF-04 | Partial | Caller token/session evidence is checked at refresh dequeue/admission. Revalidation during running protected units and output, plus delegated-workload lifetime behavior, remains pending. |
+| AF-05 | Pending | Editor changes pipeline SQL, referenced model, binding, destination, or run-as identity; approved privileged schedule cannot execute the changed closure. |
+| AF-06 | Pending | Disabled workload principal, expired/revoked execution grant, or broadened role never yields authority outside the currently valid grant. Triggering does not expose privileged results/logs. |
+| AF-07 | Partial | Personal-token issuance prevents restricted bearer and browser callers from widening typed authority. Role/group/service-principal/attribute/workload delegation escalation checks remain pending. |
+| AF-08 | Pending | Ordinary share survives issuer loss as documented; explicit revocation works; no onward sharing or delete/recreate resurrection. |
+| AF-09 | Pending | Old generation, rollback, and long reader obey current eligibility/restrictions; already committed activation reconciliation remains replay-safe. |
+| AF-10 | Pending | Real concurrent security-write/mutation/dispatch/output tests establish commit and release ordering, bounded in-flight exceptions, and fail-closed authority/audit failures. |
+| AF-11 | Partial | Catalog profiles, explicit prerequisites, exact/future targets, and typed-token immutability prevent silent credential widening. Resource create-only receipts and durable role migration remain pending. |
+| AF-12 | Partial | Typed project catalog/search/detail paths filter exact read pairs and search continues across denied pages. Totals, facets, autocomplete, semantic-member discovery, dependency previews, and denial explanations still require complete coverage. |
+| AF-13 | Partial | Permission storage and evaluation preserve pairs without Cartesian expansion. Coherent compound snapshots and complete delivery changed/dependency separation remain pending. |
 
 Record endpoint coverage, concurrency fixtures, supported-profile limits, and
 migration evidence with implementation. Documentation validation alone does not

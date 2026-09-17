@@ -216,7 +216,11 @@ type BrowserHandler struct {
 	Layout                   func(*stdhttp.Request) webpage.Provider
 	CSRFToken                func(*stdhttp.Request) string
 	CurrentUser              func(*stdhttp.Request) (Principal, bool)
-	Authenticate             func(stdhttp.Handler) stdhttp.Handler
+	// CurrentCredential carries the request's API credential when the browser
+	// route was authenticated with a bearer token. Browser sessions leave this
+	// unset and continue through the durable snapshot capability path.
+	CurrentCredential func(*stdhttp.Request) (access.APICredential, bool)
+	Authenticate      func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -291,12 +295,23 @@ func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		stdhttp.Error(w, "search is temporarily unavailable", stdhttp.StatusServiceUnavailable)
 		return
 	}
+	credential := h.currentCredential(r)
+	projectID := projectgraph.ResourceID("")
+	if !principal.DevBypass || typedBrowserCredential(credential) {
+		var err error
+		projectID, err = h.boundProject(r.Context())
+		if err != nil {
+			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+			return
+		}
+	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	limit := 24
-	page, err := h.SearchCatalog.Search(r.Context(), projectcatalog.SearchRequest{
+	request := projectcatalog.SearchRequest{
 		PrincipalID: principal.ID, DevAuthBypass: principal.DevBypass, Query: query,
 		Kinds: append([]projectgraph.Kind(nil), productSearchKinds...), Limit: limit,
-	})
+	}
+	page, err := searchCatalogAuthorized(r.Context(), h.SearchCatalog, request, credential, projectID)
 	if err != nil {
 		status := stdhttp.StatusServiceUnavailable
 		if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {
@@ -316,6 +331,42 @@ func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	_ = json.NewEncoder(w).Encode(struct {
 		Items []productSearchResult `json:"items"`
 	}{Items: items})
+}
+
+// searchCatalogAuthorized fills a product-search page from authorized results,
+// rather than filtering only the first underlying page. This prevents a typed
+// credential's denied matches from crowding later authorized results out of the
+// response while preserving the catalog's snapshot-bound opaque cursor checks.
+func searchCatalogAuthorized(ctx context.Context, catalog ProductSearchCatalog, request projectcatalog.SearchRequest, credential *access.APICredential, projectID projectgraph.ResourceID) (projectcatalog.Page, error) {
+	if catalog == nil {
+		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
+	}
+	limit := request.Limit
+	items := make([]projectcatalog.Result, 0, limit)
+	seenCursors := map[string]struct{}{}
+	for pages := 0; ; pages++ {
+		if pages >= 10000 {
+			return projectcatalog.Page{}, fmt.Errorf("catalog search pagination exceeded safety bound")
+		}
+		page, err := catalog.Search(ctx, request)
+		if err != nil {
+			return projectcatalog.Page{}, err
+		}
+		page = filterCatalogPageForCredential(page, credential, projectID)
+		remaining := limit - len(items)
+		if remaining > len(page.Items) {
+			remaining = len(page.Items)
+		}
+		items = append(items, page.Items[:remaining]...)
+		if len(items) >= limit || page.NextCursor == "" {
+			return projectcatalog.Page{Items: items}, nil
+		}
+		if _, seen := seenCursors[page.NextCursor]; seen {
+			return projectcatalog.Page{}, fmt.Errorf("catalog search pagination cursor repeated")
+		}
+		seenCursors[page.NextCursor] = struct{}{}
+		request.Cursor = page.NextCursor
+	}
 }
 
 type productSearchResult struct {
@@ -1418,7 +1469,7 @@ func (h *BrowserHandler) loadAssets(r *stdhttp.Request) (projectgraph.ResourceID
 		if h.Catalog == nil {
 			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("project catalog is unavailable")}
 		}
-		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
+		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline}, h.currentCredential(r), projectID)
 		if err != nil {
 			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
 		}
@@ -1489,7 +1540,8 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if principal.DevBypass {
 		return true
 	}
-	if _, err := h.boundProject(r.Context()); err != nil || h.Catalog == nil {
+	projectID, err := h.boundProject(r.Context())
+	if err != nil || h.Catalog == nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
@@ -1502,14 +1554,18 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	if selector != "" {
 		for _, kind := range kinds {
-			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}, access.CapabilityResourceRead, principal.DevBypass); err == nil {
+			ref := projectcatalog.Ref{ID: projectgraph.ResourceID(selector), Kind: kind}
+			if typed, allowed := typedCatalogRefDecision(h.currentCredential(r), projectID, ref); typed && !allowed {
+				continue
+			}
+			if _, err := h.Catalog.Resolve(r.Context(), principal.ID, ref, access.CapabilityResourceRead, principal.DevBypass); err == nil {
 				return true
 			}
 		}
 		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds)
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds, h.currentCredential(r), projectID)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
 			uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
@@ -1547,11 +1603,11 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
+	projectID, err := h.boundProject(r.Context())
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
-	projectID, err := h.boundProject(r.Context())
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProjectNamespace, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard}, h.currentCredential(r), projectID)
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -1589,6 +1645,16 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	result, err := h.DashboardCatalog.List(r.Context(), dashboardauthoringcatalog.ListRequest{ProjectID: projectID, ActorID: principal.ID})
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
+	}
+	result.Items = filterDashboardCatalogForCredential(result.Items, h.currentCredential(r), projectID)
+	result.Count = len(result.Items)
+	result.InstanceCount, result.ProjectCount = 0, 0
+	for _, item := range result.Items {
+		if item.Source == dashboardauthoringcatalog.SourceProject {
+			result.ProjectCount++
+		} else {
+			result.InstanceCount++
+		}
 	}
 	popularity := map[string]string{}
 	if h.DashboardPopularity != nil {
@@ -1640,6 +1706,90 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 		})
 	}
 	return catalog, options, nil
+}
+
+func (h *BrowserHandler) currentCredential(r *stdhttp.Request) *access.APICredential {
+	if h == nil || h.CurrentCredential == nil || r == nil {
+		return nil
+	}
+	credential, ok := h.CurrentCredential(r)
+	if !ok {
+		return nil
+	}
+	return &credential
+}
+
+func typedBrowserCredential(credential *access.APICredential) bool {
+	return credential != nil && strings.TrimSpace(credential.Token.ID) != "" &&
+		(credential.Token.PermissionProfile != "" || credential.Token.Permissions != nil)
+}
+
+func catalogReadAction(kind projectgraph.Kind) (access.Action, bool) {
+	switch kind {
+	case projectgraph.KindDashboard:
+		return access.ActionDashboardRead, true
+	case projectgraph.KindSemanticModel:
+		return access.ActionSemanticRead, true
+	case projectgraph.KindModel:
+		return access.ActionModelRead, true
+	case projectgraph.KindSource:
+		return access.ActionSourceRead, true
+	case projectgraph.KindPipeline:
+		return access.ActionPipelineRead, true
+	case projectgraph.KindConnection:
+		return access.ActionConnectionRead, true
+	default:
+		// ProjectNamespace and any future graph kinds have no implicit typed
+		// browser-read action. A typed credential must name a supported action.
+		return "", false
+	}
+}
+
+func typedCatalogRefDecision(credential *access.APICredential, projectID projectgraph.ResourceID, ref projectcatalog.Ref) (typed, allowed bool) {
+	if !typedBrowserCredential(credential) {
+		return false, true
+	}
+	action, ok := catalogReadAction(ref.Kind)
+	if !ok {
+		return true, false
+	}
+	resource, err := access.NewResourceRef(ref.ID, ref.Kind)
+	if err != nil || projectID.Validate() != nil {
+		return true, false
+	}
+	pair, err := access.NewExactPermissionPair(action, projectID, resource)
+	if err != nil {
+		return true, false
+	}
+	return true, access.PermissionSetAllows(credential.Token.Permissions, pair)
+}
+
+func filterCatalogPageForCredential(page projectcatalog.Page, credential *access.APICredential, projectID projectgraph.ResourceID) projectcatalog.Page {
+	if !typedBrowserCredential(credential) {
+		return page
+	}
+	filtered := make([]projectcatalog.Result, 0, len(page.Items))
+	for _, item := range page.Items {
+		if _, allowed := typedCatalogRefDecision(credential, projectID, item.Ref); allowed {
+			filtered = append(filtered, item)
+		}
+	}
+	page.Items = filtered
+	return page
+}
+
+func filterDashboardCatalogForCredential(items []dashboardauthoringcatalog.Dashboard, credential *access.APICredential, projectID projectgraph.ResourceID) []dashboardauthoringcatalog.Dashboard {
+	if !typedBrowserCredential(credential) {
+		return items
+	}
+	filtered := make([]dashboardauthoringcatalog.Dashboard, 0, len(items))
+	for _, item := range items {
+		ref := projectcatalog.Ref{ID: item.ID, Kind: projectgraph.KindDashboard}
+		if _, allowed := typedCatalogRefDecision(credential, projectID, ref); allowed {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func (h *BrowserHandler) activeServingStateUpdatedAt(ctx context.Context, projectID projectgraph.ResourceID) string {
@@ -1707,7 +1857,7 @@ func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, project
 	}
 }
 
-func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind) (projectcatalog.Page, error) {
+func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind, credential *access.APICredential, projectID projectgraph.ResourceID) (projectcatalog.Page, error) {
 	if catalog == nil {
 		return projectcatalog.Page{}, projectcatalog.ErrUnavailable
 	}
@@ -1722,6 +1872,7 @@ func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID 
 		if err != nil {
 			return projectcatalog.Page{}, err
 		}
+		page = filterCatalogPageForCredential(page, credential, projectID)
 		items = append(items, page.Items...)
 		if page.NextCursor == "" {
 			return projectcatalog.Page{Items: items}, nil

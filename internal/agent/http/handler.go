@@ -843,12 +843,12 @@ func agentCredentialScope(credential access.APICredential) agent.CredentialScope
 	if credential.Token.ID == "" {
 		return agent.CredentialScope{}
 	}
-	var capabilities []string
-	if credential.Token.Capabilities != nil {
-		capabilities = make([]string, len(credential.Token.Capabilities))
-		for index, capability := range credential.Token.Capabilities {
-			capabilities[index] = string(capability)
-		}
+	// A token with an omitted/legacy capability list is invalid for
+	// authorization. Project that form as an explicit non-nil deny-all list so
+	// downstream agent contexts cannot mistake it for an unrestricted scope.
+	capabilities := make([]string, len(credential.Token.Capabilities))
+	for index, capability := range credential.Token.Capabilities {
+		capabilities[index] = string(capability)
 	}
 	return agent.CredentialScope{Capabilities: capabilities, Restricted: true}
 }

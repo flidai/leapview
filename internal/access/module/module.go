@@ -19,17 +19,18 @@ import (
 )
 
 type Module struct {
-	handler                      accesshttp.Handler
-	persistence                  *Persistence
-	auth                         *Auth
-	currentPrincipal             func(*http.Request) (Principal, bool)
-	repository                   func() (access.Repository, error)
-	oauth                        *mcpoauth.Service
-	oauthResource                mcpoauth.ResourceServer
-	desktopAuth                  *desktopauth.Service
-	authoringAuth                *access.AuthoringAuthService
-	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	handler                           accesshttp.Handler
+	persistence                       *Persistence
+	auth                              *Auth
+	currentPrincipal                  func(*http.Request) (Principal, bool)
+	repository                        func() (access.Repository, error)
+	oauth                             *mcpoauth.Service
+	oauthResource                     mcpoauth.ResourceServer
+	desktopAuth                       *desktopauth.Service
+	authoringAuth                     *access.AuthoringAuthService
+	currentEffectiveCapabilities      func(context.Context, string) ([]access.Capability, error)
+	currentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	currentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
 	// authoringProjectID resolves the durable project binding used by
 	// authoring OAuth. It is intentionally separate from the active-runtime
 	// resolver: a fresh target has no serving lease yet, but may still accept
@@ -48,16 +49,20 @@ type surfaceConfig struct {
 	CurrentPrincipal               func(*http.Request) (Principal, bool)
 	CurrentCredential              func(*http.Request) (access.APICredential, bool)
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
-	CurrentProjectID               func(context.Context) (projectgraph.ResourceID, error)
-	AuthoringProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	Auth                           *Auth
-	Logger                         *slog.Logger
-	OAuth                          *mcpoauth.Service
-	OAuthResource                  mcpoauth.ResourceServer
-	AuthoringAuth                  *access.AuthoringAuthService
-	Avatar                         *avatar.Service
-	Presentation                   webpage.Presentation
-	Assets                         staticasset.Resolver
+	// CurrentEffectivePermissionOptions is intentionally separate from the
+	// legacy capability projection. It may only be populated by a typed
+	// principal-grant snapshot; until that authority exists it remains empty.
+	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID                func(context.Context) (projectgraph.ResourceID, error)
+	Auth                              *Auth
+	Logger                            *slog.Logger
+	OAuth                             *mcpoauth.Service
+	OAuthResource                     mcpoauth.ResourceServer
+	AuthoringAuth                     *access.AuthoringAuthService
+	Avatar                            *avatar.Service
+	Presentation                      webpage.Presentation
+	Assets                            staticasset.Resolver
 }
 
 func newSurface(config surfaceConfig) (*Module, error) {
@@ -108,23 +113,47 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	}
 	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
-		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-		currentProjectID:             config.CurrentProjectID,
-		authoringProjectID:           config.AuthoringProjectID,
-		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
+		currentEffectiveCapabilities:      config.CurrentEffectiveCapabilities,
+		currentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
+		currentProjectID:                  config.CurrentProjectID,
+		authoringProjectID:                config.AuthoringProjectID,
+		presentation:                      config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, AuthorizationPolicyTargetID: config.AuthorizationPolicyTargetID,
 			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
-			CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-			CurrentProjectID:             config.CurrentProjectID,
-			AuthoringAuth:                config.AuthoringAuth,
-			Avatar:                       avatarService, LocalPasswordEnabled: localPasswordEnabled,
+			CurrentEffectiveCapabilities:      config.CurrentEffectiveCapabilities,
+			CurrentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
+			CurrentProjectID:                  config.CurrentProjectID,
+			AuthoringAuth:                     config.AuthoringAuth,
+			Avatar:                            avatarService, LocalPasswordEnabled: localPasswordEnabled,
 		},
 	}
 	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
 	module.handler.PlatformAdmin = module.IsPlatformAdmin
 	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
 	return module, nil
+}
+
+// SetCurrentEffectivePermissionOptions installs the active-generation typed
+// action-target projection used by personal token creation. During migration,
+// the snapshot provider may expose only the explicitly qualified compatibility
+// mappings; an absent projection is an explicit empty authority set.
+func (m *Module) SetCurrentEffectivePermissionOptions(fn func(context.Context, string) ([]access.PermissionPair, error)) {
+	if m == nil {
+		return
+	}
+	m.currentEffectivePermissionOptions = fn
+	m.handler.CurrentEffectivePermissionOptions = fn
+}
+
+// CurrentEffectivePermissionOptions returns exact typed action-target pairs
+// proved by the active authorization snapshot. An unset projection fails
+// closed with an explicit empty array rather than inventing pair mappings.
+func (m *Module) CurrentEffectivePermissionOptions(ctx context.Context, principalID string) ([]access.PermissionPair, error) {
+	if m == nil || m.currentEffectivePermissionOptions == nil {
+		return []access.PermissionPair{}, nil
+	}
+	return m.currentEffectivePermissionOptions(ctx, principalID)
 }
 
 func (m *Module) HTTP() accesshttp.Handler { return m.handler }
@@ -516,6 +545,12 @@ func (m *Module) CurrentCredentialEvidence(
 	if !ok || principal.DevBypass {
 		return access.CredentialEvidence{}, false
 	}
+	if evidence, found := SessionCredentialEvidenceFromContext(r.Context()); found && evidence.PrincipalID == principal.ID && evidence.ID != "" && evidence.Fingerprint != "" {
+		if evidence.Class == "" {
+			evidence.Class = "session"
+		}
+		return evidence, true
+	}
 	if m.auth != nil {
 		if credential, found := m.auth.APICredential(r); found {
 			if credential.Authoring != nil {
@@ -533,9 +568,10 @@ func (m *Module) CurrentCredentialEvidence(
 				time.RFC3339Nano,
 				credential.Token.ExpiresAt,
 			)
-			if err == nil && credential.Token.ID != "" {
+			if err == nil && credential.Token.ID != "" && credential.Token.TokenFingerprint != "" {
 				return access.CredentialEvidence{
 					Class: "api_token", ID: credential.Token.ID,
+					Fingerprint: credential.Token.TokenFingerprint,
 					PrincipalID: principal.ID,
 					ExpiresAt:   expiresAt.UTC(),
 				}, true
@@ -565,7 +601,7 @@ func (m *Module) CurrentCredentialEvidence(
 		cookie.Value,
 	)
 	if err != nil || session.PrincipalID != principal.ID ||
-		session.RevokedAt != "" {
+		session.RevokedAt != "" || session.TokenFingerprint == "" {
 		return access.CredentialEvidence{}, false
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, session.ExpiresAt)
@@ -574,6 +610,7 @@ func (m *Module) CurrentCredentialEvidence(
 	}
 	return access.CredentialEvidence{
 		Class: "session", ID: session.ID,
+		Fingerprint: session.TokenFingerprint,
 		PrincipalID: principal.ID, ExpiresAt: expiresAt.UTC(),
 	}, true
 }

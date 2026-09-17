@@ -75,7 +75,9 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	}
 	config := refreshmodule.Config{
 		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
-		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
+		CurrentCredential: accessmodule.APICredentialFromContext, RequireAuthority: persistence.requireNativePersistence,
+		CurrentSessionEvidence: accessmodule.SessionCredentialEvidenceFromContext,
+		Artifacts:              appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },
 			CurrentPrincipal: func(r *http.Request) (refreshmodule.HTTPPrincipal, bool) {

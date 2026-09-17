@@ -206,11 +206,11 @@ WHERE EXISTS (
 );
 
 -- name: FindBrowserSession :one
-SELECT p.id, s.token_fingerprint, s.verifier
+SELECT p.id, s.id AS session_id, s.token_fingerprint, s.verifier, s.expires_at
 FROM access.session s
 JOIN access.principal p ON p.id = s.principal_id
 WHERE s.token_fingerprint = sqlc.arg(token_fingerprint)
-  AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
+  AND s.kind = 'browser' AND s.revoked_at IS NULL AND s.expires_at > clock_timestamp()
   AND p.status = 'active' AND p.revoked_at IS NULL
   AND p.disabled_at IS NULL AND p.blocked_at IS NULL;
 
@@ -256,8 +256,23 @@ WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
         AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL
   );
 
+-- name: CreateScopedAPIToken :execresult
+INSERT INTO access.api_token(id, principal_id, name, token_fingerprint, verifier, capabilities, permission_profile, permissions, expires_at)
+SELECT sqlc.arg(id)::uuid, sqlc.arg(principal_id)::uuid, sqlc.arg(name),
+       sqlc.arg(token_fingerprint), sqlc.arg(verifier), NULL,
+       sqlc.arg(permission_profile), sqlc.arg(permissions)::jsonb,
+       sqlc.arg(expires_at)
+WHERE sqlc.arg(expires_at)::timestamptz > clock_timestamp()
+  AND sqlc.arg(expires_at)::timestamptz <= clock_timestamp() + interval '365 days'
+  AND EXISTS (
+      SELECT 1 FROM access.principal
+      WHERE id = sqlc.arg(principal_id)::uuid AND status = 'active'
+        AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL
+  );
+
 -- name: GetAPIToken :one
-SELECT id, principal_id, name, capabilities, expires_at, created_at, last_used_at, revoked_at
+SELECT id, principal_id, name, token_fingerprint, capabilities, permission_profile, permissions,
+       expires_at, created_at, last_used_at, revoked_at
 FROM access.api_token
 WHERE id = sqlc.arg(id)::uuid;
 

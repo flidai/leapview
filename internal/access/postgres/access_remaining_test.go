@@ -204,7 +204,7 @@ func TestAccessRemainingPostgreSQL18SCIMDeactivationRevokesAllCredentials(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", ExpiresAt: time.Now().Add(time.Hour)})
+	apiSecret, _, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{PrincipalID: user.Principal.ID, Name: "scim-cascade", Capabilities: access.LegacyProjectCapabilities(), ExpiresAt: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}

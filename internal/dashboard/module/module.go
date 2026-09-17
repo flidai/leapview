@@ -199,26 +199,27 @@ func NewNativePersistence(options NativePersistenceOptions) (*NativePersistence,
 }
 
 type HTTPConfig struct {
-	Metrics                    queryruntime.Metrics
-	ProjectID                  projectgraph.ResourceID
-	ResolveProjectID           func(context.Context) (projectgraph.ResourceID, error)
-	ResolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
-	Admission                  workload.Admitter
-	Broker                     SignalBroker
-	Logger                     *slog.Logger
-	Telemetry                  DashboardTelemetry
-	CurrentPrincipalID         func(*http.Request) string
-	CurrentUsagePrincipal      func(*http.Request) (string, bool)
-	AuthorizeListResource      func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
-	CSRFToken                  func(*http.Request) string
-	Layout                     func(*http.Request) webpage.Provider
-	Environment                func(*http.Request) string
-	DataRefreshedAt            func(context.Context, string, string, string) string
-	QueryFreshness             func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	AgentBootstrap             func(*http.Request, string) dashboardui.AgentBootstrap
-	AgentCommands              dashboardui.AgentCommandBindings
-	Presentation               dashboardui.Presentation
-	Assets                     staticasset.Resolver
+	Metrics                       queryruntime.Metrics
+	ProjectID                     projectgraph.ResourceID
+	ResolveProjectID              func(context.Context) (projectgraph.ResourceID, error)
+	ResolveDashboardAppearance    func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
+	Admission                     workload.Admitter
+	Broker                        SignalBroker
+	Logger                        *slog.Logger
+	Telemetry                     DashboardTelemetry
+	CurrentPrincipalID            func(*http.Request) string
+	CurrentUsagePrincipal         func(*http.Request) (string, bool)
+	AuthorizeListResource         func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
+	AuthorizeTypedDashboardAction func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, bool, error)
+	CSRFToken                     func(*http.Request) string
+	Layout                        func(*http.Request) webpage.Provider
+	Environment                   func(*http.Request) string
+	DataRefreshedAt               func(context.Context, string, string, string) string
+	QueryFreshness                func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	AgentBootstrap                func(*http.Request, string) dashboardui.AgentBootstrap
+	AgentCommands                 dashboardui.AgentCommandBindings
+	Presentation                  dashboardui.Presentation
+	Assets                        staticasset.Resolver
 }
 
 type SemanticConfig struct {
@@ -388,7 +389,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		SessionStore:       sessionStore,
 		OptionCursorSecret: optionCursorSecret,
 		OptionCache:        dashboardfilter.NewOptionCache(4096),
-		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListResource: config.HTTP.AuthorizeListResource,
+		CurrentPrincipalID: config.HTTP.CurrentPrincipalID, AuthorizeListResource: config.HTTP.AuthorizeListResource, AuthorizeTypedDashboardAction: config.HTTP.AuthorizeTypedDashboardAction,
 		CurrentUsagePrincipal: config.HTTP.CurrentUsagePrincipal,
 		CSRFToken:             config.HTTP.CSRFToken, Layout: config.HTTP.Layout,
 		Presentation: config.HTTP.Presentation,
