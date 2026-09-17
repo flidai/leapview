@@ -70,20 +70,31 @@ type AuditLogSignal struct {
 }
 
 type AuditEventSignal struct {
-	ID            string         `json:"id"`
-	ProjectID     string         `json:"projectId,omitempty"`
-	PrincipalID   string         `json:"principalId,omitempty"`
-	PrincipalName string         `json:"principalName,omitempty"`
-	Action        string         `json:"action"`
-	ResourceKind  string         `json:"resourceKind"`
-	ResourceID    string         `json:"resourceId"`
-	ResourceLabel string         `json:"resourceLabel,omitempty"`
-	Capability    string         `json:"capability,omitempty"`
-	Status        string         `json:"status,omitempty"`
-	RequestID     string         `json:"requestId,omitempty"`
-	CorrelationID string         `json:"correlationId,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     string         `json:"createdAt"`
+	ID             string         `json:"id"`
+	ProjectID      string         `json:"projectId,omitempty"`
+	PrincipalID    string         `json:"principalId,omitempty"`
+	PrincipalName  string         `json:"principalName,omitempty"`
+	PrincipalEmail string         `json:"principalEmail,omitempty"`
+	Action         string         `json:"action"`
+	ResourceKind   string         `json:"resourceKind"`
+	ResourceID     string         `json:"resourceId"`
+	ResourceLabel  string         `json:"resourceLabel,omitempty"`
+	Capability     string         `json:"capability,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	RequestID      string         `json:"requestId,omitempty"`
+	CorrelationID  string         `json:"correlationId,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedAt      string         `json:"createdAt"`
+}
+
+type AuditLogReader interface {
+	ListAuditEvents(context.Context, access.AuditEventFilter) ([]access.AuditEvent, error)
+	ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error)
+}
+
+type auditLogResourceReader interface {
+	ListAllGroups(context.Context) ([]access.Group, error)
+	ListServicePrincipals(context.Context) ([]access.Principal, error)
 }
 
 type AuditLogFilters struct {
@@ -167,7 +178,7 @@ func AuditEventSignalFromDomain(event access.AuditEvent) AuditEventSignal {
 	if strings.TrimSpace(event.MetadataJSON) != "" {
 		_ = json.Unmarshal([]byte(event.MetadataJSON), &metadata)
 	}
-	return AuditEventSignal{ID: event.ID, PrincipalID: event.PrincipalID,
+	return AuditEventSignal{ID: event.ID, ProjectID: event.ProjectID, PrincipalID: event.PrincipalID,
 		Action: event.Action, ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, Capability: string(event.Capability),
 		Status: event.Status, RequestID: event.RequestID, CorrelationID: event.CorrelationID, Metadata: metadata, CreatedAt: event.CreatedAt}
 }
@@ -182,7 +193,7 @@ func auditDisplayName(primary, fallback string) string {
 // LoadAuditLog reads the canonical access audit stream. ProjectID is retained
 // in the UI filter contract for future graph-scoped events; current identity
 // audit records are globally keyed by resource kind/id.
-func LoadAuditLog(ctx context.Context, repository access.Repository, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
+func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
 	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
 	if repository == nil {
 		return state, nil
@@ -196,38 +207,36 @@ func LoadAuditLog(ctx context.Context, repository access.Repository, filters Aud
 	if err != nil {
 		return state, err
 	}
-	principalNames := map[string]string{}
+	principalLabels := map[string]access.Principal{}
 	resourceNames := map[string]string{}
 	if principals, principalErr := repository.ListPrincipals(ctx, access.PrincipalFilter{}); principalErr == nil {
 		for _, principal := range principals {
+			principalLabels[principal.ID] = principal
 			name := auditDisplayName(principal.DisplayName, principal.Email)
 			if name == "" {
 				name = "Unknown principal"
 			}
-			principalNames[principal.ID] = name
-			resourceName := auditDisplayName(principal.DisplayName, principal.Email)
-			if resourceName == "" {
-				resourceName = "Principal"
-			}
-			resourceNames["principal:"+principal.ID] = resourceName
+			resourceNames["principal:"+principal.ID] = name
 		}
 	}
-	if groups, groupErr := repository.ListAllGroups(ctx); groupErr == nil {
-		for _, group := range groups {
-			name := strings.TrimSpace(group.Name)
-			if name == "" {
-				name = "Group"
+	if resources, ok := repository.(auditLogResourceReader); ok {
+		if groups, groupErr := resources.ListAllGroups(ctx); groupErr == nil {
+			for _, group := range groups {
+				name := strings.TrimSpace(group.Name)
+				if name == "" {
+					name = "Group"
+				}
+				resourceNames["group:"+group.ID] = name
 			}
-			resourceNames["group:"+group.ID] = name
 		}
-	}
-	if servicePrincipals, serviceErr := repository.ListServicePrincipals(ctx); serviceErr == nil {
-		for _, principal := range servicePrincipals {
-			name := auditDisplayName(principal.DisplayName, principal.Email)
-			if name == "" {
-				name = "Service account"
+		if servicePrincipals, serviceErr := resources.ListServicePrincipals(ctx); serviceErr == nil {
+			for _, principal := range servicePrincipals {
+				name := auditDisplayName(principal.DisplayName, principal.Email)
+				if name == "" {
+					name = "Service account"
+				}
+				resourceNames["service_principal:"+principal.ID] = name
 			}
-			resourceNames["service_principal:"+principal.ID] = name
 		}
 	}
 	state.HasMore = len(rows) > limit
@@ -237,17 +246,18 @@ func LoadAuditLog(ctx context.Context, repository access.Repository, filters Aud
 		state.NextCursor = AuditPageToken(last.CreatedAt, last.ID)
 	}
 	for _, row := range rows {
-		item := AuditEventSignalFromDomain(row)
-		if item.PrincipalID == "" {
-			item.PrincipalName = "System"
-		} else if name := principalNames[item.PrincipalID]; name != "" {
-			item.PrincipalName = name
+		event := AuditEventSignalFromDomain(row)
+		if event.PrincipalID == "" {
+			event.PrincipalName = "System"
+		} else if principal, ok := principalLabels[row.PrincipalID]; ok {
+			event.PrincipalName = principal.DisplayName
+			event.PrincipalEmail = principal.Email
 		}
-		item.ResourceLabel = resourceNames[item.ResourceKind+":"+item.ResourceID]
-		if item.ResourceLabel == "" {
-			item.ResourceLabel = humanizeAuditValue(item.ResourceKind)
+		event.ResourceLabel = resourceNames[event.ResourceKind+":"+event.ResourceID]
+		if event.ResourceLabel == "" {
+			event.ResourceLabel = humanizeAuditValue(event.ResourceKind)
 		}
-		state.Items = append(state.Items, item)
+		state.Items = append(state.Items, event)
 	}
 	state.LoadedCount = len(state.Items)
 	return state, nil

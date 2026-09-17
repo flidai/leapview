@@ -22,6 +22,7 @@ import {
   FilePenLine,
   FileText,
   LayoutDashboard,
+  KeyRound,
   LockKeyhole,
   EllipsisVertical,
   Plus,
@@ -1425,6 +1426,7 @@ function entityIcon(type = ''): IconNode {
     case 'group': return UsersRound
     case 'user': return UserRound
     case 'application': return Bot
+    case 'key': return KeyRound
     case 'connection': return Plug
     case 'source': return Cable
     case 'catalog': return BookOpen
@@ -1456,6 +1458,7 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'success':
     case 'healthy':
     case 'published':
+    case 'active':
       return { icon: CheckCircle2, tone: 'success' }
     case 'private draft':
     case 'draft':
@@ -1466,6 +1469,9 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'failed':
     case 'cancelled':
     case 'error':
+    case 'disabled':
+    case 'revoked':
+    case 'expired':
       return { icon: XCircle, tone: 'danger' }
     case 'queued':
     case 'running':

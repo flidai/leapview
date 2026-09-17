@@ -47,7 +47,7 @@ The generic Compose controller and Hetzner provider recipe wrap this command and
 
 ## Create local users
 
-A principal with grant-management authority can create a local user through the Admin / Principals surface or `POST /api/v1/principals`. The response returns a temporary password once. Deliver it out of band and require the user to replace it at first sign-in.
+A principal with grant-management authority can create a local user through the Admin / Users surface or `POST /api/v1/principals`. The response returns a temporary password once. Deliver it out of band and require the user to replace it at first sign-in.
 
 New local passwords must contain at least 12 Unicode characters and no more than 1024 UTF-8 bytes. LeapView also rejects passwords found in a version-pinned offline corpus of common and breached credentials, including case variants. The check uses only embedded one-way hash prefixes: no password candidate or hash is sent to an external service. Passwords remain opaque values and are never trimmed or normalized before storage. A successful change revokes the principal's browser, desktop, CLI authoring, and MCP OAuth sessions; personal API tokens remain independent credentials and must be rotated or revoked separately when their exposure is suspected.
 

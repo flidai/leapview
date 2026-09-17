@@ -196,8 +196,13 @@ func (h Handler) load(r *http.Request, principalID string) (Signal, error) {
 		currentSessionID, _ = h.CurrentSession(r)
 	}
 	active := strings.TrimSpace(r.URL.Query().Get("section"))
-	state, err := h.Service.Load(r.Context(), principalID, currentSessionID, active == "api-tokens")
-	state.Active = active
+	tokensActive := active == "api-tokens" || active == "api-token-new"
+	state, err := h.Service.Load(r.Context(), principalID, currentSessionID, tokensActive)
+	if tokensActive {
+		state.Active = "api-tokens"
+	} else {
+		state.Active = active
+	}
 	return state, err
 }
 

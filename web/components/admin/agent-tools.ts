@@ -1,8 +1,9 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { Braces, Search } from 'lucide'
 import type { AdminAgentToolSignal } from '../../generated/signals'
-import { lucideIcon } from '../shared/lucide-icons'
+import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
+import '../shared/drawer'
+import '../shared/entity-list'
 
 type SchemaObject = Record<string, unknown>
 type SchemaTab = 'fields' | 'json' | 'output'
@@ -19,9 +20,17 @@ type ParsedSchema =
   | { kind: 'empty' }
   | { kind: 'unsupported' }
 
+const toolColumns: EntityListColumn[] = [
+  { id: 'name', label: 'Tool', width: '24%' },
+  { id: 'description', label: 'Description', width: '46%' },
+  { id: 'impact', label: 'Impact', width: '14%' },
+  { id: 'inputs', label: 'Inputs', width: '16%' },
+]
+
+const toolGroupOrder = ['Catalog', 'Data & queries', 'Dashboards', 'Documentation', 'Other']
+
 class AgentTools extends LitElement {
   @property({ attribute: false }) tools: AdminAgentToolSignal[] = []
-  @state() private query = ''
   @state() private selectedName = ''
   @state() private tab: SchemaTab = 'fields'
 
@@ -33,218 +42,61 @@ class AgentTools extends LitElement {
       font-family: var(--fontStack-system);
     }
 
-    .catalog {
-      display: grid;
-      height: min(42rem, calc(100svh - 12rem));
-      min-height: 28rem;
-      min-width: 0;
-      grid-template-rows: auto minmax(0, 1fr);
-      overflow: hidden;
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-    }
-
-    .toolbar {
-      display: flex;
-      align-items: center;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-8);
-    }
-
-    .search {
-      display: flex;
-      min-width: min(100%, 22rem);
-      align-items: center;
-      gap: var(--base-size-8);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel);
-      padding: 0 var(--base-size-8);
-      color: var(--lv-fg-muted);
-    }
-
-    .search svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-      flex: 0 0 var(--base-size-16);
-    }
-
-    input {
-      width: 100%;
-      min-width: 0;
-      border: 0;
-      background: transparent;
-      padding: var(--base-size-8) 0;
-      color: var(--lv-fg-default);
-      font: var(--lv-type-body-compact);
-      outline: 0;
-    }
-
-    input::placeholder {
-      color: var(--lv-fg-muted);
-    }
-
-    .count {
-      margin-left: auto;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .body {
-      display: grid;
-      min-width: 0;
-      min-height: 0;
-      grid-template-columns: minmax(12rem, 16rem) minmax(0, 1fr);
-    }
-
-    .list {
-      min-width: 0;
-      min-height: 0;
-      overflow: auto;
-      border-right: var(--lv-border-muted);
-    }
-
-    .fields table {
-      width: 100%;
-      border-spacing: 0;
-      border-collapse: collapse;
-      font: var(--lv-type-body);
-    }
-
-    .fields th {
-      background: var(--lv-bg-panel-muted);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-align: left;
-      text-transform: uppercase;
-    }
-
-    .fields th,
-    .fields td {
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-8) var(--base-size-12);
-      vertical-align: top;
-    }
-
-    .fields tbody tr:last-child td {
-      border-bottom: 0;
-    }
-
-    .tool-list {
-      display: grid;
-      padding: var(--base-size-4);
-    }
-
-    .tool-button {
-      display: block;
-      width: 100%;
-      min-width: 0;
-      border: 0;
-      border-radius: var(--lv-radius-default);
-      background: transparent;
-      padding: var(--base-size-8);
-      color: var(--lv-fg-default);
-      cursor: pointer;
-      font: inherit;
-      text-align: left;
-    }
-
-    .tool-button:hover,
-    .tool-button:focus-visible,
-    .tool-button.is-selected {
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .tool-button:focus-visible {
-      outline: 2px solid var(--lv-fg-accent);
-      outline-offset: -2px;
-    }
-
     code {
       font: var(--lv-type-code-block);
     }
 
-    .tool-button code,
-    .name code {
-      color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-semibold);
+    .drawer-title {
+      display: grid;
+      min-width: 0;
+      gap: var(--base-size-4);
     }
 
-    .description,
-    .summary,
-    .empty {
+    .drawer-title h2,
+    .drawer-title p {
+      margin: 0;
+    }
+
+    .drawer-title h2 {
+      overflow-wrap: anywhere;
+      font: var(--lv-type-section-title);
+    }
+
+    .drawer-title p {
       color: var(--lv-fg-muted);
-    }
-
-    .description,
-    .summary {
+      font: var(--lv-type-body-compact);
       line-height: var(--base-text-lineHeight-snug);
     }
 
-    .required-count,
-    .required-flag {
-      display: inline-flex;
-      align-items: center;
-      border-radius: var(--lv-radius-full);
-      background: var(--lv-bg-panel-muted);
-      padding: var(--base-size-2) var(--base-size-8);
+    .drawer-body {
+      display: grid;
+      min-width: 0;
+      gap: var(--base-size-20);
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--base-size-12) var(--base-size-16);
+      margin: 0;
+    }
+
+    .fact {
+      display: grid;
+      min-width: 0;
+      gap: var(--base-size-2);
+    }
+
+    .fact dt {
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      white-space: nowrap;
     }
 
-    .required-flag.is-required {
-      background: var(--lv-bg-accent-muted);
-      color: var(--lv-fg-accent);
-    }
-
-    .detail {
-      display: grid;
+    .fact dd {
       min-width: 0;
-      min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr);
-      align-content: start;
-    }
-
-    .detail-header {
-      display: grid;
-      gap: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-12);
-    }
-
-    .detail-title {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: var(--base-size-8);
-    }
-
-    .detail-title svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-      color: var(--lv-fg-muted);
-    }
-
-    .detail-title code {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-weight: var(--base-text-weight-semibold);
-    }
-
-    .detail-description {
       margin: 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-body-snug);
-    }
-
-    .detail-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--base-size-8);
+      overflow-wrap: anywhere;
+      font: var(--lv-type-body-compact);
     }
 
     .tabs {
@@ -279,115 +131,135 @@ class AgentTools extends LitElement {
       outline-offset: 2px;
     }
 
-    .detail-body {
+    .schema {
       min-width: 0;
-      min-height: 0;
-      overflow: auto;
+    }
+
+    .fields {
+      overflow-x: auto;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+    }
+
+    .fields table {
+      width: 100%;
+      min-width: 34rem;
+      border-spacing: 0;
+      border-collapse: collapse;
+      font: var(--lv-type-body-compact);
+    }
+
+    .fields th {
+      background: var(--lv-bg-panel-muted);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-align: left;
+    }
+
+    .fields th,
+    .fields td {
+      border-bottom: var(--lv-border-muted);
+      padding: var(--base-size-8) var(--base-size-10);
+      vertical-align: top;
+    }
+
+    .fields tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .description,
+    .empty {
+      color: var(--lv-fg-muted);
+    }
+
+    .required-flag {
+      display: inline-flex;
+      align-items: center;
+      border-radius: var(--lv-radius-full);
+      background: var(--lv-bg-panel-muted);
+      padding: var(--base-size-2) var(--base-size-8);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      white-space: nowrap;
+    }
+
+    .required-flag.is-required {
+      background: var(--lv-bg-accent-muted);
+      color: var(--lv-fg-accent);
     }
 
     .empty {
       margin: 0;
-      padding: var(--base-size-16);
       font: var(--lv-type-body);
     }
 
     .json {
       margin: 0;
+      max-width: 100%;
       overflow: auto;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
       background: var(--lv-bg-control);
-      padding: var(--base-size-16);
+      padding: var(--base-size-12);
       color: var(--lv-fg-default);
       font: var(--lv-type-code-block);
-      white-space: pre;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
-    @media (max-width: 840px) {
-      .body {
-        grid-template-rows: auto minmax(0, 1fr);
-        grid-template-columns: 1fr;
-      }
-
-      .list {
-        max-height: 12rem;
-        border-right: 0;
-        border-bottom: var(--lv-border-muted);
+    @media (max-width: 44rem) {
+      .facts {
+        grid-template-columns: minmax(0, 1fr);
       }
     }
   `
 
   render() {
-    const tools = this.filteredTools
-    const selected = this.selectedTool(tools)
+    const tools = this.tools.map(toolView).sort(compareTools)
+    const selected = tools.find((tool) => tool.name === this.selectedName)
     return html`
-      <div class="catalog">
-        <div class="toolbar">
-          <label class="search">
-            ${lucideIcon(Search, { size: 16, strokeWidth: 2 })}
-            <input
-              type="search"
-              aria-label="Search tools"
-              placeholder="Search tools"
-              .value=${this.query}
-              @input=${this.updateQuery}
-            >
-          </label>
-          <span class="count">${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}</span>
-        </div>
-        ${tools.length === 0 ? html`<p class="empty">No tools match the current search.</p>` : html`
-          <div class="body">
-            ${this.renderToolList(tools, selected)}
-            ${selected ? this.renderToolDetail(selected) : html`<p class="empty">Select a tool to inspect its input payload.</p>`}
-          </div>
-        `}
-      </div>
+      <section aria-label="Agent tool catalog">
+        <lv-entity-list
+          .items=${tools.map(toolListItem)}
+          .columns=${toolColumns}
+          client-filter
+          row-action="open"
+          group-by="group"
+          list-label="Agent tools"
+          search-placeholder="Search tools"
+          empty-text="No tools are available."
+          @lv-entity-list-row-action=${this.openTool}
+        ></lv-entity-list>
+        ${selected ? this.renderToolDrawer(selected) : nothing}
+      </section>
     `
   }
 
-  private renderToolList(tools: ToolView[], selected: ToolView | null) {
+  private renderToolDrawer(tool: ToolView) {
     return html`
-      <div class="list">
-        <div class="tool-list" role="listbox" aria-label="Agent tools">
-          ${tools.map((tool) => html`
-            <button
-              class=${tool.name === selected?.name ? 'tool-button is-selected' : 'tool-button'}
-              type="button"
-              role="option"
-              aria-selected=${String(tool.name === selected?.name)}
-              @click=${() => this.selectTool(tool.name)}
-            >
-              <code>${tool.name}</code>
-            </button>
-          `)}
+      <lv-drawer open size="wide" label="Tool details" .modal=${false} @lv-drawer-close=${this.closeTool}>
+        <div slot="title" class="drawer-title">
+          <h2><code>${tool.name}</code></h2>
+          <p>${tool.description || 'No description provided.'}</p>
         </div>
-      </div>
-    `
-  }
-
-  private renderToolDetail(tool: ToolView) {
-    return html`
-      <div class="detail">
-        <div class="detail-header">
-          <div class="detail-title">
-            ${lucideIcon(Braces, { size: 16, strokeWidth: 2 })}
-            <code>${tool.name}</code>
-          </div>
-          ${tool.description ? html`<p class="detail-description">${tool.description}</p>` : nothing}
-          <div class="detail-meta">
-            <span class="required-count">${tool.effect}</span>
-            <span class="required-count">${tool.requiredCount} required</span>
-            <span class="required-count">${tool.summary}</span>
-            ${tool.defaultsSummary ? html`<span class="required-count">Defaults: ${tool.defaultsSummary}</span>` : nothing}
-          </div>
+        <div class="drawer-body">
+          <dl class="facts">
+            ${toolFact('Impact', effectLabel(tool.effect))}
+            ${toolFact('Category', tool.group)}
+            ${toolFact('Required inputs', String(tool.requiredCount))}
+            ${toolFact('Input', tool.summary)}
+            ${toolFact('Defaults', tool.defaultsSummary || 'None')}
+          </dl>
           <div class="tabs" role="tablist" aria-label="Tool schema view">
             ${this.renderTab('fields', 'Fields')}
-            ${this.renderTab('json', 'JSON')}
+            ${this.renderTab('json', 'Input JSON')}
             ${this.renderTab('output', 'Output')}
           </div>
-        </div>
-        <div class="detail-body">
+          <div class="schema">
           ${this.tab === 'json' ? this.renderJSON(tool.inputSchema) : this.tab === 'output' ? this.renderJSON(tool.outputSchema) : this.renderFields(tool)}
+          </div>
         </div>
-      </div>
+      </lv-drawer>
     `
   }
 
@@ -436,25 +308,15 @@ class AgentTools extends LitElement {
     return html`<pre class="json"><code>${JSON.stringify(schema, null, 2)}</code></pre>`
   }
 
-  private updateQuery(event: Event): void {
-    this.query = (event.target as HTMLInputElement).value
-  }
-
-  private selectTool(name: string): void {
-    this.selectedName = name
+  private readonly openTool = (event: CustomEvent<{ action?: string, item?: EntityListItem }>): void => {
+    if (event.detail?.action !== 'open' || !event.detail.item?.id) return
+    this.selectedName = event.detail.item.id
     this.tab = 'fields'
   }
 
-  private selectedTool(tools: ToolView[]): ToolView | null {
-    if (tools.length === 0) return null
-    return tools.find((tool) => tool.name === this.selectedName) ?? tools[0]
-  }
-
-  private get filteredTools(): ToolView[] {
-    const views = this.tools.map(toolView)
-    const query = this.query.trim().toLowerCase()
-    if (!query) return views
-    return views.filter((tool) => tool.searchText.includes(query))
+  private readonly closeTool = (): void => {
+    this.selectedName = ''
+    this.tab = 'fields'
   }
 }
 
@@ -462,30 +324,102 @@ type ToolView = {
   name: string
   description: string
   effect: string
+  tags: string[]
+  group: string
   defaultsSummary: string
   inputSchema: SchemaObject
   outputSchema: SchemaObject
   parsed: ParsedSchema
   summary: string
+  inputCountLabel: string
   requiredCount: number
   searchText: string
+}
+
+function toolListItem(tool: ToolView): EntityListItem {
+  return {
+    id: tool.name,
+    title: tool.name,
+    icon: 'none',
+    group: tool.group,
+    columns: {
+      description: tool.description || 'No description provided.',
+      impact: effectLabel(tool.effect),
+      inputs: tool.inputCountLabel,
+      _search: tool.searchText,
+    },
+    sortValues: {
+      impact: tool.effect,
+      inputs: tool.parsed.kind === 'fields' ? tool.parsed.fields.length : 0,
+    },
+  }
+}
+
+function toolFact(label: string, value: string) {
+  return html`<div class="fact"><dt>${label}</dt><dd>${value}</dd></div>`
+}
+
+function effectLabel(effect: string): string {
+  switch (effect.trim().toLowerCase()) {
+    case 'read': return 'Read-only'
+    case 'write': return 'Changes draft'
+    case 'destructive': return 'Destructive'
+    default: return sentenceCase(effect)
+  }
+}
+
+function sentenceCase(value: string): string {
+  const normalized = value.trim().replaceAll('_', ' ')
+  return normalized ? normalized[0].toUpperCase() + normalized.slice(1) : 'Unknown'
+}
+
+function toolGroup(tags: string[]): string {
+  const values = new Set(tags.map((tag) => tag.trim().toLowerCase()))
+  const primary = tags[0]?.trim().toLowerCase()
+  if (primary === 'dashboard') return 'Dashboards'
+  if (primary === 'documentation') return 'Documentation'
+  if (primary === 'catalog') return 'Catalog'
+  if (primary === 'semantic-model' || primary === 'analytics') return 'Data & queries'
+  if (values.has('semantic-model') || values.has('analytics') || values.has('visualization')) return 'Data & queries'
+  if (values.has('dashboard')) return 'Dashboards'
+  if (values.has('catalog')) return 'Catalog'
+  if (values.has('documentation')) return 'Documentation'
+  return 'Other'
+}
+
+function compareTools(left: ToolView, right: ToolView): number {
+  const group = toolGroupOrder.indexOf(left.group) - toolGroupOrder.indexOf(right.group)
+  return group || left.name.localeCompare(right.name)
 }
 
 function toolView(tool: AdminAgentToolSignal): ToolView {
   const parsed = parseSchema(tool.inputSchema ?? {})
   const fieldPaths = parsed.kind === 'fields' ? parsed.fields.map((field) => field.path) : []
+  const tags = tool.tags ?? []
+  const requiredCount = parsed.kind === 'fields' ? parsed.fields.filter((field) => field.required).length : 0
   return {
     name: tool.name,
     description: tool.description,
     effect: tool.effect || 'read',
+    tags,
+    group: toolGroup(tags),
     defaultsSummary: Object.entries(tool.defaults ?? {}).map(([name, value]) => `${name}=${String(value)}`).join(', '),
     inputSchema: tool.inputSchema ?? {},
     outputSchema: tool.outputSchema ?? {},
     parsed,
     summary: inputSummary(parsed),
-    requiredCount: parsed.kind === 'fields' ? parsed.fields.filter((field) => field.required).length : 0,
-    searchText: [tool.name, tool.description, tool.effect, ...fieldPaths].join(' ').toLowerCase(),
+    inputCountLabel: inputCount(parsed, requiredCount),
+    requiredCount,
+    searchText: [tool.name, tool.description, tool.effect, ...tags, ...fieldPaths].join(' ').toLowerCase(),
   }
+}
+
+function inputCount(parsed: ParsedSchema, requiredCount: number): string {
+  if (parsed.kind === 'empty') return 'No input'
+  if (parsed.kind === 'unsupported') return 'JSON schema'
+  const count = parsed.fields.length
+  const fields = `${count} ${count === 1 ? 'field' : 'fields'}`
+  return requiredCount ? `${fields} · ${requiredCount} required` : fields
 }
 
 function inputSummary(parsed: ParsedSchema): string {

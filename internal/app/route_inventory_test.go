@@ -136,7 +136,7 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	switch {
 	case strings.HasPrefix(path, "/product/logo/"):
 		authenticated.owner = "admin"
-	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
+	case path == "/admin" || path == "/admin/profile" || path == "/admin/security" || path == "/admin/api-tokens" || path == "/admin/api-tokens/new" || path == "/admin/archived-chats" || path == "/admin/personal-settings/command":
 		authenticated.owner = "admin"
 	case path == "/admin/agent" || path == "/admin/agent/config":
 		authenticated.owner = "agent"
@@ -254,6 +254,7 @@ GET /.well-known/oauth-protected-resource/mcp
 GET /admin
 GET /admin/api-tokens
 GET /admin/archived-chats
+GET /admin/api-tokens/new
 GET /admin/agent
 GET /admin/audit
 GET /admin/authentication

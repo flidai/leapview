@@ -1492,7 +1492,7 @@ test('admin sidebar replaces global navigation and provides a back to app action
     expect(state.visibleGroupLabels).toEqual(['Personal', 'Product', 'Access', 'Data & sharing', 'Operations'])
     expect(state.links).toEqual(expect.arrayContaining([
       { href: '/admin/profile', text: 'Profile', current: 'false' },
-      { href: '/admin/principals', text: 'Principals', current: 'page' },
+      { href: '/admin/principals', text: 'Users', current: 'page' },
       { href: '/admin/groups', text: 'Groups', current: 'false' },
       { href: '/admin/agent', text: 'Agent', current: 'false' },
       { href: '/admin/storage', text: 'Storage', current: 'false' },

@@ -213,6 +213,7 @@ func (m ReadModel) agentData(r *http.Request) (ui.AdminAgentData, error) {
 			Defaults:     tool.Defaults,
 			InputSchema:  tool.InputSchema,
 			OutputSchema: tool.OutputSchema,
+			Tags:         append([]string(nil), tool.Tags...),
 		})
 	}
 	if !m.AuthConfigured {
