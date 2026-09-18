@@ -8,7 +8,7 @@ type AgentSettingsTab = 'instructions' | 'tools'
 
 /**
  * The complete admin Agent surface. The page owns the signal and prompt
- * values; this component owns the compact overview and the workspace tabs.
+ * values; this component owns the compact overview and settings tabs.
  */
 export class AgentSettings extends LitElement {
   @property({ attribute: false }) agent: AdminAgentSignal | null = null
@@ -130,7 +130,7 @@ export class AgentSettings extends LitElement {
       font-weight: var(--base-text-weight-semibold);
     }
 
-    .workspace {
+    .settings-panel {
       min-width: 0;
     }
 
@@ -178,7 +178,7 @@ export class AgentSettings extends LitElement {
       outline-offset: -2px;
     }
 
-    .workspace-body {
+    .settings-panel-body {
       min-width: 0;
       padding-top: var(--base-size-16);
     }
@@ -206,7 +206,7 @@ export class AgentSettings extends LitElement {
         grid-template-columns: minmax(0, 1fr);
       }
 
-      .workspace-body {
+      .settings-panel-body {
         padding-top: var(--base-size-12);
       }
     }
@@ -238,12 +238,12 @@ export class AgentSettings extends LitElement {
           </div>
         ` : ''}
 
-        <section class="workspace" aria-label="Agent workspace">
+        <section class="settings-panel" aria-label="Agent settings">
           <div class="tab-bar" role="tablist" aria-label="Agent settings sections">
             ${this.renderTab('instructions', 'Instructions')}
             ${this.renderTab('tools', 'Tools')}
           </div>
-          <div class="workspace-body">
+          <div class="settings-panel-body">
             ${this.tab === 'instructions'
               ? html`<div role="tabpanel" aria-label="Instructions"><lv-agent-prompt-editor .value=${prompt} value=${prompt} ?disabled=${!agent.canWrite}></lv-agent-prompt-editor></div>`
               : html`<div role="tabpanel" aria-label="Tools"><lv-agent-tools .tools=${agent.tools}></lv-agent-tools></div>`}
