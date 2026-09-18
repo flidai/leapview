@@ -27,8 +27,10 @@ The integration has three deliberately separate evidence classes:
   immutable publication, credential scope, and CI-gate wiring. Repository CI
   does not exercise live Azure OIDC, storage retention, or Azure RBAC.
 - **Project-free source root** — the profile is discovered from conventional
-  resource directories. The target-bound Project identity remains supplied by
-  `LEAPVIEW_WORKLOAD_PROJECT`; it is not authored in the source tree.
+  resource directories. The issuer bootstraps the durable ProjectUID before
+  target binding; `LEAPVIEW_WORKLOAD_PROJECT` requests the exact bound scope
+  for the CI workload identity, but does not issue Project identity or place it
+  in the portable source tree.
 
 ## Run the local showcase
 
@@ -111,7 +113,9 @@ then ends its Azure session and exposes only the non-secret prefix to a separate
 activation job. That job has no Azure OIDC permission; it renders an ordinary
 Azure-backed Connection/Source source root and invokes `leapview dev --once
 --no-browser` followed by `leapview publish`. The target binds the durable
-Project identity from `LEAPVIEW_WORKLOAD_PROJECT`.
+Project identity already bootstrapped by the issuer. The
+`LEAPVIEW_WORKLOAD_PROJECT` value requests that exact bound Project scope for
+the activation workload; it does not mint a ProjectUID.
 
 The LeapView target owns two credentials that are not present in the producer
 workflow:
