@@ -85,7 +85,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     const mainClass = [
       'main',
-      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' ? 'main-directory' : '',
+      page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'storage' || page.active === 'storage-detail' || page.active === 'publications' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
       page.active === 'profile' ? 'main-profile' : '',
       page.active === 'security' ? 'main-security' : '',
@@ -93,7 +93,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     return html`
       <div class="route">
         <section class=${mainClass} aria-label="Admin">
-          ${page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' || page.active === 'service-accounts' || page.active === 'api-tokens' || page.active === 'api-token-new' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
+          ${page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'storage-detail' || page.active === 'service-accounts' || page.active === 'service-accounts-new' || page.active === 'api-tokens' || page.active === 'api-token-new' ? nothing : renderPageHeader(page.headerTitle || page.title, page.headerDetail)}
           ${page.empty && page.active !== 'publications' && page.active !== 'storage' ? html`<div class="panel"><div class="empty">${page.empty}</div></div>` : nothing}
           ${page.metrics?.length && page.active !== 'agent' && page.active !== 'queries' && page.active !== 'principal-detail' && page.active !== 'group-detail' && page.active !== 'storage-detail' && !(page.active === 'storage' && page.storage?.status?.trim()) ? html`
             <div class="metrics">
@@ -127,7 +127,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               : isPersonalSettings(page.active) ? html`<lv-personal-settings token-view=${page.active === 'api-token-new' ? 'create' : 'list'}></lv-personal-settings>`
                 : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
                 : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
-                  : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
+                  : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts .createAccountOpen=${page.active === 'service-accounts-new'}></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
                       : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>

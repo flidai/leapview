@@ -735,9 +735,9 @@ function serviceDateInputValueInDays(days: number): string {
 
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   static styles = [pageHeaderStyles, entityDetailStyles, settingsSurfaceStyles]
+  @property({ type: Boolean }) createAccountOpen = false
   @state() private busy = false
   @state() private commandError = ''
-  @state() private createAccountOpen = false
   @state() private createSecretOpen = false
   @state() private deleteAccountOpen = false
   @state() private pendingSecretRevocation: ServiceAccountSecretSignal | null = null
