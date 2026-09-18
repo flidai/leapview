@@ -19,6 +19,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: codex/dashboard-builder-audit
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
       - uses: ./.github/actions/setup-ci
         with:
           browser: "false"
@@ -42,6 +52,7 @@ jobs:
         run: echo "ip=$(curl --fail --silent --show-error https://api.ipify.org)" >> "$GITHUB_OUTPUT"
       - name: Inspect deployment credential records
         env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
         run: |
           git fetch --depth=1 origin codex/demo-rollout-67d69c9
