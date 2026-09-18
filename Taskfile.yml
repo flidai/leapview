@@ -1349,7 +1349,7 @@ tasks:
         -count=1 -timeout=30m -v
 
   qualify:ubdr:release-transition-artifact:
-    desc: Qualify a live-admitted repository release artifact through the revision-019 forward transition
+    desc: Qualify live-admitted predecessor and candidate distributions through the revision-019 forward transition
     deps:
       - db:generate
     cmds:
