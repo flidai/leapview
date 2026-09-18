@@ -22,10 +22,21 @@ import (
 // TransitionRepository is the runner-facing view of the release PostgreSQL
 // authority. It embeds the existing release repository for shared DB access,
 // while avoiding collisions with the release Create/Get methods.
-type TransitionRepository struct{ *Repository }
+type TransitionRepository struct {
+	*Repository
+	bootstrap func(context.Context) error
+}
 
 func NewTransitionRepository(db DBTX) *TransitionRepository {
 	return &TransitionRepository{Repository: New(db)}
+}
+
+// NewTransitionRepositoryWithBootstrap arranges for the migration owner to
+// prepare the operation schema at the Create boundary. Runner calls Create
+// only after its first authoritative preflight, so rejected requests do not
+// create schema.
+func NewTransitionRepositoryWithBootstrap(db DBTX, bootstrap func(context.Context) error) *TransitionRepository {
+	return &TransitionRepository{Repository: New(db), bootstrap: bootstrap}
 }
 
 func durablePhase(p transitionrunner.Phase) transitionoperation.Phase {
@@ -55,6 +66,11 @@ func (r *TransitionRepository) Create(ctx context.Context, input transitionopera
 	}
 	if err := validateTransitionInput(input); err != nil {
 		return transitionoperation.Operation{}, err
+	}
+	if r.bootstrap != nil {
+		if err := r.bootstrap(ctx); err != nil {
+			return transitionoperation.Operation{}, err
+		}
 	}
 	if input.RequestDigest == "" {
 		input.RequestDigest, _ = input.Digest()
