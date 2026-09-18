@@ -412,7 +412,8 @@ test('chat list page renders searchable conversation history', async () => {
           href: row.querySelector('.primary-link')?.getAttribute('href'),
           label: row.querySelector('.primary-link')?.getAttribute('aria-label'),
           active: row.getAttribute('data-active'),
-          text: row.textContent.replace(/\s+/g, ' ').trim(),
+          title: row.querySelector('.title')?.textContent?.trim(),
+          date: row.querySelector('.date')?.textContent?.trim(),
           optionsLabel: row.querySelector('.options-button')?.getAttribute('aria-label'),
         })),
       }
@@ -434,11 +435,11 @@ test('chat list page renders searchable conversation history', async () => {
       buttonBackground: 'rgb(255, 255, 255)',
       buttonColor: 'rgb(36, 41, 47)',
       rowHeight: 53,
-      dateDistanceFromRowEnd: 12,
+      dateDistanceFromRowEnd: 58,
     })
     expect(initial.tableHeaders).toEqual(['Conversation'])
-    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', text: 'Revenue check Jan 2', optionsLabel: undefined })
-    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', text: 'Inventory status Jan 3', optionsLabel: undefined })
+    expect(initial.rows).toContainEqual({ href: '/chats/c1', label: 'Revenue check', active: 'true', title: 'Revenue check', date: 'Jan 2', optionsLabel: 'More actions for Revenue check' })
+    expect(initial.rows).toContainEqual({ href: '/chats/c2', label: 'Inventory status', active: 'false', title: 'Inventory status', date: 'Jan 3', optionsLabel: 'More actions for Inventory status' })
 
     await page.locator('lv-chat-page').evaluate((element: any) => {
       const input = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!.querySelector('.search') as HTMLInputElement
@@ -454,11 +455,12 @@ test('chat list page renders searchable conversation history', async () => {
       const root = ((element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as TestDomElement).shadowRoot!
       return Array.from(root.querySelectorAll('tbody tr')).map((row: any) => ({
         href: row.querySelector('.primary-link')?.getAttribute('href'),
-        text: row.textContent.replace(/\s+/g, ' ').trim(),
+        title: row.querySelector('.title')?.textContent?.trim(),
+        date: row.querySelector('.date')?.textContent?.trim(),
       }))
     })
 
-    expect(filteredRows).toEqual([{ href: '/chats/c2', text: 'Inventory status Jan 3' }])
+    expect(filteredRows).toEqual([{ href: '/chats/c2', title: 'Inventory status', date: 'Jan 3' }])
 
     const scrollState = await page.evaluate(() => ({
       innerHeight,
@@ -467,6 +469,49 @@ test('chat list page renders searchable conversation history', async () => {
       hasVerticalOverflow: document.documentElement.scrollHeight > window.innerHeight,
     }))
     expect(scrollState.hasVerticalOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('chat list row menu supports keyboard dismissal and dispatches actions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(`${baseURL}/list`)
+    await page.waitForFunction(() => customElements.get('lv-chat-page') && customElements.get('lv-chat-list'))
+    const state = await page.locator('lv-chat-page').evaluate(async (element: any) => {
+      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-chat-list') as any
+      await list.updateComplete
+      const root = list.shadowRoot as ShadowRoot
+      const actions: unknown[] = []
+      list.addEventListener('lv-chat-action', (event: Event) => {
+        event.stopPropagation()
+        actions.push((event as CustomEvent).detail)
+      })
+      const row = root.querySelector('tbody tr') as HTMLElement
+      const trigger = row.querySelector('summary') as HTMLElement
+      trigger.focus()
+      trigger.click()
+      await list.updateComplete
+      const menu = row.querySelector('details') as HTMLDetailsElement
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const initialArrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
+      const pin = menu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!
+      pin.focus()
+      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const arrowFocus = (root.activeElement as HTMLElement)?.textContent?.trim()
+      pin.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      const escaped = { open: menu.open, focus: (root.activeElement as HTMLElement)?.getAttribute('aria-label') }
+      trigger.click()
+      await list.updateComplete
+      const reopenedMenu = row.querySelector('details') as HTMLDetailsElement
+      reopenedMenu.querySelector<HTMLButtonElement>('[role="menuitem"]:nth-of-type(2)')!.click()
+      return { initialArrowFocus, arrowFocus, escaped, actions }
+    })
+    expect(state.initialArrowFocus).toBe('Select')
+    expect(state.arrowFocus).toBe('Rename')
+    expect(state.escaped).toEqual({ open: false, focus: 'More actions for Revenue check' })
+    expect(state.actions).toEqual([{ action: 'pin', conversationId: 'c1', title: 'Revenue check', href: '/chats/c1' }])
   } finally {
     await page.close()
   }

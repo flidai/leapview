@@ -206,6 +206,9 @@ export const projectOverviewStyles = css`
     min-width: 0;
     align-content: start;
     gap: var(--base-size-8);
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel);
     padding: var(--base-size-16);
   }
 
@@ -286,6 +289,33 @@ export const projectOverviewStyles = css`
 
   .semantic-model-content {
     min-width: 0;
+  }
+
+  .semantic-model-diagram-view .semantic-model-content,
+  .semantic-model-diagram-view .semantic-model-section,
+  .semantic-model-diagram-view .semantic-model-graph {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .semantic-model-definition-page .semantic-model-view,
+  .semantic-model-definition-page .semantic-model-layout {
+    height: 100%;
+    min-height: 0;
+  }
+
+  .semantic-model-definition-page .semantic-model-layout {
+    grid-template-rows: auto minmax(0, 1fr);
+    align-content: stretch;
+  }
+
+  .semantic-model-diagram-view .semantic-model-section {
+    display: grid;
+  }
+
+  .semantic-model-diagram-view .semantic-model-graph {
+    height: 100%;
   }
 
   .semantic-object-list {

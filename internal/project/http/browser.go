@@ -45,6 +45,13 @@ type GraphReader interface {
 	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
 }
 
+// PrincipalDisplayReader resolves actor identity fields for history read
+// models. It is deliberately narrower than access.Repository so the project
+// browser cannot accidentally depend on credential or administration APIs.
+type PrincipalDisplayReader interface {
+	PrincipalByID(context.Context, string) (access.Principal, error)
+}
+
 // AssetVersionsReader reads historical published configuration versions for
 // one logical project asset. It is optional so deployments without serving
 // history persistence can still render the current content hash.
@@ -178,6 +185,7 @@ type BrowserHandler struct {
 	QueryExecutor            DataQueryExecutor
 	Catalog                  CatalogAuthorizer
 	SearchCatalog            ProductSearchCatalog
+	PrincipalDisplayReader   PrincipalDisplayReader
 	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
 	Environment              string
 	TargetID                 string
@@ -959,10 +967,15 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 		return state, err
 	}
 	state.Versions = make([]projectui.AssetVersionState, 0, len(versions))
+	createdByIDs := make([]string, 0, len(versions))
+	for _, version := range versions {
+		createdByIDs = append(createdByIDs, version.CreatedBy)
+	}
+	createdByDisplayNames := h.principalDisplayNames(ctx, createdByIDs)
 	for _, version := range versions {
 		state.Versions = append(state.Versions, projectui.AssetVersionState{
 			ServingStateID: string(version.ServingStateID), Environment: string(version.Environment), Status: version.Status, Digest: version.Digest,
-			CreatedBy: version.CreatedBy, CreatedAt: version.CreatedAt, ActivatedAt: version.ActivatedAt,
+			CreatedBy: version.CreatedBy, CreatedByDisplayName: createdByDisplayNames[strings.TrimSpace(version.CreatedBy)], CreatedAt: version.CreatedAt, ActivatedAt: version.ActivatedAt,
 			SnapshotID: version.SnapshotID, SourceFile: version.SourceFile, PayloadJSON: version.PayloadJSON, ContentHash: version.ContentHash,
 		})
 	}
@@ -986,7 +999,8 @@ func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projec
 		if err != nil {
 			return state, err
 		}
-		return refreshStateToProjectUI(h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID))
+		state, err := h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID)
+		return h.refreshStateToProjectUI(ctx, state, err)
 	}
 	if asset.Type == string(projectview.AssetTypeSemanticModel) {
 		semanticModelRef := strings.TrimSpace(asset.ID)
@@ -997,14 +1011,48 @@ func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projec
 		if err != nil {
 			return state, err
 		}
-		return refreshStateToProjectUI(h.RefreshState.SemanticModelRefreshState(ctx, projectID, h.Environment, semanticModelID))
+		state, err := h.RefreshState.SemanticModelRefreshState(ctx, projectID, h.Environment, semanticModelID)
+		return h.refreshStateToProjectUI(ctx, state, err)
 	}
 	pipelineID, err := projectgraph.NewResourceID(asset.ID)
 	if err != nil {
 		return state, err
 	}
 	modelID := projectAssetPayloadResourceID(asset.Payload, "SemanticModel", "semanticModel", "SemanticModelID", "semanticModelId")
-	return refreshStateToProjectUI(h.RefreshState.AssetRefreshState(ctx, projectID, h.Environment, pipelineID, modelID))
+	refreshState, refreshErr := h.RefreshState.AssetRefreshState(ctx, projectID, h.Environment, pipelineID, modelID)
+	return h.refreshStateToProjectUI(ctx, refreshState, refreshErr)
+}
+
+func (h *BrowserHandler) refreshStateToProjectUI(ctx context.Context, state refreshpresentation.AssetRefreshState, err error) (projectui.AssetRefreshState, error) {
+	projectState, err := refreshStateToProjectUI(state, err)
+	if h == nil || h.PrincipalDisplayReader == nil {
+		return projectState, err
+	}
+	principalIDs := make([]string, 0, len(projectState.Runs)+2)
+	for _, run := range projectState.Runs {
+		if strings.TrimSpace(run.PrincipalDisplayName) == "" {
+			principalIDs = append(principalIDs, run.PrincipalID)
+		}
+	}
+	if strings.TrimSpace(projectState.Latest.PrincipalDisplayName) == "" {
+		principalIDs = append(principalIDs, projectState.Latest.PrincipalID)
+	}
+	if strings.TrimSpace(projectState.LatestSuccessful.PrincipalDisplayName) == "" {
+		principalIDs = append(principalIDs, projectState.LatestSuccessful.PrincipalID)
+	}
+	displayNames := h.principalDisplayNames(ctx, principalIDs)
+	for index := range projectState.Runs {
+		if strings.TrimSpace(projectState.Runs[index].PrincipalDisplayName) == "" {
+			projectState.Runs[index].PrincipalDisplayName = displayNames[strings.TrimSpace(projectState.Runs[index].PrincipalID)]
+		}
+	}
+	if strings.TrimSpace(projectState.Latest.PrincipalDisplayName) == "" {
+		projectState.Latest.PrincipalDisplayName = displayNames[strings.TrimSpace(projectState.Latest.PrincipalID)]
+	}
+	if strings.TrimSpace(projectState.LatestSuccessful.PrincipalDisplayName) == "" {
+		projectState.LatestSuccessful.PrincipalDisplayName = displayNames[strings.TrimSpace(projectState.LatestSuccessful.PrincipalID)]
+	}
+	return projectState, err
 }
 
 func refreshStateToProjectUI(state refreshpresentation.AssetRefreshState, err error) (projectui.AssetRefreshState, error) {
@@ -1040,6 +1088,37 @@ func projectRefreshRuns(runs []refreshpresentation.AssetRefreshRun) []projectui.
 		out = append(out, projectRefreshRun(run))
 	}
 	return out
+}
+
+func (h *BrowserHandler) principalDisplayNames(ctx context.Context, ids []string) map[string]string {
+	names := make(map[string]string)
+	if h == nil || h.PrincipalDisplayReader == nil {
+		return names
+	}
+	for _, rawID := range ids {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, alreadyResolved := names[id]; alreadyResolved {
+			continue
+		}
+		principal, err := h.PrincipalDisplayReader.PrincipalByID(ctx, id)
+		if err != nil {
+			continue
+		}
+		displayName := strings.TrimSpace(principal.DisplayName)
+		if displayName == "" {
+			displayName = strings.TrimSpace(principal.Email)
+		}
+		if displayName == "" && principal.Kind == access.PrincipalKindServicePrincipal {
+			displayName = "Service account"
+		}
+		if displayName != "" {
+			names[id] = displayName
+		}
+	}
+	return names
 }
 
 func projectRefreshRun(run refreshpresentation.AssetRefreshRun) projectui.AssetRefreshRun {

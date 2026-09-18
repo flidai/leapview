@@ -108,11 +108,29 @@ GROUP BY project_id
 ORDER BY count DESC, value ASC
 LIMIT sqlc.arg(page_size)::int;
 
+-- name: ListQueryEventFilterOptionsGlobal :many
+SELECT project_id AS value, count(*) AS count
+FROM audit.query_event
+WHERE project_id <> ''
+  AND (sqlc.arg(search)::text = '' OR project_id ILIKE '%' || sqlc.arg(search)::text || '%')
+GROUP BY project_id
+ORDER BY count DESC, value ASC
+LIMIT sqlc.arg(page_size)::int;
+
 -- name: ListPrincipalFilterOptions :many
 SELECT principal_id AS value, count(*) AS count
 FROM audit.query_event
 WHERE principal_id <> ''
 	AND project_id = sqlc.arg(project_id)::text
+  AND (sqlc.arg(search)::text = '' OR principal_id ILIKE '%' || sqlc.arg(search)::text || '%')
+GROUP BY principal_id
+ORDER BY count DESC, value ASC
+LIMIT sqlc.arg(page_size)::int;
+
+-- name: ListPrincipalFilterOptionsGlobal :many
+SELECT principal_id AS value, count(*) AS count
+FROM audit.query_event
+WHERE principal_id <> ''
   AND (sqlc.arg(search)::text = '' OR principal_id ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY principal_id
 ORDER BY count DESC, value ASC
@@ -128,6 +146,15 @@ GROUP BY surface
 ORDER BY count DESC, value ASC
 LIMIT sqlc.arg(page_size)::int;
 
+-- name: ListSurfaceFilterOptionsGlobal :many
+SELECT surface AS value, count(*) AS count
+FROM audit.query_event
+WHERE surface <> ''
+  AND (sqlc.arg(search)::text = '' OR surface ILIKE '%' || sqlc.arg(search)::text || '%')
+GROUP BY surface
+ORDER BY count DESC, value ASC
+LIMIT sqlc.arg(page_size)::int;
+
 -- name: ListKindFilterOptions :many
 SELECT query_kind AS value, count(*) AS count
 FROM audit.query_event
@@ -138,11 +165,29 @@ GROUP BY query_kind
 ORDER BY count DESC, value ASC
 LIMIT sqlc.arg(page_size)::int;
 
+-- name: ListKindFilterOptionsGlobal :many
+SELECT query_kind AS value, count(*) AS count
+FROM audit.query_event
+WHERE query_kind <> ''
+  AND (sqlc.arg(search)::text = '' OR query_kind ILIKE '%' || sqlc.arg(search)::text || '%')
+GROUP BY query_kind
+ORDER BY count DESC, value ASC
+LIMIT sqlc.arg(page_size)::int;
+
 -- name: ListStatusFilterOptions :many
 SELECT status AS value, count(*) AS count
 FROM audit.query_event
 WHERE status <> ''
 	AND project_id = sqlc.arg(project_id)::text
+  AND (sqlc.arg(search)::text = '' OR status ILIKE '%' || sqlc.arg(search)::text || '%')
+GROUP BY status
+ORDER BY count DESC, value ASC
+LIMIT sqlc.arg(page_size)::int;
+
+-- name: ListStatusFilterOptionsGlobal :many
+SELECT status AS value, count(*) AS count
+FROM audit.query_event
+WHERE status <> ''
   AND (sqlc.arg(search)::text = '' OR status ILIKE '%' || sqlc.arg(search)::text || '%')
 GROUP BY status
 ORDER BY count DESC, value ASC

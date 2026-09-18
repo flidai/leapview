@@ -6,7 +6,7 @@ import { lucideIcon } from '../shared/lucide-icons'
 import { browserCommandFailure, ownsBrowserCommandFetch } from '../shared/command-failure'
 import type { ChatManagementSignal } from '../../generated/signals'
 
-export type ChatAction = { action: string; conversationId: string; title?: string }
+export type ChatAction = { action: string; conversationId: string; title?: string; newTitle?: string; href?: string }
 
 export const CHAT_UNDO_WINDOW_MS = 5_000
 const pendingUndoStorageKey = 'lv-chat-manager.pending-undo'
@@ -80,6 +80,8 @@ export class ChatManager extends DatastarLit(LitElement) {
   @state() private feedback = ''
   @state() private failure = ''
   @state() private undoPendings: PendingUndo[] = []
+  @state() private renameTarget: ChatAction | null = null
+  @state() private renameValue = ''
   private pendingAction: ChatAction | null = null
   private archivesOpen = false
   private lastFocus: HTMLElement | null = null
@@ -103,6 +105,10 @@ export class ChatManager extends DatastarLit(LitElement) {
     .confirm-delete { background: var(--lv-fg-danger); color: var(--lv-fg-on-emphasis); border-color: transparent; }
     .confirm-delete:hover { filter: brightness(.92); }
     .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+    .rename-form { display: grid; gap: 16px; }
+    .rename-form label { display: grid; gap: 6px; color: var(--lv-fg-muted); font-size: .9em; }
+    .rename-form input { box-sizing: border-box; min-height: 36px; padding: 6px 8px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-input, var(--lv-bg-panel)); }
+    button.primary { color: var(--lv-fg-on-accent); border-color: var(--lv-bg-accent); background: var(--lv-bg-accent); }
     .muted { color: var(--lv-fg-muted); }
     .search { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); color: var(--lv-fg-muted); }
     input { min-width: 0; flex: 1; width: 100%; border: 0; background: transparent; color: var(--lv-fg-default); font: inherit; outline: none; }
@@ -173,10 +179,21 @@ export class ChatManager extends DatastarLit(LitElement) {
   }
 
   public requestAction(detail: ChatAction) {
+    if (detail.action === 'select') {
+      if (detail.href) {
+        const target = new URL(detail.href, window.location.href)
+        if (target.origin === window.location.origin && target.href !== window.location.href) window.location.assign(target.href)
+      }
+      return
+    }
     if (this.pending) return
     this.failure = ''
     this.feedback = ''
-    if (detail.action === 'delete' || detail.action.endsWith('_all')) {
+    if (detail.action === 'rename') {
+      this.renameTarget = detail
+      this.renameValue = detail.title || ''
+      this.open()
+    } else if (detail.action === 'delete' || detail.action.endsWith('_all')) {
       this.confirmation = detail
       this.open()
     } else if (isUndoableAction(detail)) {
@@ -359,14 +376,29 @@ export class ChatManager extends DatastarLit(LitElement) {
   private cancel = (event: Event) => {
     event.preventDefault()
     if (this.pending) return
+    if (this.renameTarget) {
+      this.renameTarget = null
+      this.renameValue = ''
+      this.close()
+      return
+    }
     if (this.confirmation && this.archivesOpen) this.confirmation = null
     else this.close()
+  }
+
+  private submitRename = (event: SubmitEvent) => {
+    event.preventDefault()
+    if (!this.renameTarget || !this.renameValue.trim() || this.pending) return
+    const detail = { ...this.renameTarget, title: this.renameValue.trim(), newTitle: this.renameValue.trim() }
+    this.renameTarget = null
+    this.renameValue = ''
+    this.perform({ ...detail, action: 'rename' })
   }
 
   render() {
     const action = this.confirmation?.action
     const deleting = action === 'delete' || action === 'delete_all'
-    const title = this.confirmation ? action === 'delete_all' ? 'Delete all chats?' : action === 'archive_all' ? 'Archive all chats?' : 'Delete chat?' : 'Archived chats'
+    const title = this.renameTarget ? 'Rename chat' : this.confirmation ? action === 'delete_all' ? 'Delete all chats?' : action === 'archive_all' ? 'Archive all chats?' : 'Delete chat?' : 'Archived chats'
     const archived = this.management.archivedConversations || []
     const matches = archived.filter(chat => chat.title.toLowerCase().includes(this.query.toLowerCase()))
     return html`
@@ -374,7 +406,13 @@ export class ChatManager extends DatastarLit(LitElement) {
         <header><h2 id="chat-management-title">${title}</h2><button class="icon" aria-label="Close" ?disabled=${Boolean(this.pending)} @click=${this.cancel}>${lucideIcon(X, { size: 18 })}</button></header>
         <div class="body">
           ${this.failure ? html`<p class="error" role="alert">${this.failure}</p>${!this.confirmation ? html`<button @click=${() => this.openArchives()}>Retry</button>` : nothing}` : nothing}
-          ${this.confirmation ? html`
+          ${this.renameTarget ? html`
+            <form class="rename-form" @submit=${this.submitRename}>
+              <p>Choose a new name for <strong>${this.renameTarget.title || 'this chat'}</strong>.</p>
+              <label>Chat name<input aria-label="Chat name" maxlength="200" required .value=${this.renameValue} @input=${(event: InputEvent) => { this.renameValue = (event.target as HTMLInputElement).value }}></label>
+              <div class="actions"><button type="button" ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class="primary" type="submit" ?disabled=${Boolean(this.pending) || !this.renameValue.trim()}>${this.pending ? 'Saving…' : 'Rename'}</button></div>
+            </form>
+          ` : this.confirmation ? html`
             <p>${action === 'delete_all' ? 'This permanently deletes all of your chats, including archived chats. This cannot be undone.' : action === 'archive_all' ? 'All of your chats will move out of the sidebar. You can restore them here in Settings.' : html`Delete <strong>${this.confirmation.title || 'this chat'}</strong>? You can undo this from the notification before the chat is permanently deleted.`}</p>
             <div class="actions"><button ?disabled=${Boolean(this.pending)} @click=${this.cancel}>Cancel</button><button class=${deleting ? 'confirm-delete' : ''} ?disabled=${Boolean(this.pending)} @click=${() => this.confirmation && (isUndoableAction(this.confirmation) ? this.beginUndo(this.confirmation) : this.perform(this.confirmation))}>${this.pending ? 'Saving…' : deleting ? 'Delete' : 'Archive all'}</button></div>
           ` : html`

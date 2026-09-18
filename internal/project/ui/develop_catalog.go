@@ -324,7 +324,7 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 	if asset.Type == "refresh_pipeline" || asset.Type == "pipeline" || asset.Type == "semantic_model" {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
 	} else if asset.Type == "model" {
-		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
+		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset, refresh))
 	}
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefreshAndVersions(project, asset, assets, edges, refresh, versions))

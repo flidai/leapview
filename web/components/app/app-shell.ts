@@ -123,8 +123,19 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
     this.toggleAttribute('data-asset-page', page?.localName === 'lv-project-asset-page')
   }
 
+  private get initialChrome(): ChromeSignal {
+    const encoded = this.getAttribute('data-initial-chrome')
+    if (!encoded) return emptyChrome
+    try {
+      const parsed = JSON.parse(encoded) as ChromeSignal
+      return parsed?.sidebar ? parsed : emptyChrome
+    } catch {
+      return emptyChrome
+    }
+  }
+
   get chrome(): ChromeSignal {
-    return this.signal<ChromeSignal>('chrome', emptyChrome)
+    return this.signal<ChromeSignal>('chrome', this.initialChrome)
   }
 
   connectedCallback(): void {
@@ -161,7 +172,13 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
   private handleChatAction = (event: Event) => {
     event.stopPropagation()
-    this.renderRoot.querySelector<ChatManager>('lv-chat-manager')?.requestAction((event as CustomEvent<ChatAction>).detail)
+    const detail = (event as CustomEvent<ChatAction>).detail
+    if (detail.action === 'select' && detail.href) {
+      const target = new URL(detail.href, window.location.href)
+      if (target.origin === window.location.origin && target.href !== window.location.href) window.location.assign(target.href)
+      return
+    }
+    this.renderRoot.querySelector<ChatManager>('lv-chat-manager')?.requestAction(detail)
   }
 
   private openChatSettings = (event: Event) => {

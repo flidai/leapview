@@ -1,9 +1,12 @@
 package shell
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	g "maragu.dev/gomponents"
 )
 
 func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
@@ -123,6 +126,13 @@ func TestProviderProjectsCustomProductIdentity(t *testing.T) {
 	if layout.Presentation.ProductName != "Northstar Analytics" {
 		t.Fatalf("presentation = %#v", layout.Presentation)
 	}
+	var rendered bytes.Buffer
+	if err := layout.Mount(g.El("p", g.Text("route"))).Render(&rendered); err != nil {
+		t.Fatalf("render mounted shell: %v", err)
+	}
+	if html := rendered.String(); !strings.Contains(html, `data-initial-chrome=`) || !strings.Contains(html, "Northstar Analytics") || !strings.Contains(html, "/product/logo/digest") {
+		t.Fatalf("mounted shell omitted first-paint product identity: %s", html)
+	}
 }
 
 func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
@@ -148,7 +158,7 @@ func TestProviderUsesAdminNavigationAndBackAction(t *testing.T) {
 		{label: "Personal", items: []struct {
 			label string
 			icon  string
-		}{{label: "Profile", icon: "user"}, {label: "Security & sessions", icon: "activity"}, {label: "API tokens", icon: "data"}}},
+		}{{label: "Profile", icon: "user"}, {label: "Security & sessions", icon: "activity"}, {label: "API tokens", icon: "data"}, {label: "Archived chats", icon: "history"}}},
 		{label: "Product", items: []struct {
 			label string
 			icon  string
