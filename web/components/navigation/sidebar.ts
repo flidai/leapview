@@ -454,9 +454,23 @@ class LeapViewSidebar extends LitElement {
       display: grid;
       min-width: 0;
       flex: 1 1 auto;
+      gap: var(--base-size-2);
+    }
+
+    .brand-home {
+      display: grid;
+      min-width: 0;
       grid-template-columns: auto minmax(0, 1fr);
       align-items: center;
-      column-gap: var(--base-size-8);
+      gap: var(--base-size-8);
+      border-radius: var(--lv-radius-default);
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .brand-home:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .product-logo {
@@ -1113,6 +1127,7 @@ class LeapViewSidebar extends LitElement {
   connectedCallback(): void {
     super.connectedCallback()
     document.addEventListener('keydown', this.onKeyDown)
+    document.addEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.addEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
     window.addEventListener('pointermove', this.onWindowPointerMove, { passive: true })
     this.mobileMediaQuery = window.matchMedia('(max-width: 640px)')
@@ -1122,6 +1137,7 @@ class LeapViewSidebar extends LitElement {
 
   disconnectedCallback(): void {
     document.removeEventListener('keydown', this.onKeyDown)
+    document.removeEventListener('pointerdown', this.closeChatMenusOnOutsidePointerDown)
     document.removeEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
     window.removeEventListener('pointermove', this.onWindowPointerMove)
     this.mobileMediaQuery?.removeEventListener('change', this.onMobileViewportChange)
@@ -1252,12 +1268,37 @@ class LeapViewSidebar extends LitElement {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    const path = event.composedPath()
+    const menuPanel = path.find((target): target is HTMLElement => target instanceof HTMLElement && target.classList.contains('chat-menu-panel'))
+    if (menuPanel && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      const items = Array.from(menuPanel.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'))
+      if (items.length) {
+        event.preventDefault()
+        const current = items.indexOf(path.find((target): target is HTMLButtonElement => target instanceof HTMLButtonElement) as HTMLButtonElement)
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : event.key === 'ArrowDown' ? (current + 1 + items.length) % items.length : (current - 1 + items.length) % items.length
+        items[index].focus()
+      }
+      return
+    }
     if (event.key !== 'Escape') return
+    const openMenu = this.shadowRoot?.querySelector<HTMLDetailsElement>('.chat-menu[open]')
+    if (openMenu) {
+      event.preventDefault()
+      openMenu.open = false
+      openMenu.querySelector<HTMLElement>('summary')?.focus()
+      return
+    }
     if (this.mobileOpen) {
       event.preventDefault()
       this.closeMobileNavigation(true)
       return
     }
+  }
+
+  private closeChatMenusOnOutsidePointerDown = (event: PointerEvent): void => {
+    const openMenus = Array.from(this.shadowRoot?.querySelectorAll<HTMLDetailsElement>('.chat-menu[open]') ?? [])
+    if (!openMenus.length || event.composedPath().some(target => openMenus.includes(target as HTMLDetailsElement))) return
+    openMenus.forEach(menu => { menu.open = false })
   }
 
   render() {
@@ -1321,8 +1362,10 @@ class LeapViewSidebar extends LitElement {
               </a>
             ` : html`
               <span class="brand-identity">
-                ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : null}
-                <span class="name">${productName}</span>
+                <a class="brand-home" href="/" aria-label=${`${productName} home`} @click=${(event: MouseEvent) => this.followInternalLink(event, '/')}>
+                  ${productLogoUrl ? html`<img class="product-logo" src=${productLogoUrl} alt="">` : null}
+                  <span class="name">${productName}</span>
+                </a>
                 ${hasCustomIdentity ? html`<a class="powered-by" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>` : null}
               </span>
             `}
@@ -1363,7 +1406,7 @@ class LeapViewSidebar extends LitElement {
                 <span class="brand-back-icon sidebar-control-back-icon">${icon(this.config.primaryAction.icon)}</span>
                 <span class="brand-back-text sidebar-control-back-label">${this.config.primaryAction.label}</span>
               </a>
-            ` : html`<strong class="mobile-drawer-title">${productName}</strong>`}
+            ` : html`<a class="mobile-drawer-title" href="/" aria-label=${`${productName} home`} @click=${(event: MouseEvent) => this.followInternalLink(event, '/')}>${productName}</a>`}
             ${this.config.admin ? null : this.renderAreaSwitcher(true)}
           </div>
           ${this.config.admin ? this.renderSearch(true) : html`
@@ -1676,7 +1719,7 @@ class LeapViewSidebar extends LitElement {
   }
 
   private chatAction(action: string, item: SidebarHistoryItem) {
-    this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: item.id, title: item.title } }))
+    this.dispatchEvent(new CustomEvent('lv-chat-action', { bubbles: true, composed: true, detail: { action, conversationId: item.id, title: item.title, href: item.href } }))
   }
 
   private followInternalLink(event: MouseEvent, href: string): void {

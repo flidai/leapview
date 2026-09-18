@@ -16,6 +16,7 @@ import '../shared/record-table'
 import '../shared/user-avatar'
 import './agent-tools'
 import './agent-prompt-editor'
+import './archived-chats'
 import './personal-settings'
 import './product-settings'
 import './settings-surfaces'
@@ -148,7 +149,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
     .metrics {
       display: grid;
-          max-width: var(--lv-page-content-max-width);
+      width: 100%;
+      min-width: 0;
+      max-width: var(--lv-page-content-max-width);
+      box-sizing: border-box;
       grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
       gap: var(--base-size-12);
     }
@@ -412,6 +416,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       font: var(--lv-type-body-compact);
       padding: var(--base-size-8) var(--lv-space-control);
     }
+
+    .query-history-clear-all { align-self: end; min-height: var(--lv-control-medium); border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel); color: var(--lv-fg-default); cursor: pointer; font: var(--lv-type-body-compact); padding: 0 var(--lv-space-control); }
+    .query-history-clear-all:hover, .query-history-clear-all:focus-visible { border-color: var(--lv-border-accent); outline: 0; }
+    .query-history-clear-all:disabled { cursor: not-allowed; opacity: 0.5; }
 
     .query-history-footer {
       display: flex;
@@ -700,10 +708,11 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
               ></lv-entity-list>`
             : page.active === 'groups'
               ? html`<lv-entity-list .items=${adminGroupListItems(page)} .columns=${adminGroupListColumns()} .filters=${adminGroupListFilters(page)} .actions=${[{ id: 'create-group', label: 'Create group', emphasis: 'primary' }]} initial-query=${page.listQuery ?? ''} active-filter=${page.listFilter ?? 'all'} search-placeholder="Search groups by name or ID" empty-text="No groups found." export-filename="groups.csv" @lv-entity-list-action=${this.handleEntityListAction}></lv-entity-list>`
-            : isPersonalSettings(page.active) ? html`<lv-personal-settings></lv-personal-settings>`
+              : page.active === 'archived-chats' ? html`<lv-archived-chats></lv-archived-chats>`
+                : isPersonalSettings(page.active) ? html`<lv-personal-settings></lv-personal-settings>`
               : isProductSettings(page.active) ? html`<lv-product-settings></lv-product-settings>`
                 : page.active === 'projects-admin' ? html`<lv-project-registry></lv-project-registry>`
-                  : page.active === 'service-accounts' ? html`<lv-service-accounts></lv-service-accounts>`
+                  : page.active === 'service-accounts' || page.active === 'service-accounts-new' ? html`<lv-service-accounts mode=${page.active === 'service-accounts-new' ? 'new' : 'list'}></lv-service-accounts>`
                     : page.active === 'audit' ? html`<lv-audit-log></lv-audit-log>`
                       : page.active === 'storage' ? this.renderStorage(page) : page.active === 'storage-detail' ? this.renderStorageDetail(page) : page.active === 'agent' ? this.renderAgent(page) : page.active === 'queries' ? this.renderQueries(page) : page.active === 'publications' ? this.renderPublications(page.publications ?? []) : page.active === 'principal-detail' || page.active === 'group-detail' ? nothing : page.sections?.map((section) => renderSection(section))}
         </section>
@@ -820,6 +829,14 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         <div class="query-filters" aria-label="Query event filters" @lv-filter-menu-command=${this.handleFilterMenuCommand}>
           ${history.filterMenus?.map((menu) => this.renderFilterMenu(menu))}
           ${this.renderTextFilter('search', 'Statement / ID')}
+          <button
+            type="button"
+            class="query-history-clear-all"
+            ?disabled=${!queryHistoryHasFilters(history.filters)}
+            @click=${this.clearAllQueryHistory}
+          >
+            Clear all
+          </button>
         </div>
         <div class="panel table-panel" @lv-record-table-action=${this.handleQueryTableAction}>
           <lv-record-table variant="compact" .table=${history.table}></lv-record-table>
@@ -954,13 +971,19 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     this.emitQueryHistoryCommand(action, this.currentQueryHistory().filters, '', '', command)
   }
 
+  private clearAllQueryHistory = (): void => {
+    this.queryFilters = {}
+    if (this.queryFilterTimer) clearTimeout(this.queryFilterTimer)
+    this.emitQueryHistoryCommand('clear_all', {})
+  }
+
   private loadMoreQueryHistory = () => {
     const history = this.currentQueryHistory()
     if (!history.hasMore || history.loading || !history.nextCursor) return
     this.emitQueryHistoryCommand('load_more', history.filters, history.nextCursor)
   }
 
-  private emitQueryHistoryCommand(action: 'reset' | 'load_more' | 'select_detail' | 'close_detail' | 'filter_search' | 'filter_toggle' | 'filter_clear', filters: AdminQueryHistoryFilters, pageToken: string, eventId = '', filterMenu?: FilterMenuCommand) {
+  private emitQueryHistoryCommand(action: 'reset' | 'load_more' | 'select_detail' | 'close_detail' | 'filter_search' | 'filter_toggle' | 'filter_clear' | 'clear_all', filters: AdminQueryHistoryFilters, pageToken = '', eventId = '', filterMenu?: FilterMenuCommand) {
     const history = this.currentQueryHistory()
     this.dispatchEvent(new CustomEvent('lv-query-history-command', {
       bubbles: true,
@@ -1112,7 +1135,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 }
 
 function isPersonalSettings(active: string): boolean {
-  return active === 'profile' || active === 'security' || active === 'api-tokens'
+  return active === 'profile' || active === 'security' || active === 'api-tokens' || active === 'archived-chats'
 }
 
 function isProductSettings(active: string): boolean {
@@ -1138,6 +1161,14 @@ const emptyQueryDetail: AdminQueryDetailSignal = {
 
 function tableRows(table: RecordTableSignal | undefined | null): Array<Record<string, unknown>> {
   return Array.isArray(table?.rows) ? table.rows as Array<Record<string, unknown>> : []
+}
+
+function queryHistoryHasFilters(filters: AdminQueryHistoryFilters): boolean {
+  return Boolean(
+    filters.search?.trim() || filters.target?.trim() || filters.from?.trim() || filters.to?.trim() ||
+    filters.projects?.length || filters.principals?.length || filters.surfaces?.length ||
+    filters.kinds?.length || filters.statuses?.length,
+  )
 }
 
 function adminGroupTable(page: AdminPageSignal): RecordTableSignal | undefined {

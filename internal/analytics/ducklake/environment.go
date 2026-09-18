@@ -131,6 +131,16 @@ type Environment struct {
 	closeErr           error
 }
 
+// DuckLakeMetadataSchema returns the configured PostgreSQL metadata namespace.
+// File-backed catalogs return an empty string because their metadata tables
+// live directly in DuckDB's attached metadata catalog.
+func (e *Environment) DuckLakeMetadataSchema() string {
+	if e == nil {
+		return ""
+	}
+	return e.postgresMetadata
+}
+
 // borrowedConnector deliberately exposes only driver.Connector. Some concrete
 // connectors (including DuckDB's) also implement io.Closer, and database/sql
 // closes such a connector when its DB handle closes. A short-lived DB used for

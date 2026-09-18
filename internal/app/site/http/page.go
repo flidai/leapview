@@ -385,7 +385,6 @@ func siteDocsIndex() g.Node {
 	return h.Article(h.ID("main-content"), h.Class("site-docs-article site-docs-index"),
 		h.H1(g.Text("Documentation")),
 		h.P(g.Text("Follow a task-oriented path or open the generated reference for an exact contract.")),
-		docsSearchForm(""),
 		h.Nav(g.Attr("aria-label", "Documentation sections"), h.Ul(h.Class("site-docs-index-list"), g.Group(items))),
 	)
 }

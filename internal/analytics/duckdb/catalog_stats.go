@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
@@ -28,8 +29,59 @@ func (r *ProjectRuntime) CatalogTableStatistics(ctx context.Context) ([]catalogs
 		return nil, fmt.Errorf("project runtime database does not expose catalog metadata queries")
 	}
 	snapshotID := r.DuckLakeSnapshotID()
+	metadataNamespace := quoteIdentifier("__ducklake_metadata_lake")
+	if provider, ok := r.db.(interface{ DuckLakeMetadataSchema() string }); ok {
+		metadataSchema := provider.DuckLakeMetadataSchema()
+		if metadataSchema != "" {
+			if err := validateIdentifier(metadataSchema); err != nil {
+				return nil, fmt.Errorf("inspect serving DuckLake catalog: invalid metadata schema: %w", err)
+			}
+			metadataNamespace += "." + quoteIdentifier(metadataSchema)
+		}
+	}
+	catalogSQL := strings.ReplaceAll(catalogStatisticsSQL, "__ducklake_metadata_lake", metadataNamespace)
 	rows, err := queryer.Query(ctx, semanticquery.Plan{
-		SQL: `
+		SQL:     catalogSQL,
+		Args:    []any{snapshotID, snapshotID, "lake"},
+		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id", "snapshot_time", "column_name", "column_type", "column_order", "nulls_allowed", "default_value"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("inspect serving DuckLake catalog: %w", err)
+	}
+	statistics := make([]catalogstats.Table, 0, len(rows))
+	indexes := make(map[string]int, len(rows))
+	for _, row := range rows {
+		schemaName := catalogStatisticString(row["schema_name"])
+		tableName := catalogStatisticString(row["table_name"])
+		key := schemaName + "\x00" + tableName
+		index, ok := indexes[key]
+		if !ok {
+			index = len(statistics)
+			indexes[key] = index
+			statistics = append(statistics, catalogstats.Table{
+				Schema:      schemaName,
+				Name:        tableName,
+				RowCount:    catalogStatisticInt64(row["row_count"]),
+				ColumnCount: catalogStatisticInt64(row["column_count"]),
+				FileCount:   catalogStatisticInt64(row["file_count"]),
+				SizeBytes:   catalogStatisticInt64(row["byte_count"]),
+				SnapshotID:  catalogStatisticInt64(row["snapshot_id"]),
+				SnapshotAt:  catalogStatisticTime(row["snapshot_time"]),
+			})
+		}
+		if columnName := catalogStatisticString(row["column_name"]); columnName != "" {
+			statistics[index].Columns = append(statistics[index].Columns, semanticmodel.ColumnSchema{
+				Name: columnName, Ordinal: int(catalogStatisticInt64(row["column_order"])),
+				PhysicalType: catalogStatisticString(row["column_type"]),
+				Nullable:     catalogStatisticNullable(row["nulls_allowed"]),
+				Default:      catalogStatisticString(row["default_value"]),
+			})
+		}
+	}
+	return statistics, nil
+}
+
+const catalogStatisticsSQL = `
 WITH selected_snapshot AS (
 	SELECT selected.id, snapshots.snapshot_time
 	FROM (
@@ -85,45 +137,7 @@ CROSS JOIN selected_snapshot selected
 LEFT JOIN file_rollup f ON f.table_id = a.table_id
 LEFT JOIN column_rollup c ON c.table_id = a.table_id
 LEFT JOIN active_columns columns ON columns.table_id = a.table_id
-ORDER BY a.schema_name, a.table_name, columns.column_order`,
-		Args:    []any{snapshotID, snapshotID, "lake"},
-		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id", "snapshot_time", "column_name", "column_type", "column_order", "nulls_allowed", "default_value"},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("inspect serving DuckLake catalog: %w", err)
-	}
-	statistics := make([]catalogstats.Table, 0, len(rows))
-	indexes := make(map[string]int, len(rows))
-	for _, row := range rows {
-		schemaName := catalogStatisticString(row["schema_name"])
-		tableName := catalogStatisticString(row["table_name"])
-		key := schemaName + "\x00" + tableName
-		index, ok := indexes[key]
-		if !ok {
-			index = len(statistics)
-			indexes[key] = index
-			statistics = append(statistics, catalogstats.Table{
-				Schema:      schemaName,
-				Name:        tableName,
-				RowCount:    catalogStatisticInt64(row["row_count"]),
-				ColumnCount: catalogStatisticInt64(row["column_count"]),
-				FileCount:   catalogStatisticInt64(row["file_count"]),
-				SizeBytes:   catalogStatisticInt64(row["byte_count"]),
-				SnapshotID:  catalogStatisticInt64(row["snapshot_id"]),
-				SnapshotAt:  catalogStatisticTime(row["snapshot_time"]),
-			})
-		}
-		if columnName := catalogStatisticString(row["column_name"]); columnName != "" {
-			statistics[index].Columns = append(statistics[index].Columns, semanticmodel.ColumnSchema{
-				Name: columnName, Ordinal: int(catalogStatisticInt64(row["column_order"])),
-				PhysicalType: catalogStatisticString(row["column_type"]),
-				Nullable:     catalogStatisticNullable(row["nulls_allowed"]),
-				Default:      catalogStatisticString(row["default_value"]),
-			})
-		}
-	}
-	return statistics, nil
-}
+ORDER BY a.schema_name, a.table_name, columns.column_order`
 
 func catalogStatisticTime(value any) time.Time {
 	switch value := value.(type) {

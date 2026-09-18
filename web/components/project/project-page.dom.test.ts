@@ -235,9 +235,9 @@ test('semantic model overview separates summary metadata from model inspection',
     expect(state.overviewLayout.width).toBe(1152)
     expect(state.overviewLayout.width).toBeLessThan(state.overviewLayout.availableWidth)
     expect(state.overviewLayout.left).toBe(state.overviewLayout.availableLeft)
-    expect(state.overviewLayout.panelBorders).toEqual(['0px', '0px'])
+    expect(state.overviewLayout.panelBorders).toEqual(['1px', '1px'])
     expect(state.overviewLayout.summaryBorders).toEqual(['0px', '0px', '0px', '0px'])
-    expect(state.overviewLayout.impactBorders).toEqual(['0px', '0px'])
+    expect(state.overviewLayout.impactBorders).toEqual(['1px', '1px'])
     expect(state.chromeRuleExtensions).toEqual({ breadcrumb: '44px', tabs: '44px' })
     expect(state.impactHeadings).toEqual(['Upstream', 'Downstream impact'])
     expect(state.upstreamFacts).toEqual(['2 governed datasets', '1 refresh pipeline'])
@@ -666,7 +666,7 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
     expect(drawer.signal).toEqual({ open: true, runId: 'run:model:orders' })
     expect(drawer.label).toBe('run:model:orders refresh details')
     expect(drawer.title).toBe('Refresh run')
-    expect(drawer.subtitle).toBe('failed · 2026-08-24T14:32:00Z')
+    expect(drawer.subtitle).toBe('failed · 24 Aug 2026, 14:32 UTC')
     expect(drawer.sections.map((section: any) => section.title)).toEqual(['Overview', 'Context', 'Execution', 'Error'])
     expect(drawer.sections.at(-1)?.text).toContain('Artifact digest mismatch')
 
@@ -726,7 +726,7 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
       table?.querySelector<HTMLElement>('tbody tr.record-row')?.click()
       return {
         columns: table?.table?.columns?.map((column: any) => column.header),
-        versions: table?.table?.rows?.map((row: any) => ({ version: row.version, contentHash: row.content_hash })),
+        versions: table?.table?.rows?.map((row: any) => ({ version: row.version })),
         rowAction: table?.table?.rowAction,
         drawerBeforeSignal: Boolean((element.shadowRoot as ShadowRoot)!.querySelector('lv-drawer')),
         diff: [additions?.textContent, deletions?.textContent],
@@ -734,8 +734,8 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
       }
     })
     expect(tableState).toEqual({
-      columns: ['Version', 'Content hash', 'Published', 'Changes', 'Status', 'Published by'],
-      versions: [{ version: 2, contentHash: 'sha256:curre' }, { version: 1, contentHash: 'sha256:previ' }],
+      columns: ['Version', 'Published', 'Changes', 'Status', 'Published by'],
+      versions: [{ version: 2 }, { version: 1 }],
       rowAction: 'open-asset-version',
       drawerBeforeSignal: false,
       diff: ['+2', '-1'],
@@ -776,7 +776,7 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
     expect(drawer.signal).toEqual({ open: true, versionId: 'state:current' })
     expect(drawer.label).toBe('Version 2 details')
     expect(drawer.title).toBe('Version 2')
-    expect(drawer.subtitle).toBe('current · 2026-08-24T14:57:00Z')
+    expect(drawer.subtitle).toBe('current · 24 Aug 2026, 14:57 UTC')
     expect(drawer.sections).toEqual(['Overview', 'Provenance', 'Changes from previous version', 'Compiled configuration'])
     expect(Math.min(...drawer.factRowGaps)).toBeGreaterThanOrEqual(12)
     expect(drawer.factRows.length).toBeGreaterThan(0)

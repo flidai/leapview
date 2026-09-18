@@ -25,6 +25,16 @@ beforeAll(async () => {
       response.end(testDocument(true))
       return
     }
+    if (url.pathname === '/initial-chrome-shell') {
+      const initialChrome = escapeHTML(JSON.stringify({ sidebar: {
+        productName: 'Northstar Analytics', productLogoUrl: '/northstar.svg', active: 'sources', area: 'develop', compact: false,
+        dashboardId: '', dashboardTitle: '', pageTitle: '', modelId: '', modelTitle: '', userSettingsHref: '/admin/profile',
+        groups: [{ label: 'Catalog', items: [{ id: 'sources', label: 'Sources', href: '/sources', icon: 'database' }] }],
+      } }))
+      response.setHeader('content-type', 'text/html')
+      response.end(testDocument(true).replace('<lv-app-shell>', `<lv-app-shell data-initial-chrome="${initialChrome}">`))
+      return
+    }
     if (url.pathname === '/upgraded-compact-shell') {
       response.setHeader('content-type', 'text/html')
       response.end(testDocument(true, true))
@@ -170,6 +180,9 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
         navigationLabel: root.querySelector('aside')?.getAttribute('aria-label'),
         name: root.querySelector('.brand .name')?.textContent?.trim(),
         mobileName: root.querySelector('.mobile-drawer-title')?.textContent?.trim(),
+        homeHref: root.querySelector('.brand-home')?.getAttribute('href'),
+        homeLabel: root.querySelector('.brand-home')?.getAttribute('aria-label'),
+        mobileHomeHref: root.querySelector('.mobile-drawer-title')?.getAttribute('href'),
         markCount: root.querySelectorAll('lv-brand-mark').length,
       }
     })
@@ -178,6 +191,9 @@ test('app shell renders a restrained text-only LeapView identity', async () => {
       navigationLabel: 'LeapView navigation',
       name: 'LeapView',
       mobileName: 'LeapView',
+      homeHref: '/',
+      homeLabel: 'LeapView home',
+      mobileHomeHref: '/',
       markCount: 0,
     })
   } finally {
@@ -210,6 +226,27 @@ test('app shell renders custom identity with permanent LeapView attribution', as
       attribution: 'Powered by LeapView',
       attributionHref: 'https://leapview.dev',
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('server-projected chrome renders the correct tenant identity before live signals arrive', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
+  try {
+    await page.goto(`${baseURL}/initial-chrome-shell`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
+      await sidebar.updateComplete
+      return {
+        name: sidebar.shadowRoot.querySelector('.name')?.textContent?.trim(),
+        logo: sidebar.shadowRoot.querySelector('.product-logo')?.getAttribute('src'),
+        sourceHref: sidebar.shadowRoot.querySelector('a[href="/sources"]')?.getAttribute('href'),
+      }
+    })
+    expect(state).toEqual({ name: 'Northstar Analytics', logo: '/northstar.svg', sourceHref: '/sources' })
   } finally {
     await page.close()
   }
@@ -937,7 +974,7 @@ test('mobile navigation opens in an accessible drawer', async () => {
   }
 })
 
-test('chat inline hover actions support pinning without navigating the row', async () => {
+test('chat row action menu supports keyboard navigation and pinning without navigating the row', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   await page.goto(`${baseURL}/sidebar-history`)
   await page.evaluate(() => {
@@ -946,9 +983,19 @@ test('chat inline hover actions support pinning without navigating the row', asy
   })
   const row = page.locator('.history-row').filter({ hasText: 'Revenue check' })
   await row.hover()
-  expect(await row.getByRole('button').count()).toBe(3)
-  expect(await page.getByRole('menu').count()).toBe(0)
-  await row.getByRole('button', { name: 'Pin chat', exact: true }).click()
+  const trigger = row.locator('summary[aria-label="More actions for Revenue check"]')
+  expect(await trigger.count()).toBe(1)
+  await trigger.focus()
+  await trigger.press('Enter')
+  const menu = row.getByRole('menu')
+  expect(await menu.count()).toBe(1)
+  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).focus()
+  await page.keyboard.press('ArrowDown')
+  expect(await menu.getByRole('menuitem', { name: 'Rename', exact: true }).evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await page.keyboard.press('Escape')
+  expect(await trigger.evaluate((element) => element === (element.getRootNode() as Document | ShadowRoot).activeElement)).toBe(true)
+  await trigger.click()
+  await menu.getByRole('menuitem', { name: 'Pin chat', exact: true }).click()
   expect(await page.evaluate(() => (window as any).chatActions.map((item: any) => ({ action: item.action, conversationId: item.conversationId })))).toEqual([{ action: 'pin', conversationId: 'c1' }])
   expect(new URL(page.url()).pathname).toBe('/sidebar-history')
   await page.close()
@@ -1238,7 +1285,7 @@ test('sidebar renders global chat action and recent history', async () => {
         })),
         spacing: (() => {
           const group = root.querySelector('.nav-group:not(.primary-action)') as HTMLElement
-          const navItem = root.querySelector('a[href="/"]') as HTMLElement
+          const navItem = root.querySelector('a.nav-item[href="/"]') as HTMLElement
           const historyList = root.querySelector('.history-list') as HTMLElement
           return {
             navGroupGap: getComputedStyle(group).gap,

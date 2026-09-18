@@ -42,6 +42,9 @@ func (m *Module) executeStartedChatTurn(ctx context.Context, service *agent.Serv
 		transcript = applyLiveTranscriptEvent(transcript, started.ConversationID, event)
 		emit(liveSignal("", true))
 	})
+	if err != nil && m.logger != nil {
+		m.logger.ErrorContext(ctx, "agent turn execution failed", "conversation_id", started.ConversationID, "run_id", started.RunID, "error", err)
+	}
 	statusErr := chatTurnStatusError(err, result.StopReason)
 	if result.RunID != "" {
 		if refreshed, refreshErr := service.ConversationTranscriptState(ctx, scope, started.ConversationID); refreshErr == nil {
@@ -71,5 +74,5 @@ func chatTurnStatusError(err error, stopReason agentcore.StopReason) string {
 	if agent.IsBusy(err) {
 		return "A turn is already running for this conversation."
 	}
-	return err.Error()
+	return "The agent could not complete that request. Please try again."
 }

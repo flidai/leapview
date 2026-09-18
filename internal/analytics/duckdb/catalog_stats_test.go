@@ -11,8 +11,9 @@ import (
 )
 
 type catalogStatisticsDatabase struct {
-	plan semanticquery.Plan
-	rows semanticquery.Rows
+	plan           semanticquery.Plan
+	rows           semanticquery.Rows
+	metadataSchema string
 }
 
 func (*catalogStatisticsDatabase) Exec(context.Context, string) error { return nil }
@@ -22,10 +23,11 @@ func (d *catalogStatisticsDatabase) Query(_ context.Context, plan semanticquery.
 	d.plan = plan
 	return d.rows, nil
 }
+func (d *catalogStatisticsDatabase) DuckLakeMetadataSchema() string { return d.metadataSchema }
 
 func TestProjectRuntimeCatalogTableStatisticsUsesServingSnapshot(t *testing.T) {
 	snapshotAt := time.Date(2026, 8, 24, 14, 32, 0, 0, time.UTC)
-	database := &catalogStatisticsDatabase{rows: semanticquery.Rows{{
+	database := &catalogStatisticsDatabase{metadataSchema: "leapview_catalog_pool", rows: semanticquery.Rows{{
 		"schema_name": "model", "table_name": "orders", "row_count": big.NewInt(42),
 		"column_count": int64(7), "file_count": int64(2), "byte_count": big.NewInt(4096), "snapshot_id": big.NewInt(17), "snapshot_time": snapshotAt,
 		"column_name": "order_id", "column_type": "VARCHAR", "column_order": int64(0), "nulls_allowed": false,
@@ -51,5 +53,8 @@ func TestProjectRuntimeCatalogTableStatisticsUsesServingSnapshot(t *testing.T) {
 	}
 	if !strings.Contains(database.plan.SQL, "selected.id < f.end_snapshot") || !strings.Contains(database.plan.SQL, "selected.id < t.end_snapshot") {
 		t.Fatalf("statistics query is not snapshot-aware:\n%s", database.plan.SQL)
+	}
+	if !strings.Contains(database.plan.SQL, `"__ducklake_metadata_lake"."leapview_catalog_pool".ducklake_table`) {
+		t.Fatalf("statistics query does not qualify the PostgreSQL metadata schema:\n%s", database.plan.SQL)
 	}
 }

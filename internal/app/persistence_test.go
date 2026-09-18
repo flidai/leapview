@@ -232,6 +232,14 @@ func (r *testQueryAuditRepository) ListQueryEvents(_ context.Context, filter que
 }
 
 func (r *testQueryAuditRepository) ListQueryEventFilterOptions(_ context.Context, projectID projectgraph.ResourceID, field, search string, limit int) ([]queryaudit.FilterOption, error) {
+	return r.listQueryEventFilterOptions(&projectID, field, search, limit)
+}
+
+func (r *testQueryAuditRepository) ListQueryEventFilterOptionsGlobal(_ context.Context, field, search string, limit int) ([]queryaudit.FilterOption, error) {
+	return r.listQueryEventFilterOptions(nil, field, search, limit)
+}
+
+func (r *testQueryAuditRepository) listQueryEventFilterOptions(projectID *projectgraph.ResourceID, field, search string, limit int) ([]queryaudit.FilterOption, error) {
 	if r == nil {
 		return nil, fmt.Errorf("query audit repository is unavailable")
 	}
@@ -249,7 +257,7 @@ func (r *testQueryAuditRepository) ListQueryEventFilterOptions(_ context.Context
 	r.mu.RLock()
 	counts := make(map[string]int)
 	for _, event := range r.events {
-		if event.ProjectID != projectID {
+		if projectID != nil && event.ProjectID != *projectID {
 			continue
 		}
 		value := testQueryAuditOptionValue(event, field)

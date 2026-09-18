@@ -29,13 +29,16 @@ func (testServiceAccountReader) ListServicePrincipals(context.Context) ([]access
 func (testServiceAccountReader) ListServicePrincipalSecrets(context.Context, string) ([]access.ServicePrincipalSecret, error) {
 	return []access.ServicePrincipalSecret{{ID: "secret-1", ServicePrincipalID: "svc-1", Name: "ci"}}, nil
 }
+func (testServiceAccountReader) CountServicePrincipalSecrets(context.Context) (map[string]int, error) {
+	return map[string]int{"svc-1": 1}, nil
+}
 
 func TestLoadServiceAccountsSortsAndSelectsMetadata(t *testing.T) {
 	signal, err := LoadServiceAccounts(context.Background(), testServiceAccountReader{}, "svc-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if signal.Items[0].ID != "svc-1" || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
+	if signal.Items[0].ID != "svc-1" || signal.Items[0].SecretCount != 1 || signal.SelectedID != "svc-1" || len(signal.Secrets) != 1 {
 		t.Fatalf("signal = %#v", signal)
 	}
 }
