@@ -67,8 +67,9 @@ def main():
     subprocess.run(['sha256sum', '--check', str(RELEASE / 'leapview.sha256')], check=True)
     original_fragment = Path(output('systemctl', 'show', SERVICE, '--property=FragmentPath', '--value'))
     original_unit = original_fragment.read_text()
-    assert original_fragment == Path('/run/systemd/transient') / SERVICE, 'Unexpected unit owner'
-    assert not UNIT.exists(), 'A persistent unit already exists; inspect before replacing it'
+    assert original_fragment in (Path('/run/systemd/transient') / SERVICE, UNIT), 'Unexpected unit owner'
+    if UNIT.exists():
+        assert UNIT.read_text() == original_unit and str(RELEASE) not in original_unit, 'Persistent unit differs from the restored predecessor'
     assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '19'
 
     operation_env = runtime_env.copy()
@@ -123,7 +124,14 @@ def main():
         if migration.returncode and 'already initialized' not in (backup / 'baseline-error.log').read_text():
             raise RuntimeError('Canonical baseline operation failed; private diagnostics retained with backup')
         assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '21'
-        unit = original_unit + '\n[Service]\nExecStart=\nExecStart=' + str(RELEASE / 'leapview') + ' serve --production\nWorkingDirectory=' + str(RELEASE) + '\n\n[Install]\nWantedBy=multi-user.target\n'
+        environment_file = RELEASE / 'runtime.env'
+        environment_lines = []
+        for name, value in sorted(runtime_env.items()):
+            if name.startswith('LEAPVIEW_'):
+                escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
+                environment_lines.append(name + '="' + escaped + '"')
+        write_private(environment_file, '\n'.join(environment_lines) + '\n')
+        unit = original_unit + '\n[Service]\nEnvironmentFile=' + str(environment_file) + '\nExecStart=\nExecStart=' + str(RELEASE / 'leapview') + ' serve --production\nWorkingDirectory=' + str(RELEASE) + '\n\n[Install]\nWantedBy=multi-user.target\n'
         write_private(UNIT, unit)
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
         subprocess.run(['systemctl', 'start', SERVICE], check=True)
