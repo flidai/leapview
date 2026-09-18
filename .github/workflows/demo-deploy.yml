@@ -1,55 +1,32 @@
 name: Hosted demo deployment
-
 on:
-  workflow_run:
-    workflows: [Main artifacts]
-    types: [completed]
   workflow_dispatch:
-
 permissions:
   contents: read
   id-token: write
-
 concurrency:
   group: leapview-hosted-demo
   cancel-in-progress: false
-
 jobs:
-  deploy:
-    name: Deploy Olist showcase
-    if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+  inspect:
+    name: Inspect hosted demo runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 10
     environment: leapview-demo
-    env:
-      SOURCE_REVISION: ${{ github.event.workflow_run.head_sha || github.sha }}
-
     steps:
-      - name: Check out the qualified revision
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fetch infrastructure credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
         with:
-          ref: ${{ env.SOURCE_REVISION }}
-
-      - name: Set up the cached CI toolchain
-        uses: ./.github/actions/setup-ci
-        with:
-          browser: "false"
-
-      - name: Restore the pinned Olist dataset cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/leapview
-          key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
-
-      - name: Prepare generated code
-        run: task generate
-
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /hetzner-qualification/infrastructure
       - name: Fetch demo deployment credentials
-        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
         with:
           method: oidc
           identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
@@ -58,20 +35,11 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
-
-      - name: Publish the canonical Olist showcase
+      - name: Inspect runtime with pinned SSH identity
         env:
-          DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
-          DEMO_TARGET: https://demo.leapview.dev
-        run: ./scripts/deploy_demo.sh
-
-      - name: Record deployed product routes
-        if: success()
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
         run: |
-          {
-            echo '### Hosted demo'
-            echo
-            echo '- [Visual Showcase](https://demo.leapview.dev/dashboards/visual-showcase/pages/overview)'
-            echo '- [Executive Sales](https://demo.leapview.dev/dashboards/executive-sales/pages/overview)'
-            echo '- [Fulfillment Operations](https://demo.leapview.dev/dashboards/fulfillment-operations/pages/overview)'
-          } >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
+          export DEMO_RUNNER_IP
+          bash scripts/inspect_demo_runtime.sh
