@@ -176,7 +176,7 @@ from pathlib import Path
 pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value']).decode().strip()
 env=dict(item.split(b'=',1) for item in open('/proc/'+pid+'/environ','rb').read().split(b'\0') if b'=' in item)
 secrets=[value.decode() for key,value in env.items() if any(word in key for word in (b'KEY',b'PASSWORD',b'TOKEN',b'URL',b'SECRET')) and len(value)>7]
-logs=subprocess.check_output(['journalctl','-u','leapview-demo-current.service','--since','2026-09-18 19:48:00 UTC','--until','2026-09-18 19:50:15 UTC','--no-pager','-o','json']).decode()
+logs=subprocess.check_output(['journalctl','-u','leapview-demo-current.service','--since','-10 minutes','--no-pager','-o','json']).decode()
 messages=[]
 for line in logs.splitlines():
     item=json.loads(line)
