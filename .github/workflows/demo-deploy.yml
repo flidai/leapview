@@ -31,7 +31,9 @@ jobs:
           browser: "false"
       - name: Build bounded credential recovery helper
         if: inputs.action == 'recover-credentials'
-        run: go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
+        run: |
+          task generate
+          go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
         with:
@@ -57,6 +59,8 @@ jobs:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_RECOVER_CREDENTIALS: ${{ inputs.action == 'recover-credentials' }}
           DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"

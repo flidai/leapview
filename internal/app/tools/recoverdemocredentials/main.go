@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/alexedwards/argon2id"
+	"github.com/flidai/leapview/internal/access"
+	accesspg "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -105,6 +107,58 @@ func run(ctx context.Context) error {
 			return fmt.Errorf("commit %s credential recovery: %w", item.Name, err)
 		}
 		fmt.Printf("restored %s credential\n", item.Name)
+	}
+	return ensureDeploymentPolicy(ctx, pool, []byte(key), request.Credentials)
+}
+
+func ensureDeploymentPolicy(ctx context.Context, pool *pgxpool.Pool, fingerprintKey []byte, credentials []credential) error {
+	ids := map[string]string{}
+	for _, item := range credentials {
+		ids[item.Name] = strings.TrimSpace(item.ClientID)
+	}
+	var scope access.AuthorizationPolicyScope
+	if err := pool.QueryRow(ctx, `
+		SELECT target_id,project_id,environment
+		FROM delivery.delivery_target
+		ORDER BY updated_at DESC
+		LIMIT 1`).Scan(&scope.TargetID, &scope.ProjectID, &scope.Environment); err != nil {
+		return fmt.Errorf("resolve demo authorization scope: %w", err)
+	}
+	repository, err := accesspg.NewAccess(pool, accesspg.FingerprintConfig{Key: fingerprintKey})
+	if err != nil {
+		return fmt.Errorf("compose demo authorization repository: %w", err)
+	}
+	desired := []access.RoleBinding{
+		{ID: "demo-publisher-contributor", Name: "Demo publisher authoring", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: ids["publisher"]}, Role: access.ProjectRoleContributor, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleContributor)},
+		{ID: "demo-publisher-deployer", Name: "Demo publisher releases", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: ids["publisher"]}, Role: access.ProjectRoleDeployer, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer)},
+		{ID: "demo-release-admin", Name: "Demo release administrator", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: ids["release"]}, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)},
+	}
+	policy, err := repository.AuthorizationPolicy(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("read demo authorization policy: %w", err)
+	}
+	for _, binding := range desired {
+		present := false
+		for _, current := range policy.RoleBindings {
+			if current.ID == binding.ID {
+				if current.Subject != binding.Subject || current.Role != binding.Role {
+					return fmt.Errorf("demo role binding %s has incompatible identity", binding.ID)
+				}
+				present = true
+				break
+			}
+		}
+		if present {
+			continue
+		}
+		policy, err = repository.UpsertAuthorizationRoleBinding(ctx, access.AuthorizationRoleBindingInput{
+			Scope: scope, Binding: binding, ExpectedRevision: policy.Revision,
+			IdempotencyKey: fmt.Sprintf("demo-credential-recovery-%s-%d", binding.ID, policy.Revision),
+		})
+		if err != nil {
+			return fmt.Errorf("create demo role binding %s: %w", binding.ID, err)
+		}
+		fmt.Printf("created %s role binding\n", binding.ID)
 	}
 	return nil
 }
