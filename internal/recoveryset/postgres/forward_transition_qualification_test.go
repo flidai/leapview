@@ -45,8 +45,16 @@ const (
 // negative/concurrency gates have passed.
 func TestFAI518ForwardOnlyReleaseTransitionQualification(t *testing.T) {
 	pool := productionPreflightDB(t)
+	currentDB, err := sql.Open("pgx", pool.Config().ConnString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer currentDB.Close()
+	assertAppliedMigrationRevision(t, pool)
 	_, resolver, preflightRequest := forwardQualificationAuthorities(t, pool)
-	transitions := releasepostgres.NewTransitionRepository(pool)
+	transitions := releasepostgres.NewTransitionRepositoryWithBootstrap(pool, func(ctx context.Context) error {
+		return postgresmigrations.BootstrapTransitionOperation(ctx, pool, currentDB)
+	})
 	reportPath := forwardQualificationReportPath(t)
 	if _, err := os.Stat(reportPath); !os.IsNotExist(err) {
 		if err == nil {
