@@ -17,6 +17,7 @@ import (
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/observability"
+	projecthttp "github.com/flidai/leapview/internal/project/http"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -122,6 +123,85 @@ func TestProjectBoundaryRejectsRequestSelectorsBeforeDispatch(t *testing.T) {
 	}
 }
 
+// Keep the request-selector proof tied to the mounted browser routes and the
+// generated query/search/agent/release contract inventory. New routes in
+// these surfaces must inherit the same pre-dispatch Project fence.
+func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
+	type route struct{ method, path string }
+	var routes []route
+	browser := chi.NewRouter()
+	(&projecthttp.BrowserHandler{Authenticate: func(next http.Handler) http.Handler { return next }}).MountAuthenticated(browser)
+	if err := chi.Walk(browser, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		routes = append(routes, route{method, path})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) == 0 {
+		t.Fatal("browser route inventory is empty")
+	}
+	counts := map[string]int{"query": 0, "search": 0, "agent": 0, "release": 0}
+	queryBodies := map[string]bool{
+		"queryDashboardPage": false, "queryDashboardVisualData": false,
+		"querySemanticModel": false, "explainSemanticModelQuery": false,
+	}
+	for _, contract := range apiaggregate.GetAPIGenOperationContracts() {
+		category := ""
+		switch {
+		case contract.Path == "/api/v1/search":
+			category = "search"
+		case strings.HasSuffix(contract.Path, "/query") || strings.HasSuffix(contract.Path, "/query/explain"):
+			category = "query"
+		case strings.HasPrefix(contract.Path, "/api/v1/agent/"):
+			category = "agent"
+		case strings.Contains(contract.Path, "/releases"):
+			category = "release"
+		}
+		if category != "" {
+			if category == "query" {
+				if _, covered := queryBodies[contract.OperationID]; !covered {
+					t.Fatalf("query operation %q lacks body-selector coverage", contract.OperationID)
+				}
+				queryBodies[contract.OperationID] = true
+			}
+			if category == "search" && (contract.Method != http.MethodGet || contract.RequestBodyRequired) {
+				t.Fatalf("search operation %q now accepts a request body; add body-selector evidence", contract.OperationID)
+			}
+			counts[category]++
+			routes = append(routes, route{contract.Method, contract.Path})
+		}
+	}
+	for category, count := range counts {
+		if count == 0 {
+			t.Fatalf("%s API contract inventory is empty", category)
+		}
+	}
+	for operation, covered := range queryBodies {
+		if !covered {
+			t.Fatalf("query body operation %q disappeared from route inventory", operation)
+		}
+	}
+	parameters := regexp.MustCompile(`\{[^}]+\}`)
+	for _, route := range routes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			calls := 0
+			mux := chi.NewRouter()
+			mountRouterMiddleware(mux, routerMiddlewareDependencies{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry: observability.New()})
+			mux.Method(route.method, route.path, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			path := parameters.ReplaceAllString(route.path, "bound")
+			request := httptest.NewRequest(route.method, path+"?projectId=project:foreign", nil)
+			response := httptest.NewRecorder()
+			mux.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || calls != 0 || strings.Contains(response.Body.String(), "project:foreign") {
+				t.Fatalf("selector escaped pre-dispatch fence: status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 	store := testStore(t)
 	principal := testPlatformPrincipal(t, t.Context(), store, "selector-boundary@example.com", "Selector Boundary")
@@ -132,16 +212,32 @@ func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 	}))
 
 	for _, tc := range []struct {
-		name        string
-		path        string
-		validBody   string
-		forgedBody  string
-		validStatus int
+		name         string
+		path         string
+		validBody    string
+		forgedBody   string
+		validStatus  int
+		withSnapshot bool
 	}{
 		{
 			name: "query", path: "/api/v1/semantic-models/test/query", validStatus: http.StatusOK,
 			validBody:  `{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
 			forgedBody: `{"projectId":"project:foreign","dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`,
+		},
+		{
+			name: "query explain", path: "/api/v1/semantic-models/test/query/explain", validStatus: http.StatusOK, withSnapshot: true,
+			validBody:  `{"metrics":[{"field":"order_count"}]}`,
+			forgedBody: `{"projectId":"project:foreign","metrics":[{"field":"order_count"}]}`,
+		},
+		{
+			name: "dashboard page query", path: "/api/v1/dashboards/executive-sales/pages/overview/query", validStatus: http.StatusOK, withSnapshot: true,
+			validBody:  `{}`,
+			forgedBody: `{"projectId":"project:foreign"}`,
+		},
+		{
+			name: "dashboard visual query", path: "/api/v1/dashboards/executive-sales/pages/overview/visuals/order_rows/query", validStatus: http.StatusOK, withSnapshot: true,
+			validBody:  `{"limit":1}`,
+			forgedBody: `{"projectId":"project:foreign","limit":1}`,
 		},
 		{
 			name: "agent", path: "/api/v1/agent/conversations", validStatus: http.StatusCreated,
@@ -156,6 +252,9 @@ func TestProjectBoundaryRejectsGeneratedAPIRequestBodySelectors(t *testing.T) {
 				request.Header.Set("Content-Type", "application/json")
 				request.Header.Set("Accept", "application/json")
 				request.Header.Set("Idempotency-Key", key)
+				if tc.withSnapshot {
+					request = servingSnapshotRequest(t, server, request)
+				}
 				return request
 			}
 			control := httptest.NewRecorder()

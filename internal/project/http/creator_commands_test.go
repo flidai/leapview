@@ -125,7 +125,7 @@ func TestPipelineCommandFailsClosedWithoutResourceAuthorizer(t *testing.T) {
 }
 
 func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testing.T) {
-	var authorizedID, queuedID string
+	var authorizedID, queuedID, invocationProject string
 	h := &BrowserHandler{
 		PipelineRunCommand: refreshgen.GenUIActionCreateRefreshRun(),
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
@@ -141,7 +141,8 @@ func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testin
 			authorizedID = pipelineID
 			return true, nil
 		},
-		BeginPipelineCommand: func(ctx context.Context, _ CreatorCommandInvocation) (context.Context, error) {
+		BeginPipelineCommand: func(ctx context.Context, invocation CreatorCommandInvocation) (context.Context, error) {
+			invocationProject = invocation.Project
 			return ctx, nil
 		},
 		RunPipeline: func(_ context.Context, pipelineID, _ string, _ string) error {
@@ -149,14 +150,14 @@ func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testin
 			return errors.New("injected queue failure")
 		},
 	}
-	body := bytes.NewBufferString(`{"pipelineCommand":{"action":"run","assetId":"pipeline:sales","pipelineId":"sales","runId":""}}`)
+	body := bytes.NewBufferString(`{"projectId":"project:foreign","pipelineCommand":{"projectId":"project:foreign","action":"run","assetId":"pipeline:sales","pipelineId":"sales","runId":""}}`)
 	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", body)
 	request.Header.Set("X-LeapView-Operation-ID", refreshgen.GenUIActionCreateRefreshRun().OperationID())
 	request.Header.Set("X-Request-ID", "pipeline-canonical-1")
 	recorder := httptest.NewRecorder()
 	h.PipelineCommand(recorder, request)
-	if authorizedID != "pipeline:sales" || queuedID != "pipeline:sales" {
-		t.Fatalf("pipeline IDs: authorized=%q queued=%q, want canonical asset ID", authorizedID, queuedID)
+	if authorizedID != "pipeline:sales" || queuedID != "pipeline:sales" || invocationProject != "project:test" {
+		t.Fatalf("pipeline identities: authorized=%q queued=%q project=%q, want canonical asset ID and bound Project", authorizedID, queuedID, invocationProject)
 	}
 }
 

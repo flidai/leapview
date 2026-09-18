@@ -2,6 +2,8 @@ package module
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -21,6 +23,48 @@ func TestBuildRequiresPersistence(t *testing.T) {
 	_, err := Build(t.Context(), Config{})
 	if err == nil || !strings.Contains(err.Error(), "persistence is required") {
 		t.Fatalf("missing persistence error = %v", err)
+	}
+}
+
+func TestReleaseResponsePreservesBoundProjectAndGenerationIdentity(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project:bound", "prod", "generation:active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := response(release.Release{ID: "release:one", ServingIdentity: identity})
+	if public.ProjectID != identity.ProjectID.String() || public.Environment != identity.Environment || public.GenerationID != identity.GenerationID {
+		t.Fatalf("release public identity = %#v, want exact bound serving identity %#v", public, identity)
+	}
+}
+
+func TestCreateReleaseRejectsClientProjectSelectorBeforeAdmission(t *testing.T) {
+	m := &Module{api: APIConfig{CurrentPrincipal: func(*http.Request) (Principal, bool) {
+		return Principal{ID: "principal:publisher"}, true
+	}}}
+	// An invalid environment makes the otherwise decodable control stop before
+	// persistence; the forged body must fail earlier at strict JSON decoding.
+	for _, tc := range []struct {
+		name, body  string
+		invalidJSON bool
+	}{
+		{name: "control", body: `{"environment":"!","generationId":"generation:one"}`},
+		{name: "foreign Project selector", body: `{"projectId":"project:foreign","environment":"!","generationId":"generation:one"}`, invalidJSON: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project:bound/releases", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			m.CreateRelease(response, request, "project:bound", "request-one")
+			if tc.invalidJSON && response.Code != http.StatusBadRequest {
+				t.Fatalf("foreign Project selector status=%d body=%s, want 400", response.Code, response.Body.String())
+			}
+			if got := strings.Contains(response.Body.String(), "INVALID_JSON"); got != tc.invalidJSON {
+				t.Fatalf("body decoder rejected=%t, want %t: status=%d body=%s", got, tc.invalidJSON, response.Code, response.Body.String())
+			}
+			if strings.Contains(response.Body.String(), "project:foreign") {
+				t.Fatalf("foreign Project selector leaked: %s", response.Body.String())
+			}
+		})
 	}
 }
 
