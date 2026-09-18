@@ -109,6 +109,13 @@ test('service account detail uses shared lists and focused credential confirmati
       const secretDialog = root.querySelector('[data-service-account-dialog="secret"]') as HTMLDialogElement
       const expiration = secretDialog.querySelector('lv-select-menu') as any
       await expiration.updateComplete
+      const expirationOptions = (expiration.options as Array<{ label: string }>).map((option) => option.label)
+      expiration.dispatchEvent(new CustomEvent('lv-select-change', { bubbles: true, composed: true, detail: { value: 'custom' } }))
+      await element.updateComplete
+      const customExpiration = secretDialog.querySelector<HTMLInputElement>('input[name="customExpiration"]')
+      const customExpirationRange = { min: customExpiration?.min, max: customExpiration?.max }
+      ;(secretDialog.querySelector('lv-select-menu') as HTMLElement).dispatchEvent(new CustomEvent('lv-select-change', { bubbles: true, composed: true, detail: { value: '90' } }))
+      await element.updateComplete
       const form = secretDialog.querySelector('form') as HTMLFormElement
       ;(form.elements.namedItem('secretName') as HTMLInputElement).value = 'Warehouse sync'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
@@ -133,6 +140,8 @@ test('service account detail uses shared lists and focused credential confirmati
       return {
         initial,
         expirationLabel: (expiration.shadowRoot as ShadowRoot).querySelector('.value')?.textContent?.trim(),
+        expirationOptions,
+        customExpirationRange,
         commands,
         revokeTitle: revokeDialog.querySelector('h2')?.textContent?.trim(),
         deleteTitle: deleteDialog.querySelector('h2')?.textContent?.trim(),
@@ -147,6 +156,11 @@ test('service account detail uses shared lists and focused credential confirmati
       backHref: '/admin/service-accounts',
     })
     expect(result.expirationLabel).toMatch(/^90 days \(.+\)$/)
+    expect(result.expirationOptions).toContain('Custom date')
+    expect(result.expirationOptions).not.toContain('No expiration')
+    expect(result.customExpirationRange.min).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(result.customExpirationRange.max).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(new Date(result.customExpirationRange.max as string).valueOf() - new Date(result.customExpirationRange.min as string).valueOf()).toBeLessThanOrEqual(363 * 24 * 60 * 60 * 1000)
     expect(result.commands).toHaveLength(3)
     expect(result.commands[0]).toMatchObject({ action: 'create_secret', accountId: 'svc-1', secretName: 'Warehouse sync' })
     expect((result.commands[0] as { expiresAt: string }).expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
@@ -299,6 +313,16 @@ test('audit rows open a non-modal detail drawer and quick presets keep the comma
       await element.updateComplete
 
       const failedPreset = root.querySelector<HTMLButtonElement>('[data-audit-preset="failed"]')
+      const rolePreset = root.querySelector<HTMLButtonElement>('[data-audit-preset="access"]')
+      rolePreset?.click()
+      const roleCommand = commands.at(-1) as { action?: string; filters?: Record<string, unknown> }
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: document.querySelector('lv-admin-page') } }))
+      await element.updateComplete
+      const serviceAccountPreset = root.querySelector<HTMLButtonElement>('[data-audit-preset="credentials"]')
+      serviceAccountPreset?.click()
+      const serviceAccountCommand = commands.at(-1) as { action?: string; filters?: Record<string, unknown> }
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: document.querySelector('lv-admin-page') } }))
+      await element.updateComplete
       failedPreset?.click()
       const failedCommand = commands.at(-1) as { action?: string; filters?: Record<string, unknown> }
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: document.querySelector('lv-admin-page') } }))
@@ -315,6 +339,8 @@ test('audit rows open a non-modal detail drawer and quick presets keep the comma
         actorHref: drawer?.querySelector('.audit-drawer-fact a')?.getAttribute('href'),
         resourceHref: drawerLinks?.[drawerLinks.length - 1]?.getAttribute('href'),
         presetLabels: Array.from(root.querySelectorAll('[data-audit-preset]')).map((button) => button.textContent?.trim()),
+        roleCommand,
+        serviceAccountCommand,
         failedCommand,
         failedRows: root.querySelectorAll('tbody tr.record-row').length,
         drawerClosed: !root.querySelector('lv-drawer'),
@@ -333,7 +359,9 @@ test('audit rows open a non-modal detail drawer and quick presets keep the comma
     expect(result.drawerIsNonModal).toBe(true)
     expect(result.actorHref).toBe('/admin/principals/admin-1')
     expect(result.resourceHref).toBe('/admin/principals/user-1')
-    expect(result.presetLabels).toEqual(['Security', 'Access changes', 'Credentials', 'Failed events'])
+    expect(result.presetLabels).toEqual(['Security', 'Role changes', 'Service accounts', 'Failed events'])
+    expect(result.roleCommand).toEqual({ action: 'filter', filters: { resourceKind: 'role_binding' } })
+    expect(result.serviceAccountCommand).toEqual({ action: 'filter', filters: { resourceKind: 'service_principal' } })
     expect(result.failedCommand).toEqual({ action: 'filter', filters: {} })
     expect(result.failedRows).toBe(1)
     expect(result.drawerClosed).toBe(true)

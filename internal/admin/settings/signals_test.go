@@ -24,21 +24,25 @@ func TestAuditEventSignalParsesMetadataWithoutRawSecret(t *testing.T) {
 	}
 }
 
-type testAuditLogReader struct{}
+type testAuditLogReader struct {
+	filter access.AuditEventFilter
+}
 
-func (testAuditLogReader) ListAuditEvents(context.Context, access.AuditEventFilter) ([]access.AuditEvent, error) {
+func (r *testAuditLogReader) ListAuditEvents(_ context.Context, filter access.AuditEventFilter) ([]access.AuditEvent, error) {
+	r.filter = filter
 	return []access.AuditEvent{{
 		ID: "event-1", PrincipalID: "principal-1", Action: "agent_tool.called", ResourceKind: "agent_tool",
 		ResourceID: "querySemanticModel", Status: "success", CreatedAt: "2026-09-17T14:17:04Z",
 	}}, nil
 }
 
-func (testAuditLogReader) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
+func (*testAuditLogReader) ListPrincipals(context.Context, access.PrincipalFilter) ([]access.Principal, error) {
 	return []access.Principal{{ID: "principal-1", DisplayName: "Platform Admin", Email: "admin@example.com"}}, nil
 }
 
 func TestLoadAuditLogEnrichesActorIdentity(t *testing.T) {
-	signal, err := LoadAuditLog(context.Background(), testAuditLogReader{}, AuditLogFilters{}, "", 50)
+	reader := &testAuditLogReader{}
+	signal, err := LoadAuditLog(context.Background(), reader, AuditLogFilters{}, "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +52,17 @@ func TestLoadAuditLogEnrichesActorIdentity(t *testing.T) {
 	event := signal.Items[0]
 	if event.PrincipalName != "Platform Admin" || event.PrincipalEmail != "admin@example.com" {
 		t.Fatalf("actor identity = %q <%s>", event.PrincipalName, event.PrincipalEmail)
+	}
+}
+
+func TestLoadAuditLogPassesInclusiveDateRangeToRepository(t *testing.T) {
+	reader := &testAuditLogReader{}
+	filters := AuditLogFilters{From: "2026-09-01", To: "2026-09-18"}
+	if _, err := LoadAuditLog(context.Background(), reader, filters, "", 50); err != nil {
+		t.Fatal(err)
+	}
+	if reader.filter.From != "2026-09-01T00:00:00Z" || reader.filter.To != "2026-09-19T00:00:00Z" {
+		t.Fatalf("repository range = %q to %q, want inclusive Sep 1-18", reader.filter.From, reader.filter.To)
 	}
 }
 

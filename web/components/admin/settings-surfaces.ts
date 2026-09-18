@@ -473,8 +473,8 @@ type AuditPreset = {
 
 const auditPresets: AuditPreset[] = [
   { id: 'security', label: 'Security', description: 'Principal and account security events', filters: { resourceKind: 'principal' } },
-  { id: 'access', label: 'Access changes', description: 'Recorded access-change events', filters: { action: 'access.changed' } },
-  { id: 'credentials', label: 'Credentials', description: 'Service-principal credential events', filters: { resourceKind: 'service_principal_secret' } },
+  { id: 'access', label: 'Role changes', description: 'Recorded role-binding changes', filters: { resourceKind: 'role_binding' } },
+  { id: 'credentials', label: 'Service accounts', description: 'Service-account and credential events', filters: { resourceKind: 'service_principal' } },
   // AuditLogFilters deliberately has no status field. Failed events are therefore
   // narrowed in the already-loaded rows while the command remains contract-valid.
   { id: 'failed', label: 'Failed events', description: 'Failed events in the loaded result set', filters: {} },
@@ -625,7 +625,7 @@ function projectTimestamp(value = ''): number {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
-type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom' | 'none'
+type ServiceSecretExpirationPreset = '30' | '60' | '90' | 'custom'
 
 function serviceAccountListItems(accounts: ServiceAccountSignal[], busy: boolean): EntityListItem[] {
   return accounts.map((account) => ({
@@ -714,7 +714,6 @@ function serviceSecretExpirationOptions(): Array<{ value: ServiceSecretExpiratio
     label: `${days} days (${serviceEndOfDayInDays(days).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })})`,
   })).concat([
     { value: 'custom', label: 'Custom date' },
-    { value: 'none', label: 'No expiration' },
   ])
 }
 
@@ -887,7 +886,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
             <lv-select-menu class="service-expiration-control" label="Credential expiration" .options=${expirationOptions} .value=${this.secretExpirationPreset} @lv-select-change=${this.chooseSecretExpiration}>
               <span slot="leading">${lucideIcon(CalendarDays, { size: 16, strokeWidth: 2 })}</span>
             </lv-select-menu>
-            ${this.secretExpirationPreset === 'custom' ? html`<input name="customExpiration" aria-label="Custom expiration date" type="date" min=${serviceDateInputValueInDays(1)} .value=${this.secretCustomExpiration} @input=${this.updateSecretCustomExpiration} required>` : nothing}
+            ${this.secretExpirationPreset === 'custom' ? html`<input name="customExpiration" aria-label="Custom expiration date" type="date" min=${serviceDateInputValueInDays(1)} max=${serviceDateInputValueInDays(364)} .value=${this.secretCustomExpiration} @input=${this.updateSecretCustomExpiration} required>` : nothing}
           </div>
           <div class="modal-actions"><button type="button" @click=${this.closeCreateSecret}>Cancel</button><button class="primary" type="submit" ?disabled=${this.busy}>${this.busy && this.pendingAction === 'create_secret' ? 'Creating…' : 'Create credential'}</button></div>
         </form>
@@ -967,7 +966,6 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   }
 
   private secretExpiration(): string | null {
-    if (this.secretExpirationPreset === 'none') return ''
     if (this.secretExpirationPreset === 'custom') {
       if (!this.secretCustomExpiration) return null
       const date = new Date(`${this.secretCustomExpiration}T23:59:59.999`)

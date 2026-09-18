@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 )
@@ -194,7 +195,8 @@ func auditDisplayName(primary, fallback string) string {
 // in the UI filter contract for future graph-scoped events; current identity
 // audit records are globally keyed by resource kind/id.
 func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditLogFilters, pageToken string, limit int) (AuditLogSignal, error) {
-	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: NormalizeAuditLogFilters(filters), NextCursor: "", LoadedCount: 0, Loading: false}
+	filters = NormalizeAuditLogFilters(filters)
+	state := AuditLogSignal{Items: []AuditEventSignal{}, Filters: filters, NextCursor: "", LoadedCount: 0, Loading: false}
 	if repository == nil {
 		return state, nil
 	}
@@ -202,6 +204,7 @@ func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditL
 	rows, err := repository.ListAuditEvents(ctx, access.AuditEventFilter{
 		PrincipalID: strings.TrimSpace(filters.PrincipalID), Action: strings.TrimSpace(filters.Action),
 		ResourceKind: strings.TrimSpace(filters.ResourceKind), ResourceID: strings.TrimSpace(filters.ResourceID),
+		From: auditDateBoundary(filters.From, false), To: auditDateBoundary(filters.To, true),
 		PageToken: strings.TrimSpace(pageToken), Limit: limit + 1,
 	})
 	if err != nil {
@@ -261,6 +264,18 @@ func LoadAuditLog(ctx context.Context, repository AuditLogReader, filters AuditL
 	}
 	state.LoadedCount = len(state.Items)
 	return state, nil
+}
+
+func auditDateBoundary(value string, exclusiveEnd bool) string {
+	value = strings.TrimSpace(value)
+	date, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return value
+	}
+	if exclusiveEnd {
+		date = date.AddDate(0, 0, 1)
+	}
+	return date.UTC().Format(time.RFC3339)
 }
 
 func humanizeAuditValue(value string) string {
