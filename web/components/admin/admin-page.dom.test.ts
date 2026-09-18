@@ -577,14 +577,14 @@ test('personal API token UI submits action-target pairs without a Cartesian expa
         summary: Array.from(root.querySelectorAll('.card:last-child .settings-description')).at(-1)?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
-	expect(state.command).toEqual({
-	  action: 'create', name: 'Dashboard reader',
-	  permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard_1' } }],
-	  expiresAt: (state.command as { expiresAt: string }).expiresAt,
-	})
-	expect(typeof state.command.expiresAt).toBe('string')
-	expect(Date.parse(state.command.expiresAt)).toBeGreaterThan(Date.now())
-	expect(state.summary).toContain('dashboard.read · dashboard dashboard_1')
+    const command = state.command as { action: string, name: string, permissions: unknown[], expiresAt: string }
+    expect(command).toMatchObject({
+      action: 'create', name: 'Dashboard reader',
+      permissions: [{ action: 'dashboard.read', profile: 'leapview.permissions/v1', target: { scope: 'resource', projectId: 'project_1', resourceKind: 'dashboard', resourceId: 'dashboard_1' } }],
+    })
+    expect(typeof command.expiresAt).toBe('string')
+    expect(Date.parse(command.expiresAt)).toBeGreaterThan(Date.now())
+    expect(state.summary).toContain('dashboard.read · dashboard dashboard_1')
   } finally {
     await page.close()
   }

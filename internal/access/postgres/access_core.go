@@ -928,15 +928,23 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 	if err != nil {
 		return access.Principal{}, err
 	}
-	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
+	fingerprint := r.secretFingerprint(token)
+	row, err := accessdb.New(db).FindBrowserSession(ctx, fingerprint)
+	if err == nil {
+		if !hmac.Equal(row.TokenFingerprint, fingerprint) || !verifySecret(token, row.Verifier) {
+			return access.Principal{}, pgx.ErrNoRows
+		}
+		_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
+		return r.PrincipalByID(ctx, principalUUID(row.ID))
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return access.Principal{}, err
+	}
+	desktop, err := r.DesktopSessionForToken(ctx, token)
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
-		return access.Principal{}, pgx.ErrNoRows
-	}
-	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
-	return r.PrincipalByID(ctx, principalUUID(row.ID))
+	return r.PrincipalByID(ctx, desktop.PrincipalID)
 }
 
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
