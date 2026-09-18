@@ -155,4 +155,7 @@ func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
 	if strings.Contains(body, "route=dashboard_builder") {
 		t.Fatalf("copy dashboard form opened a draft update stream before the copy exists: %s", body)
 	}
+	if strings.Contains(body, "data-on:submit") {
+		t.Fatalf("copy dashboard form intercepted native submission: %s", body)
+	}
 }

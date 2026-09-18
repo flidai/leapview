@@ -124,7 +124,7 @@ func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKe
 func draftForm(title, hint, action, csrfToken, idempotencyKey string, fields ...g.Node) g.Node {
 	return h.Div(h.Class("lv-draft-form"), h.Section(
 		h.H1(g.Text(title)), h.P(g.Text(hint)),
-		h.Form(h.Method("post"), h.Action(action), g.Attr("data-on:submit", "el.querySelector('button[type=submit]').disabled = true"), g.Group(append(fields,
+		h.Form(h.Method("post"), h.Action(action), g.Group(append(fields,
 			h.Input(h.Type("hidden"), h.Name("gorilla.csrf.Token"), h.Value(csrfToken)),
 			h.Input(h.Type("hidden"), h.Name("idempotencyKey"), h.Value(idempotencyKey)),
 		))),

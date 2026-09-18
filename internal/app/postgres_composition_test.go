@@ -293,6 +293,17 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 	}
 }
 
+func TestPostgresBuildEnsuresClaimedProjectIdentity(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	if !strings.Contains(source, "projectmodule.EnsureIdentity(ctx, graph.Project, claimedProject)") {
+		t.Fatal("PostgreSQL composition does not ensure the durable project identity before exposing project-scoped authoring")
+	}
+}
+
 func TestPostgresBuildWiresNativeAgentSettingsAuthority(t *testing.T) {
 	contents, err := os.ReadFile("postgres_build.go")
 	if err != nil {
