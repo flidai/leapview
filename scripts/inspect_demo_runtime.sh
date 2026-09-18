@@ -169,6 +169,23 @@ pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service',
 args=[s.decode() for s in open('/proc/'+pid+'/cmdline','rb').read().split(b'\0') if s]
 print('Expected serve --production arguments:', args[1:]==['serve','--production'])
 PYARGS
+printf 'Redacted recent runtime errors:\n'
+python3 - <<'PYLOG'
+import json, subprocess, re
+pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value']).decode().strip()
+env=dict(item.split(b'=',1) for item in open('/proc/'+pid+'/environ','rb').read().split(b'\0') if b'=' in item)
+secrets=[value.decode() for key,value in env.items() if any(word in key for word in (b'KEY',b'PASSWORD',b'TOKEN',b'URL',b'SECRET')) and len(value)>7]
+logs=subprocess.check_output(['journalctl','-u','leapview-demo-current.service','--since','2026-09-18 19:48:00 UTC','--until','2026-09-18 19:50:15 UTC','--no-pager','-o','json']).decode()
+messages=[]
+for line in logs.splitlines():
+    item=json.loads(line)
+    message=item.get('MESSAGE','')
+    if any(word in message.lower() for word in ('error','failed','fatal','invalid','missing','mismatch','panic')):
+        for secret in sorted(secrets,key=len,reverse=True): message=message.replace(secret,'<redacted>')
+        message=re.sub(r'postgres(?:ql)?://[^\s]+','<redacted database URL>',message)
+        messages.append(message)
+print('\n'.join(messages[-35:]))
+PYLOG
 printf 'Repository identity:\n'
 if [[ -d /tmp/leapview-main/.git ]]; then
   git -C /tmp/leapview-main rev-parse HEAD
