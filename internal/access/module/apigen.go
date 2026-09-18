@@ -632,7 +632,7 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 		return "", false
 	}
 	switch scope {
-	case "dashboard", "semantic-model", "connection", "source", "model", "project", "delivery", "instance", "platform", "principal":
+	case "dashboard", "semantic-model", "connection", "source", "model", "pipeline", "project", "delivery", "instance", "platform", "principal":
 		return scope, true
 	default:
 		return "", false
@@ -640,6 +640,25 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 }
 
 func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationContract) (APIGenResourceResolver, bool) {
+	// Typed authorization metadata names the security target. A generated
+	// command target may instead describe its protocol identity (for example,
+	// a Project-scoped refresh command whose exact Pipeline target is carried
+	// in the JSON body). Keep those contracts separate and let the product-owned
+	// resolver extract the typed target; malformed or absent targets still fail
+	// closed when the resolver returns no resources.
+	if requirement, typed := a.typedRequirement(contract.OperationID); typed {
+		scope, scopeOK := apiGenScope(contract)
+		if !scopeOK || scope != string(requirement.Resolver) {
+			return nil, false
+		}
+		if requirement.Resolver != access.TypedOperationResolverDelivery && requirement.Resolver != access.TypedOperationResolverInstance {
+			definition, ok := a.scopes[scope]
+			if !ok || definition.resolver == nil {
+				return nil, false
+			}
+			return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
+		}
+	}
 	if contract.Command != nil && contract.Command.Target != nil {
 		target := *contract.Command.Target
 		scope, scopeOK := apiGenScope(contract)

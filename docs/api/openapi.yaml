@@ -43572,7 +43572,7 @@ paths:
             schema_version: 1
           required: true
           success_action: refresh.queued
-        authz_mode: authenticated
+        authz_mode: privilege
         execution:
           cancellation: supported
           events_operation: listRefreshRunEvents
@@ -43607,6 +43607,13 @@ paths:
           type: project
         ui:
           action_id: refresh.run
+        privilege: RESOURCE_USE
+      x-authz:
+        action: pipeline.run
+        mode: privilege
+        resolver: pipeline
+        privilege: RESOURCE_USE
+      x-leapview-object-scope: pipeline
   /api/v1/projects/{project}/refresh-runs/{run}:
     get:
       operationId: getRefreshRun

@@ -1746,6 +1746,40 @@ func TestAPIGenResourceResolverRejectsMismatchedCanonicalScope(t *testing.T) {
 	}
 }
 
+func TestAPIGenTypedResolverOwnsSecurityTargetWhenCommandTargetIsProtocolScope(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "createRefreshRun", Path: "/api/v1/projects/{project}/refresh-runs",
+		Protected: true, AuthzMode: "privilege", Action: string(access.ActionPipelineRun), Resolver: string(access.TypedOperationResolverPipeline),
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: string(access.CapabilityResourceUse), Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "pipeline", "x-authz": map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceUse)}},
+	}
+	typed, err := NewAPIGenTypedOperationRequirementService(map[string]APIGenOperationContract{"createRefreshRun": contract})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := access.NewResourceRef("pipeline:orders", projectgraph.KindPipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer := &APIGenAuthorizer{
+		typed: typed,
+		scopes: map[string]apiGenResourceScope{
+			"pipeline": {pathParameter: "pipeline", kind: projectgraph.KindPipeline, resolver: func(*http.Request, projectgraph.ResourceID) []access.ResourceRef {
+				return []access.ResourceRef{resolved}
+			}},
+		},
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("typed Pipeline resolver was rejected because the command protocol target is Project")
+	}
+	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/refresh-runs", map[string]string{"project": "project_demo"})
+	resources := resolver(request, "project_demo")
+	if len(resources) != 1 || resources[0] != resolved {
+		t.Fatalf("resolved resources = %#v, want %#v", resources, []access.ResourceRef{resolved})
+	}
+}
+
 func TestAPIGenProtectNeverDowngradesScopedCapabilityToAuthentication(t *testing.T) {
 	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
 	authorizer := &APIGenAuthorizer{

@@ -1711,7 +1711,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		Source:   pathResourceResolver("source", projectgraph.KindSource),
 		Model:    pathResourceResolver("model", projectgraph.KindModel),
-		Pipeline: pathResourceResolver("pipeline", projectgraph.KindPipeline),
+		Pipeline: pipelineResourceResolver,
 		Project: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
 			requested, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
 			if err != nil || requested != active {
