@@ -254,6 +254,10 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		if name == "" || len(name) > 200 {
 			return nil, fmt.Errorf("token name must contain between 1 and 200 bytes")
 		}
+		description := strings.TrimSpace(command.Description)
+		if len(description) > 1024 {
+			return nil, fmt.Errorf("token description must not exceed 1024 bytes")
+		}
 		var capabilities []access.Capability
 		if command.Capabilities != nil {
 			capabilities = make([]access.Capability, 0, len(command.Capabilities))
@@ -288,7 +292,7 @@ func (s *Service) ApplyToken(ctx context.Context, principalID string, command To
 		var secret string
 		err = s.runAudited(ctx, func(repository Repository) (access.AuditEventInput, error) {
 			createdSecret, token, createErr := repository.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
-				PrincipalID: principalID, Name: name, Capabilities: capabilities, ExpiresAt: expiresAt,
+				PrincipalID: principalID, Name: name, Description: description, Capabilities: capabilities, ExpiresAt: expiresAt,
 			})
 			secret = createdSecret
 			return access.AuditEventInput{PrincipalID: principalID, Action: "api_token.created", ResourceKind: "api_token", ResourceID: token.ID, Status: "success", MetadataJSON: metadataJSON(map[string]string{"name": name})}, createErr

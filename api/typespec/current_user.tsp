@@ -10,6 +10,7 @@ model EffectiveCapabilitiesResponse {
 
 model APITokenCreateRequest {
   name: string;
+  description?: string;
   @doc("Omit to keep the token dynamically constrained by the principal's effective capabilities at request time. An explicit list must be a subset of the principal's current effective capabilities.")
   capabilities?: Capability[];
   expiresAt?: utcDateTime;
@@ -18,6 +19,7 @@ model APITokenCreateRequest {
 model APITokenResponse {
   id: string;
   name: string;
+  description: string;
   @doc("Present when the token has an explicit capability allowlist. When omitted, the principal's effective capabilities are evaluated dynamically at request time.")
   capabilities?: Capability[];
   expiresAt?: utcDateTime;

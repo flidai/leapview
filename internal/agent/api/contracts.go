@@ -72,6 +72,7 @@ type AdminAgentToolResponse struct {
 	Defaults     map[string]any `json:"defaults"`
 	InputSchema  map[string]any `json:"inputSchema"`
 	OutputSchema map[string]any `json:"outputSchema"`
+	Tags         []string       `json:"tags"`
 }
 
 type AdminAgentResponse struct {

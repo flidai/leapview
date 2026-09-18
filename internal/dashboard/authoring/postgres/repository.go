@@ -220,7 +220,7 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 		EventID: nativeUUIDValue(intent.EventID),
 	})
 	if err != nil {
-		if isConstraint(err) {
+		if isUniqueConstraint(err) {
 			return authoring.DashboardLifecycle{}, fmt.Errorf("%w: dashboard identity already exists or slug is in use", authoring.ErrConflict)
 		}
 		return authoring.DashboardLifecycle{}, err
@@ -1474,6 +1474,11 @@ func staleConflict() error {
 }
 
 func conflict(message string) error { return fmt.Errorf("%w: %s", authoring.ErrConflict, message) }
+
+func isUniqueConstraint(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) && postgresError.Code == "23505"
+}
 
 func isConstraint(err error) bool {
 	if err == nil {

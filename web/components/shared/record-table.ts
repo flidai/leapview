@@ -69,6 +69,7 @@ type RecordColumn = {
   width?: string
   sortable?: boolean
   toggleable?: boolean
+  mobileHidden?: boolean
 }
 
 type RecordColumnSelector = {
@@ -194,7 +195,10 @@ function applyUpdater<T>(updater: unknown, current: T): T {
 }
 
 function columnAlignClass(column: RecordColumn): string {
-  return column.align === 'right' || column.kind === 'number' ? 'is-right' : ''
+  return [
+    column.align === 'right' || column.kind === 'number' ? 'is-right' : '',
+    column.mobileHidden ? 'is-mobile-hidden' : '',
+  ].filter(Boolean).join(' ')
 }
 
 function columnWidth(column: RecordColumn): string {
@@ -243,7 +247,7 @@ class RecordTable extends LitElement {
         aria-label="Scrollable table"
         tabindex="0"
       >
-        <table class="record-table" style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
+        <table class=${`record-table ${columns.some((column) => column.mobileHidden) ? 'has-mobile-hidden-columns' : ''}`} style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
           <thead>
             <tr>
               ${columns.map((column) => {
@@ -277,7 +281,7 @@ class RecordTable extends LitElement {
           </tbody>
         </table>
       </div>
-      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
+      ${table.minWidth && table.minWidth !== '0' ? html`<p class=${`record-table-scroll-hint ${columns.some((column) => column.mobileHidden) ? 'has-mobile-alternative' : ''}`} aria-hidden="true">Swipe horizontally to see more columns</p>` : nothing}
     `
   }
 
@@ -915,6 +919,23 @@ const recordTableStyles = `
   @media (max-width: 640px) {
     lv-record-table .record-table-scroll-hint {
       display: block;
+    }
+
+    lv-record-table .record-table-scroll-hint.has-mobile-alternative {
+      display: none;
+    }
+
+    lv-record-table .record-table.has-mobile-hidden-columns {
+      min-width: 100% !important;
+      table-layout: auto;
+    }
+
+    lv-record-table .record-table .is-mobile-hidden {
+      display: none;
+    }
+
+    lv-record-table .record-table.has-mobile-hidden-columns th:first-child {
+      width: auto !important;
     }
 
   }

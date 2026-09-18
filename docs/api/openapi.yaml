@@ -15215,6 +15215,7 @@ paths:
                   - capabilities:
                       - PROJECT_ADMIN
                     createdAt: "2026-01-02T15:04:05Z"
+                    description: example
                     expiresAt: "2026-01-02T15:04:05Z"
                     id: example
                     lastUsedAt: "2026-01-02T15:04:05Z"
@@ -15491,6 +15492,7 @@ paths:
                   capabilities:
                     - PROJECT_ADMIN
                   createdAt: "2026-01-02T15:04:05Z"
+                  description: example
                   expiresAt: "2026-01-02T15:04:05Z"
                   id: example
                   lastUsedAt: "2026-01-02T15:04:05Z"
@@ -15743,6 +15745,7 @@ paths:
             example:
               capabilities:
                 - PROJECT_ADMIN
+              description: example
               expiresAt: "2026-01-02T15:04:05Z"
               name: example
       x-apigen-operation-kind: command
@@ -60474,6 +60477,9 @@ components:
         name:
           type: string
           example: example
+        description:
+          type: string
+          example: example
         capabilities:
           type: array
           items:
@@ -60490,6 +60496,7 @@ components:
       example:
         capabilities:
           - PROJECT_ADMIN
+        description: example
         expiresAt: "2026-01-02T15:04:05Z"
         name: example
     APITokenCreateResponse:
@@ -60508,6 +60515,7 @@ components:
           capabilities:
             - PROJECT_ADMIN
           createdAt: "2026-01-02T15:04:05Z"
+          description: example
           expiresAt: "2026-01-02T15:04:05Z"
           id: example
           lastUsedAt: "2026-01-02T15:04:05Z"
@@ -60528,6 +60536,7 @@ components:
             - capabilities:
                 - PROJECT_ADMIN
               createdAt: "2026-01-02T15:04:05Z"
+              description: example
               expiresAt: "2026-01-02T15:04:05Z"
               id: example
               lastUsedAt: "2026-01-02T15:04:05Z"
@@ -60540,6 +60549,7 @@ components:
           - capabilities:
               - PROJECT_ADMIN
             createdAt: "2026-01-02T15:04:05Z"
+            description: example
             expiresAt: "2026-01-02T15:04:05Z"
             id: example
             lastUsedAt: "2026-01-02T15:04:05Z"
@@ -60552,12 +60562,16 @@ components:
       required:
         - id
         - name
+        - description
         - createdAt
       properties:
         id:
           type: string
           example: example
         name:
+          type: string
+          example: example
+        description:
           type: string
           example: example
         capabilities:
@@ -60589,6 +60603,7 @@ components:
         capabilities:
           - PROJECT_ADMIN
         createdAt: "2026-01-02T15:04:05Z"
+        description: example
         expiresAt: "2026-01-02T15:04:05Z"
         id: example
         lastUsedAt: "2026-01-02T15:04:05Z"
@@ -60701,6 +60716,7 @@ components:
         - restore
         - delete
         - archive_all
+        - delete_active
         - delete_all
       example: pin
     AgentConversationManagementRequest:
