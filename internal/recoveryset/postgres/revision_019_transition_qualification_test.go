@@ -87,12 +87,27 @@ func TestFAI518Revision019To020TransitionQualification(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), `SELECT to_regclass('release.release_transition_operation')::text`).Scan(&operationTable); err != nil || operationTable != nil {
 		t.Fatalf("rejected preflight created transition schema = %v, error = %v", operationTable, err)
 	}
+	var migration020Attempted bool
+	var migration020Failure error
 	failedRunner, err := transitionrunner.New(transitionrunner.Options{
 		Operations: transitions,
 		Preflight:  resolver,
 		Fences:     transitions,
-		Effects: transitionrunner.EffectFuncs{MigrationsFunc: func(context.Context, transitionrunner.EffectInput) (transitionrunner.EffectResult, error) {
-			return transitionrunner.EffectResult{}, errors.New("qualification migration failure before Goose 020")
+		Effects: transitionrunner.EffectFuncs{MigrationsFunc: func(ctx context.Context, _ transitionrunner.EffectInput) (transitionrunner.EffectResult, error) {
+			// Bootstrap has already committed; deny migration 020's SET ROLE so
+			// Goose attempts the migration but cannot record revision 020.
+			if _, err := pool.Exec(ctx, `REVOKE leapview_control_owner FROM leapview_control_migrator`); err != nil {
+				return transitionrunner.EffectResult{}, err
+			}
+			migration020Attempted = true
+			migration020Failure = migrations.ApplyGoose(ctx, migratorDB)
+			if _, err := pool.Exec(ctx, `GRANT leapview_control_owner TO leapview_control_migrator`); err != nil {
+				return transitionrunner.EffectResult{}, err
+			}
+			if migration020Failure == nil {
+				return transitionrunner.EffectResult{}, errors.New("migration 020 unexpectedly succeeded without owner role")
+			}
+			return transitionrunner.EffectResult{}, migration020Failure
 		}},
 	})
 	if err != nil {
@@ -117,6 +132,12 @@ func TestFAI518Revision019To020TransitionQualification(t *testing.T) {
 	if got := readForwardTransitionAfterRepositoryRestart(t, pool, failed.Operation.OperationID); got.Status != transitionoperation.StatusIndeterminate {
 		t.Fatalf("durable failed migration status = %q, want indeterminate", got.Status)
 	}
+	if !migration020Attempted {
+		t.Fatal("Goose migration 020 was not attempted")
+	}
+	if migration020Failure == nil || !strings.Contains(migration020Failure.Error(), "permission denied to set role") {
+		t.Fatalf("Goose migration 020 failure = %v; want denied owner role", migration020Failure)
+	}
 	if err := pool.QueryRow(t.Context(), `SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1`).Scan(&before); err != nil || before != 19 {
 		t.Fatalf("failed migration revision = %d, error = %v; want 19", before, err)
 	}
@@ -125,6 +146,37 @@ func TestFAI518Revision019To020TransitionQualification(t *testing.T) {
 		if err := pool.QueryRow(t.Context(), `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil || !exists {
 			t.Fatalf("runner bootstrap table %s exists = %t, error = %v", table, exists, err)
 		}
+	}
+	var failedGeneration int64
+	if err := pool.QueryRow(t.Context(), `SELECT fencing_generation FROM release.release_transition_fence WHERE target_identity_digest=$1`, targetDigest).Scan(&failedGeneration); err != nil || failedGeneration < 1 {
+		t.Fatalf("durable failed-operation fence generation = %d, error = %v", failedGeneration, err)
+	}
+	for _, guard := range []struct{ table, trigger string }{
+		{"release.release_transition_operation", "release_transition_operation_no_truncate_bootstrap"},
+		{"release.release_transition_phase_result", "release_transition_phase_no_truncate_bootstrap"},
+		{"release.release_transition_fence", "release_transition_fence_no_truncate_bootstrap"},
+	} {
+		var canTruncate, protected bool
+		if err := pool.QueryRow(t.Context(), `SELECT has_table_privilege('leapview_control_migrator', $1, 'TRUNCATE')`, guard.table).Scan(&canTruncate); err != nil || !canTruncate {
+			t.Fatalf("migrator truncate privilege on %s = %t, error = %v", guard.table, canTruncate, err)
+		}
+		if err := pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = $1::regclass AND tgname = $2 AND tgenabled = 'O' AND NOT tgisinternal)`, guard.table, guard.trigger).Scan(&protected); err != nil || !protected {
+			t.Fatalf("bootstrap truncate guard on %s = %t, error = %v", guard.table, protected, err)
+		}
+		statement := "TRUNCATE " + guard.table
+		if guard.table == "release.release_transition_operation" {
+			statement += " CASCADE"
+		}
+		if _, err := migratorDB.ExecContext(t.Context(), statement); err == nil || !strings.Contains(err.Error(), "release transition evidence cannot be truncated") {
+			t.Fatalf("%s error = %v; want truncate guard rejection", statement, err)
+		}
+	}
+	var retainedGeneration int64
+	if err := pool.QueryRow(t.Context(), `SELECT fencing_generation FROM release.release_transition_fence WHERE target_identity_digest=$1`, targetDigest).Scan(&retainedGeneration); err != nil || retainedGeneration != failedGeneration {
+		t.Fatalf("failed-operation fence generation after TRUNCATE = %d, error = %v; want %d", retainedGeneration, err, failedGeneration)
+	}
+	if got := readForwardTransitionAfterRepositoryRestart(t, pool, failed.Operation.OperationID); got.Status != transitionoperation.StatusIndeterminate {
+		t.Fatalf("durable failed operation after TRUNCATE = %q, want indeterminate", got.Status)
 	}
 	effects := newForwardQualificationEffects(t, pool, predecessor.Release.Image, resolver, preflightRequest)
 	t.Cleanup(effects.cleanup)
@@ -162,8 +214,8 @@ func TestFAI518Revision019To020TransitionQualification(t *testing.T) {
 	var generation int64
 	var fenceOperation *string
 	var fenceOwner string
-	if err := pool.QueryRow(t.Context(), `SELECT fencing_generation, operation_id::text, owner_id FROM release.release_transition_fence WHERE target_identity_digest=$1`, targetDigest).Scan(&generation, &fenceOperation, &fenceOwner); err != nil || generation < 1 || fenceOperation != nil || fenceOwner != "" {
-		t.Fatalf("released durable fence: generation=%d operation=%v owner=%q error=%v", generation, fenceOperation, fenceOwner, err)
+	if err := pool.QueryRow(t.Context(), `SELECT fencing_generation, operation_id::text, owner_id FROM release.release_transition_fence WHERE target_identity_digest=$1`, targetDigest).Scan(&generation, &fenceOperation, &fenceOwner); err != nil || generation <= failedGeneration || fenceOperation != nil || fenceOwner != "" {
+		t.Fatalf("released durable fence: generation=%d (failed=%d) operation=%v owner=%q error=%v", generation, failedGeneration, fenceOperation, fenceOwner, err)
 	}
 }
 

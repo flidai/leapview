@@ -66,10 +66,9 @@ func BootstrapTransitionOperation(ctx context.Context, pool *pgxpool.Pool, db *s
 	})
 }
 
-// Migration 020 is the sole DDL source for this authority. Its three
-// no-truncate triggers are installed by Goose itself after the runner's
-// migration phase; unlike the other guards, their CREATE statements are not
-// idempotent and cannot run in the preparatory transaction.
+// Migration 020 is the sole DDL source for this authority. Bootstrap installs
+// the same truncate guards under distinct names so migration 020 can still
+// create its own non-idempotent triggers after the runner's migration phase.
 func transitionBootstrapSQL() (string, error) {
 	source, err := migrationFiles.ReadFile("020_release_transition_operation.sql")
 	if err != nil {
@@ -79,21 +78,26 @@ func transitionBootstrapSQL() (string, error) {
 	if !found {
 		return "", errors.New("transition migration has no Down boundary")
 	}
-	for _, name := range []string{
-		"release_transition_operation_no_truncate",
-		"release_transition_phase_no_truncate",
-		"release_transition_fence_no_truncate",
+	for _, guard := range []struct{ name, table string }{
+		{"release_transition_operation_no_truncate", "release.release_transition_operation"},
+		{"release_transition_phase_no_truncate", "release.release_transition_phase_result"},
+		{"release_transition_fence_no_truncate", "release.release_transition_fence"},
 	} {
-		prefix := "CREATE TRIGGER " + name + " BEFORE TRUNCATE "
+		prefix := "CREATE TRIGGER " + guard.name + " BEFORE TRUNCATE "
 		start := strings.Index(up, prefix)
 		if start < 0 || strings.Count(up, prefix) != 1 {
-			return "", fmt.Errorf("transition migration has no unique %s trigger", name)
+			return "", fmt.Errorf("transition migration has no unique %s trigger", guard.name)
 		}
 		end := strings.IndexByte(up[start:], '\n')
 		if end < 0 {
-			return "", fmt.Errorf("transition migration has unterminated %s trigger", name)
+			return "", fmt.Errorf("transition migration has unterminated %s trigger", guard.name)
 		}
-		up = up[:start] + up[start+end+1:]
+		statement := up[start : start+end]
+		bootstrapName := guard.name + "_bootstrap"
+		bootstrapStatement := strings.Replace(statement, guard.name, bootstrapName, 1)
+		// The transaction makes replacement atomic to other sessions on a retry.
+		replacement := "DROP TRIGGER IF EXISTS " + bootstrapName + " ON " + guard.table + ";\n" + bootstrapStatement + "\n"
+		up = up[:start] + replacement + up[start+end+1:]
 	}
 	return up, nil
 }

@@ -93,15 +93,19 @@ func TestTransitionBootstrapUpgradeAndCurrentPaths(t *testing.T) {
 	if got := readRevision(upgradeDB); got != 19 {
 		t.Fatalf("bootstrap revision = %d, want 19", got)
 	}
+	assertTransitionTruncateTriggers(t, upgradeDB, "_bootstrap", true)
 	if err := BootstrapTransitionOperation(t.Context(), upgradePool, upgradeDB); err != nil {
 		t.Fatalf("repeat bootstrap at revision 019: %v", err)
 	}
+	assertTransitionTruncateTriggers(t, upgradeDB, "_bootstrap", true)
 	if err := ApplyGoose(t.Context(), upgradeDB); err != nil {
 		t.Fatalf("apply migration 020 after bootstrap: %v", err)
 	}
 	if got := readRevision(upgradeDB); got != CurrentRevision {
 		t.Fatalf("upgraded revision = %d, want %d", got, CurrentRevision)
 	}
+	assertTransitionTruncateTriggers(t, upgradeDB, "", true)
+	assertTransitionTruncateTriggers(t, upgradeDB, "_bootstrap", true)
 	if err := BootstrapTransitionOperation(t.Context(), upgradePool, upgradeDB); err != nil {
 		t.Fatalf("already-current bootstrap: %v", err)
 	}
@@ -113,7 +117,23 @@ func TestTransitionBootstrapUpgradeAndCurrentPaths(t *testing.T) {
 	if got := readRevision(freshDB); got != CurrentRevision {
 		t.Fatalf("fresh revision = %d, want %d", got, CurrentRevision)
 	}
+	assertTransitionTruncateTriggers(t, freshDB, "", true)
+	assertTransitionTruncateTriggers(t, freshDB, "_bootstrap", false)
 	if err := BootstrapTransitionOperation(t.Context(), freshPool, freshDB); err != nil {
 		t.Fatalf("fresh current bootstrap: %v", err)
+	}
+}
+
+func assertTransitionTruncateTriggers(t *testing.T, db *sql.DB, suffix string, want bool) {
+	t.Helper()
+	for _, name := range []string{
+		"release_transition_operation_no_truncate",
+		"release_transition_phase_no_truncate",
+		"release_transition_fence_no_truncate",
+	} {
+		var exists bool
+		if err := db.QueryRowContext(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = $1 AND NOT tgisinternal)`, name+suffix).Scan(&exists); err != nil || exists != want {
+			t.Fatalf("truncate trigger %s present = %t, error = %v; want %t", name+suffix, exists, err, want)
+		}
 	}
 }
