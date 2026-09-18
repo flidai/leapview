@@ -46,7 +46,7 @@ export class OneTimeSecret extends LitElement {
       gap: var(--base-size-6);
       border: var(--lv-border-default);
       border-radius: var(--lv-radius-small);
-      padding: 0 var(--lv-space-control, var(--base-size-10));
+      padding: 0 var(--lv-space-control);
       color: var(--lv-fg-default);
       background: var(--lv-button-bg-rest);
       cursor: pointer;

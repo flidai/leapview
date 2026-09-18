@@ -159,7 +159,7 @@ class AgentTools extends LitElement {
     .fields th,
     .fields td {
       border-bottom: var(--lv-border-muted);
-      padding: var(--base-size-8) var(--base-size-10);
+      padding: var(--base-size-8) var(--lv-space-control);
       vertical-align: top;
     }
 

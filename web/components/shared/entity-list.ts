@@ -41,6 +41,7 @@ import {
   type IconNode,
 } from 'lucide'
 import { lucideIcon } from './lucide-icons'
+import { entityListStickyStyles } from './entity-list-sticky.styles'
 import './user-avatar'
 
 export type EntityListItem = {
@@ -440,10 +441,7 @@ const entityListStyles = `
     cursor: pointer;
   }
 
-  .entity-list-table-row:hover,
-  .entity-list-table-row:focus-within {
-    background: var(--lv-bg-control-hover);
-  }
+  ${entityListStickyStyles}
 
   .entity-list-icon,
   .entity-list-chevron {

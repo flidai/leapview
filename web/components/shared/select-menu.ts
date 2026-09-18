@@ -43,7 +43,7 @@ export class SelectMenu extends LitElement {
       cursor: pointer;
       font: var(--lv-type-body-compact);
       font-weight: var(--base-text-weight-semibold);
-      padding: 0 var(--lv-space-control, var(--base-size-10));
+      padding: 0 var(--lv-space-control);
       text-align: left;
       white-space: nowrap;
     }
@@ -101,7 +101,7 @@ export class SelectMenu extends LitElement {
       grid-template-columns: var(--base-size-16) minmax(0, 1fr);
       align-items: center;
       gap: var(--base-size-8);
-      border: var(--lv-border-transparent, 1px solid transparent);
+      border: var(--lv-border-transparent);
       border-radius: var(--lv-radius-small);
       background: transparent;
       color: var(--lv-fg-default);

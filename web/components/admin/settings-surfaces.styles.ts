@@ -83,7 +83,7 @@ export const settingsSurfaceStyles = css`
   .audit-actions .primary { border-color: var(--lv-button-accent-border-rest); background: var(--lv-button-accent-bg-rest); color: var(--lv-button-accent-fg-rest); }
   .audit-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-6); }
   .audit-presets-label { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
-  .audit-preset { min-height: var(--lv-control-small); border: var(--lv-border-transparent); border-radius: 999px; background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--base-size-10); font: var(--lv-type-body-compact); }
+  .audit-preset { min-height: var(--lv-control-small); border: var(--lv-border-transparent); border-radius: 999px; background: var(--lv-bg-control); color: var(--lv-fg-default); padding: 0 var(--lv-space-control); font: var(--lv-type-body-compact); }
   .audit-preset:hover { background: var(--lv-bg-control-hover); }
   .audit-preset[aria-pressed='true'] { border-color: var(--lv-border-accent); background: var(--lv-bg-accent-muted); color: var(--lv-fg-accent); }
   .audit-preset[disabled] { cursor: default; opacity: .55; }
@@ -110,9 +110,9 @@ export const settingsSurfaceStyles = css`
   .audit-drawer-title h2 { overflow-wrap: anywhere; font: var(--lv-type-section-title); }
   .audit-drawer-title p { color: var(--lv-fg-muted); font: var(--lv-type-body-compact); overflow-wrap: anywhere; }
   .audit-drawer-body { display: grid; gap: var(--base-size-20); min-width: 0; }
-  .audit-drawer-section { display: grid; gap: var(--base-size-10); min-width: 0; }
+  .audit-drawer-section { display: grid; gap: var(--lv-space-control); min-width: 0; }
   .audit-drawer-section h3 { margin: 0; font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
-  .audit-drawer-facts { display: grid; gap: var(--base-size-10); margin: 0; }
+  .audit-drawer-facts { display: grid; gap: var(--lv-space-control); margin: 0; }
   .audit-drawer-fact { display: grid; grid-template-columns: minmax(7rem, .5fr) minmax(0, 1fr); gap: var(--base-size-12); align-items: start; margin: 0; }
   .audit-drawer-fact dt { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .audit-drawer-fact dd { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-6); margin: 0; overflow-wrap: anywhere; }
@@ -123,10 +123,10 @@ export const settingsSurfaceStyles = css`
   .audit-drawer-status { font-weight: var(--base-text-weight-semibold); }
   .audit-drawer-status-success { color: var(--lv-fg-success); }
   .audit-drawer-status-danger { color: var(--lv-fg-danger); }
-  .audit-drawer-status-attention { color: var(--lv-fg-attention, var(--lv-fg-warning)); }
+  .audit-drawer-status-attention { color: var(--lv-fg-warning); }
   .audit-drawer-metadata { border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
   .audit-drawer-metadata summary { cursor: pointer; color: var(--lv-fg-link); font-weight: var(--base-text-weight-semibold); }
-  .audit-drawer-metadata pre { max-width: 100%; box-sizing: border-box; overflow: auto; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel-muted); padding: var(--base-size-10); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .audit-drawer-metadata pre { max-width: 100%; box-sizing: border-box; overflow: auto; border: var(--lv-border-muted); border-radius: var(--lv-radius-small); background: var(--lv-bg-panel-muted); padding: var(--lv-space-control); white-space: pre-wrap; overflow-wrap: anywhere; }
   .audit-row-hint { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
   .detail-user-avatar { --lv-user-avatar-size: 100%; width: 100%; height: 100%; }
   @media (max-width: 760px) {

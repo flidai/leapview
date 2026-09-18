@@ -65,7 +65,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
 
   static styles = [settingsFieldStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
-    .settings { display: grid; min-width: 0; gap: var(--base-size-24); max-width: var(--lv-page-content-max-width, 72rem); }
+    .settings { display: grid; min-width: 0; gap: var(--base-size-24); max-width: var(--lv-page-content-max-width); }
     .panel { display: grid; min-width: 0; gap: var(--base-size-16); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); padding: var(--base-size-20); }
     .panel h2, .panel h3, .panel p { margin: 0; }
     .panel h2 { font: var(--lv-type-section-title); }
