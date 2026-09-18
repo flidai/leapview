@@ -135,9 +135,62 @@ func updateTemporaryPlatformAdmin(ctx context.Context, pool *pgxpool.Pool, mode 
 			fmt.Printf("revoked temporary %s platform administration\n", item.Name)
 		}
 		return nil
+	case "grant-generation":
+		return updateTemporaryGenerationRoles(ctx, pool, true, credentials)
+	case "revoke-generation":
+		return updateTemporaryGenerationRoles(ctx, pool, false, credentials)
 	default:
 		return fmt.Errorf("unsupported temporary platform admin mode %q", mode)
 	}
+}
+
+func updateTemporaryGenerationRoles(ctx context.Context, pool *pgxpool.Pool, grant bool, credentials []credential) error {
+	ids := map[string]string{}
+	for _, item := range credentials {
+		ids[item.Name] = strings.TrimSpace(item.ClientID)
+	}
+	var projectID, environment, generationID string
+	if err := pool.QueryRow(ctx, `
+		SELECT t.project_id,t.environment,p.generation_id::text
+		FROM delivery.delivery_target t
+		JOIN delivery.delivery_active_pointer p ON p.target_id=t.target_id
+		ORDER BY t.updated_at DESC
+		LIMIT 1`).Scan(&projectID, &environment, &generationID); err != nil {
+		return fmt.Errorf("resolve active demo generation: %w", err)
+	}
+	type binding struct {
+		id, subject, role, name string
+		capabilities            []access.Capability
+	}
+	bindings := []binding{
+		{"demo-recovery-active-publisher-contributor", ids["publisher"], string(access.ProjectRoleContributor), "Temporary demo publisher authoring", access.ProjectRoleCapabilities(access.ProjectRoleContributor)},
+		{"demo-recovery-active-publisher-deployer", ids["publisher"], string(access.ProjectRoleDeployer), "Temporary demo publisher releases", access.ProjectRoleCapabilities(access.ProjectRoleDeployer)},
+		{"demo-recovery-active-release-admin", ids["release"], string(access.ProjectRoleAdmin), "Temporary demo release administrator", access.ProjectRoleCapabilities(access.ProjectRoleAdmin)},
+	}
+	for _, item := range bindings {
+		if grant {
+			capabilities, err := json.Marshal(item.capabilities)
+			if err != nil {
+				return fmt.Errorf("encode temporary generation capabilities: %w", err)
+			}
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO access.authorization_role_binding
+					(id,project_id,environment,generation_id,subject_kind,subject_id,role,capabilities,name)
+				VALUES($1,$2,$3,$4,'principal',$5,$6,$7::jsonb,$8)
+				ON CONFLICT DO NOTHING`, item.id, projectID, environment, generationID, item.subject, item.role, capabilities, item.name); err != nil {
+				return fmt.Errorf("grant temporary active-generation role %s: %w", item.id, err)
+			}
+			fmt.Printf("granted temporary active-generation role %s\n", item.id)
+			continue
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE access.authorization_role_binding SET revoked_at=clock_timestamp()
+			WHERE id=$1 AND revoked_at IS NULL`, item.id); err != nil {
+			return fmt.Errorf("revoke temporary active-generation role %s: %w", item.id, err)
+		}
+		fmt.Printf("revoked temporary active-generation role %s\n", item.id)
+	}
+	return nil
 }
 
 func ensureDeploymentPolicy(ctx context.Context, pool *pgxpool.Pool, fingerprintKey []byte, credentials []credential) error {

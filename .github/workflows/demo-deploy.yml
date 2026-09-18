@@ -5,7 +5,7 @@ on:
       action:
         type: choice
         default: inspect
-        options: [inspect, recover-credentials, grant-recovery-admin, revoke-recovery-admin, qualify, stage, prepare, deploy]
+        options: [inspect, recover-credentials, grant-recovery-admin, revoke-recovery-admin, grant-recovery-generation, revoke-recovery-generation, qualify, stage, prepare, deploy]
 permissions:
   contents: read
   id-token: write
@@ -14,7 +14,7 @@ permissions:
   actions: read
 jobs:
   inspect:
-    if: inputs.action == 'inspect' || inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin'
+    if: inputs.action == 'inspect' || inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation'
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
@@ -25,12 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Set up recovery toolchain
-        if: inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin'
+        if: inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation'
         uses: ./.github/actions/setup-ci
         with:
           browser: "false"
       - name: Build bounded credential recovery helper
-        if: inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin'
+        if: inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation'
         run: |
           task generate
           go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
@@ -57,8 +57,8 @@ jobs:
       - name: Inspect runtime with pinned SSH identity
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
-          DEMO_RECOVER_CREDENTIALS: ${{ inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' }}
-          DEMO_PLATFORM_ADMIN_MODE: ${{ inputs.action == 'grant-recovery-admin' && 'grant' || inputs.action == 'revoke-recovery-admin' && 'revoke' || 'unchanged' }}
+          DEMO_RECOVER_CREDENTIALS: ${{ inputs.action == 'recover-credentials' || inputs.action == 'grant-recovery-admin' || inputs.action == 'revoke-recovery-admin' || inputs.action == 'grant-recovery-generation' || inputs.action == 'revoke-recovery-generation' }}
+          DEMO_PLATFORM_ADMIN_MODE: ${{ inputs.action == 'grant-recovery-admin' && 'grant' || inputs.action == 'revoke-recovery-admin' && 'revoke' || inputs.action == 'grant-recovery-generation' && 'grant-generation' || inputs.action == 'revoke-recovery-generation' && 'revoke-generation' || 'unchanged' }}
           DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
           DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
           DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}

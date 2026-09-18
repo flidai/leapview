@@ -308,4 +308,15 @@ if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
     ]}')"
   unset DEMO_PUBLISHER_CLIENT_SECRET DEMO_RELEASE_CLIENT_SECRET
   printf '%s' "$recovery_payload" | ssh "${ssh_options[@]}" "root@$demo_host" 'bash /tmp/recover-demo-credentials.sh'
+  if [[ "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" == grant-generation || "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" == revoke-generation ]]; then
+    ssh "${ssh_options[@]}" "root@$demo_host" 'systemctl restart leapview-demo-current.service'
+    for _ in $(seq 1 60); do
+      if curl --fail --silent --show-error --max-time 10 https://demo.leapview.dev/readyz >/dev/null; then
+        echo "demo runtime reloaded the active authorization snapshot"
+        break
+      fi
+      sleep 2
+    done
+    curl --fail --silent --show-error --max-time 10 https://demo.leapview.dev/readyz >/dev/null
+  fi
 fi
