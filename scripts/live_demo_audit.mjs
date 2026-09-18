@@ -26,7 +26,7 @@ page.on('console', (message) => {
 page.on('pageerror', (error) => consoleErrors.push(`${page.url()}: ${error.message}`))
 
 try {
-  await page.goto(new URL('/login', baseURL), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL('/login', baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill('demo@leapview.dev')
   await page.locator('input[name="password"]').fill(password)
   await page.locator('input[name="password"]').press('Enter')
@@ -40,7 +40,7 @@ try {
   ]
 
   for (const route of routes) {
-    const response = await page.goto(new URL(route, baseURL), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+    const response = await page.goto(new URL(route, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const status = response?.status() ?? 0
     if (status >= 500 || status === 0) failures.push(`${route}: HTTP ${status}`)
     if (status === 200 && route.includes('/dashboards/')) {
@@ -68,7 +68,7 @@ try {
   }
 
   const filterRoute = '/dashboards/dashboard:visual-showcase/pages/filters'
-  await page.goto(new URL(filterRoute, baseURL), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL(filterRoute, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.waitForFunction(() => {
     const dashboard = document.querySelector('lv-dashboard-page')
     return dashboard?.status?.loading === false
