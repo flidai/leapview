@@ -1016,6 +1016,23 @@ test('chat deletion requires confirmation and cancel sends no command', async ()
   await page.close()
 })
 
+test('deleting all listed chats confirms archived chats are kept', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  await page.goto(`${baseURL}/sidebar-history`)
+  await page.evaluate(() => {
+    ;(window as any).chatActions = []
+    document.addEventListener('lv-chat-management', (event: Event) => (window as any).chatActions.push((event as CustomEvent).detail))
+    document.querySelector('lv-app-shell')!.dispatchEvent(new CustomEvent('lv-chat-action', { detail: { action: 'delete_active', conversationId: '' } }))
+  })
+  const dialog = page.getByRole('dialog', { name: 'Delete all chats?' })
+  await dialog.waitFor()
+  expect(await dialog.textContent()).toContain('Archived chats will be kept')
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.waitForFunction(() => (window as any).chatActions.length === 1)
+  expect(await page.evaluate(() => ({ action: (window as any).chatActions[0].action, conversationId: (window as any).chatActions[0].conversationId }))).toEqual({ action: 'delete_active', conversationId: '' })
+  await page.close()
+})
+
 test('archive persists before showing five-second Undo and waits for cancellation acknowledgement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   try {

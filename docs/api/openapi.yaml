@@ -60716,6 +60716,7 @@ components:
         - restore
         - delete
         - archive_all
+        - delete_active
         - delete_all
       example: pin
     AgentConversationManagementRequest:
