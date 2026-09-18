@@ -63,6 +63,7 @@ jobs:
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
         run: ./scripts/deploy_demo.sh
 
       - name: Record deployed product routes

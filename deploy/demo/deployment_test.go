@@ -63,6 +63,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"Infisical/secrets-action@",
 		"scripts/deploy_demo.sh",
 		"Publish the canonical Olist showcase",
+		"vars.DEMO_PROJECT_ID",
 	} {
 		require.Contains(t, workflow, required)
 	}
@@ -87,7 +88,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"getDeliveryPublicationEvidence",
 		"getDeliveryGenerationStatus",
 		"getProject",
-		"project:leapview-showcase",
+		"DEMO_PROJECT_ID",
 		"go build -o",
 		"grant_type=client_credentials",
 		"DEMO_PUBLISHER_CLIENT_ID",
@@ -110,6 +111,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"getdeployment",
 		"approvedeployment",
 		"activatedeployment",
+		"project:leapview-showcase",
 	} {
 		require.NotContains(t, strings.ToLower(script), forbidden)
 	}

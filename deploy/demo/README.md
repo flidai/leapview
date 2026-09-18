@@ -50,6 +50,10 @@ project authoring, and release publication. The release principal is restricted
 to viewing, approving, and activating the demo project environment, plus
 managing the public dashboard publications declared by the canonical showcase.
 
+The `leapview-demo` environment variable `DEMO_PROJECT_ID` stores the target's
+durable `ProjectUID`. Content publication must use that issuer-owned identity;
+the source bundle does not provide or replace it.
+
 Target capability discovery requires an authenticated credential but no
 pre-existing project grant. This is essential on the first deployment,
 because the project graph is not active until its exact candidate is

@@ -10,7 +10,7 @@ release_client_id="${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}"
 release_client_secret="${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}"
 source_root="$repo_root/dashboards"
 data_link="$repo_root/.data/olist"
-project_id="project:leapview-showcase"
+project_id="${DEMO_PROJECT_ID:?Set DEMO_PROJECT_ID to the durable target ProjectUID}"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
 
