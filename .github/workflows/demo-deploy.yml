@@ -4,6 +4,9 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: read
+  attestations: read
+  actions: read
 concurrency:
   group: leapview-hosted-demo
   cancel-in-progress: false
@@ -43,3 +46,61 @@ jobs:
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
           export DEMO_RUNNER_IP
           bash scripts/inspect_demo_runtime.sh
+  qualify:
+    name: Qualify exact merged demo image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+      - name: Install browser dependencies
+        run: bun install --frozen-lockfile
+      - name: Wait for the exact image build and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 80); do
+            state="$(gh api repos/flidai/leapview/actions/runs/35385617324/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
+            case "$state" in
+              success) exit 0 ;;
+              failure|cancelled|skipped) echo "Canonical image build ended in $state"; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo 'Image build did not finish within 40 minutes'
+          exit 1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve exact main image
+        id: image
+        run: |
+          set -euo pipefail
+          tag=ghcr.io/flidai/leapview:main-67d69c97f26096521fa7633114b145c7c43480b2
+          docker pull "$tag"
+          image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
+          echo "reference=$image" >> "$GITHUB_OUTPUT"
+      - name: Admit exact image provenance
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ steps.image.outputs.reference }}
+          repository: ghcr.io/flidai/leapview
+          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
+          source-revision: 67d69c97f26096521fa7633114b145c7c43480b2
+      - name: Run complete image qualification with current token UI contract
+        env:
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+        run: task image:qualify:production IMAGE="$IMAGE_REFERENCE"
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: demo-67d69c9-qualification
+          path: .tmp/qualification/production-image
+          if-no-files-found: ignore
