@@ -231,7 +231,9 @@ func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
 		"needs.authorize-candidate.result == 'success'",
 		`channel="candidate"`,
 		"${{ steps.identity.outputs.channel }}-${{ steps.identity.outputs.revision }}",
-		"source-revision: ${{ needs.build-production-image.outputs.revision }}",
+		"source-revision: ${{ github.sha }}",
+		"--arg revision \"${IMAGE_REVISION}\"",
+		".revision == $revision",
 	} {
 		requireContains(t, workflow, fragment)
 	}
