@@ -73,8 +73,9 @@ principal-filtered agent suggestions through the real catalog adapter
 (`TestSearchReferencesAutocompleteFiltersByAuthorization`). ProjectUID is
 bootstrapped by the issuer before target interaction; the workload Project
 selector requests the exact already-bound Project scope and does not mint
-Project identity. The local multi-source proof checks exact ResourceUID and
-graph-kind bindings against the validated delivery plan.
+Project identity. The dbt proof validates a production-shaped delivery plan.
+Separately, `TestPostgresResourceUIDMultiSourceProjectClosure` validates exact
+ResourceUID and graph-kind bindings against the compiled multi-source graph.
 
 ## Existing capability composition
 
