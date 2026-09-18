@@ -66,6 +66,27 @@ jobs:
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
           export DEMO_RUNNER_IP
           bash scripts/inspect_demo_runtime.sh
+      - name: Report public runtime compatibility identity
+        if: inputs.action == 'inspect'
+        env:
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          token="$(curl --fail --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode 'grant_type=client_credentials' \
+            --data-urlencode "client_id=$DEMO_PUBLISHER_CLIENT_ID" \
+            --data-urlencode "client_secret=$DEMO_PUBLISHER_CLIENT_SECRET" \
+            --data-urlencode "project_id=$DEMO_PROJECT_ID" \
+            --data-urlencode 'scope=RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH' \
+            --data-urlencode 'lifetime_seconds=300' \
+            https://demo.leapview.dev/oauth/token | jq -er .access_token)"
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer $token" \
+            https://demo.leapview.dev/api/v1/capabilities \
+            | jq -c '{apiVersion,deliveryMode,buildRevision,buildDirty,buildDevelopment}'
   qualify:
     if: inputs.action == 'qualify'
     name: Qualify exact merged demo image
