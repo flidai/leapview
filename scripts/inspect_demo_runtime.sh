@@ -163,6 +163,8 @@ for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
   docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT t.target_id,t.project_id,t.environment,COALESCE(p.generation_id::text,\x27\x27) FROM delivery.delivery_target t LEFT JOIN delivery.delivery_active_pointer p ON p.target_id=t.target_id ORDER BY t.target_id"' || true
   printf 'Canonical project identities:\n'
   docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT project_id FROM project.project_identity ORDER BY project_id"' || true
+  printf 'Service principal credential inventory:\n'
+  docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT p.id,p.display_name,p.status,COUNT(s.id),COUNT(s.id) FILTER (WHERE s.revoked_at IS NULL AND s.expires_at > clock_timestamp()) FROM access.principal p LEFT JOIN access.service_principal_secret s ON s.service_principal_id=p.id WHERE p.kind=\x27service_principal\x27 GROUP BY p.id,p.display_name,p.status ORDER BY p.display_name"' || true
 done
 printf 'Operator environment file paths:\n'
 find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
