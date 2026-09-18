@@ -2,7 +2,6 @@ package access
 
 import (
 	"fmt"
-	"sort"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -135,25 +134,4 @@ func NewTypedRoleBinding(id, name string, subject SubjectRef, role PermissionRol
 		return RoleBinding{}, err
 	}
 	return binding, nil
-}
-
-// PermissionRolePairs is a compatibility spelling for callers that consume
-// role expansion as a typed PairSet.
-func PermissionRolePairs(role PermissionRole, projectID projectgraph.ResourceID) ([]PermissionPair, error) {
-	return ExpandPermissionRole(role, projectID)
-}
-
-// TypedPermissionPairs returns the validated pair set without exposing the
-// assignment's backing slice.
-func (binding RoleBinding) TypedPermissionPairs() ([]PermissionPair, error) {
-	if err := ValidateTypedPermissionSet(binding.PermissionProfile, binding.Permissions); err != nil {
-		return nil, err
-	}
-	return ClonePermissionPairs(binding.Permissions), nil
-}
-
-// SortPermissionPairs gives persistence and digest callers a deterministic
-// ordering while retaining pair identity.
-func SortPermissionPairs(pairs []PermissionPair) {
-	sort.Slice(pairs, func(i, j int) bool { return permissionPairKey(pairs[i]) < permissionPairKey(pairs[j]) })
 }

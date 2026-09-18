@@ -115,12 +115,6 @@ func AuthorizeAndPaginate[T any](ctx context.Context, candidates []T, request Di
 	return page, nil
 }
 
-// FilterAndPaginate is a descriptive alias used by collection adapters whose
-// primary concern is filtering rather than page construction.
-func FilterAndPaginate[T any](ctx context.Context, candidates []T, request DiscoveryRequest, authorize DiscoveryAuthorizer[T]) (DiscoveryPage[T], error) {
-	return AuthorizeAndPaginate(ctx, candidates, request, authorize)
-}
-
 type discoveryCursor struct {
 	Context  string `json:"context"`
 	Snapshot string `json:"snapshot,omitempty"`

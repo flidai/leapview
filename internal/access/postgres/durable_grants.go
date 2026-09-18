@@ -132,11 +132,6 @@ func (r *Repository) insertResourceShareGrant(ctx context.Context, in access.Res
 	return grant, true, err
 }
 
-// CreateShareGrant is the concise compatibility spelling.
-func (r *Repository) CreateShareGrant(ctx context.Context, in access.ShareGrantInput) (access.ShareGrant, error) {
-	return r.CreateResourceShareGrant(ctx, in)
-}
-
 func (r *Repository) ResourceShareGrant(ctx context.Context, id string) (access.ResourceShareGrant, error) {
 	db, err := r.requireDB()
 	if err != nil {
@@ -157,10 +152,6 @@ func (r *Repository) RevokeResourceShareGrant(ctx context.Context, id, actorID, 
 	return r.revokeDurableGrant(ctx, "resource_share_grant", id, actorID, reason)
 }
 
-func (r *Repository) RevokeShareGrant(ctx context.Context, id, actorID, reason string) error {
-	return r.RevokeResourceShareGrant(ctx, id, actorID, reason)
-}
-
 func (r *Repository) CurrentResourceShareGrant(ctx context.Context, id, recipientID string) (access.ResourceShareGrant, error) {
 	grant, err := r.ResourceShareGrant(ctx, id)
 	if err != nil {
@@ -173,10 +164,6 @@ func (r *Repository) CurrentResourceShareGrant(ctx context.Context, id, recipien
 		return access.ResourceShareGrant{}, err
 	}
 	return grant, nil
-}
-
-func (r *Repository) ResolveCurrentResourceShareGrant(ctx context.Context, id, recipientID string) (access.ResourceShareGrant, error) {
-	return r.CurrentResourceShareGrant(ctx, id, recipientID)
 }
 
 func (r *Repository) CurrentShareGrant(ctx context.Context, id, recipientID string) (access.ShareGrant, error) {
@@ -304,10 +291,6 @@ func (r *Repository) CurrentExecutionGrant(ctx context.Context, id, executionPri
 	return grant, nil
 }
 
-func (r *Repository) ResolveCurrentExecutionGrant(ctx context.Context, id, executionPrincipalID string) (access.ExecutionGrant, error) {
-	return r.CurrentExecutionGrant(ctx, id, executionPrincipalID)
-}
-
 func (r *Repository) CreateGrantAdminEnvelope(ctx context.Context, in access.GrantAdminEnvelopeInput) (result access.GrantAdminEnvelope, err error) {
 	if err = in.Validate(); err != nil {
 		return result, err
@@ -431,10 +414,6 @@ func (r *Repository) CurrentGrantAdminEnvelope(ctx context.Context, id, principa
 		return access.GrantAdminEnvelope{}, access.ErrGrantExpired
 	}
 	return grant, nil
-}
-
-func (r *Repository) ResolveCurrentGrantAdminEnvelope(ctx context.Context, id, principalID string) (access.GrantAdminEnvelope, error) {
-	return r.CurrentGrantAdminEnvelope(ctx, id, principalID)
 }
 
 func principalIDOr(bound, requested string) string {

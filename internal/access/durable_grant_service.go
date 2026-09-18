@@ -99,7 +99,6 @@ type ResourceShareGrantRequest struct {
 // adapters without exposing the repository's authority-bearing input type.
 type ResourceShareRequest = ResourceShareGrantRequest
 type ShareGrantRequest = ResourceShareGrantRequest
-type ResourceShareGrantIssueRequest = ResourceShareGrantRequest
 
 // ExecutionGrantRequest contains only user-controlled bounded execution
 // parameters. The issuer, bound principal, and issuance ceiling are derived
@@ -123,8 +122,6 @@ type ExecutionGrantRequest struct {
 	RequestDigest        string
 }
 
-type ExecutionGrantIssueRequest = ExecutionGrantRequest
-
 // GrantAdminEnvelopeRequest contains only the bounded envelope requested by
 // the caller. BoundPrincipalID is always the current resolved principal and
 // cannot be selected by the HTTP/body caller.
@@ -144,8 +141,6 @@ type GrantAdminEnvelopeRequest struct {
 	RequestDigest         string
 	AllowOnwardDelegation bool
 }
-
-type GrantAdminEnvelopeIssueRequest = GrantAdminEnvelopeRequest
 
 // DurableGrantService is the narrow internal issuance/revocation service.
 // It owns all authority-bearing fields passed to DurableGrantWriter.
@@ -202,14 +197,6 @@ func (s *DurableGrantService) IssueResourceShare(ctx context.Context, request Re
 	return s.writer.CreateResourceShareGrant(ctx, in)
 }
 
-func (s *DurableGrantService) IssueShare(ctx context.Context, request ResourceShareGrantRequest) (ResourceShareGrant, error) {
-	return s.IssueResourceShare(ctx, request)
-}
-
-func (s *DurableGrantService) IssueResourceShareGrant(ctx context.Context, request ResourceShareGrantRequest) (ResourceShareGrant, error) {
-	return s.IssueResourceShare(ctx, request)
-}
-
 // IssueExecutionGrant issues a bounded pipeline execution grant using only
 // authority resolved by the service. Execution recipients are always exact
 // principals; group execution subjects are not accepted by the durable model.
@@ -241,10 +228,6 @@ func (s *DurableGrantService) IssueExecutionGrant(ctx context.Context, request E
 		return ExecutionGrant{}, err
 	}
 	return s.writer.CreateExecutionGrant(ctx, in)
-}
-
-func (s *DurableGrantService) IssueExecution(ctx context.Context, request ExecutionGrantRequest) (ExecutionGrant, error) {
-	return s.IssueExecutionGrant(ctx, request)
 }
 
 // IssueGrantAdminEnvelope binds the envelope to the currently resolved
@@ -281,14 +264,6 @@ func (s *DurableGrantService) IssueGrantAdminEnvelope(ctx context.Context, reque
 	return s.writer.CreateGrantAdminEnvelope(ctx, in)
 }
 
-func (s *DurableGrantService) IssueAdminEnvelope(ctx context.Context, request GrantAdminEnvelopeRequest) (GrantAdminEnvelope, error) {
-	return s.IssueGrantAdminEnvelope(ctx, request)
-}
-
-func (s *DurableGrantService) IssueGrantAdmin(ctx context.Context, request GrantAdminEnvelopeRequest) (GrantAdminEnvelope, error) {
-	return s.IssueGrantAdminEnvelope(ctx, request)
-}
-
 // RevokeResourceShareGrant performs the monotonic active-to-revoked mutation
 // using the current resolved principal as actor. The actor is never accepted
 // from a request body and a repeated repository revoke cannot restore state.
@@ -296,24 +271,12 @@ func (s *DurableGrantService) RevokeResourceShareGrant(ctx context.Context, id, 
 	return s.revoke(ctx, DurableGrantKindResourceShare, id, reason)
 }
 
-func (s *DurableGrantService) RevokeShare(ctx context.Context, id, reason string) error {
-	return s.RevokeResourceShareGrant(ctx, id, reason)
-}
-
 func (s *DurableGrantService) RevokeExecutionGrant(ctx context.Context, id, reason string) error {
 	return s.revoke(ctx, DurableGrantKindExecution, id, reason)
 }
 
-func (s *DurableGrantService) RevokeExecution(ctx context.Context, id, reason string) error {
-	return s.RevokeExecutionGrant(ctx, id, reason)
-}
-
 func (s *DurableGrantService) RevokeGrantAdminEnvelope(ctx context.Context, id, reason string) error {
 	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason)
-}
-
-func (s *DurableGrantService) RevokeAdminEnvelope(ctx context.Context, id, reason string) error {
-	return s.RevokeGrantAdminEnvelope(ctx, id, reason)
 }
 
 func (s *DurableGrantService) revoke(ctx context.Context, kind GrantKind, id, reason string) error {

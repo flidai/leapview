@@ -164,8 +164,6 @@ type ResourceShareGrantInput struct {
 	AllowOnwardDelegation bool
 }
 
-type ShareGrantInput = ResourceShareGrantInput
-
 func (in ResourceShareGrantInput) Validate() error {
 	if in.Profile != "" && in.Profile != DurableGrantProfile {
 		return fmt.Errorf("%w: unsupported profile %q", ErrInvalidDurableGrant, in.Profile)

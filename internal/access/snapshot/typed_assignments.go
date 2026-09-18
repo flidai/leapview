@@ -109,11 +109,6 @@ func (s AuthorizationSnapshot) AllowsTyped(subject access.SubjectRef, requested 
 	return access.PermissionSetAllows(granted, requested), nil
 }
 
-// AllowsPermissionPair is an ergonomic alias used by request authorizers.
-func (s AuthorizationSnapshot) AllowsPermissionPair(subject access.SubjectRef, requested access.PermissionPair) (bool, error) {
-	return s.AllowsTyped(subject, requested)
-}
-
 // EffectiveTypedPermissions returns the exact profile-pinned pair union for
 // the supplied principal/group subjects. Group and service-principal
 // identities use the same SubjectRef path: service principals are explicit
@@ -170,11 +165,6 @@ func (s AuthorizationSnapshot) EffectiveTypedPermissions(subjects []access.Subje
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Key() < result[j].Key() })
 	return result, nil
-}
-
-// TypedPermissionPairs is a short alias for the immutable snapshot set.
-func (s AuthorizationSnapshot) TypedPermissionPairs(subjects ...access.SubjectRef) ([]access.PermissionPair, error) {
-	return s.EffectiveTypedPermissions(subjects)
 }
 
 func validateTypedPairNamespace(pair access.PermissionPair, identity graph.ServingIdentity, project graph.ProjectGraph) error {
