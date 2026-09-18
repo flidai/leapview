@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -17,7 +18,6 @@ import (
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/platform/observability"
-	projecthttp "github.com/flidai/leapview/internal/project/http"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -123,22 +123,35 @@ func TestProjectBoundaryRejectsRequestSelectorsBeforeDispatch(t *testing.T) {
 	}
 }
 
-// Keep the request-selector proof tied to the mounted browser routes and the
-// generated query/search/agent/release contract inventory. New routes in
-// these surfaces must inherit the same pre-dispatch Project fence.
+// Exercise the actual application router: a route registered outside its
+// shared ingress must not pass this selector-fence inventory.
 func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
-	type route struct{ method, path string }
-	var routes []route
-	browser := chi.NewRouter()
-	(&projecthttp.BrowserHandler{Authenticate: func(next http.Handler) http.Handler { return next }}).MountAuthenticated(browser)
-	if err := chi.Walk(browser, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		routes = append(routes, route{method, path})
+	store := testStore(t)
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
+		Agent: agent.NewService(testAgentRepository(store), agent.Config{APIKey: "key", Model: "model"}),
+	}))
+	server.runtime.persistenceConfigured = true
+	handler := server.Routes()
+	router, ok := handler.(chi.Routes)
+	if !ok {
+		t.Fatal("application handler does not expose mounted routes")
+	}
+	mounted := make(map[string]bool)
+	if err := chi.Walk(router, func(method, path string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method != "*" {
+			mounted[method+" "+path] = true
+		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(routes) == 0 {
-		t.Fatal("browser route inventory is empty")
+	selected := make(map[string]bool)
+	for route := range mounted {
+		method, path, _ := strings.Cut(route, " ")
+		metadata, found := nonAPIRouteMetadata(method, path)
+		if found && (metadata.owner == "project" || metadata.owner == "dashboard" || metadata.owner == "agent") {
+			selected[route] = true
+		}
 	}
 	counts := map[string]int{"query": 0, "search": 0, "agent": 0, "release": 0}
 	queryBodies := map[string]bool{
@@ -168,7 +181,11 @@ func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
 				t.Fatalf("search operation %q now accepts a request body; add body-selector evidence", contract.OperationID)
 			}
 			counts[category]++
-			routes = append(routes, route{contract.Method, contract.Path})
+			route := contract.Method + " " + contract.Path
+			if !mounted[route] {
+				t.Fatalf("API-02 contract route %q is not mounted", route)
+			}
+			selected[route] = true
 		}
 	}
 	for category, count := range counts {
@@ -181,22 +198,26 @@ func TestProjectBoundarySelectorFenceCoversPublicRouteInventory(t *testing.T) {
 			t.Fatalf("query body operation %q disappeared from route inventory", operation)
 		}
 	}
+	for _, route := range []string{"GET /", "GET /models/search", "POST /pipelines/command", "GET /chats/references/search"} {
+		if !selected[route] {
+			t.Fatalf("API-02 browser or agent route %q is not mounted", route)
+		}
+	}
+	routes := make([]string, 0, len(selected))
+	for route := range selected {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
 	parameters := regexp.MustCompile(`\{[^}]+\}`)
 	for _, route := range routes {
-		t.Run(route.method+" "+route.path, func(t *testing.T) {
-			calls := 0
-			mux := chi.NewRouter()
-			mountRouterMiddleware(mux, routerMiddlewareDependencies{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), telemetry: observability.New()})
-			mux.Method(route.method, route.path, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				calls++
-				w.WriteHeader(http.StatusNoContent)
-			}))
-			path := parameters.ReplaceAllString(route.path, "bound")
-			request := httptest.NewRequest(route.method, path+"?projectId=project:foreign", nil)
+		t.Run(route, func(t *testing.T) {
+			method, path, _ := strings.Cut(route, " ")
+			request := httptest.NewRequest(method, parameters.ReplaceAllString(path, "bound")+"?projectId=project:foreign", nil)
+			request.Header.Set("Accept", "application/json")
 			response := httptest.NewRecorder()
-			mux.ServeHTTP(response, request)
-			if response.Code != http.StatusBadRequest || calls != 0 || strings.Contains(response.Body.String(), "project:foreign") {
-				t.Fatalf("selector escaped pre-dispatch fence: status=%d calls=%d body=%s", response.Code, calls, response.Body.String())
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "PROJECT_SELECTOR_UNSUPPORTED") || strings.Contains(response.Body.String(), "project:foreign") {
+				t.Fatalf("mounted route escaped Project selector fence: status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}

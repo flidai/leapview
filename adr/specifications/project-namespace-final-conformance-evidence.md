@@ -76,7 +76,7 @@ The evidence states are:
 | RID-06 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | `TestPostgresResourceUIDAdmissionAndActivationQualification` covers immutable tombstone, authorized exact-generation restore, same-scope historical rollback, atomic audit, and rollback safety | — (Main) |
 | RID-07 | FAI-670 | [#542](https://github.com/flidai/leapview/pull/542) / `c9e6482a8` | Registry-key validation excludes paths, names, environments, dbt identifiers, and artifact hashes | — (Main) |
 | API-01 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | Exact-identity [surface inventory](#api-01-public-project-identity-inventory) links maintained deployment, authorization, audit, lineage, catalog, and generation tests; FAI-679 adds public release and catalog identity assertions | — (Candidate) |
-| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | [Mounted browser and generated API route inventory](../../internal/app/project_boundary_test.go) checks pre-dispatch selector rejection and all four generated query bodies; [browser commands and search signals](../../internal/project/http/creator_commands_test.go) retain the bound Project with forged selector fields; the [release command body](../../internal/release/module/module_test.go) rejects a foreign `projectId` | — (Candidate) |
+| API-02 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | [Composed router inventory](../../internal/app/project_boundary_test.go) checks pre-dispatch selector rejection on mounted browser, agent browser, and generated API routes plus all four generated query bodies; [browser commands and search signals](../../internal/project/http/creator_commands_test.go) retain the bound Project with forged selector fields; the [release command body](../../internal/release/module/module_test.go) rejects a foreign `projectId` | — (Candidate) |
 | API-03 | FAI-669 | [#512](https://github.com/flidai/leapview/pull/512) / `62d039399`; #546 supplies supporting generated-locator coverage | Foreign scope and missing claim rejected before source I/O, repository mutation, or workload admission | — (Main) |
 | API-04 | Baseline | Explicit serving identity in authorization snapshots and runtime installation | Capability, malformed identity, and authorization-install fail-closed tests | — (Main) |
 | API-05 | FAI-671 | [#546](https://github.com/flidai/leapview/pull/546) / `4435ea6c1`; FAI-679 candidate | [Authorization-filtered surface inventory](#api-05-bound-project-and-authorization-filtered-surface-inventory) links maintained catalog, browser, audit, candidate, and error tests; FAI-679 strengthens catalog search/list filtering and follows a denied browser resource through discovery, search, lineage, and detail errors | — (Candidate) |
@@ -152,10 +152,12 @@ environment, or client selector cannot substitute for that identity.
 ## API-02 server-bound request inventory
 
 [`TestProjectBoundarySelectorFenceCoversPublicRouteInventory`](../../internal/app/project_boundary_test.go)
-enumerates mounted browser routes and generated query, search, agent, and
-release operations, and verifies that a client Project query selector is
-rejected before dispatch. It fails if any of the four current generated query
-body operations is missing or a new one appears without a body test. The same
+walks the production-composed router, including authenticated agent browser
+routes such as `/chats/references/search`, and sends each selected browser,
+query, search, agent, and release route a client Project selector. It verifies
+the shared ingress rejects the selector before dispatch. It fails if any of
+the four current generated query body operations is missing or a new one
+appears without a body test. The same
 file tests encoded, repeated, and alternate selector spellings; actual
 dashboard page, dashboard visual, semantic query, semantic explain, and agent
 JSON bodies reject a foreign `projectId`. The browser
@@ -176,7 +178,7 @@ switches a serving request's Project.
 | List | [`TestSearchUsesDirectAndGroupGrantsAndDoesNotEnumerateDeniedResources`](../../internal/project/catalog/catalog_test.go) now uses matching allowed and denied models and asserts root list filtering; [`TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters`](../../internal/release/module/catalog_api_test.go) covers the public connection list. |
 | Search | The same catalog test rejects the matching denied model; [`TestSearchFailsClosedForAuthenticationCatalogAndInvalidKinds`](../../internal/release/module/search_test.go) covers public API errors. |
 | Discovery | [`TestAssetsFilterUnauthorizedSiblingAndEdges`](../../internal/project/http/browser_test.go) follows the catalog-filtered active graph into the browser bootstrap; [`TestSemanticCatalogDiscoveryAndDirectReferenceShareGate`](../../internal/project/catalog/semantic_visibility_test.go) covers semantic-resource discovery. |
-| Autocomplete | Browser `/models/search` in `TestAssetsFilterUnauthorizedSiblingAndEdges` uses the same filtered graph; [`TestSearchReferencesListsAccessibleContextForBareMention`](../../internal/agent/module/search_test.go) covers agent reference suggestions. There is no separate Project-switching autocomplete endpoint. |
+| Autocomplete | Browser `/models/search` in `TestAssetsFilterUnauthorizedSiblingAndEdges` uses the same filtered graph; [`TestSearchReferencesAutocompleteFiltersByAuthorization`](../../internal/agent/module/search_test.go) exercises agent suggestions through the real catalog adapter and per-principal grant snapshot for both search and bare mentions. There is no separate Project-switching autocomplete endpoint. |
 | Audit | [`TestProjectAuditProducerPersistsThroughScopedEndpoint`](../../internal/app/project_boundary_test.go) and [`TestAccessExtendedPostgreSQL18AuthorityBoundaries`](../../internal/access/postgres/access_extended_test.go) cover the bound audit API and foreign-row exclusion. |
 | Lineage | `TestAssetsFilterUnauthorizedSiblingAndEdges` verifies a denied node and edge do not reappear in the lineage signal. |
 | Errors | The same browser test makes a denied detail indistinguishable from an unknown detail; [`TestProjectBoundaryGeneratedLocatorsCannotRetarget`](../../internal/app/project_boundary_test.go) conceals foreign Project locators. |
