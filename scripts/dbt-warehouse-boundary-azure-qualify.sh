@@ -88,7 +88,7 @@ verify_download_checksum() {
 }
 
 storage_request_status() {
-  local method="$1" account="$2" container="$3" blob="$4" conditional="${5:-}" token auth_file status
+  local method="$1" account="$2" container="$3" blob="$4" conditional="${5:-}" token auth_file response_headers status error_code
   require_safe_name "storage account" "$account"
   require_safe_name "container" "$container"
   require_safe_name "blob path" "$blob"
@@ -99,8 +99,9 @@ storage_request_status() {
     --only-show-errors)"
   [[ -n "$token" ]] || fail "Azure Storage access token is unavailable"
   auth_file="$(mktemp)"
+  response_headers="$(mktemp)"
   chmod 600 "$auth_file"
-  trap 'rm -f "$auth_file"' RETURN
+  trap 'rm -f "$auth_file" "$response_headers"' RETURN
   printf 'header = "Authorization: Bearer %s"\n' "$token" >"$auth_file"
   unset token
   local -a args=(
@@ -108,6 +109,7 @@ storage_request_status() {
     --silent
     --show-error
     --output /dev/null
+    --dump-header "$response_headers"
     --write-out '%{http_code}'
     --request "$method"
     --header 'x-ms-version: 2023-11-03'
@@ -124,15 +126,18 @@ storage_request_status() {
     args+=(--header "$conditional")
   fi
   status="$(curl "${args[@]}" "https://${account}.blob.core.windows.net/${container}/${blob}")"
-  rm -f "$auth_file"
+  error_code="$(awk 'tolower($1) == "x-ms-error-code:" { code=$2; sub(/\r$/, "", code) } END { print code }' "$response_headers")"
+  rm -f "$auth_file" "$response_headers"
   trap - RETURN
-  printf '%s\n' "$status"
+  printf '%s %s\n' "$status" "$error_code"
 }
 
 expect_storage_status() {
-  local expected="$1" method="$2" account="$3" container="$4" blob="$5" label="$6" status
-  status="$(storage_request_status "$method" "$account" "$container" "$blob")"
-  [[ "$status" == "$expected" ]] || fail "$label returned HTTP $status instead of the required $expected"
+  local expected="$1" method="$2" account="$3" container="$4" blob="$5" label="$6" result status error_code
+  result="$(storage_request_status "$method" "$account" "$container" "$blob")"
+  read -r status error_code <<<"$result"
+  [[ "$status" == "$expected" && "$error_code" == "AuthorizationPermissionMismatch" ]] ||
+    fail "$label returned HTTP $status/$error_code instead of the required $expected/AuthorizationPermissionMismatch"
 }
 
 preflight() {
@@ -217,6 +222,10 @@ publish() {
     "$DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT" "$DBT_QUALIFICATION_DUCKLAKE_CONTAINER" \
     "qualification/producer-deny-${GITHUB_RUN_ID}" \
     "producer cross-scope DuckLake read"
+  expect_storage_status 403 PUT \
+    "$DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT" "$DBT_QUALIFICATION_DUCKLAKE_CONTAINER" \
+    "qualification/producer-deny-${GITHUB_RUN_ID}-write" \
+    "producer cross-scope DuckLake write"
 
   {
     printf 'publication_prefix=%s\n' "$prefix"
@@ -242,6 +251,7 @@ source_read() {
   expect_storage_status 403 DELETE "$AZURE_STORAGE_ACCOUNT" "$AZURE_PUBLICATION_CONTAINER" "$PUBLICATION_PREFIX/source-delete-probe" "Source delete probe"
   expect_storage_status 403 GET "$AZURE_STORAGE_ACCOUNT" "$AZURE_SOURCE_CONTAINER" "dbt-warehouse-boundary/raw_orders.csv" "Source cross-scope producer-input read"
   expect_storage_status 403 GET "$DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT" "$DBT_QUALIFICATION_DUCKLAKE_CONTAINER" "qualification/source-deny-${GITHUB_RUN_ID}" "Source cross-scope DuckLake read"
+  expect_storage_status 403 PUT "$DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT" "$DBT_QUALIFICATION_DUCKLAKE_CONTAINER" "qualification/source-deny-${GITHUB_RUN_ID}-write" "Source cross-scope DuckLake write"
   echo "Qualified checksum-preserving Source reads and fail-closed create, overwrite, and delete denial"
 }
 

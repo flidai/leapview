@@ -1,6 +1,8 @@
 package architecture
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -281,6 +283,104 @@ func TestDBTAzureQualificationPreflightRejectsIdentityAndScopeCollisions(t *test
 			}
 			if !test.wantErr && err != nil {
 				t.Fatalf("preflight rejected distinct bounded identities: %v", err)
+			}
+		})
+	}
+}
+
+func TestDBTAzureQualificationRequiresRBACCodeAndCrossScopeWriteDenial(t *testing.T) {
+	root := repoRoot(t)
+	script := filepath.Join(root, "scripts/dbt-warehouse-boundary-azure-qualify.sh")
+	body, err := os.ReadFile(script)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := strings.SplitN(string(body), "publish() {", 2)
+	if len(publish) != 2 || !strings.Contains(strings.SplitN(publish[1], "source_read() {", 2)[0],
+		"expect_storage_status 403 PUT \\\n    \"$DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT\"") {
+		t.Fatal("producer qualification does not probe denied DuckLake writes")
+	}
+
+	dir := t.TempDir()
+	parquet := filepath.Join(dir, "parquet")
+	if err := os.WriteFile(parquet, []byte("bounded parquet fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for name, contents := range map[string]string{
+		"az": `#!/usr/bin/env bash
+set -euo pipefail
+case "$1 $2 $3" in
+  "account get-access-token "*) printf 'test-token\n' ;;
+  "storage blob list")
+    printf '%s/dim_customers.parquet\n%s/fct_orders.parquet\n' "$PUBLICATION_PREFIX" "$PUBLICATION_PREFIX" ;;
+  "storage blob download")
+    while (($#)); do
+      if [[ "$1" == "--file" ]]; then cp "$MOCK_PARQUET" "$2"; exit 0; fi
+      shift
+    done
+    exit 2 ;;
+  *) exit 2 ;;
+esac
+`,
+		"curl": `#!/usr/bin/env bash
+set -euo pipefail
+headers='' method='' url='' conditional=no
+while (($#)); do
+  case "$1" in
+    --dump-header) headers="$2"; shift ;;
+    --request) method="$2"; shift ;;
+    --header) [[ "$2" == 'If-Match: "leapview-never-match"' ]] && conditional=yes; shift ;;
+    https://*) url="$1" ;;
+  esac
+  shift
+done
+printf 'HTTP/1.1 %s Mocked\r\nx-ms-error-code: %s\r\n\r\n' "$MOCK_STATUS" "$MOCK_CODE" >"$headers"
+printf '%s|%s|%s\n' "$method" "$url" "$conditional" >>"$MOCK_LOG"
+printf '%s' "$MOCK_STATUS"
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	digest := sha256.Sum256([]byte("bounded parquet fixture"))
+	expected := hex.EncodeToString(digest[:])
+	for _, tc := range []struct {
+		name, status, code string
+		wantSuccess        bool
+	}{
+		{name: "RBAC denial", status: "403", code: "AuthorizationPermissionMismatch", wantSuccess: true},
+		{name: "generic forbidden", status: "403", code: "AuthorizationFailure"},
+		{name: "missing Azure code", status: "403"},
+		{name: "precondition failure", status: "412", code: "ConditionNotMet"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logPath := filepath.Join(t.TempDir(), "requests")
+			command := exec.Command("bash", script, "source-read")
+			command.Env = []string{
+				"PATH=" + dir + ":" + os.Getenv("PATH"),
+				"MOCK_PARQUET=" + parquet, "MOCK_LOG=" + logPath,
+				"MOCK_STATUS=" + tc.status, "MOCK_CODE=" + tc.code,
+				"AZURE_STORAGE_ACCOUNT=producerstore", "AZURE_SOURCE_CONTAINER=producer-input",
+				"AZURE_PUBLICATION_CONTAINER=producer-publication",
+				"DBT_QUALIFICATION_DUCKLAKE_STORAGE_ACCOUNT=leapviewstore",
+				"DBT_QUALIFICATION_DUCKLAKE_CONTAINER=ducklake-state",
+				"PUBLICATION_PREFIX=qualification/run", "GITHUB_RUN_ID=123",
+				"EXPECTED_DIM_CUSTOMERS_SHA256=" + expected,
+				"EXPECTED_FCT_ORDERS_SHA256=" + expected,
+			}
+			output, err := command.CombinedOutput()
+			if (err == nil) != tc.wantSuccess {
+				t.Fatalf("source-read error = %v, want success %v; output: %s", err, tc.wantSuccess, output)
+			}
+			if tc.wantSuccess {
+				requests, err := os.ReadFile(logPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(requests), "PUT|https://leapviewstore.blob.core.windows.net/ducklake-state/qualification/source-deny-123-write|yes") {
+					t.Fatalf("Source boundary did not make a safe denied DuckLake write probe: %s", requests)
+				}
 			}
 		})
 	}

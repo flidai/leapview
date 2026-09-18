@@ -115,8 +115,9 @@ qualify the separate live Azure boundary.
 The FAI-688 qualification workflow adds no runtime protocol. Its
 run/attempt/Git-SHA prefix and SHA-256 comparisons are external qualification
 evidence only. Conditional create and overwrite probes use an impossible ETag
-and require authorization failure, while the delete probe addresses a
-nonexistent object; these probes cannot mutate admitted producer data even if
+and require HTTP 403 with Azure's `AuthorizationPermissionMismatch` code,
+while the delete probe addresses a nonexistent object; these probes cannot
+mutate admitted producer data even if
 the tested role is accidentally broader than expected. The DuckLake probe
 writes and removes only a dedicated LeapView-owned qualification object. A
 successful protected-main run is still required before any live-cloud row can

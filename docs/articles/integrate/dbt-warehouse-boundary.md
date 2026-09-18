@@ -168,16 +168,18 @@ run/attempt/Git-SHA-qualified complete prefix. Only the complete prefix is
 exported to the read qualification. Uploads forbid overwrite, the exact file
 set is listed, and both downloaded Parquet files must match producer SHA-256
 evidence. The digest values are qualification evidence only; LeapView does not
-consume a marker, manifest, or release envelope.
+consume a marker, manifest, or release envelope. The producer also requires
+denied DuckLake-scope reads and conditional writes.
 
 The Source identity must read and checksum the complete prefix. Safe
-conditional Azure REST probes then require HTTP 403 for create and overwrite,
-and a nonexistent-object probe requires HTTP 403 for delete. The conditional
+conditional Azure REST probes then require HTTP 403 with
+`AuthorizationPermissionMismatch` for create and overwrite, and a
+nonexistent-object probe requires the same denial for delete. The conditional
 write probes use an impossible ETag, so an unexpectedly privileged identity
 still cannot mutate admitted data. Cross-container probes also reject producer
-input and DuckLake access. The DuckLake identity performs a bounded round trip
-inside its own qualification prefix, removes only that probe, and must receive
-HTTP 403 from the producer publication scope.
+input and DuckLake read/write access. The DuckLake identity performs a bounded
+round trip inside its own qualification prefix, removes only that probe, and
+must receive HTTP 403 from the producer publication scope.
 
 The incomplete producer prefix is never exported to LeapView and is not
 deleted as recovery. Its eventual removal belongs to the Azure storage
