@@ -48,6 +48,7 @@ jobs:
           revision="${SOURCE_REVISION}"
           [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "${revision}"
+          test "$GITHUB_SHA" = "$revision"
           gh api "repos/${GITHUB_REPOSITORY}/commits/${revision}/pulls" \
             | jq -e --arg revision "${revision}" \
               'map(select(.base.ref == "main" and .state == "open" and .head.sha == $revision)) | length == 1' \

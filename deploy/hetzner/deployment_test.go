@@ -227,6 +227,7 @@ func TestMainArtifactsAllowsOnlyProtectedOpenPRCandidates(t *testing.T) {
 		"commits/${revision}/pulls",
 		`.base.ref == "main"`,
 		`.head.sha == $revision`,
+		`test "$GITHUB_SHA" = "$revision"`,
 		"ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_revision || github.sha }}",
 		"needs.authorize-candidate.result == 'success'",
 		`channel="candidate"`,
