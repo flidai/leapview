@@ -141,6 +141,40 @@ func testAPIToken(t *testing.T, ctx context.Context, store *testControlStore, pr
 	return secret
 }
 
+func testTypedInstanceAPIToken(t *testing.T, ctx context.Context, store *testControlStore, principalID, name string, actions ...access.Action) string {
+	t.Helper()
+	permissions := make([]access.PermissionPair, 0, len(actions))
+	seen := make(map[string]struct{})
+	for _, action := range actions {
+		pair, err := access.NewInstancePermissionPair(action, "lvinst_test")
+		if err != nil {
+			t.Fatalf("create typed instance permission %q: %v", action, err)
+		}
+		required, err := access.RequiredPermissionPairs(pair)
+		if err != nil {
+			t.Fatalf("expand typed instance permission %q: %v", action, err)
+		}
+		for _, candidate := range required {
+			key := string(candidate.Action) + "\x00" + candidate.Target.InstanceID
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			permissions = append(permissions, candidate)
+		}
+	}
+	secret, _, err := store.fixture.Graph.Access.CreateScopedAPITokenWithMetadata(ctx, access.ScopedAPITokenInput{
+		PrincipalID: principalID,
+		Name:        name,
+		Permissions: permissions,
+		ExpiresAt:   time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create typed instance API token: %v", err)
+	}
+	return secret
+}
+
 func assertAPIError(t *testing.T, rec *httptest.ResponseRecorder, wantCode int, messageContains string) {
 	t.Helper()
 	if rec.Code != wantCode {

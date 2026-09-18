@@ -52,6 +52,17 @@ func (a *APIGenAuthorizer) protectInstance(operationID string, next http.Handler
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
-		next.ServeHTTP(w, r)
+		requirement, ok := a.typedRequirement(operationID)
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		ctx := withInstanceAuthorization(r.Context(), instanceAuthorization{
+			OperationID: operationID,
+			PrincipalID: principal.ID,
+			InstanceID:  instanceID,
+			Action:      requirement.Action,
+		})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}))
 }

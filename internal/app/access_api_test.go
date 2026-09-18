@@ -88,13 +88,7 @@ func TestCreateAndResetLocalPrincipalAPI(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()
 	admin := testPlatformPrincipal(t, ctx, store, "access-admin@example.com", "Access Admin")
-	token, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID: admin.ID,
-		Name:        "access-admin",
-		Capabilities: []access.Capability{
-			access.CapabilityPlatformAdmin,
-		},
-	})
+	token := testTypedInstanceAPIToken(t, ctx, store, admin.ID, "access-admin", access.ActionPlatformAccessManage)
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -264,11 +258,7 @@ func TestServicePrincipalSecretCreateReturnsExpiry(t *testing.T) {
 	ctx := context.Background()
 	repo := testAccessRepository(store)
 	owner := testPlatformPrincipal(t, ctx, store, "sp-secret-owner@example.com", "SP Secret Owner")
-	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID:  owner.ID,
-		Name:         "platform-admin",
-		Capabilities: []access.Capability{access.CapabilityPlatformAdmin},
-	})
+	authSecret := testTypedInstanceAPIToken(t, ctx, store, owner.ID, "platform-admin", access.ActionPlatformAccessManage)
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret API"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
@@ -315,11 +305,7 @@ func TestServicePrincipalSecretMintingResponseDisablesHTTPStorage(t *testing.T) 
 	ctx := context.Background()
 	repo := testAccessRepository(store)
 	owner := testPlatformPrincipal(t, ctx, store, "secret-cache-owner@example.com", "Secret Cache Owner")
-	authSecret, _ := testScopedAPIToken(t, ctx, store, access.APITokenInput{
-		PrincipalID:  owner.ID,
-		Name:         "platform-admin",
-		Capabilities: []access.Capability{access.CapabilityPlatformAdmin, access.CapabilityResourceManage, access.CapabilityResourceUse},
-	})
+	authSecret := testTypedInstanceAPIToken(t, ctx, store, owner.ID, "platform-admin", access.ActionPlatformAccessManage)
 	servicePrincipal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "Secret Cache"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)

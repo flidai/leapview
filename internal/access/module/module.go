@@ -253,7 +253,10 @@ func (m *Module) AuthorizeBootstrapCredential(ctx context.Context, principalID, 
 // applies request-credential attenuation. Credentials can reduce authority,
 // never grant the durable role: authoring credentials always deny, and API
 // tokens must explicitly carry PLATFORM_ADMIN. Legacy NULL/empty capability
-// lists deny.
+// lists deny. A generated typed instance operation may preserve its exact,
+// already-validated action/instance decision in the request context so domain
+// handlers do not incorrectly re-attenuate it through the retired capability
+// model.
 func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, principalID string) (bool, error) {
 	allowed, err := m.IsPlatformAdmin(ctx, principalID)
 	if err != nil || !allowed {
@@ -268,6 +271,9 @@ func (m *Module) RequestPlatformAdmin(ctx context.Context, r *http.Request, prin
 	}
 	if credential.Authoring != nil {
 		return false, nil
+	}
+	if authorization, found := instanceAuthorizationFromContext(ctx); found && authorization.PrincipalID == principalID {
+		return true, nil
 	}
 	if credential.Token.ID == "" || len(credential.Token.Capabilities) == 0 {
 		return false, nil

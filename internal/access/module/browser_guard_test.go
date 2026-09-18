@@ -351,4 +351,28 @@ func TestRequestPlatformAdminCredentialAttenuation(t *testing.T) {
 	check("narrow token", access.APICredential{Token: access.APIToken{ID: "narrow", Capabilities: []access.Capability{access.CapabilityResourceRead}}}, false)
 	check("project admin token", access.APICredential{Token: access.APIToken{ID: "project", Capabilities: []access.Capability{access.CapabilityProjectAdmin}}}, false)
 	check("platform admin token", access.APICredential{Token: access.APIToken{ID: "platform", Capabilities: []access.Capability{access.CapabilityPlatformAdmin}}}, true)
+
+	typedCredential := access.APICredential{
+		Principal: access.Principal{ID: principal.ID},
+		Token: access.APIToken{
+			ID:                "typed",
+			PrincipalID:       principal.ID,
+			PermissionProfile: access.PermissionCatalogProfile,
+		},
+	}
+	typedRequest := httptest.NewRequest(http.MethodGet, "/api/v1/access/principals", nil)
+	typedRequest = typedRequest.WithContext(WithAPICredential(typedRequest.Context(), typedCredential))
+	typedContext := withInstanceAuthorization(typedRequest.Context(), instanceAuthorization{
+		OperationID: "createPrincipal",
+		PrincipalID: principal.ID,
+		InstanceID:  "instance_test",
+		Action:      access.ActionPlatformAccessManage,
+	})
+	typedRequest = typedRequest.WithContext(typedContext)
+	if allowed, typedErr := module.RequestPlatformAdmin(typedRequest.Context(), typedRequest, principal.ID); typedErr != nil || !allowed {
+		t.Fatalf("validated typed instance decision allowed = %t, error = %v", allowed, typedErr)
+	}
+	if allowed, mismatchErr := module.RequestPlatformAdmin(typedRequest.Context(), typedRequest, "another-principal"); mismatchErr != nil || allowed {
+		t.Fatalf("mismatched typed instance decision allowed = %t, error = %v", allowed, mismatchErr)
+	}
 }

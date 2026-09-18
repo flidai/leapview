@@ -36,15 +36,15 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed journey principal: %v", err)
 	}
-	journeyToken, _, err := fixture.Graph.Access.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
+	publicationPermissions, err := access.ExpandPermissionRole(access.PermissionRolePublisher, postgresJourneyProject)
+	if err != nil {
+		t.Fatalf("expand journey publication permissions: %v", err)
+	}
+	journeyToken, _, err := fixture.Graph.Access.CreateScopedAPITokenWithMetadata(t.Context(), access.ScopedAPITokenInput{
 		PrincipalID: principal.ID,
 		Name:        "journey-public-dashboard",
-		Capabilities: []access.Capability{
-			access.CapabilityResourceRead,
-			access.CapabilityResourceEdit,
-			access.CapabilityResourcePublish,
-		},
-		ExpiresAt: time.Now().Add(time.Hour),
+		Permissions: publicationPermissions,
+		ExpiresAt:   time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatalf("create journey API token: %v", err)
@@ -371,9 +371,14 @@ func (r *postgresPublicJourneyRuntime) Prepare(_ context.Context, input runtimeh
 	if err != nil {
 		return nil, err
 	}
+	publisher, err := access.NewTypedRoleBinding("journey-publisher-binding", "Journey publisher", subject, access.PermissionRolePublisher, identity.ProjectID)
+	if err != nil {
+		return nil, err
+	}
 	snapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, r.graph, []accesssnapshot.RoleBinding{
 		{ID: "journey-admin-binding", Name: "Journey administrator", Subject: subject, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)},
 		editor,
+		publisher,
 	}, r.typedGrants, nil)
 	if err != nil {
 		return nil, err
