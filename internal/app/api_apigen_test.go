@@ -863,7 +863,6 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"getInstance": true,
 	}
 	authenticatedOperations := map[string]bool{
-		"addGroupMember":                   true,
 		"archiveAgentConversation":         true,
 		"cancelAgentRun":                   true,
 		"cancelRefreshRun":                 true,
@@ -872,33 +871,18 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"createAgentConversation":          true,
 		"createAgentRun":                   true,
 		"createCurrentAPIToken":            true,
-		"createGroup":                      true,
-		"createPrincipal":                  true,
-		"createServicePrincipal":           true,
-		"createServicePrincipalSecret":     true,
 		"decideDeviceAuthorization":        true,
 		"deleteCurrentAvatar":              true,
-		"deleteGroup":                      true,
-		"deletePrincipal":                  true,
-		"deleteServicePrincipal":           true,
-		"disablePrincipal":                 true,
-		"enablePrincipal":                  true,
 		"executeDashboardAuthoringCommand": true,
-		"getAgentConfig":                   true,
 		"getAgentConversation":             true,
 		"getAgentRun":                      true,
 		"getCapabilities":                  true,
 		"getCurrentPrincipal":              true,
-		"getDashboardPublication":          true,
-		"getGroup":                         true,
-		"getPrincipal":                     true,
 		"getPrincipalAvatar":               true,
 		"getProductAPIStatus":              true,
 		"getProductAuthenticationStatus":   true,
 		"getProductSystemStatus":           true,
 		"getRefreshRun":                    true,
-		"getServicePrincipal":              true,
-		"getServicePrincipalSecret":        true,
 		"listAgentConversations":           true,
 		"listArchivedAgentConversations":   true,
 		"listAgentEvents":                  true,
@@ -911,32 +895,18 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"listDashboardAuthoringCatalog":    true,
 		"listDashboardPublications":        true,
 		"listDashboards":                   true,
-		"listGroupMembers":                 true,
-		"listGroups":                       true,
 		"listManagedConnections":           true,
-		"listPrincipalSessions":            true,
-		"listPrincipals":                   true,
 		"listRefreshRunEvents":             true,
 		"listRefreshRuns":                  true,
 		"listSemanticModels":               true,
-		"listServicePrincipalSecrets":      true,
-		"listServicePrincipals":            true,
-		"removeGroupMember":                true,
-		"resetPrincipalPassword":           true,
 		"revokeCurrentAPIToken":            true,
 		"revokeCurrentAuthoringSession":    true,
 		"revokeCurrentSession":             true,
-		"revokePrincipalSession":           true,
-		"revokeServicePrincipalSecret":     true,
 		"search":                           true,
-		"updateAgentConfig":                true,
 		"updateAgentConversation":          true,
 		"manageAgentConversations":         true,
 		"updateCurrentPrincipal":           true,
 		"updateCurrentTheme":               true,
-		"updateGroup":                      true,
-		"updatePrincipal":                  true,
-		"updateServicePrincipal":           true,
 		"uploadCurrentAvatar":              true,
 	}
 	for operationID, contract := range contracts {
@@ -950,7 +920,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 			}
 			continue
 		}
-		if authenticatedOperations[operationID] || slices.Contains(semanticAttributeAuthenticatedOperations, operationID) {
+		if authenticatedOperations[operationID] {
 			if got := authz["mode"]; got != "authenticated" {
 				t.Fatalf("%s x-authz mode = %#v, want authenticated", operationID, got)
 			}

@@ -28,16 +28,11 @@ func validatePipelineAuthorityTarget(authority jobs.AuthorityEnvelope, identity 
 	return nil
 }
 
-// validateDelegatedExecutablePlan binds the only executable-closure identity
-// currently exposed by the refresh contract to delegated authority. The
-// pipeline-plan digest is the canonical identity over the generation-bound
-// execution selection, its artifact/source provenance, and invocation-bound
-// plan identity. It is therefore the provable closure fence for refresh work.
-//
-// Binding, destination, and trigger digests are deliberately not compared
-// here: the refresh artifact/plan contracts do not expose standalone values
-// for those meanings. Treating another component digest as one of them would
-// silently change the authority contract.
+// validateDelegatedExecutablePlan binds the complete canonical execution
+// evidence to delegated authority. The pipeline-plan digest remains the
+// generation-bound closure fence, while the explicit evidence digests prevent
+// a caller from presenting a plan whose parameters, bindings, destination, or
+// trigger meaning differs from the durable grant.
 func validateDelegatedExecutablePlan(authority jobs.AuthorityEnvelope, plan projectpipelineplan.Plan) error {
 	if authority.Mode != jobs.DelegatedWorkloadMode {
 		return nil
@@ -50,6 +45,41 @@ func validateDelegatedExecutablePlan(authority jobs.AuthorityEnvelope, plan proj
 	}
 	if authority.ExecutionGrant.ClosureDigest != plan.Digest {
 		return fmt.Errorf("delegated execution closure does not match executable pipeline plan")
+	}
+	if err := validateDelegatedClosureEvidence(authority, plan); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateDelegatedClosureEvidence(authority jobs.AuthorityEnvelope, plan projectpipelineplan.Plan) error {
+	evidence := authority.ExecutionGrant
+	if evidence == nil {
+		return fmt.Errorf("delegated execution grant evidence is required")
+	}
+	if plan.ParameterDigest == "" || plan.BindingDigest == "" || plan.DestinationDigest == "" || plan.TriggerDigest == "" {
+		return fmt.Errorf("delegated executable plan closure evidence is incomplete")
+	}
+	if evidence.ParameterDigest == "" {
+		return fmt.Errorf("delegated execution parameter evidence is unavailable")
+	}
+	if evidence.ParameterDigest != plan.ParameterDigest {
+		return fmt.Errorf("delegated execution parameter evidence does not match executable plan")
+	}
+	if evidence.BindingDigest != plan.BindingDigest {
+		return fmt.Errorf("delegated execution binding evidence does not match executable plan")
+	}
+	if evidence.DestinationDigest != plan.DestinationDigest {
+		return fmt.Errorf("delegated execution destination evidence does not match executable plan")
+	}
+	if evidence.TriggerDigest != plan.TriggerDigest {
+		return fmt.Errorf("delegated execution trigger evidence does not match executable plan")
+	}
+	if evidence.RunAsPrincipalID == "" || evidence.RunAsPrincipalID != plan.RunAsPrincipalID || plan.RunAsPrincipalID != authority.ExecutionPrincipalID {
+		return fmt.Errorf("delegated execution run-as evidence does not match executable plan")
+	}
+	if evidence.Environment == "" || evidence.Environment != plan.Environment || evidence.Environment != authority.Target.Environment {
+		return fmt.Errorf("delegated execution environment evidence does not match executable plan")
 	}
 	return nil
 }

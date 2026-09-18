@@ -321,7 +321,7 @@ interface ManagedDataLifecycle {
   @summary("Create a managed-data upload session from a canonical manifest")
   @route("/upload-sessions")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
@@ -367,7 +367,7 @@ interface ManagedDataLifecycle {
   @summary("Cancel a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/cancel")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)
@@ -390,7 +390,7 @@ interface ManagedDataLifecycle {
   @summary("Finalize a managed-data upload session")
   @route("/upload-sessions/{uploadSession}/finalize")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
+  @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT", action: "connection.manage", resolver: "connection" })
   @extension("x-leapview-object-scope", "connection")
   @apigen.failsWith(ManagedDataUploadInvalidFailure)
   @apigen.failsWith(ManagedDataUploadNotFoundFailure)

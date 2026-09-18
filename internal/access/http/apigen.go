@@ -160,6 +160,21 @@ func (d *APIGenDispatcher) CreateProjectRoleBinding(w stdhttp.ResponseWriter, r 
 	}
 	d.handler.CreateProjectRoleBinding(w, r)
 }
+func (d *APIGenDispatcher) IssueResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenIssueResourceShareGrantHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.IssueResourceShareGrant(w, r)
+}
+func (d *APIGenDispatcher) RevokeResourceShareGrant(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.RevokeResourceShareGrant(w, r)
+}
+func (d *APIGenDispatcher) DeleteProjectRoleBinding(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenDeleteProjectRoleBindingHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.DeleteProjectRoleBinding(w, r)
+}
 func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
 	d.handler.ListGroupSemanticAttributeAssignments(w, r)
 }

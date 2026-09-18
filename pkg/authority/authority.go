@@ -58,7 +58,10 @@ type ExecutionGrantEvidence struct {
 	WorkflowID        string    `json:"workflowId"`
 	WorkflowRevision  string    `json:"workflowRevision"`
 	ClosureDigest     string    `json:"closureDigest"`
+	ParameterDigest   string    `json:"parameterDigest,omitempty"`
 	BindingDigest     string    `json:"bindingDigest"`
+	RunAsPrincipalID  string    `json:"runAsPrincipalId,omitempty"`
+	Environment       string    `json:"environment,omitempty"`
 	DestinationDigest string    `json:"destinationDigest"`
 	TriggerDigest     string    `json:"triggerDigest"`
 }
@@ -194,6 +197,11 @@ func (e ExecutionGrantEvidence) Validate() error {
 	} {
 		if !canonicalIdentity(value) {
 			return fmt.Errorf("%s evidence is required", label)
+		}
+	}
+	for label, value := range map[string]string{"parameter digest": e.ParameterDigest, "run-as principal": e.RunAsPrincipalID, "environment": e.Environment} {
+		if value != "" && !canonicalIdentity(value) {
+			return fmt.Errorf("%s evidence is not canonical", label)
 		}
 	}
 	return nil

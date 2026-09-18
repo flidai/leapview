@@ -46,6 +46,7 @@ type surfaceConfig struct {
 	Repository                     func() (access.Repository, error)
 	AuthorizationPolicyTargetID    string
 	AuthorizationPolicyEnvironment string
+	InstanceID                     string
 	CurrentPrincipal               func(*http.Request) (Principal, bool)
 	CurrentCredential              func(*http.Request) (access.APICredential, bool)
 	CurrentEffectiveCapabilities   func(context.Context, string) ([]access.Capability, error)
@@ -120,7 +121,8 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		presentation:                      config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, AuthorizationPolicyTargetID: config.AuthorizationPolicyTargetID,
 			AuthorizationPolicyEnvironment: config.AuthorizationPolicyEnvironment, CurrentPrincipal: currentPrincipal,
-			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,
+			DurableGrantInstanceID: config.InstanceID,
+			CurrentCredential:      config.CurrentCredential, CurrentSession: currentSession,
 			CurrentEffectiveCapabilities:      config.CurrentEffectiveCapabilities,
 			CurrentEffectivePermissionOptions: config.CurrentEffectivePermissionOptions,
 			CurrentProjectID:                  config.CurrentProjectID,
@@ -131,6 +133,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 	module.handler.RequestEffectiveCapabilities = module.RequestEffectiveCapabilities
 	module.handler.PlatformAdmin = module.IsPlatformAdmin
 	module.handler.RequestPlatformAdmin = module.RequestPlatformAdmin
+	module.handler.DurableGrantService = module.durableGrantService
 	return module, nil
 }
 

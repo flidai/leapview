@@ -26,6 +26,14 @@ type SearchParams struct {
 	Cursor *string
 }
 
+// ResourceCreateReceipt is the bounded response shared by resource creation
+// handlers. Creation returns only the allocated identity and lifecycle status;
+// callers must perform an independently authorized read for any other fields.
+type ResourceCreateReceipt struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+}
+
 type ProjectResponse struct {
 	ActiveDeploymentID *string `json:"activeDeploymentId,omitempty"`
 	CreatedAt          string  `json:"createdAt"`

@@ -521,6 +521,71 @@ func TestAuthoringAPIMutationDoesNotSpoofToolCallProvenance(t *testing.T) {
 
 }
 
+func TestAuthoringAPICreateReturnsBoundedReceipt(t *testing.T) {
+	app := &fakeHeadlessAuthoring{}
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000107")
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want created (%s)", rec.Code, rec.Body.String())
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("create receipt fields = %#v, want only id and status", fields)
+	}
+	var receipt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != "created-dashboard" || receipt.Status != "draft" {
+		t.Fatalf("receipt = %#v, want created dashboard draft", receipt)
+	}
+	if got, want := rec.Header().Get("Location"), "/api/v1/projects/sales/authoring/dashboards/created-dashboard"; got != want {
+		t.Fatalf("location = %q, want %q", got, want)
+	}
+}
+
+func TestAuthoringAPIForkReturnsBoundedReceipt(t *testing.T) {
+	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "forked-dashboard", Draft: &authoring.Draft{ID: "forked-draft"}}}}
+	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"}}`))
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000108")
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want created (%s)", rec.Code, rec.Body.String())
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("fork receipt fields = %#v, want only id and status", fields)
+	}
+	var receipt struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != "forked-dashboard" || receipt.Status != "draft" {
+		t.Fatalf("fork receipt = %#v, want forked dashboard draft", receipt)
+	}
+	if _, ok := fields["lifecycle"]; ok {
+		t.Fatal("fork receipt exposed lifecycle details")
+	}
+	if _, ok := fields["revision"]; ok {
+		t.Fatal("fork receipt exposed revision details")
+	}
+}
+
 func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "created-dashboard", Draft: &authoring.Draft{ID: "created-draft"},

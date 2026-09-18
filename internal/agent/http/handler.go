@@ -850,7 +850,16 @@ func agentCredentialScope(credential access.APICredential) agent.CredentialScope
 	for index, capability := range credential.Token.Capabilities {
 		capabilities[index] = string(capability)
 	}
-	return agent.CredentialScope{Capabilities: capabilities, Restricted: true}
+	var permissions []access.PermissionPair
+	if credential.Token.Permissions != nil {
+		permissions = append(make([]access.PermissionPair, 0, len(credential.Token.Permissions)), credential.Token.Permissions...)
+	}
+	return agent.CredentialScope{
+		Capabilities:      capabilities,
+		PermissionProfile: credential.Token.PermissionProfile,
+		Permissions:       permissions,
+		Restricted:        true,
+	}
 }
 
 func agentConversationDTO(row agent.Conversation) api.AgentConversationResponse {

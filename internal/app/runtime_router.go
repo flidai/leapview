@@ -58,6 +58,32 @@ import (
 
 type QueryMetrics = dashboardmodule.Metrics
 
+// withAgentCredential installs the bounded agent credential for downstream
+// tool and API handlers. Keeping the typed profile/pairs on the context is
+// essential: a principal-only context would silently restore the principal's
+// broader authority after the agent scope had been attenuated.
+func withAgentCredential(ctx context.Context, principal accessmodule.Principal, scope agentmodule.Scope) context.Context {
+	if !scope.Credential.Restricted {
+		return ctx
+	}
+	capabilities := make([]access.Capability, len(scope.Credential.Capabilities))
+	for index, capability := range scope.Credential.Capabilities {
+		capabilities[index] = access.Capability(capability)
+	}
+	var permissions []access.PermissionPair
+	if scope.Credential.Permissions != nil {
+		permissions = append(make([]access.PermissionPair, 0, len(scope.Credential.Permissions)), scope.Credential.Permissions...)
+	}
+	return accessmodule.WithAPICredential(ctx, access.APICredential{
+		Principal: access.Principal{ID: principal.ID},
+		Token: access.APIToken{
+			ID: "agent-scope", PrincipalID: scope.PrincipalID,
+			Capabilities: capabilities, PermissionProfile: scope.Credential.PermissionProfile,
+			Permissions: permissions,
+		},
+	})
+}
+
 type capabilityRoutes struct {
 	accessModule       *accessmodule.Module
 	managedDataModule  *manageddatamodule.Module
@@ -1028,6 +1054,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return routes.refreshModule.CancelPipelineRefreshForUI(ctx, identity, pipelineID, runID, principalID)
 			}
 			routes.projectBrowser.AuthorizePipeline = func(r *http.Request, pipelineID string, capability access.Capability) (bool, error) {
+				if capability != access.CapabilityResourceUse {
+					return false, fmt.Errorf("unsupported pipeline browser capability %q", capability)
+				}
 				principal, ok := routes.accessModule.CurrentPrincipal(r)
 				if !ok {
 					return false, nil
@@ -1040,10 +1069,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if err != nil {
 					return false, err
 				}
-				return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{resource}, capability)
+				return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{resource}, capability, access.ActionPipelineRun)
 			}
 		}
 		routes.projectBrowser.AuthorizeConnectionCreate = func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			if capability != access.CapabilityProjectAdmin {
+				return false, fmt.Errorf("unsupported connection-create browser capability %q", capability)
+			}
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
 				return false, nil
@@ -1055,9 +1087,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
+			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability, access.ActionConnectionCreate)
 		}
 		routes.projectBrowser.AuthorizeDashboard = func(r *http.Request, dashboardID string, capability access.Capability) (bool, error) {
+			if capability != access.CapabilityResourceManage {
+				return false, fmt.Errorf("unsupported dashboard browser capability %q", capability)
+			}
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
 				return false, nil
@@ -1070,9 +1105,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, capability)
+			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, capability, access.ActionDashboardUpdate)
 		}
 		routes.projectBrowser.AuthorizeConnection = func(r *http.Request, connectionID string, capability access.Capability) (bool, error) {
+			if capability != access.CapabilityResourceManage {
+				return false, fmt.Errorf("unsupported connection browser capability %q", capability)
+			}
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			if !ok {
 				return false, nil
@@ -1085,7 +1123,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if err != nil {
 				return false, err
 			}
-			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{connection}, capability)
+			return authorizeProjectResourcesWithTypedAction(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{connection}, capability, access.ActionConnectionManage)
 		}
 		if platform.apiProtocol != nil {
 			routes.projectBrowser.MutationMiddleware = func(next http.Handler) http.Handler {
@@ -1399,6 +1437,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if routes.projectCatalog == nil {
 					return "", projectcatalog.ErrUnavailable
 				}
+				if !agentmodule.CredentialAllowsResource(scope, id, kind, capability) {
+					return "", projectcatalog.ErrNotFound
+				}
 				resolved, err := routes.projectCatalog.Resolve(ctx, scope.PrincipalID, projectcatalog.Ref{ID: id, Kind: kind}, capability, scope.DevAuthBypass)
 				if err != nil {
 					return "", err
@@ -1473,6 +1514,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 				} else if identity.Credential.Token.ID != "" {
 					scope.Credential.Restricted = true
+					scope.Credential.PermissionProfile = identity.Credential.Token.PermissionProfile
+					if identity.Credential.Token.Permissions != nil {
+						scope.Credential.Permissions = append(make([]access.PermissionPair, 0, len(identity.Credential.Token.Permissions)), identity.Credential.Token.Permissions...)
+					}
 					if identity.Credential.Token.Capabilities != nil {
 						scope.Credential.Capabilities = make([]string, 0, len(identity.Credential.Token.Capabilities))
 						for _, capability := range identity.Credential.Token.Capabilities {
@@ -1488,6 +1533,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx := accessmodule.WithPrincipal(request.Context(), principal)
+				ctx = withAgentCredential(ctx, principal, scope)
 				request = request.WithContext(ctx)
 				if apiDispatcher == nil {
 					return false
@@ -1527,6 +1573,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
 				ctx = accessmodule.WithPrincipal(ctx, principal)
+				ctx = withAgentCredential(ctx, principal, scope)
 				if projectID, err := projectgraph.NewResourceID(scope.ProjectID); err == nil {
 					ctx = analyticsmodule.WithAgentQueryMetadata(ctx, projectID, scope.PrincipalID)
 				}
@@ -1622,15 +1669,18 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			CurrentEffectiveCapabilities:      routes.accessModule.CurrentEffectiveCapabilities,
 			CurrentEffectivePermissionOptions: routes.accessModule.CurrentEffectivePermissionOptions,
-			PlatformAdmin:                     routes.accessModule.IsPlatformAdmin,
-			CurrentProjectID:                  runtime.resolveProjectID,
-			Publications:                      routes.dashboardModule,
-			AgentConfigCommand:                routes.agentModule.UICommandBindings().UpdateConfig,
-			PublicationCommands:               routes.dashboardModule.PublicationCommandBindings(),
-			AuthConfigured:                    platform.auth != nil,
-			LocalPasswordEnabled:              localPasswordEnabled,
-			AccessConfigured:                  accessReader != nil,
-			Storage:                           storageConfig,
+			AuthorizeTypedDashboardAction: func(ctx context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
+				return authorizeTypedDashboardAction(ctx, routes.accessModule, runtime.runtimeHostModule, principalID, projectID, dashboardID, action)
+			},
+			PlatformAdmin:        routes.accessModule.IsPlatformAdmin,
+			CurrentProjectID:     runtime.resolveProjectID,
+			Publications:         routes.dashboardModule,
+			AgentConfigCommand:   routes.agentModule.UICommandBindings().UpdateConfig,
+			PublicationCommands:  routes.dashboardModule.PublicationCommandBindings(),
+			AuthConfigured:       platform.auth != nil,
+			LocalPasswordEnabled: localPasswordEnabled,
+			AccessConfigured:     accessReader != nil,
+			Storage:              storageConfig,
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
@@ -1676,8 +1726,25 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}
 	apiGenAuthorizer, err := routes.accessModule.APIGenAuthorizer(runtime.runtimeHostModule, accessAPIGenOperationContracts(), accessmodule.APIGenResourceResolvers{
-		Dashboard: func(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {
-			id, err := projectgraph.NewResourceID(chi.URLParam(r, "dashboard"))
+		Dashboard: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+			rawID := chi.URLParam(r, "dashboard")
+			if strings.TrimSpace(rawID) == "" {
+				publicationName := strings.TrimSpace(chi.URLParam(r, "publication"))
+				if publicationName == "" || routes.dashboardModule == nil {
+					return nil
+				}
+				rows, readErr := routes.dashboardModule.ProjectPublications(r.Context(), active)
+				if readErr != nil {
+					return nil
+				}
+				for _, row := range rows {
+					if row.Name == publicationName {
+						rawID = row.Dashboard
+						break
+					}
+				}
+			}
+			id, err := projectgraph.NewResourceID(rawID)
 			if err != nil {
 				return nil
 			}
@@ -1712,6 +1779,23 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		Source:   pathResourceResolver("source", projectgraph.KindSource),
 		Model:    pathResourceResolver("model", projectgraph.KindModel),
 		Pipeline: pipelineResourceResolver,
+		ResourceShare: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+			handler := routes.accessModule.HTTP()
+			if handler.Repository == nil {
+				return resourceShareResourceResolver(r, active)
+			}
+			repository, err := handler.Repository()
+			if err != nil || repository == nil {
+				return nil
+			}
+			reader, ok := repository.(interface {
+				ResourceShareGrant(context.Context, string) (access.ResourceShareGrant, error)
+			})
+			if !ok {
+				return nil
+			}
+			return resourceShareResourceResolverWithGrantReader(r, active, reader.ResourceShareGrant)
+		},
 		Project: func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
 			requested, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
 			if err != nil || requested != active {

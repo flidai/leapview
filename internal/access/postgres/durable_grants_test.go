@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -54,14 +55,19 @@ func installDurableGrantMigration(t *testing.T, db auditDatabase) {
 	`, durableGrantTestInstance, durableGrantTestProject, durableGrantTestUID, durableGrantTestUID2); err != nil {
 		t.Fatalf("seed resource UID fixture: %v", err)
 	}
-	contents, err := fs.ReadFile(platformmigrations.MigrationFS(), "026_durable_authority_grants.sql")
-	if err != nil {
-		t.Fatalf("read migration 026: %v", err)
+	parts := make([]string, 0, 2)
+	for _, migrationName := range []string{"026_durable_authority_grants.sql", "027_resource_share_no_onward_delegation.sql"} {
+		contents, readErr := fs.ReadFile(platformmigrations.MigrationFS(), migrationName)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", migrationName, readErr)
+		}
+		up := string(contents)
+		if down := strings.Index(up, "\n-- +goose Down"); down >= 0 {
+			up = up[:down]
+		}
+		parts = append(parts, up)
 	}
-	up := string(contents)
-	if down := strings.Index(up, "\n-- +goose Down"); down >= 0 {
-		up = up[:down]
-	}
+	up := strings.Join(parts, "\n")
 	conn, err := db.admin.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -142,9 +148,26 @@ func TestDurableGrantPostgreSQLResourceShareLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := durableGrantPostgresInput(t, issuer, target, principal, "share-replay", issued, expires, []access.PermissionPair{read}, []access.PermissionPair{share, read})
+	onward := input
+	onward.IdempotencyKey = "share-onward-rejected"
+	onward.AllowOnwardDelegation = true
+	if _, err := repo.CreateResourceShareGrant(t.Context(), onward); !errors.Is(err, access.ErrGrantNoOnwardDelegation) {
+		t.Fatalf("repository onward-delegating share error = %v, want ErrGrantNoOnwardDelegation", err)
+	}
 	grant, err := repo.CreateResourceShareGrant(t.Context(), input)
 	if err != nil {
 		t.Fatalf("create resource share: %v", err)
+	}
+	if _, err := db.admin.Exec(t.Context(), `ALTER TABLE access.resource_share_grant DISABLE TRIGGER resource_share_grant_immutable`); err != nil {
+		t.Fatalf("disable immutable trigger for schema check: %v", err)
+	}
+	_, schemaErr := db.admin.Exec(t.Context(), `UPDATE access.resource_share_grant SET allow_onward_delegation=true WHERE id=$1`, grant.ID)
+	if _, err := db.admin.Exec(t.Context(), `ALTER TABLE access.resource_share_grant ENABLE TRIGGER resource_share_grant_immutable`); err != nil {
+		t.Fatalf("restore immutable trigger after schema check: %v", err)
+	}
+	var pgErr *pgconn.PgError
+	if schemaErr == nil || !errors.As(schemaErr, &pgErr) || pgErr.Code != "23514" {
+		t.Fatalf("resource-share onward schema error = %v, want check violation", schemaErr)
 	}
 	replayed, err := repo.CreateResourceShareGrant(t.Context(), input)
 	if err != nil {

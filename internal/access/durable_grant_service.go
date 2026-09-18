@@ -268,25 +268,40 @@ func (s *DurableGrantService) IssueGrantAdminEnvelope(ctx context.Context, reque
 // using the current resolved principal as actor. The actor is never accepted
 // from a request body and a repeated repository revoke cannot restore state.
 func (s *DurableGrantService) RevokeResourceShareGrant(ctx context.Context, id, reason string) error {
-	return s.revoke(ctx, DurableGrantKindResourceShare, id, reason)
+	return s.revoke(ctx, DurableGrantKindResourceShare, id, reason, DurableGrantTarget{})
+}
+
+// RevokeResourceShareGrantForTarget performs the same audited revocation but
+// binds authority resolution to the persisted exact target. Public adapters
+// use this form after loading the grant and proving the caller is its issuer.
+func (s *DurableGrantService) RevokeResourceShareGrantForTarget(ctx context.Context, id, reason string, target DurableGrantTarget) error {
+	return s.revoke(ctx, DurableGrantKindResourceShare, id, reason, target)
 }
 
 func (s *DurableGrantService) RevokeExecutionGrant(ctx context.Context, id, reason string) error {
-	return s.revoke(ctx, DurableGrantKindExecution, id, reason)
+	return s.revoke(ctx, DurableGrantKindExecution, id, reason, DurableGrantTarget{})
 }
 
 func (s *DurableGrantService) RevokeGrantAdminEnvelope(ctx context.Context, id, reason string) error {
-	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason)
+	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason, DurableGrantTarget{})
 }
 
-func (s *DurableGrantService) revoke(ctx context.Context, kind GrantKind, id, reason string) error {
+// RevokeGrantAdminEnvelopeForTarget binds the issuer re-check to the exact
+// project/resource selector persisted on the envelope. Public adapters must
+// load that selector before calling this method; the empty-target compatibility
+// method above remains for internal callers that already own that proof.
+func (s *DurableGrantService) RevokeGrantAdminEnvelopeForTarget(ctx context.Context, id, reason string, target DurableGrantTarget) error {
+	return s.revoke(ctx, DurableGrantKindAdminEnvelope, id, reason, target)
+}
+
+func (s *DurableGrantService) revoke(ctx context.Context, kind GrantKind, id, reason string, target DurableGrantTarget) error {
 	if s == nil || s.writer == nil || s.resolver == nil {
 		return ErrGrantAuthorityUnavailable
 	}
 	if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) || strings.ContainsAny(id, "\x00\r\n") || len(id) > 255 || len(reason) > 1024 || strings.ContainsAny(reason, "\x00\r\n") {
 		return ErrGrantRevokeInvalid
 	}
-	authority, err := s.resolve(ctx, DurableGrantTarget{})
+	authority, err := s.resolve(ctx, target)
 	if err != nil {
 		return err
 	}

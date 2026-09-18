@@ -182,7 +182,7 @@ model TargetConnectionBindingHealthResponse {
 interface TargetConnectionBindings {
   @summary("List target connection bindings")
   @get
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.settings.read", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   listTargetConnectionBindings(
     @path project: ResourceId,
@@ -191,7 +191,7 @@ interface TargetConnectionBindings {
 
   @summary("Create a target connection binding")
   @post
-  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
+  @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN", action: "project.settings.update", resolver: "project" })
   @extension("x-leapview-object-scope", "project")
   @apigen.failsWith(InvalidConnectionBindingFailure)
   @apigen.failsWith(ForbiddenConnectionOperationFailure)

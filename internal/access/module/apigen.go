@@ -30,13 +30,14 @@ type apiGenResourceScope struct {
 // resource capability operations; platform-scoped operations use the durable
 // platform-role evaluator and remain available without an active generation.
 type APIGenAuthorizer struct {
-	module     *Module
-	runtime    apigenRuntimeHost
-	scopes     map[string]apiGenResourceScope
-	operations map[string]APIGenOperationContract
-	typed      *APIGenTypedOperationRequirementService
-	instance   APIGenInstanceResolver
-	delivery   APIGenDeliveryAuthorizer
+	module        *Module
+	runtime       apigenRuntimeHost
+	scopes        map[string]apiGenResourceScope
+	operations    map[string]APIGenOperationContract
+	typed         *APIGenTypedOperationRequirementService
+	instance      APIGenInstanceResolver
+	delivery      APIGenDeliveryAuthorizer
+	resourceShare APIGenResourceResolver
 	// bootstrap is an explicit, narrow pre-activation authorization seam. It
 	// is intentionally optional and is only consulted for candidate routes;
 	// active generations continue through the immutable snapshot path.
@@ -82,12 +83,13 @@ func (m *Module) APIGenAuthorizer(runtime apigenRuntimeHost, operations map[stri
 		return nil, err
 	}
 	authorizer := &APIGenAuthorizer{
-		module:     m,
-		runtime:    runtime,
-		operations: operations,
-		typed:      typed,
-		delivery:   resolvers.Delivery,
-		instance:   resolvers.Instance,
+		module:        m,
+		runtime:       runtime,
+		operations:    operations,
+		typed:         typed,
+		delivery:      resolvers.Delivery,
+		instance:      resolvers.Instance,
+		resourceShare: resolvers.ResourceShare,
 		scopes: map[string]apiGenResourceScope{
 			"dashboard":      {pathParameter: "dashboard", resolver: resolvers.Dashboard, kind: projectgraph.KindDashboard},
 			"semantic-model": {pathParameter: "model", resolver: resolvers.SemanticModel, kind: projectgraph.KindSemanticModel},
@@ -632,7 +634,7 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 		return "", false
 	}
 	switch scope {
-	case "dashboard", "semantic-model", "connection", "source", "model", "pipeline", "project", "delivery", "instance", "platform", "principal":
+	case "dashboard", "semantic-model", "connection", "source", "model", "pipeline", "project", "resource-share", "delivery", "instance", "platform", "principal":
 		return scope, true
 	default:
 		return "", false
@@ -650,6 +652,12 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 		scope, scopeOK := apiGenScope(contract)
 		if !scopeOK || scope != string(requirement.Resolver) {
 			return nil, false
+		}
+		if requirement.Resolver == access.TypedOperationResolverResourceShare {
+			if a.resourceShare == nil {
+				return nil, false
+			}
+			return a.boundResourceShareResolver(contract), true
 		}
 		if requirement.Resolver != access.TypedOperationResolverDelivery && requirement.Resolver != access.TypedOperationResolverInstance {
 			definition, ok := a.scopes[scope]
@@ -699,6 +707,31 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 		return nil, false
 	}
 	return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
+}
+
+func (a *APIGenAuthorizer) boundResourceShareResolver(contract APIGenOperationContract) APIGenResourceResolver {
+	return func(r *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+		if strings.Contains(contract.Path, "{project}") {
+			requestedProject, err := projectgraph.NewResourceID(chi.URLParam(r, "project"))
+			if err != nil || requestedProject != active {
+				return nil
+			}
+		}
+		resources := a.resourceShare(r, active)
+		if len(resources) == 0 {
+			return nil
+		}
+		requirement, ok := a.typedRequirement(contract.OperationID)
+		if !ok {
+			return nil
+		}
+		for _, resource := range resources {
+			if requirement.ValidateResource(resource) != nil {
+				return nil
+			}
+		}
+		return resources
+	}
 }
 
 func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope, assertProject bool) APIGenResourceResolver {

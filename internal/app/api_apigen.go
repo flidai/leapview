@@ -20,6 +20,18 @@ func agentAPIGenOperations() []agentmodule.APIGenOperation {
 		contracts[operationID] = agentmodule.APIGenOperationContract{
 			OperationID: contract.OperationID, Method: contract.Method, Path: contract.Path,
 			Protected: contract.Protected, AuthzMode: contract.AuthzMode, Manual: contract.Manual,
+			Action: func() string {
+				if contract.Authz == nil {
+					return ""
+				}
+				return contract.Authz.Action
+			}(),
+			Resolver: func() string {
+				if contract.Authz == nil {
+					return ""
+				}
+				return contract.Authz.Resolver
+			}(),
 			Extensions: contract.Extensions,
 		}
 	}

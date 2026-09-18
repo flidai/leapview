@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -76,7 +77,7 @@ func TestDelegatedWorkloadAuthorityServiceCapturesOnlyCurrentGrant(t *testing.T)
 		t.Fatalf("authority target = %#v", authority.Target)
 	}
 	evidence := authority.ExecutionGrant
-	if evidence == nil || evidence.WorkflowRevision != grant.WorkflowRevision || evidence.ClosureDigest != grant.ClosureDigest || evidence.BindingDigest != grant.BindingDigest || evidence.DestinationDigest != grant.DestinationDigest || evidence.TriggerDigest != grant.TriggerDigest {
+	if evidence == nil || evidence.WorkflowRevision != grant.WorkflowRevision || evidence.ClosureDigest != grant.ClosureDigest || evidence.ParameterDigest != projectpipelineplan.SealedAbsentEvidenceDigest("parameters") || evidence.BindingDigest != grant.BindingDigest || evidence.RunAsPrincipalID != grant.ExecutionPrincipalID || evidence.Environment != identity.Environment || evidence.DestinationDigest != grant.DestinationDigest || evidence.TriggerDigest != grant.TriggerDigest {
 		t.Fatalf("authority closure evidence = %#v", evidence)
 	}
 	if len(authority.Permissions) != 2 || authority.Permissions[0].Action != "pipeline.run" || authority.Permissions[1].Action != "source.read" {

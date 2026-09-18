@@ -1,6 +1,7 @@
 package access
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,11 @@ func TestResourceShareGrantRequiresExplicitIssuerCeilingAndExactPairs(t *testing
 	}
 	if err := base.Validate(); err != nil {
 		t.Fatalf("valid share input: %v", err)
+	}
+	onward := base
+	onward.AllowOnwardDelegation = true
+	if err := onward.Validate(); !errors.Is(err, ErrGrantNoOnwardDelegation) {
+		t.Fatalf("onward-delegating share validation error = %v, want ErrGrantNoOnwardDelegation", err)
 	}
 	withoutCeiling := base
 	withoutCeiling.IssuancePermissions = nil
@@ -115,5 +121,37 @@ func TestDurableGrantCredentialAndExecutionBounds(t *testing.T) {
 	withoutDelegate.IssuancePermissions = []PermissionPair{run}
 	if err := withoutDelegate.Validate(); err == nil || !strings.Contains(err.Error(), "workload.delegate") {
 		t.Fatalf("missing workload delegation error = %v", err)
+	}
+}
+
+func TestGrantAdminEnvelopeRoleBindingIsExactAndCatalogPinned(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	subject := SubjectRef{Kind: SubjectKindGroup, ID: "group-1"}
+	permissions, err := ExpandPermissionRole(PermissionRoleViewer, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := GrantAdminEnvelope{
+		BoundPrincipalID: "actor-1", TargetProjectID: projectID,
+		RecipientSelector: "group:group-1", RoleVersion: PermissionRoleVersion(PermissionRoleViewer),
+		Permissions: permissions,
+	}
+	if err := ValidateGrantAdminEnvelopeRoleBinding(envelope, "actor-1", projectID, subject, PermissionRoleViewer, permissions); err != nil {
+		t.Fatalf("valid envelope: %v", err)
+	}
+	changed := envelope
+	changed.RecipientSelector = "group:other"
+	if !errors.Is(ValidateGrantAdminEnvelopeRoleBinding(changed, "actor-1", projectID, subject, PermissionRoleViewer, permissions), ErrGrantAdminEnvelopeMismatch) {
+		t.Fatal("recipient mismatch was accepted")
+	}
+	changed = envelope
+	changed.RoleVersion = PermissionRoleVersion(PermissionRoleEditor)
+	if !errors.Is(ValidateGrantAdminEnvelopeRoleBinding(changed, "actor-1", projectID, subject, PermissionRoleViewer, permissions), ErrGrantAdminEnvelopeMismatch) {
+		t.Fatal("role version mismatch was accepted")
+	}
+	changed = envelope
+	changed.Permissions = changed.Permissions[:1]
+	if !errors.Is(ValidateGrantAdminEnvelopeRoleBinding(changed, "actor-1", projectID, subject, PermissionRoleViewer, permissions), ErrGrantAdminEnvelopeMismatch) {
+		t.Fatal("narrow permission ceiling was accepted")
 	}
 }

@@ -8,9 +8,9 @@ typed resource actions and credential attenuation remain the foundation.
 
 Decision date: 2026-09-17
 
-Implementation: advanced partial — typed credentials, assignments, durable
-grant primitives, and qualified private operation slices; compatibility removal
-and complete surface coverage remain pending
+Implementation: complete for the qualified private/native profile — unsupported
+public/embed, transport, export, and future operation classes remain explicitly
+outside that profile and fail closed where they reach typed enforcement
 
 Deciders: LeapView maintainers
 
@@ -31,8 +31,9 @@ Related: [ADR-0005](0005-use-project-wide-resource-graph.md);
 
 ## Implementation status
 
-The contract and persistence foundations are implemented without claiming
-complete rollout. LeapView now has the versioned `leapview.permissions/v1`
+The decision is implemented for LeapView's qualified private/native profile;
+this is not a claim that every conceivable future surface is supported. LeapView
+now has the versioned `leapview.permissions/v1`
 catalog, validated action/target pairs and prerequisites, named role
 expansions, generated TypeSpec/SQL/presentation/documentation artifacts,
 PostgreSQL typed-token persistence, and a typed personal-token picker. New
@@ -81,18 +82,26 @@ cannot supply those fields. Ambiguous legacy assignments deliberately remain
 legacy rather than being widened, so downstream compatibility cannot be
 removed until every affected surface is qualified.
 
-Qualified paths now include private dashboard consumption and authoring,
-governed semantic query entry points, project catalog discovery, selected
-project/connection/managed-data administration, instance settings/audit, and
-the manual/scheduled delegated-refresh foundation. Native delivery planning and
-build also evaluate and persist a coherent compound permission projection,
-then reauthorize it against the current candidate snapshot before physical
-work. Complete publication/rollback reauthorization, sharing-administration,
-agent/MCP, list/facet/autocomplete, public/embed, and all lifecycle-boundary
-coverage remains governed by the ADR-0026 ledger. The Go catalog is the runtime
-authority and generated checks prevent contract drift; completion still
-requires the remaining partial ledger rows rather than an ADR-format or
-schema-only claim.
+Qualified paths include private dashboard consumption and authoring, governed
+semantic query entry points, credential-filtered project catalog discovery,
+project/connection/managed-data administration, instance settings/access/audit,
+dashboard publication administration, generated Agent operations, supported
+Agent/MCP catalog and visual tools, and manual/scheduled delegated refresh.
+Custom authoring tools reject typed credentials until they have exact
+action/target metadata. Native delivery
+planning and build also evaluate and persist a coherent compound permission
+projection, then reauthorize it against the current candidate snapshot before
+physical work. Public resource-share and grant-administration adapters derive
+issuer and ceiling authority server-side; role binding creation consumes a
+locked exact administration envelope. The obsolete generic grant-management API
+is no longer served.
+
+The Go catalog is the runtime authority and generated checks prevent contract
+drift. The ADR-0026 ledger remains authoritative for deliberately unsupported or
+separately governed work such as public/embed consumption, downstream durable
+share consumption, arbitrary export/result retrieval, external dispatch, and
+future job kinds. Those exclusions do not make the implemented profile partial:
+they define its boundary and must not be described as already supported.
 
 ## Context and problem statement
 

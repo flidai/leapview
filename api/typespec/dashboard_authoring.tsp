@@ -466,6 +466,12 @@ model DashboardAuthoringMutationResponse {
   lifecycle: DashboardAuthoringLifecycle;
 }
 
+/** Creation returns only a new identity and bounded lifecycle status. */
+model DashboardAuthoringCreateReceipt {
+  id: ResourceId;
+  status: "draft" | "published" | "archived";
+}
+
 model DashboardAuthoringDraftResponse {
   projectId: ResourceId;
   dashboardId: ResourceId;
@@ -814,7 +820,7 @@ interface DashboardAuthoring {
   @extension("x-leapview-object-scope", "project")
   @apigen.ui("dashboard.builder.create")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "transactional", failures: #[] })
-  createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringCreateReceipt> | CommonErrors;
 
   @summary("Execute one dashboard authoring command")
   @route("/commands")
@@ -831,7 +837,7 @@ interface DashboardAuthoring {
   @extension("x-leapview-object-scope", "project")
   @apigen.ui("dashboard.builder.fork")
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "transactional", failures: #[] })
-  forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: UUIDv7IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringCreateReceipt> | CommonErrors;
 
   @summary("Preview one exact dashboard draft revision")
   @route("/dashboards/{dashboard}/drafts/{draft}/preview")

@@ -245,12 +245,23 @@ func ValidateAuthorizationPolicyRevisionTx(ctx context.Context, tx Tx, scope acc
 
 type authorizationPolicyCommandWire struct {
 	Scope            access.AuthorizationPolicyScope `json:"scope"`
+	Operation        string                          `json:"operation,omitempty"`
 	Binding          access.RoleBinding              `json:"binding"`
+	BindingID        string                          `json:"bindingId,omitempty"`
 	ExpectedRevision int64                           `json:"expectedRevision"`
 }
 
 func authorizationPolicyCommandDigest(input access.AuthorizationRoleBindingInput) (string, error) {
 	encoded, err := json.Marshal(authorizationPolicyCommandWire{Scope: input.Scope, Binding: input.Binding, ExpectedRevision: input.ExpectedRevision})
+	if err != nil {
+		return "", fmt.Errorf("encode authorization policy command: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func authorizationPolicyDeleteCommandDigest(input access.AuthorizationRoleBindingDeleteInput) (string, error) {
+	encoded, err := json.Marshal(authorizationPolicyCommandWire{Scope: input.Scope, Operation: "remove", BindingID: input.BindingID, ExpectedRevision: input.ExpectedRevision})
 	if err != nil {
 		return "", fmt.Errorf("encode authorization policy command: %w", err)
 	}
@@ -328,8 +339,8 @@ func conflictingAuthorizationPolicyIdempotencyError() error {
 	return fmt.Errorf("%w: %w", access.ErrAuthorizationPolicyIdempotency, access.ErrAuthorizationPolicyConflict)
 }
 
-func (r *Repository) checkAuthorizationPolicyOperation(ctx context.Context, db DBTX, input access.AuthorizationRoleBindingInput, requestDigest string) (access.AuthorizationPolicy, bool, error) {
-	row, err := accessdb.New(db).GetAuthorizationPolicyOperation(ctx, accessdb.GetAuthorizationPolicyOperationParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, IdempotencyKey: input.IdempotencyKey})
+func (r *Repository) checkAuthorizationPolicyOperation(ctx context.Context, db DBTX, scope access.AuthorizationPolicyScope, idempotencyKey, requestDigest string) (access.AuthorizationPolicy, bool, error) {
+	row, err := accessdb.New(db).GetAuthorizationPolicyOperation(ctx, accessdb.GetAuthorizationPolicyOperationParams{TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, IdempotencyKey: idempotencyKey})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return access.AuthorizationPolicy{}, false, nil
 	}
@@ -339,16 +350,16 @@ func (r *Repository) checkAuthorizationPolicyOperation(ctx context.Context, db D
 	if row.RequestDigest != requestDigest {
 		return access.AuthorizationPolicy{}, false, conflictingAuthorizationPolicyIdempotencyError()
 	}
-	policy, err := (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, input.Scope, row.Revision, row.PolicyDigest)
+	policy, err := (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, scope, row.Revision, row.PolicyDigest)
 	if err != nil {
 		return access.AuthorizationPolicy{}, false, err
 	}
 	return policy, true, nil
 }
 
-func insertAuthorizationPolicyRevision(ctx context.Context, db DBTX, input access.AuthorizationRoleBindingInput, revision int64, digest, requestDigest string, bindings []access.RoleBinding) (access.AuthorizationPolicy, error) {
+func insertAuthorizationPolicyRevision(ctx context.Context, db DBTX, scope access.AuthorizationPolicyScope, idempotencyKey, bindingID string, revision int64, digest, requestDigest string, bindings []access.RoleBinding) (access.AuthorizationPolicy, error) {
 	queries := accessdb.New(db)
-	if err := queries.InsertAuthorizationPolicyRevision(ctx, accessdb.InsertAuthorizationPolicyRevisionParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: revision, Digest: digest}); err != nil {
+	if err := queries.InsertAuthorizationPolicyRevision(ctx, accessdb.InsertAuthorizationPolicyRevisionParams{TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, Revision: revision, Digest: digest}); err != nil {
 		return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy revision: %w", err)
 	}
 	for _, binding := range bindings {
@@ -356,14 +367,14 @@ func insertAuthorizationPolicyRevision(ctx context.Context, db DBTX, input acces
 		if marshalErr != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("encode authorization policy role binding %q: %w", binding.ID, marshalErr)
 		}
-		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: revision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
+		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, Revision: revision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
 		}
 	}
-	if err := queries.InsertAuthorizationPolicyOperation(ctx, accessdb.InsertAuthorizationPolicyOperationParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, IdempotencyKey: input.IdempotencyKey, RequestDigest: requestDigest, Revision: revision, PolicyDigest: digest, BindingID: input.Binding.ID}); err != nil {
+	if err := queries.InsertAuthorizationPolicyOperation(ctx, accessdb.InsertAuthorizationPolicyOperationParams{TargetID: scope.TargetID, ProjectID: scope.ProjectID, Environment: scope.Environment, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, Revision: revision, PolicyDigest: digest, BindingID: bindingID}); err != nil {
 		return access.AuthorizationPolicy{}, fmt.Errorf("record authorization policy idempotency: %w", err)
 	}
-	return (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, input.Scope, revision, digest)
+	return (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, scope, revision, digest)
 }
 
 func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db DBTX, input access.AuthorizationRoleBindingInput) (access.AuthorizationPolicy, error) {
@@ -385,7 +396,7 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 	if err != nil {
 		return access.AuthorizationPolicy{}, err
 	}
-	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input, requestDigest); ok || replayErr != nil {
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
 		return replay, replayErr
 	}
 	if err := access.ValidateAuthorizationRoleBinding(input.Binding); err != nil {
@@ -420,7 +431,7 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 			return access.AuthorizationPolicy{}, fmt.Errorf("create authorization policy head: %w", insertErr)
 		}
 		if insertTag.RowsAffected() == 1 {
-			return insertAuthorizationPolicyRevision(ctx, db, input, 1, initialDigest, requestDigest, initialBindings)
+			return insertAuthorizationPolicyRevision(ctx, db, input.Scope, input.IdempotencyKey, input.Binding.ID, 1, initialDigest, requestDigest, initialBindings)
 		}
 		headRow, err = queries.LockAuthorizationPolicyHead(ctx, policyScopeLockParams(input.Scope))
 	}
@@ -433,7 +444,7 @@ func (r *Repository) upsertAuthorizationRoleBindingCore(ctx context.Context, db 
 	head := policyHeadFromLockRow(headRow)
 	// A second caller with the same key can have waited on the head lock after
 	// the first caller committed. Re-check idempotency after locking before CAS.
-	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input, requestDigest); ok || replayErr != nil {
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
 		return replay, replayErr
 	}
 	if input.ExpectedRevision != head.Revision {
@@ -519,6 +530,115 @@ func (r *Repository) UpsertAuthorizationRoleBinding(ctx context.Context, input a
 	if owned {
 		if err := tx.Commit(ctx); err != nil {
 			return access.AuthorizationPolicy{}, fmt.Errorf("commit authorization policy upsert: %w", err)
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) removeAuthorizationRoleBindingCore(ctx context.Context, db DBTX, input access.AuthorizationRoleBindingDeleteInput) (access.AuthorizationPolicy, error) {
+	if ctx == nil {
+		return access.AuthorizationPolicy{}, errors.New("authorization policy context is nil")
+	}
+	if err := r.validateAuthorizationPolicyScope(input.Scope); err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	if input.ExpectedRevision <= 0 {
+		return access.AuthorizationPolicy{}, fmt.Errorf("%w: removal expected revision must be positive", access.ErrAuthorizationPolicyConflict)
+	}
+	if err := access.ValidateAuthorizationRoleBindingID(input.BindingID); err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	key, err := bounded(input.IdempotencyKey, "authorization policy idempotency key", maxAuthorizationPolicyIdempotencyKeyBytes)
+	if err != nil {
+		return access.AuthorizationPolicy{}, fmt.Errorf("%w: %v", access.ErrAuthorizationPolicyIdempotency, err)
+	}
+	input.IdempotencyKey = key
+	requestDigest, err := authorizationPolicyDeleteCommandDigest(input)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
+		return replay, replayErr
+	}
+
+	queries := accessdb.New(db)
+	headRow, err := queries.LockAuthorizationPolicyHead(ctx, policyScopeLockParams(input.Scope))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.AuthorizationPolicy{}, fmt.Errorf("%w: policy head is absent", access.ErrAuthorizationPolicyNotFound)
+	}
+	if err != nil {
+		return access.AuthorizationPolicy{}, fmt.Errorf("lock authorization policy head: %w", err)
+	}
+	head := policyHeadFromLockRow(headRow)
+	if replay, ok, replayErr := r.checkAuthorizationPolicyOperation(ctx, db, input.Scope, input.IdempotencyKey, requestDigest); ok || replayErr != nil {
+		return replay, replayErr
+	}
+	if input.ExpectedRevision != head.Revision {
+		return access.AuthorizationPolicy{}, staleAuthorizationPolicyRevisionError(input.ExpectedRevision, head.Revision)
+	}
+	current, err := r.authorizationPolicyAtRevision(ctx, db, input.Scope, head.Revision, head.Digest)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	bindings := make([]access.RoleBinding, 0, len(current.RoleBindings))
+	found := false
+	for _, binding := range current.RoleBindings {
+		if binding.ID == input.BindingID {
+			found = true
+			continue
+		}
+		bindings = append(bindings, binding)
+	}
+	if !found {
+		return access.AuthorizationPolicy{}, fmt.Errorf("%w: role binding %q", access.ErrAuthorizationPolicyNotFound, input.BindingID)
+	}
+	digest, err := access.AuthorizationPolicyDigest(input.Scope, bindings)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	nextRevision := head.Revision + 1
+	if err := queries.InsertAuthorizationPolicyRevision(ctx, accessdb.InsertAuthorizationPolicyRevisionParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, Digest: digest}); err != nil {
+		return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy revision: %w", err)
+	}
+	for _, binding := range bindings {
+		caps, permissions, profile, permissionRole, marshalErr := authorizationRoleBindingEncoding(binding)
+		if marshalErr != nil {
+			return access.AuthorizationPolicy{}, fmt.Errorf("encode authorization policy role binding %q: %w", binding.ID, marshalErr)
+		}
+		if err := queries.InsertAuthorizationPolicyRoleBinding(ctx, accessdb.InsertAuthorizationPolicyRoleBindingParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, Revision: nextRevision, ID: binding.ID, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID, Role: nullableString(string(binding.Role)), Capabilities: caps, PermissionProfile: profile, Permissions: permissions, PermissionRole: permissionRole, Name: binding.Name}); err != nil {
+			return access.AuthorizationPolicy{}, fmt.Errorf("insert authorization policy role binding %q: %w", binding.ID, err)
+		}
+	}
+	updateTag, err := queries.UpdateAuthorizationPolicyHead(ctx, accessdb.UpdateAuthorizationPolicyHeadParams{Revision: nextRevision, Digest: digest, ExpectedRevision: head.Revision, TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment})
+	if err != nil {
+		return access.AuthorizationPolicy{}, fmt.Errorf("advance authorization policy revision: %w", err)
+	}
+	if updateTag.RowsAffected() != 1 {
+		return access.AuthorizationPolicy{}, staleAuthorizationPolicyRevisionError(input.ExpectedRevision, head.Revision)
+	}
+	if err := queries.InsertAuthorizationPolicyOperation(ctx, accessdb.InsertAuthorizationPolicyOperationParams{TargetID: input.Scope.TargetID, ProjectID: input.Scope.ProjectID, Environment: input.Scope.Environment, IdempotencyKey: input.IdempotencyKey, RequestDigest: requestDigest, Revision: nextRevision, PolicyDigest: digest, BindingID: input.BindingID}); err != nil {
+		return access.AuthorizationPolicy{}, fmt.Errorf("record authorization policy idempotency: %w", err)
+	}
+	return (&Repository{db: db}).authorizationPolicyAtRevision(ctx, db, input.Scope, nextRevision, digest)
+}
+
+// RemoveAuthorizationRoleBinding creates a new immutable policy revision that
+// omits one exact role binding. Historical revisions are preserved.
+func (r *Repository) RemoveAuthorizationRoleBinding(ctx context.Context, input access.AuthorizationRoleBindingDeleteInput) (result access.AuthorizationPolicy, err error) {
+	tx, owned, err := r.txOrBegin(ctx)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	if owned {
+		defer func() { _ = tx.Rollback(ctx) }()
+	}
+	result, err = r.removeAuthorizationRoleBindingCore(ctx, tx, input)
+	if err != nil {
+		return access.AuthorizationPolicy{}, err
+	}
+	if owned {
+		if err := tx.Commit(ctx); err != nil {
+			return access.AuthorizationPolicy{}, fmt.Errorf("commit authorization policy removal: %w", err)
 		}
 	}
 	return result, nil

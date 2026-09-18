@@ -491,6 +491,7 @@ func TestAPIGenEveryGeneratedOperationConstructsWithCanonicalResolvers(t *testin
 		Dashboard:     apigenResolver("dashboard", projectgraph.KindDashboard),
 		SemanticModel: apigenResolver("model", projectgraph.KindSemanticModel),
 		Connection:    apigenResolver("connection", projectgraph.KindConnection),
+		ResourceShare: apigenResolver("resourceId", projectgraph.KindDashboard),
 		Project:       apigenResolver("project", projectgraph.KindProjectNamespace),
 		Instance:      func(*http.Request) string { return "instance_test" },
 	})

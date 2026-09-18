@@ -606,7 +606,7 @@ func TestServiceQueuePipelineRefreshRejectsDelegatedEditorDrift(t *testing.T) {
 	service.Artifacts = fakeArtifactLoader{definition: definition}
 	service.RequireAuthority = true
 	plan := testDelegatedPipelinePlan(t, repo, definition)
-	authority := testDelegatedAuthority(plan.Digest)
+	authority := testDelegatedAuthority(plan)
 	input := QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1,
 		PipelineID: "sales-refresh", TriggerType: TriggerManual, Authority: authority,
@@ -627,7 +627,7 @@ func TestServiceExecuteClaimedJobRejectsDelegatedArtifactDrift(t *testing.T) {
 	repo := newFakeRepo()
 	definition := refreshTestDefinition()
 	plan := testDelegatedPipelinePlan(t, repo, definition)
-	authority := testDelegatedAuthority(plan.Digest)
+	authority := testDelegatedAuthority(plan)
 	executed := false
 	service := canonicalQueueService(repo)
 	service.Artifacts = fakeArtifactLoader{definition: definition}
@@ -652,6 +652,89 @@ func TestServiceExecuteClaimedJobRejectsDelegatedArtifactDrift(t *testing.T) {
 	}
 }
 
+func TestServiceQueuePipelineRefreshRejectsDelegatedBindingAndTriggerEdits(t *testing.T) {
+	repo := newFakeRepo()
+	definition := refreshTestDefinition()
+	definition.ConnectionIDs = map[string]string{"warehouse": "connection:warehouse", "other": "connection:other"}
+	definition.Models["sales"].Sources = map[string]semanticmodel.Source{"source:orders": {Connection: "warehouse"}}
+	for name, table := range definition.ModelTables {
+		table.Execution.Source = "source:orders"
+		definition.ModelTables[name] = table
+	}
+	service := canonicalQueueService(repo)
+	service.Artifacts = fakeArtifactLoader{definition: definition}
+	service.RequireAuthority = true
+	input := QueuePipelineInput{Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1, PipelineID: "sales-refresh", TriggerType: TriggerManual}
+
+	plan := testDelegatedPipelinePlan(t, repo, definition)
+	input.Authority = testDelegatedAuthority(plan)
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err != nil {
+		t.Fatalf("queue baseline delegated plan: %v", err)
+	}
+
+	definition.Models["sales"].Sources["source:orders"] = semanticmodel.Source{Connection: "other"}
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err == nil || (!strings.Contains(err.Error(), "binding evidence") && !strings.Contains(err.Error(), "closure does not match")) {
+		t.Fatalf("queue after connection binding edit error = %v, want binding evidence rejection", err)
+	}
+
+	definition.Models["sales"].Sources["source:orders"] = semanticmodel.Source{Connection: "warehouse"}
+	pipeline := definition.Pipelines["sales-refresh"]
+	pipeline.Schedules[0].Expression = "0 7 * * *"
+	definition.Pipelines["sales-refresh"] = pipeline
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err == nil || (!strings.Contains(err.Error(), "trigger evidence") && !strings.Contains(err.Error(), "closure does not match")) {
+		t.Fatalf("queue after trigger edit error = %v, want trigger evidence rejection", err)
+	}
+}
+
+func TestServiceQueuePipelineRefreshRejectsDelegatedDestinationEvidenceEdit(t *testing.T) {
+	repo := newFakeRepo()
+	definition := refreshTestDefinition()
+	service := canonicalQueueService(repo)
+	service.Artifacts = fakeArtifactLoader{definition: definition}
+	service.RequireAuthority = true
+	plan := testDelegatedPipelinePlan(t, repo, definition)
+	input := QueuePipelineInput{Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1, PipelineID: "sales-refresh", TriggerType: TriggerManual, Authority: testDelegatedAuthority(plan)}
+	input.Authority.ExecutionGrant.DestinationDigest = projectpipelineplan.SealedAbsentEvidenceDigest("destinations-changed")
+	if _, err := service.QueuePipelineRefresh(t.Context(), input); err == nil || !strings.Contains(err.Error(), "destination evidence") {
+		t.Fatalf("queue after destination evidence edit error = %v, want destination evidence rejection", err)
+	}
+}
+
+func TestServiceExecuteClaimedJobRejectsDelegatedClosureEditAtOutputBoundary(t *testing.T) {
+	repo := newFakeRepo()
+	definition := refreshTestDefinition()
+	plan := testDelegatedPipelinePlan(t, repo, definition)
+	authority := testDelegatedAuthority(plan)
+	boundaryCalls := 0
+	executed := false
+	service := canonicalQueueService(repo)
+	service.Artifacts = fakeArtifactLoader{definition: definition}
+	service.AuthorityRevalidator = jobs.AuthorityRevalidatorFunc(func(context.Context, jobs.AuthorityEnvelope) error {
+		boundaryCalls++
+		if boundaryCalls == 4 {
+			authority.ExecutionGrant.TriggerDigest = projectpipelineplan.SealedAbsentEvidenceDigest("edited-trigger")
+		}
+		return nil
+	})
+	service.CanonicalExecutor = func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+		executed = true
+		return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
+	}
+	service.Publication = fakePublication{repo: repo}
+	job := JobRecord{
+		ID: "job-delegated-output", Identity: serviceIdentity, PrincipalID: "workload:refresh", EstimatedMemoryBytes: 1,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: &plan,
+		InvocationSource: TriggerManual, TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1, Authority: authority,
+	}
+	if err := service.ExecuteClaimedJob(t.Context(), job); err == nil || !strings.Contains(err.Error(), "trigger evidence") {
+		t.Fatalf("execute after output-boundary trigger edit error = %v, want trigger evidence rejection", err)
+	}
+	if !executed || boundaryCalls != 4 {
+		t.Fatalf("executor/boundary calls = %t/%d, want executor true and four boundaries", executed, boundaryCalls)
+	}
+}
+
 func testDelegatedPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifact.Definition) projectpipelineplan.Plan {
 	t.Helper()
 	base, err := refreshplan.ForPipeline(definition, serviceIdentity.ProjectID, "sales-refresh")
@@ -662,14 +745,14 @@ func testDelegatedPipelinePlan(t *testing.T, repo *fakeRepo, definition *artifac
 	if err != nil {
 		t.Fatalf("bind test refresh plan: %v", err)
 	}
-	plan, err := bound.DeliveryPipelinePlan(refreshplan.InvocationPolicy{InvocationSource: TriggerManual})
+	plan, err := bound.DeliveryPipelinePlan(refreshplan.InvocationPolicy{InvocationSource: TriggerManual, RunAsPrincipalID: "workload:refresh"})
 	if err != nil {
 		t.Fatalf("build test delivery plan: %v", err)
 	}
 	return plan
 }
 
-func testDelegatedAuthority(closureDigest string) jobs.AuthorityEnvelope {
+func testDelegatedAuthority(plan projectpipelineplan.Plan) jobs.AuthorityEnvelope {
 	pair, err := permissions.NewExactPair("leapview.permissions/v1", permissions.Action("pipeline.run"), "project", "pipeline", "sales-refresh")
 	if err != nil {
 		panic(err)
@@ -685,8 +768,9 @@ func testDelegatedAuthority(closureDigest string) jobs.AuthorityEnvelope {
 		Permissions: []permissions.Pair{pair},
 		ExecutionGrant: &jobs.ExecutionGrantEvidence{
 			ID: "grant:refresh", Fingerprint: "fingerprint:refresh", ExpiresAt: time.Now().UTC().Add(time.Hour),
-			WorkflowID: "workflow:refresh", WorkflowRevision: "revision:1", ClosureDigest: closureDigest,
-			BindingDigest: "binding:refresh", DestinationDigest: "destination:refresh", TriggerDigest: "trigger:refresh",
+			WorkflowID: "workflow:refresh", WorkflowRevision: "revision:1", ClosureDigest: plan.Digest,
+			ParameterDigest: plan.ParameterDigest, BindingDigest: plan.BindingDigest, RunAsPrincipalID: "workload:refresh", Environment: plan.Environment,
+			DestinationDigest: plan.DestinationDigest, TriggerDigest: plan.TriggerDigest,
 		},
 	}
 }

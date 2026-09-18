@@ -206,6 +206,86 @@ func TestTypedBrowserDecisionRejectsTypedTokenAgainstLegacyOnlyAuthority(t *test
 	}
 }
 
+func TestTypedBrowserMutationRejectsCredentialWithDifferentAction(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_1", "prod", "generation_typed_browser_mutation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "dashboard_a", Kind: projectgraph.KindDashboard, Name: "dashboard_a"},
+		{ID: "pipeline_a", Kind: projectgraph.KindPipeline, Name: "pipeline_a"},
+		{ID: "connection_a", Kind: projectgraph.KindConnection, Name: "connection_a"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal := access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: "principal_1"}
+	var authority []access.PermissionPair
+	var resources []access.ResourceRef
+	for _, requested := range []struct {
+		action access.Action
+		id     projectgraph.ResourceID
+		kind   projectgraph.Kind
+	}{
+		{access.ActionDashboardUpdate, "dashboard_a", projectgraph.KindDashboard},
+		{access.ActionPipelineRun, "pipeline_a", projectgraph.KindPipeline},
+		{access.ActionConnectionManage, "connection_a", projectgraph.KindConnection},
+	} {
+		resource, resourceErr := access.NewResourceRef(requested.id, requested.kind)
+		if resourceErr != nil {
+			t.Fatal(resourceErr)
+		}
+		pair, pairErr := access.NewExactPermissionPair(requested.action, identity.ProjectID, resource)
+		if pairErr != nil {
+			t.Fatal(pairErr)
+		}
+		authority = append(authority, pair)
+		resources = append(resources, resource)
+	}
+	grant, err := accesssnapshot.NewTypedGrant("typed-browser-mutations", "typed browser mutations", principal, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, graph, []accesssnapshot.Grant{grant}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readResource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly, err := access.NewExactPermissionPair(access.ActionDashboardRead, identity.ProjectID, readResource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := accessmodule.WithAPICredential(context.Background(), access.APICredential{
+		Principal: access.Principal{ID: principal.ID},
+		Token: access.APIToken{
+			ID: "read-only-token", PrincipalID: principal.ID,
+			PermissionProfile: access.PermissionCatalogProfile,
+			Permissions:       []access.PermissionPair{readOnly},
+		},
+	})
+	runtime := tusRuntime{project: identity.ProjectID, lease: tusLease{identity: identity, snapshot: snapshot}}
+	accessModule := tusAccess{principal: accessmodule.Principal{ID: principal.ID}, ok: true, subjects: []access.SubjectRef{principal}}
+	for index, requested := range []struct {
+		action     access.Action
+		capability access.Capability
+	}{
+		{access.ActionDashboardUpdate, access.CapabilityResourceManage},
+		{access.ActionPipelineRun, access.CapabilityResourceUse},
+		{access.ActionConnectionManage, access.CapabilityResourceManage},
+	} {
+		allowed, authorizeErr := authorizeProjectResourcesWithTypedAction(ctx, accessModule, runtime, principal.ID, identity.ProjectID, []access.ResourceRef{resources[index]}, requested.capability, requested.action)
+		if authorizeErr != nil {
+			t.Fatal(authorizeErr)
+		}
+		if allowed {
+			t.Fatalf("read-only credential authorized %s", requested.action)
+		}
+	}
+}
+
 func TestTypedPermissionDecisionRejectsCredentialAttenuationMismatch(t *testing.T) {
 	resource, err := access.NewResourceRef("dashboard_a", projectgraph.KindDashboard)
 	if err != nil {

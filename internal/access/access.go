@@ -87,6 +87,16 @@ type AuthorizationRoleBindingInput struct {
 	IdempotencyKey   string
 }
 
+// AuthorizationRoleBindingDeleteInput removes one binding by stable identity.
+// The mutation has the same revision CAS and idempotency guarantees as an
+// upsert; historical policy revisions remain immutable and readable.
+type AuthorizationRoleBindingDeleteInput struct {
+	Scope            AuthorizationPolicyScope
+	BindingID        string
+	ExpectedRevision int64
+	IdempotencyKey   string
+}
+
 // AuthorizationPolicyReader is intentionally narrow so release planning can
 // consume target policy state without gaining mutation authority.
 type AuthorizationPolicyReader interface {
@@ -98,13 +108,14 @@ type AuthorizationPolicyReader interface {
 // boundary. Implementations must preserve CAS and idempotency semantics.
 type AuthorizationPolicyWriter interface {
 	UpsertAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingInput) (AuthorizationPolicy, error)
+	RemoveAuthorizationRoleBinding(context.Context, AuthorizationRoleBindingDeleteInput) (AuthorizationPolicy, error)
 }
 
 // ValidateAuthorizationRoleBinding applies the same role and capability
 // validation used by serving snapshots without requiring a project graph.
 func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
-	if strings.TrimSpace(binding.ID) != binding.ID || binding.ID == "" || len(binding.ID) > 255 || strings.ContainsAny(binding.ID, "\x00\r\n") {
-		return fmt.Errorf("%w: binding id is invalid", ErrAuthorizationPolicyInvalidBinding)
+	if err := ValidateAuthorizationRoleBindingID(binding.ID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(binding.Name) != binding.Name || len(binding.Name) > 255 || strings.ContainsAny(binding.Name, "\x00\r\n") {
 		return fmt.Errorf("%w: binding name is invalid", ErrAuthorizationPolicyInvalidBinding)
@@ -135,6 +146,15 @@ func ValidateAuthorizationRoleBinding(binding RoleBinding) error {
 		if capability != want[index] {
 			return fmt.Errorf("%w: role %q has a non-canonical capability bundle", ErrAuthorizationPolicyInvalidBinding, role)
 		}
+	}
+	return nil
+}
+
+// ValidateAuthorizationRoleBindingID validates the stable identifier shared by
+// role-binding create, update, and removal commands.
+func ValidateAuthorizationRoleBindingID(id string) error {
+	if strings.TrimSpace(id) != id || id == "" || len(id) > 255 || strings.ContainsAny(id, "\x00\r\n") {
+		return fmt.Errorf("%w: binding id is invalid", ErrAuthorizationPolicyInvalidBinding)
 	}
 	return nil
 }

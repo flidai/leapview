@@ -21,6 +21,11 @@ const (
 	TypedOperationResolverModel         TypedOperationResolver = "model"
 	TypedOperationResolverProject       TypedOperationResolver = "project"
 	TypedOperationResolverPipeline      TypedOperationResolver = "pipeline"
+	// TypedOperationResolverResourceShare resolves the exact graph resource
+	// carried by a durable share request body. It is intentionally separate
+	// from the concrete graph-kind resolvers because resource.share supports
+	// the complete shareable resource family.
+	TypedOperationResolverResourceShare TypedOperationResolver = "resource-share"
 	TypedOperationResolverDelivery      TypedOperationResolver = "delivery"
 	TypedOperationResolverInstance      TypedOperationResolver = "instance"
 )
@@ -71,16 +76,21 @@ func (TypedOperationRequirementService) New(action Action, resolver string) (Typ
 		return TypedOperationRequirement{}, fmt.Errorf("%w: resolver %q is not canonical", ErrUnknownTypedOperationResolver, resolver)
 	}
 	resolverKind, ok := typedOperationResolverKinds[TypedOperationResolver(resolverValue)]
-	if !ok && TypedOperationResolver(resolverValue) != TypedOperationResolverInstance {
+	if !ok && TypedOperationResolver(resolverValue) != TypedOperationResolverInstance && TypedOperationResolver(resolverValue) != TypedOperationResolverResourceShare {
 		return TypedOperationRequirement{}, fmt.Errorf("%w: %q", ErrUnknownTypedOperationResolver, resolver)
+	}
+	if TypedOperationResolver(resolverValue) == TypedOperationResolverResourceShare && action != ActionResourceShare {
+		return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: resource-share resolver requires resource.share", action, resolver)
 	}
 	if TypedOperationResolver(resolverValue) == TypedOperationResolverInstance {
 		definition, _ := Permission(action)
 		if definition.Scope != PermissionScopeInstance {
 			return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: %w", action, resolver, ErrInvalidPermissionCatalog)
 		}
-	} else if err := ValidateActionForKind(action, resolverKind); err != nil {
-		return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: %w", action, resolver, err)
+	} else if TypedOperationResolver(resolverValue) != TypedOperationResolverResourceShare {
+		if err := ValidateActionForKind(action, resolverKind); err != nil {
+			return TypedOperationRequirement{}, fmt.Errorf("typed operation action %q with resolver %q: %w", action, resolver, err)
+		}
 	}
 	return TypedOperationRequirement{Action: action, Resolver: TypedOperationResolver(resolverValue)}, nil
 }
@@ -198,6 +208,12 @@ func (requirement TypedOperationRequirement) PermissionPair(projectID projectgra
 func (requirement TypedOperationRequirement) ValidateResource(resource ResourceRef) error {
 	if err := resource.Validate(); err != nil {
 		return err
+	}
+	if requirement.Resolver == TypedOperationResolverResourceShare {
+		if resource.Kind() == projectgraph.KindProjectNamespace {
+			return fmt.Errorf("resource-share resolver does not accept project resources")
+		}
+		return ValidateActionForKind(requirement.Action, resource.Kind())
 	}
 	wantKind, ok := typedOperationResolverKinds[requirement.Resolver]
 	if !ok {

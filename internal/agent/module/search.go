@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/agent/ui"
@@ -41,12 +42,18 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 		return nil, err
 	}
 	scope := agenttools.Scope{ProjectID: projectID, PrincipalID: principal.ID, DevAuthBypass: principal.DevAuthBypass}
+	if m.currentCredential != nil {
+		if credential, ok := m.currentCredential(r); ok {
+			scope.Credential = toolsCredentialScope(credential)
+		}
+	}
 	query = strings.TrimSpace(query)
 	var page agenttools.CatalogPage
+	catalog := credentialCatalog{base: m.catalog}
 	if query == "" {
-		page, err = m.catalog.List(r.Context(), scope, agenttools.CatalogListRequest{ChildKinds: catalogReferenceKinds, Limit: limit})
+		page, err = catalog.List(r.Context(), scope, agenttools.CatalogListRequest{ChildKinds: catalogReferenceKinds, Limit: limit})
 	} else {
-		page, err = m.catalog.Search(r.Context(), scope, agenttools.CatalogSearchRequest{Query: query, Kinds: catalogReferenceKinds, Limit: limit})
+		page, err = catalog.Search(r.Context(), scope, agenttools.CatalogSearchRequest{Query: query, Kinds: catalogReferenceKinds, Limit: limit})
 	}
 	if err != nil {
 		return nil, err
@@ -56,6 +63,28 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 		out = append(out, referenceSignal(item))
 	}
 	return out, nil
+}
+
+func toolsCredentialScope(credential access.APICredential) agenttools.CredentialScope {
+	if credential.Authoring != nil {
+		capabilities := make([]string, len(credential.Authoring.Scope.Capabilities))
+		for index, capability := range credential.Authoring.Scope.Capabilities {
+			capabilities[index] = string(capability)
+		}
+		return agenttools.CredentialScope{ProjectID: credential.Authoring.Scope.ProjectID.String(), Capabilities: capabilities, Restricted: true}
+	}
+	if strings.TrimSpace(credential.Token.ID) == "" {
+		return agenttools.CredentialScope{}
+	}
+	capabilities := make([]string, len(credential.Token.Capabilities))
+	for index, capability := range credential.Token.Capabilities {
+		capabilities[index] = string(capability)
+	}
+	var permissions []access.PermissionPair
+	if credential.Token.Permissions != nil {
+		permissions = append(make([]access.PermissionPair, 0, len(credential.Token.Permissions)), credential.Token.Permissions...)
+	}
+	return agenttools.CredentialScope{Capabilities: capabilities, PermissionProfile: credential.Token.PermissionProfile, Permissions: permissions, Restricted: true}
 }
 
 func referenceSignal(item agenttools.CatalogItem) ui.AgentReferenceSignal {

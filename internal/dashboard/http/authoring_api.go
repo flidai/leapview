@@ -25,6 +25,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
+	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -59,6 +60,16 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 		return dashboardgen.DashboardAuthoringMutationResponse{}, err
 	}
 	return response, nil
+}
+
+func resourceCreateReceipt(result authoringservice.Result) (projectapi.ResourceCreateReceipt, error) {
+	if err := result.Lifecycle.Validate(); err != nil {
+		return projectapi.ResourceCreateReceipt{}, err
+	}
+	if err := result.Revision.ValidateComplete(); err != nil {
+		return projectapi.ResourceCreateReceipt{}, err
+	}
+	return projectapi.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
 }
 
 // AuthoringAPI is the versioned, headless dashboard authoring transport. It
@@ -449,11 +460,12 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, err)
 		return
 	}
-	response, err := mutationResponse(result)
+	response, err := resourceCreateReceipt(result)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
+	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(projectID.String())+"/authoring/dashboards/"+url.PathEscape(response.ID))
 	writeJSON(w, nethttp.StatusCreated, response)
 }
 
@@ -555,11 +567,12 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 		writeAuthoringError(w, r, err)
 		return
 	}
-	response, err := mutationResponse(result)
+	response, err := resourceCreateReceipt(result)
 	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
+	w.Header().Set("Location", "/api/v1/projects/"+url.PathEscape(projectID.String())+"/authoring/dashboards/"+url.PathEscape(response.ID))
 	writeJSON(w, nethttp.StatusCreated, response)
 }
 

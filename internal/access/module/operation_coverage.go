@@ -227,6 +227,8 @@ func validateTypedOperationScope(contract APIGenOperationContract, requirement a
 		want = "model"
 	case access.TypedOperationResolverPipeline:
 		want = "pipeline"
+	case access.TypedOperationResolverResourceShare:
+		want = "resource-share"
 	case access.TypedOperationResolverProject:
 		want = "project"
 	case access.TypedOperationResolverDelivery:

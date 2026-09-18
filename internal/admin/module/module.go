@@ -101,6 +101,7 @@ type Config struct {
 	AuthorizationProjection           adminsettings.AuthorizationProjectionReader
 	CurrentEffectiveCapabilities      func(context.Context, string) ([]access.Capability, error)
 	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
+	AuthorizeTypedDashboardAction     func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
 	PlatformAdmin                     func(context.Context, string) (bool, error)
 	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
 	PersonalAvatar                    PersonalAvatar
@@ -109,25 +110,27 @@ type Config struct {
 }
 
 type Module struct {
-	handler                      adminhttp.Handler
-	access                       AccessReader
-	currentPrincipal             func(*http.Request) (Principal, bool)
-	currentCredential            func(*http.Request) (access.APICredential, bool)
-	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
-	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	publications                 PublicationService
-	product                      *product.Handler
-	publicationCommands          map[string]uicommand.Binding
-	productCommands              productsettings.CommandContract
+	handler                       adminhttp.Handler
+	access                        AccessReader
+	currentPrincipal              func(*http.Request) (Principal, bool)
+	currentCredential             func(*http.Request) (access.APICredential, bool)
+	currentEffectiveCapabilities  func(context.Context, string) ([]access.Capability, error)
+	currentProjectID              func(context.Context) (projectgraph.ResourceID, error)
+	authorizeTypedDashboardAction func(context.Context, string, projectgraph.ResourceID, projectgraph.ResourceID, access.Action) (bool, error)
+	publications                  PublicationService
+	product                       *product.Handler
+	publicationCommands           map[string]uicommand.Binding
+	productCommands               productsettings.CommandContract
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		access: config.Access, currentPrincipal: config.CurrentPrincipal,
-		currentCredential:            config.CurrentCredential,
-		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-		currentProjectID:             config.CurrentProjectID,
-		publications:                 config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
+		currentCredential:             config.CurrentCredential,
+		currentEffectiveCapabilities:  config.CurrentEffectiveCapabilities,
+		currentProjectID:              config.CurrentProjectID,
+		authorizeTypedDashboardAction: config.AuthorizeTypedDashboardAction,
+		publications:                  config.Publications, publicationCommands: config.PublicationCommands, productCommands: config.ProductUICommands,
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,

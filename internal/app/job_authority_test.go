@@ -322,3 +322,24 @@ func TestDelegatedWorkloadRevalidatorRejectsRemovedWorkloadPermission(t *testing
 		t.Fatalf("removed workload permission error = %v, want authority invalid", err)
 	}
 }
+
+func TestDelegatedWorkloadRevalidatorRejectsBroadenedIssuedCeiling(t *testing.T) {
+	authority, grant := testDelegatedAuthority(t, time.Now().UTC().Add(time.Hour))
+	resource, err := access.NewResourceRef(grant.Target.ResourceID, grant.Target.ResourceKind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readPair, err := access.NewExactPermissionPair(access.ActionPipelineRead, grant.Target.ProjectID, resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contractPair, err := access.ToContractPermissionPair(readPair)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.Permissions = append(authority.Permissions, contractPair)
+	revalidator := newDelegatedWorkloadRevalidator(jobAuthorityExecutionGrantReader{grant: grant}, allowDelegatedPermission, authority.Target.InstanceID, authority.Target.Environment)
+	if err := revalidator.Revalidate(t.Context(), authority); !errors.Is(err, jobs.ErrAuthorityInvalid) {
+		t.Fatalf("broadened issued-ceiling error = %v, want authority invalid", err)
+	}
+}

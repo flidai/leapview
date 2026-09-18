@@ -174,11 +174,15 @@ func TestPostgresScheduledRefreshCompositionCarriesOccurrenceGrantIntoQueuedAuth
 		MatchingScheduleIDs:     occurrence.MatchingScheduleIDs,
 		ConcurrencyPolicy:       refreshschedule.ConcurrencyForbid,
 		StartingDeadlineSeconds: 0,
+		RunAsPrincipalID:        fixture.grant.ExecutionPrincipalID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture.grant.ClosureDigest = approvedPlan.Digest
+	fixture.grant.BindingDigest = approvedPlan.BindingDigest
+	fixture.grant.DestinationDigest = approvedPlan.DestinationDigest
+	fixture.grant.TriggerDigest = approvedPlan.TriggerDigest
 	service := refreshrun.Service{
 		ServingStates: postgresScheduledStateFixture{state: state, artifact: artifact},
 		Artifacts:     postgresScheduledArtifactFixture{definition: definition},

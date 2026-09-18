@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -122,7 +123,9 @@ func (s *DelegatedWorkloadAuthorityService) Capture(ctx context.Context, grantID
 		ExecutionGrant: &jobs.ExecutionGrantEvidence{
 			ID: grant.ID, Fingerprint: grant.Fingerprint, ExpiresAt: grant.ExpiresAt.UTC(),
 			WorkflowID: grant.WorkflowID, WorkflowRevision: grant.WorkflowRevision, ClosureDigest: grant.ClosureDigest,
-			BindingDigest: grant.BindingDigest, DestinationDigest: grant.DestinationDigest, TriggerDigest: grant.TriggerDigest,
+			ParameterDigest: projectpipelineplan.SealedAbsentEvidenceDigest("parameters"), BindingDigest: grant.BindingDigest,
+			RunAsPrincipalID: grant.ExecutionPrincipalID, Environment: identity.Environment,
+			DestinationDigest: grant.DestinationDigest, TriggerDigest: grant.TriggerDigest,
 		},
 	}
 	if err := authority.Validate(); err != nil {

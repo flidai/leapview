@@ -1,6 +1,7 @@
 # Resource authorization authority flow
 
-Status: partially implemented; qualification ledger below remains authoritative.
+Status: implemented for the qualified private/native profile; the qualification
+ledger below remains authoritative for unsupported and separately governed work.
 
 Governing decisions: [ADR-0025](../0025-adopt-typed-resource-permissions-and-scoped-api-credentials.md)
 and [ADR-0026](../0026-preserve-authority-across-governed-operations.md).
@@ -52,10 +53,15 @@ not a reusable allow boolean detached from its context.
 | Sensitive mutation | Couple current authorization, expected resource/security versions, mutation, and required audit at commit, using transactions/locks or an equivalent proven fence. |
 | Explanation | Use stable reason categories and authorized evidence only. Public errors must not distinguish a hidden object from a nonexistent one where that would leak its existence. |
 
-Browser, REST, CLI, agents, MCP, workers, exports, and cache delivery call this
-same module. Presentation may summarize its results but cannot grant authority.
-Sensitive logs and diagnostic endpoints are also consumers. Internal audits may
-record rejected identities that the requester is not allowed to discover.
+Qualified Browser, REST, CLI-through-REST, Agent, MCP, worker, and cache adapters
+call this same module. Generated Agent operations preserve action/resolver
+metadata; supported custom tools and catalog/search preserve the typed
+credential ceiling. Operations without an exact typed mapping, including custom
+authoring, reject typed credentials and remain outside the qualified profile.
+Presentation may summarize authorization results
+but cannot grant authority. Sensitive logs and diagnostic endpoints are also
+consumers. Internal audits may record rejected identities that the requester is
+not allowed to discover.
 
 ## Dashboard consumption and previews
 
@@ -296,20 +302,26 @@ listed slice exists. It does not waive the remaining clauses in that row.
 4. Expand operation/catalog coverage and complete the versioned migration only
    after these cross-boundary invariants have executable evidence.
 
+Public and embedded dashboard consumers are a separately governed surface. They
+remain outside the qualified private typed-permission profile until dedicated
+public/embed consumer, stream, cache, and output evidence exists. This
+qualification boundary records evidence scope only; it does not change public
+behavior, publication controls, or their existing fail-closed safeguards.
+
 | ID | Status | Required negative and lifecycle evidence |
 | --- | --- | --- |
 | AF-01 | Implemented for typed private dashboard/API paths | Dashboard read without consume denies data; consume without query cannot submit arbitrary queries; forged interaction/query payloads fail. Public/embed remains outside the qualified typed slice. |
 | AF-02 | Implemented for private dashboard authoring paths | Generated authoring operations distinguish Project-scoped create/fork from exact-dashboard read/update, body-dependent edit/publish/archive actions use coherent typed principal/group authority plus credential attenuation, dependency changes require semantic metadata authority, and draft data preview requires update plus query/consume. Public/embed and non-dashboard authoring surfaces remain outside this slice. |
 | AF-03 | Implemented for protected materialization paths | Real PostgreSQL tests commit an attribute restriction during cache reuse and a coalesced flight, reject stale insertion/delivery, and stop the next bounded Arrow output batch. Other result/export transports remain outside this slice. |
-| AF-04 | Implemented for native Pipeline refresh | Caller token/session and delegated-grant evidence is checked at worker admission and refresh prepare, execute, publish, and output boundaries. Native scheduling selects exactly one live grant for the Pipeline UID and workload principal and never falls back to scheduler identity. Missing selection/revalidation, ambiguity, expiry, revocation, or evidence drift fails closed. Other job kinds remain unmigrated. |
-| AF-05 | Partial; canonical closure qualified | Queue admission binds delegated closure evidence to the canonical generation-bound Pipeline plan, and every protected boundary rebuilds it from the active artifact; editor selection and source/artifact drift deny. Standalone canonical binding, destination, trigger, and workflow-revision values are not exposed by the runtime and therefore remain sealed-but-not-artifact-derived checks. |
+| AF-04 | Implemented for native Pipeline refresh | Caller token/session and delegated-grant evidence is checked at worker admission and refresh prepare, execute, publish, and output boundaries. Native scheduling selects exactly one live grant for the instance, Project, and Pipeline UID; the grant supplies the execution principal and there is no scheduler-identity fallback. Missing selection/revalidation, ambiguity, expiry, revocation, or evidence drift fails closed. Other job kinds remain unmigrated. |
+| AF-05 | Implemented for native Pipeline refresh | Queue admission binds parameter, binding, run-as principal, environment, destination, trigger, workflow revision, and complete closure evidence to the canonical generation-bound Pipeline plan. Every protected boundary rebuilds the plan from the active artifact and exact-matches the evidence; missing evidence and editor/source/artifact drift deny. |
 | AF-06 | Partial | Current execution-grant lookup, workload-principal lifecycle, permission-ceiling intersection, expiry/revocation, fingerprint, exact target, and closure evidence have negative tests. Separate result/log/export consumer authorization remains pending. |
-| AF-07 | Partial | Personal-token issuance and the trusted durable-grant service prevent request-supplied issuer/ceiling authority, require coherent principal/group plus credential evidence, and deny onward delegation. Complete role/group/service-principal/attribute mutation integration remains pending. |
-| AF-08 | Partial | PostgreSQL durable-share tests prove exact resource UID binding, issuer-independent lifetime, recipient/group lifecycle, expiry, explicit audited revocation, idempotency, and no onward delegation. Public share/revoke adapters and downstream share consumption are not yet qualified. |
+| AF-07 | Implemented for project role binding and bounded grant administration | Personal-token and durable-grant issuance prevent request-supplied issuer/ceiling authority, require coherent principal/group plus credential evidence, and deny onward delegation. Public administration-envelope issue/revoke is project-bound; role binding creation locks and exact-matches the envelope's actor, recipient, role version, target, permission expansion, and lifetime. Platform group, service-principal, credential, and trusted-attribute mutations remain distinct high-trust instance operations with typed platform actions, not project-envelope fallbacks. |
+| AF-08 | Implemented for durable-share issuance/revocation lifecycle | PostgreSQL and HTTP tests prove exact resource UID binding, issuer-independent lifetime, recipient/group lifecycle, expiry, explicit audited revocation, idempotency, server-derived issuer/ceiling, and no onward delegation. Downstream use of a durable share as an authorization source remains unsupported. |
 | AF-09 | Implemented for the current registry/control fence | Real PostgreSQL activation/rollback tests serialize current semantic registry revision changes, deny stale or unavailable eligibility evidence, produce no stale rollback activation evidence, and replay an already committed activation outcome safely. A future per-semantic-identity retained-eligibility restriction remains separate work. |
 | AF-10 | Partial | Real PostgreSQL AF-03 and AF-09 races establish cache/coalesced/output-batch and activation/rollback ordering, including fail-closed unavailable evidence. External dispatch and the remaining mutation/output authorities still need real concurrency fixtures. |
-| AF-11 | Partial | Catalog profiles, explicit prerequisites, exact/future targets, typed-token immutability, typed role-binding writes, and immutable PostgreSQL typed assignments prevent silent widening. Ambiguous historical assignments intentionally remain legacy and fail closed on typed routes; create-only receipts and compatibility removal remain pending. |
-| AF-12 | Partial | Shared discovery filters before items, authorized totals and derived projections, signs context-bound cursors, and reauthorizes continuation pages; project catalog/search is integrated. Facets, autocomplete, semantic-member discovery, dashboard dependency previews, and denial explanations still require complete surface coverage. |
+| AF-11 | Implemented for the typed catalog/profile lifecycle | Catalog profiles, explicit prerequisites, exact/future targets, typed-token immutability, immutable PostgreSQL assignments, exact role-binding deletion, and bounded create receipts prevent silent widening. Ambiguous historical assignments remain read-only legacy evidence and fail closed on typed routes; obsolete public generic-grant mutations are removed. |
+| AF-12 | Partial; qualified project catalog and bounded Agent/MCP projection | Shared project discovery filters before items, authorized totals and derived projections, signs context-bound cursors, and reauthorizes continuation pages. Agent chat, catalog, get, search, and resource resolution retain exact typed credential ceilings and never return unfiltered counts. Credential-bound Agent pagination plus unlisted facets, autocomplete, semantic-member discovery, dependency previews, and denial explanations remain unsupported until separately mapped. |
 | AF-13 | Partial; native planning/build qualified | Permission storage/evaluation and durable grant ceilings preserve pairs without Cartesian expansion. Production native planning evaluates authored changes, the complete candidate dependency closure, connection bindings, and delivery transitions under one coherent snapshot; it persists the exact projection and build reauthorizes it against the current candidate snapshot. Publication/rollback still validate persisted evidence structurally without an independent compound-resolver call. |
 
 ### Executable evidence ledger
@@ -319,12 +331,12 @@ listed here retains only its previously documented evidence.
 
 | IDs | Executable evidence |
 | --- | --- |
-| AF-02 | `internal/dashboard/api/operation_contract_test.go`, `internal/dashboard/queryauthz/semantic_consumption_test.go`, `internal/dashboard/authoring/accessadapter/adapter_test.go`, and `internal/dashboard/module/routes_test.go` |
+| AF-02 | `internal/dashboard/api/operation_contract_test.go`, `internal/dashboard/queryauthz/semantic_consumption_test.go`, `internal/dashboard/authoring/accessadapter/adapter_test.go`, `internal/dashboard/module/routes_test.go`, `internal/agent/tools/authoring_contract_test.go`, and `internal/app/project_authorization_typed_test.go` |
 | AF-03, AF-10 | `internal/analytics/materialize/adr0026_qualification_test.go` uses the real PostgreSQL registry/control authority at cache, coalesced-flight, and bounded Arrow-batch release boundaries. |
 | AF-04, AF-05, AF-06 | `internal/refresh/module/authority_capture_test.go`, `internal/refresh/run/service_test.go`, `internal/app/job_authority_test.go`, `internal/app/postgres_refresh_scheduler_test.go`, `internal/access/postgres/durable_grants_test.go`, and `internal/platform/jobs/module/module_test.go` cover unique scheduled-grant selection, canonical closure drift, current grant/principal revalidation, and prepare/execute/publish/output fences. |
-| AF-07, AF-08, AF-11 | `internal/access/durable_grant_service_test.go`, `internal/access/durable_grants_test.go`, and `internal/access/postgres/durable_grants_test.go` cover trusted issuance, attenuation, resource UIDs, lifecycle, audit, replay, and revocation. |
+| AF-07, AF-08, AF-11 | `internal/access/http/durable_grant_handler_test.go`, `internal/access/http/role_binding_handler_test.go`, `internal/access/durable_grant_service_test.go`, `internal/access/durable_grants_test.go`, `internal/access/postgres/durable_grants_test.go`, and `internal/project/api/contracts_test.go` cover trusted issuance, envelope consumption, attenuation, resource UIDs, bounded receipts, lifecycle, audit, replay, and revocation. |
 | AF-09, AF-10 | `internal/deployment/module/native_coordinator_af09_test.go` exercises PostgreSQL activation/rollback concurrency, stale evidence, unavailable authority, and committed replay. |
-| AF-12 | `internal/access/discovery_test.go` and `internal/project/catalog/catalog_test.go` cover filtered totals/projections and continuation reauthorization. |
+| AF-12 | `internal/access/discovery_test.go`, `internal/project/catalog/catalog_test.go`, `internal/agent/module/catalog_scope_test.go`, `internal/agent/module/apigen_typed_scope_test.go`, and `internal/agent/http/credential_scope_test.go` cover filtered totals/projections, continuation reauthorization, and Agent/MCP credential attenuation. |
 | AF-13 | `internal/deployment/compound_authority_test.go`, `internal/app/deploymentpostgres/native_create_plan_postgres_test.go`, `internal/release/module/native_candidate_artifacts_test.go`, `internal/access/typed_operation_test.go`, and `internal/access/module/resource_authorization_typed_test.go` cover coherent compound evidence, lifecycle replay/tamper rejection, production wiring, and exact pair preservation. |
 
 Record endpoint coverage, concurrency fixtures, supported-profile limits, and

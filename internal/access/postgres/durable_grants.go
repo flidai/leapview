@@ -394,6 +394,37 @@ func (r *Repository) RevokeGrantAdminEnvelope(ctx context.Context, id, actorID, 
 
 func (r *Repository) CurrentGrantAdminEnvelope(ctx context.Context, id, principalID string) (access.GrantAdminEnvelope, error) {
 	grant, err := r.GetGrantAdminEnvelope(ctx, id)
+	return r.validateCurrentGrantAdminEnvelope(ctx, grant, principalID, err)
+}
+
+// CurrentGrantAdminEnvelopeForMutation takes a shared row lock so a
+// concurrent revoke and the authorized mutation cannot both claim to precede
+// one another. Callers use this through an already-open audited transaction.
+func (r *Repository) CurrentGrantAdminEnvelopeForMutation(ctx context.Context, id, principalID string) (access.GrantAdminEnvelope, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return access.GrantAdminEnvelope{}, err
+	}
+	row, err := accessdb.New(db).GetGrantAdminEnvelopeForMutation(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = access.ErrGrantNotFound
+		}
+		return access.GrantAdminEnvelope{}, err
+	}
+	grant, err := grantAdminEnvelopeFromFields(
+		row.ID, row.Profile, row.IssuerPrincipalID, row.IssuerCredentialClass,
+		row.IssuerCredentialID, row.IssuerCredentialFingerprint, row.BoundPrincipalID,
+		row.PermissionProfile, row.Permissions, row.TargetProjectID,
+		row.TargetResourceKind, row.TargetResourceID, row.RecipientSelector,
+		row.RoleVersion, row.IssuedAt, row.ExpiresAt, row.Fingerprint,
+		row.IdempotencyKey, row.RequestDigest, row.AllowOnwardDelegation,
+		row.RevokedAt, row.RevokedByPrincipalID, row.RevocationReason,
+	)
+	return r.validateCurrentGrantAdminEnvelope(ctx, grant, principalID, err)
+}
+
+func (r *Repository) validateCurrentGrantAdminEnvelope(ctx context.Context, grant access.GrantAdminEnvelope, principalID string, err error) (access.GrantAdminEnvelope, error) {
 	if err != nil {
 		return grant, err
 	}
@@ -801,20 +832,22 @@ func (r *Repository) grantAdminEnvelopeByID(ctx context.Context, db DBTX, id str
 		}
 		return access.GrantAdminEnvelope{}, err
 	}
-	var grant access.GrantAdminEnvelope
-	var issuerPrincipal, boundPrincipal, profile, kind, resourceID, revokedBy string
-	var permissionsJSON []byte
-	var issuerClass, issuerID, issuerFP, projectID, selector, role, fingerprint, idem, requestDigest, reason string
-	var issued, expires, revoked time.Time
-	var onward bool
-	grant.ID, grant.Profile = row.ID, row.Profile
-	issuerPrincipal, issuerClass, issuerID, issuerFP, boundPrincipal = row.IssuerPrincipalID, row.IssuerCredentialClass, row.IssuerCredentialID, row.IssuerCredentialFingerprint, row.BoundPrincipalID
-	profile, permissionsJSON, projectID, kind, resourceID = row.PermissionProfile, row.Permissions, row.TargetProjectID, row.TargetResourceKind, row.TargetResourceID
-	selector, role, issued, expires = row.RecipientSelector, row.RoleVersion, durableGrantTime(row.IssuedAt), durableGrantTime(row.ExpiresAt)
-	fingerprint, idem, requestDigest, onward = row.Fingerprint, row.IdempotencyKey, row.RequestDigest, row.AllowOnwardDelegation
-	revoked, revokedBy, reason = durableGrantTime(row.RevokedAt), row.RevokedByPrincipalID, row.RevocationReason
+	return grantAdminEnvelopeFromFields(
+		row.ID, row.Profile, row.IssuerPrincipalID, row.IssuerCredentialClass,
+		row.IssuerCredentialID, row.IssuerCredentialFingerprint, row.BoundPrincipalID,
+		row.PermissionProfile, row.Permissions, row.TargetProjectID,
+		row.TargetResourceKind, row.TargetResourceID, row.RecipientSelector,
+		row.RoleVersion, row.IssuedAt, row.ExpiresAt, row.Fingerprint,
+		row.IdempotencyKey, row.RequestDigest, row.AllowOnwardDelegation,
+		row.RevokedAt, row.RevokedByPrincipalID, row.RevocationReason,
+	)
+}
+
+func grantAdminEnvelopeFromFields(id, grantProfile, issuerPrincipal, issuerClass, issuerID, issuerFP, boundPrincipal, permissionProfile string, permissionsJSON []byte, projectID, kind, resourceID, selector, role string, issuedValue, expiresValue pgtype.Timestamptz, fingerprint, idem, requestDigest string, onward bool, revokedValue pgtype.Timestamptz, revokedBy, reason string) (access.GrantAdminEnvelope, error) {
+	issued, expires, revoked := durableGrantTime(issuedValue), durableGrantTime(expiresValue), durableGrantTime(revokedValue)
+	grant := access.GrantAdminEnvelope{ID: id, Profile: grantProfile}
 	grant.Issuer = access.GrantIssuerEvidence{PrincipalID: issuerPrincipal, Credential: access.GrantCredentialEvidence{Class: issuerClass, ID: issuerID, Fingerprint: issuerFP}}
-	grant.BoundPrincipalID, grant.Permissions, grant.TargetProjectID = boundPrincipal, nil, projectgraph.ResourceID(projectID)
+	grant.BoundPrincipalID, grant.TargetProjectID = boundPrincipal, projectgraph.ResourceID(projectID)
 	grant.TargetResourceKind, grant.TargetResourceID = projectgraph.Kind(kind), projectgraph.ResourceID(resourceID)
 	grant.RecipientSelector, grant.RoleVersion, grant.IssuedAt, grant.ExpiresAt = selector, role, issued, expires
 	grant.Fingerprint, grant.IdempotencyKey, grant.RequestDigest, grant.AllowOnwardDelegation, grant.RevokedAt, grant.RevokedByPrincipalID, grant.RevocationReason = fingerprint, idem, requestDigest, onward, revoked, revokedBy, reason
@@ -822,7 +855,7 @@ func (r *Repository) grantAdminEnvelopeByID(ctx context.Context, db DBTX, id str
 		grant.RevokedAt = time.Time{}
 	}
 	decoded, err := access.DecodePermissionPairs(permissionsJSON)
-	if err != nil || grant.Profile != access.DurableGrantProfile || profile != access.PermissionCatalogProfile {
+	if err != nil || grant.Profile != access.DurableGrantProfile || permissionProfile != access.PermissionCatalogProfile {
 		return access.GrantAdminEnvelope{}, fmt.Errorf("%w: persisted envelope permissions: %v", access.ErrInvalidDurableGrant, err)
 	}
 	if err := grant.Issuer.Validate(); err != nil {

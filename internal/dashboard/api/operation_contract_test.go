@@ -86,6 +86,9 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 			t.Fatalf("%s command contract = %#v", operationID, contract.Command)
 		}
 		command := contract.Command
+		if contract.Authz == nil || contract.Authz.Action != string(access.ActionDashboardPublish) || contract.Authz.Resolver != string(access.TypedOperationResolverDashboard) {
+			t.Errorf("%s typed authz = %#v, want dashboard.publish/dashboard", operationID, contract.Authz)
+		}
 		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "privilege" || command.Privilege != "RESOURCE_PUBLISH" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
@@ -104,8 +107,12 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 	}
 
 	for _, operationID := range []string{"listDashboardPublications", "getDashboardPublication"} {
-		if contract := contracts[operationID]; contract.Command != nil {
+		contract := contracts[operationID]
+		if contract.Command != nil {
 			t.Errorf("query %s has command contract %#v", operationID, contract.Command)
+		}
+		if operationID == "getDashboardPublication" && (contract.Authz == nil || contract.Authz.Action != string(access.ActionDashboardRead) || contract.Authz.Resolver != string(access.TypedOperationResolverDashboard)) {
+			t.Errorf("%s typed authz = %#v, want dashboard.read/dashboard", operationID, contract.Authz)
 		}
 	}
 }

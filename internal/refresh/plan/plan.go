@@ -30,19 +30,29 @@ type Plan struct {
 	// scope and is preserved through delivery planning.
 	MaterializationScope []string
 	SourceInputs         []string
-	ServingGenerationID  string
-	ArtifactDigest       string
-	SelectionDigest      string
-	Digest               string
+	// ParameterDigest and DestinationDigest are explicit sealed evidence. The
+	// current refresh model has no user parameters or authored external
+	// destination, so these are canonical empty identities rather than
+	// unchecked omissions.
+	ParameterDigest     string
+	BindingDigest       string
+	DestinationDigest   string
+	TriggerEvidence     []string
+	ServingGenerationID string
+	ArtifactDigest      string
+	SelectionDigest     string
+	Digest              string
 }
 
 // InvocationPolicy is the effective authored trigger and overlap policy bound
 // when a compiled selection is admitted as a run.
 type InvocationPolicy struct {
 	InvocationSource        string
+	TriggerID               string
 	MatchingScheduleIDs     []string
 	StartingDeadlineSeconds int64
 	ConcurrencyPolicy       string
+	RunAsPrincipalID        string
 }
 
 // DeliveryPipelinePlan lowers a generation-bound refresh selection into the
@@ -62,11 +72,39 @@ func (p Plan) DeliveryPipelinePlan(policy ...InvocationPolicy) (projectpipelinep
 	if err := refreshschedule.ValidateArtifactDigest(p.SelectionDigest); err != nil {
 		return projectpipelineplan.Plan{}, fmt.Errorf("pipeline authored selection digest: %w", err)
 	}
+	parameterDigest := p.ParameterDigest
+	if parameterDigest == "" {
+		parameterDigest = projectpipelineplan.SealedAbsentEvidenceDigest("parameters")
+	}
+	bindingDigest := p.BindingDigest
+	if bindingDigest == "" {
+		bindingDigest = projectpipelineplan.SealedAbsentEvidenceDigest("connection-bindings")
+	}
+	destinationDigest := p.DestinationDigest
+	if destinationDigest == "" {
+		destinationDigest = projectpipelineplan.SealedAbsentEvidenceDigest("destinations")
+	}
+	triggerEvidence := []string{"source:" + strings.TrimSpace(effective.InvocationSource)}
+	if triggerID := strings.TrimSpace(effective.TriggerID); triggerID != "" {
+		triggerEvidence = append(triggerEvidence, "trigger:"+triggerID)
+	}
+	for _, scheduleID := range effective.MatchingScheduleIDs {
+		triggerEvidence = append(triggerEvidence, "schedule:"+strings.TrimSpace(scheduleID))
+	}
+	triggerEvidence = append(triggerEvidence, p.TriggerEvidence...)
+	if effective.StartingDeadlineSeconds != 0 {
+		triggerEvidence = append(triggerEvidence, fmt.Sprintf("deadline:%d", effective.StartingDeadlineSeconds))
+	}
+	if policy := strings.TrimSpace(effective.ConcurrencyPolicy); policy != "" {
+		triggerEvidence = append(triggerEvidence, "concurrency:"+policy)
+	}
+	triggerDigest := projectpipelineplan.CanonicalEvidenceDigest("triggers", triggerEvidence)
 	return projectpipelineplan.New(projectpipelineplan.Plan{
 		ID: "pipeline-plan-" + strings.TrimPrefix(p.Digest, "sha256:"), PipelineID: p.TargetID.String(), ProjectID: p.ProjectID.String(), Environment: p.Environment,
 		SemanticModelID: p.SemanticModelID.String(), SelectedResourceType: "semanticModel", SelectedResourceID: p.SemanticModelID.String(), ServingGenerationID: p.ServingGenerationID,
 		ArtifactDigest: p.ArtifactDigest, SelectionDigest: p.SelectionDigest, MaterializationScope: append([]string(nil), p.MaterializationScope...),
 		ModelExecutionOrder: append([]string(nil), p.MaterializationScope...), SourceInputs: append([]string(nil), p.SourceInputs...),
+		ParameterDigest: parameterDigest, BindingDigest: bindingDigest, RunAsPrincipalID: strings.TrimSpace(effective.RunAsPrincipalID), DestinationDigest: destinationDigest, TriggerDigest: triggerDigest,
 		InvocationSource: effective.InvocationSource, MatchingScheduleIDs: append([]string(nil), effective.MatchingScheduleIDs...), StartingDeadlineSeconds: effective.StartingDeadlineSeconds, ConcurrencyPolicy: effective.ConcurrencyPolicy,
 	})
 }
@@ -100,8 +138,15 @@ func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID p
 		SemanticModelID:  pipeline.SemanticModelID,
 		Tables:           order,
 		DependencyTables: append([]string(nil), order...), MaterializationScope: append([]string(nil), order...),
-		SourceInputs: modelSourceInputs(definition.ModelTables, order),
+		SourceInputs:      modelSourceInputs(definition.ModelTables, order),
+		ParameterDigest:   projectpipelineplan.SealedAbsentEvidenceDigest("parameters"),
+		DestinationDigest: projectpipelineplan.SealedAbsentEvidenceDigest("destinations"),
 	}
+	for _, schedule := range pipeline.Schedules {
+		result.TriggerEvidence = append(result.TriggerEvidence, "schedule:"+strings.TrimSpace(schedule.ID)+"="+strings.TrimSpace(schedule.Expression))
+	}
+	sort.Strings(result.TriggerEvidence)
+	result.BindingDigest = projectpipelineplan.CanonicalEvidenceDigest("connection-bindings", connectionBindingEvidence(definition, model, result.SourceInputs))
 	if err := refreshschedule.ValidateArtifactDigest(pipeline.SelectionDigest); err != nil {
 		return Plan{}, fmt.Errorf("refresh pipeline %q authored selection digest: %w", pipelineID, err)
 	}
@@ -125,6 +170,8 @@ func (p Plan) BindGeneration(identity projectgraph.ServingIdentity, artifactDige
 	p.Environment = identity.Environment
 	p.ServingGenerationID = identity.GenerationID
 	p.ArtifactDigest = artifactDigest
+	p.TriggerEvidence = append([]string(nil), p.TriggerEvidence...)
+	sort.Strings(p.TriggerEvidence)
 	p.Digest = digestPlan(struct {
 		TargetID            string   `json:"targetId"`
 		PipelineID          string   `json:"pipelineId"`
@@ -132,10 +179,53 @@ func (p Plan) BindGeneration(identity projectgraph.ServingIdentity, artifactDige
 		ServingGenerationID string   `json:"servingGenerationId"`
 		ArtifactDigest      string   `json:"artifactDigest"`
 		SelectionDigest     string   `json:"selectionDigest"`
+		ParameterDigest     string   `json:"parameterDigest"`
+		BindingDigest       string   `json:"bindingDigest"`
+		DestinationDigest   string   `json:"destinationDigest"`
+		TriggerEvidence     []string `json:"triggerEvidence"`
 		Scope               []string `json:"materializationScope"`
 		Sources             []string `json:"sourceInputs"`
-	}{p.TargetID.String(), p.TargetID.String(), p.SemanticModelID.String(), identity.GenerationID, p.ArtifactDigest, p.SelectionDigest, p.MaterializationScope, p.SourceInputs})
+	}{p.TargetID.String(), p.TargetID.String(), p.SemanticModelID.String(), identity.GenerationID, p.ArtifactDigest, p.SelectionDigest, p.ParameterDigest, p.BindingDigest, p.DestinationDigest, p.TriggerEvidence, p.MaterializationScope, p.SourceInputs})
 	return p, nil
+}
+
+// connectionBindingEvidence lowers the currently available source-to-
+// connection graph into stable, non-secret identities. A source/model fixture
+// that does not expose this graph is represented explicitly as absent evidence;
+// it is never silently treated as an unconstrained binding.
+func connectionBindingEvidence(definition *refreshartifact.Definition, model *semanticmodel.Model, sources []string) []string {
+	if len(sources) == 0 {
+		return []string{"sources:absent"}
+	}
+	if model == nil || len(model.Sources) == 0 {
+		return []string{"bindings:absent"}
+	}
+	result := make([]string, 0, len(sources))
+	for _, sourceID := range sources {
+		sourceID = strings.TrimSpace(sourceID)
+		source, ok := model.Sources[sourceID]
+		if !ok {
+			result = append(result, "source:"+sourceID+"=absent")
+			continue
+		}
+		connectionName := strings.TrimSpace(source.Connection)
+		if connectionName == "" {
+			result = append(result, "source:"+sourceID+"=connection:absent")
+			continue
+		}
+		connectionID := ""
+		if definition != nil {
+			connectionID = strings.TrimSpace(definition.ConnectionIDs[connectionName])
+		}
+		if connectionID == "" {
+			// The runtime model still carries the canonical authored connection
+			// name even when a compact test artifact omits the ID index. Keep that
+			// evidence explicit so a changed name changes the closure identity.
+			connectionID = "name:" + connectionName
+		}
+		result = append(result, "source:"+sourceID+"=connection:"+connectionID)
+	}
+	return result
 }
 
 func digestPlan(value any) string {

@@ -8,7 +8,7 @@ ${LEAPVIEW_PUBLIC_URL}/mcp
 
 For example, a deployment whose public URL is `https://bi.example.com` exposes MCP at `https://bi.example.com/mcp`. `https://leapview.dev` hosts the LeapView website and documentation; it is not a shared MCP gateway for independently deployed instances.
 
-LeapView implements stateless Streamable HTTP 2025-11-25. It exposes tools, not MCP resources, prompts, nested conversations, or stdio transport. The built-in agent and MCP use the same catalog, input and output schemas, handlers, authorization, projections, audit path, and execution errors.
+LeapView implements stateless Streamable HTTP 2025-11-25. It exposes tools, not MCP resources, prompts, nested conversations, or stdio transport. The built-in agent and MCP use the same catalog, input and output schemas, handlers, projections, audit path, and execution errors. Supported typed operations also share exact action/target authorization. A typed credential cannot call a legacy-only tool that lacks an exact mapping; that tool is unavailable instead of inheriting the principal's broader authority.
 
 ## Before you connect
 

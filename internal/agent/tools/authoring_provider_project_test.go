@@ -34,6 +34,23 @@ func TestDashboardAuthoringRequiresAuthenticatedPrincipalAndResolver(t *testing.
 	}
 }
 
+func TestDashboardAuthoringRejectsTypedCredentialBeforePrincipalApplication(t *testing.T) {
+	app := &projectAuthoringFake{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
+	scope := Scope{PrincipalID: "principal", Credential: CredentialScope{
+		PermissionProfile: access.PermissionCatalogProfile,
+		Permissions:       []access.PermissionPair{}, Restricted: true,
+	}}
+	definition := definitionByName(provider.Definitions(scope), GetDashboardToolName)
+	result, err := definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "typed-get", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales"}`)})
+	if err != nil || !result.IsError || toolErrorCode(result) != "forbidden" {
+		t.Fatalf("typed authoring result=%#v err=%v", result, err)
+	}
+	if app.getRequest.DashboardID != "" {
+		t.Fatalf("typed authoring reached principal application: %#v", app.getRequest)
+	}
+}
+
 func TestDashboardAuthoringCatalogApplicationIsAuthoritativeAndProjectIsFixed(t *testing.T) {
 	app := &projectAuthoringFake{list: catalog.ListResult{Items: []catalog.Dashboard{
 		{ID: "dashboard_sales", Source: catalog.SourceProject},
@@ -84,7 +101,7 @@ func TestDashboardAuthoringResolvesActiveProjectPerOperation(t *testing.T) {
 }
 
 func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing.T) {
-	app := &projectAuthoringFake{}
+	app := &projectAuthoringFake{createResult: createResultForTest()}
 	resolver := &projectResolverFake{}
 	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: resolver.Resolve}
 	scope := Scope{PrincipalID: "principal", ConversationID: "conversation"}
@@ -188,6 +205,33 @@ func TestDashboardAuthoringSourceToolsReadAndEditExactDraftYAML(t *testing.T) {
 
 func projectIDForTest() projectgraph.ResourceID { return projectgraph.ResourceID("project_demo") }
 
+func createResultForTest() authoringservice.Result {
+	revision := dashboardauthoring.RevisionToken{
+		RevisionID:  "revision_1",
+		Number:      1,
+		ContentHash: "sha256:" + strings.Repeat("a", 64),
+	}
+	return authoringservice.Result{
+		Revision: revision,
+		Lifecycle: dashboardauthoring.DashboardLifecycle{
+			ProjectID:        projectIDForTest(),
+			ID:               "dashboard_sales",
+			OwnerPrincipalID: "principal",
+			Slug:             "sales",
+			Title:            "Sales",
+			SemanticModel:    "semantic_sales",
+			Visibility:       dashboardauthoring.VisibilityPrivate,
+			Status:           dashboardauthoring.LifecycleStatusDraft,
+			Draft: &dashboardauthoring.Draft{
+				ID:          "draft_1",
+				DashboardID: "dashboard_sales",
+				Revision:    revision,
+				Provenance:  dashboardauthoring.Provenance{Origin: dashboardauthoring.OriginAgent, ActorID: "principal"},
+			},
+		},
+	}
+}
+
 func toolErrorCode(result agentcore.ToolResult) string {
 	content, _ := result.Content.(map[string]any)
 	errValue, _ := content["error"].(map[string]any)
@@ -229,6 +273,7 @@ type projectAuthoringFake struct {
 	listRequest      catalog.ListRequest
 	getRequest       catalog.GetRequest
 	create           authoringservice.CreateRequest
+	createResult     authoringservice.Result
 	fork             sourceadapter.ForkRequest
 	command          dashboardauthoring.Command
 	source           authoringapplication.SourceRead
@@ -249,7 +294,7 @@ func (f *projectAuthoringFake) Draft(context.Context, authoringapplication.Draft
 }
 func (f *projectAuthoringFake) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
 	f.create = request
-	return authoringservice.Result{}, nil
+	return f.createResult, nil
 }
 func (f *projectAuthoringFake) Execute(_ context.Context, _ projectgraph.ResourceID, command dashboardauthoring.Command) (authoringservice.Result, error) {
 	f.command = command

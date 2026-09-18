@@ -4,8 +4,8 @@ Status: accepted
 
 Decision date: 2026-09-17
 
-Implementation: advanced partial — restricted consumption, durable delegation,
-and qualified lifecycle slices; complete boundary and interface coverage pending
+Implementation: complete for the qualified private/native profile — the ledger
+records explicit unsupported and separately governed boundaries
 
 Deciders: LeapView maintainers
 
@@ -29,11 +29,16 @@ The restricted-dashboard slice now distinguishes saved-content consumption
 from arbitrary query construction. Published dashboard execution requires an
 exact `dashboard.read` credential pair and `semantic.consume` on every selected
 SemanticModel in addition to the existing principal grants and semantic policy.
-API, agent, Explorer, and preview query construction requires
-`semantic.query`, whose catalog prerequisite independently requires
-`semantic.consume`. Draft previews retain their authoring gate, and dashboard
-interaction input is validated against the server-owned revision rather than
-accepting a caller-supplied query shape.
+API, Explorer, and preview query construction requires `semantic.query`, whose
+catalog prerequisite independently requires `semantic.consume`. Generated
+Agent operations carry the same action/resolver metadata, supported Agent and
+MCP tools preserve the typed credential ceiling, catalog/search filters exact
+pairs, and visual queries require query plus consume. Custom authoring and any
+other legacy-only tools reject typed credentials rather than projecting them
+back to generic capabilities.
+Draft previews retain their authoring gate, and dashboard interaction input is
+validated against the server-owned revision rather than accepting a
+caller-supplied query shape.
 
 The asynchronous slice persists an immutable authority envelope with Pipeline
 refresh work. Caller-authority refresh records an exact `pipeline.run` pair,
@@ -67,9 +72,10 @@ or ambiguous selection fails closed and never falls back to a scheduler or
 worker identity. Queue admission binds the grant's closure digest to the
 canonical generation-bound Pipeline plan. Prepare, execute, publish, and output
 boundaries rebuild that plan from the current active artifact, so executable or
-source drift stops queued work. Binding, destination, trigger, and workflow
-revision values remain sealed grant evidence, but are not misrepresented as
-artifact-derived checks until the runtime exposes canonical values for them.
+source drift stops queued work. The plan now seals parameter, connection
+binding, run-as principal, environment, destination, trigger, workflow revision,
+and complete closure evidence. Every protected boundary exact-matches that
+evidence; missing or changed evidence fails closed.
 
 Native delivery planning evaluates authored changes, complete dependency
 closure, connection bindings, and lifecycle transitions against one coherent
@@ -94,14 +100,20 @@ reuse and for activation/rollback registry revision changes, including
 fail-closed unavailable evidence and idempotent replay of an already committed
 activation.
 
-This remains an intentionally bounded qualification. Release, managed-data,
-agent, approval, public/embed, every discovery facet, external dispatch, and
-all running-job/result retrieval paths have not migrated to the complete
-authority contract. Durable grant issuance/revocation is not yet a public API,
-and the retained-generation test qualifies the current registry/control fence,
-not a future per-semantic-identity eligibility store. The companion
-specification's ledger is authoritative; these slices must not be described as
-security-complete.
+This is an intentionally bounded completed profile. Generated private REST,
+Browser, CLI-through-REST, Agent, MCP, native refresh, native delivery, cache,
+and rollback adapters use the typed contract for their supported operations.
+Resource-share and grant-administration issue/revoke adapters are public and
+audited; downstream consumption of a durable share is not yet a supported
+authority source. Public/embed consumers, TUS transport semantics, arbitrary
+export/result retrieval, external side-effect dispatch, future job kinds, and
+unlisted discovery facets remain unsupported or separately governed. Legacy
+generic grant-management routes are removed; ambiguous historical bindings are
+read only on explicitly legacy paths and cannot authorize typed operations.
+The retained-generation evidence qualifies the current registry/control fence,
+not a future per-semantic-identity eligibility store. The companion ledger is
+authoritative for these boundaries; completion of this profile is not a claim
+of universal security coverage.
 
 ## Context and problem statement
 

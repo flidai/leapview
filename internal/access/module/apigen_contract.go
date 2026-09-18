@@ -30,6 +30,7 @@ type APIGenResourceResolvers struct {
 	Source        APIGenResourceResolver
 	Model         APIGenResourceResolver
 	Pipeline      APIGenResourceResolver
+	ResourceShare APIGenResourceResolver
 	Project       APIGenResourceResolver
 	Instance      APIGenInstanceResolver
 	Delivery      APIGenDeliveryAuthorizer

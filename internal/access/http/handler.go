@@ -43,6 +43,7 @@ type SessionProvider func(*stdhttp.Request) (string, bool)
 type EffectiveCapabilitiesProvider func(context.Context, *stdhttp.Request, string) ([]access.Capability, error)
 type PlatformAdminProvider func(context.Context, string) (bool, error)
 type RequestPlatformAdminProvider func(context.Context, *stdhttp.Request, string) (bool, error)
+type DurableGrantServiceProvider func(*stdhttp.Request) (*access.DurableGrantService, error)
 
 type AuthoringAuthentication interface {
 	InstanceID() string
@@ -73,6 +74,8 @@ type Handler struct {
 	// from browser picker data.
 	CurrentEffectivePermissionOptions func(context.Context, string) ([]access.PermissionPair, error)
 	CurrentProjectID                  func(context.Context) (projectgraph.ResourceID, error)
+	DurableGrantService               DurableGrantServiceProvider
+	DurableGrantInstanceID            string
 	RequestEffectiveCapabilities      EffectiveCapabilitiesProvider
 	// PlatformAdmin evaluates the durable instance-wide role. It is retained as
 	// a narrow callback for non-module callers; RequestPlatformAdmin additionally

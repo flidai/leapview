@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -167,6 +168,9 @@ type ResourceShareGrantInput struct {
 func (in ResourceShareGrantInput) Validate() error {
 	if in.Profile != "" && in.Profile != DurableGrantProfile {
 		return fmt.Errorf("%w: unsupported profile %q", ErrInvalidDurableGrant, in.Profile)
+	}
+	if in.AllowOnwardDelegation {
+		return ErrGrantNoOnwardDelegation
 	}
 	if in.ID != "" && !durableIdentity(in.ID, 255) {
 		return fmt.Errorf("%w: grant ID is invalid", ErrInvalidDurableGrant)
@@ -371,6 +375,52 @@ type GrantAdminEnvelopeInput struct {
 	IdempotencyKey        string
 	RequestDigest         string
 	AllowOnwardDelegation bool
+}
+
+// CurrentGrantAdminEnvelopeReader resolves a live grant-administration
+// envelope for a mutation. Implementations used by write paths must serialize
+// this read with concurrent revocation so the mutation and revocation have a
+// deterministic commit order.
+type CurrentGrantAdminEnvelopeReader interface {
+	CurrentGrantAdminEnvelopeForMutation(context.Context, string, string) (GrantAdminEnvelope, error)
+}
+
+var ErrGrantAdminEnvelopeMismatch = errors.New("grant administration envelope does not authorize the mutation")
+
+// PermissionRoleVersion is the canonical, catalog-pinned identity used when
+// a grant-administration envelope authorizes one named role expansion.
+func PermissionRoleVersion(role PermissionRole) string {
+	return PermissionCatalogProfile + ":role:" + string(role)
+}
+
+// ValidateGrantAdminEnvelopeRoleBinding proves that a live envelope is bound
+// to the actor, Project, exact recipient, catalog-pinned role expansion, and
+// every permission the binding would make effective. The envelope is a
+// ceiling, not a wildcard, and resource-scoped envelopes cannot administer a
+// Project-wide role binding.
+func ValidateGrantAdminEnvelopeRoleBinding(envelope GrantAdminEnvelope, actorID string, projectID projectgraph.ResourceID, subject SubjectRef, role PermissionRole, permissions []PermissionPair) error {
+	if envelope.BoundPrincipalID != actorID || envelope.TargetProjectID != projectID || envelope.TargetResourceKind != "" || envelope.TargetResourceID != "" {
+		return ErrGrantAdminEnvelopeMismatch
+	}
+	if envelope.RecipientSelector != string(subject.Kind)+":"+subject.ID || envelope.RoleVersion != PermissionRoleVersion(role) {
+		return ErrGrantAdminEnvelopeMismatch
+	}
+	if err := ValidatePermissionPairs(permissions); err != nil || len(permissions) == 0 {
+		return ErrGrantAdminEnvelopeMismatch
+	}
+	for _, pair := range permissions {
+		matched := false
+		for _, ceiling := range envelope.Permissions {
+			if ceiling.Key() == pair.Key() {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return ErrGrantAdminEnvelopeMismatch
+		}
+	}
+	return nil
 }
 
 func (in GrantAdminEnvelopeInput) Validate() error {

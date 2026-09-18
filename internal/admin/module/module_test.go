@@ -98,16 +98,16 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 		t.Fatal(err)
 	}
 	allowed := true
-	service := &adminPublicationInvocationService{}
+	service := &adminPublicationInvocationService{publications: []publication.Publication{{ProjectID: "project:server-bound", Name: "executive", Dashboard: "dashboard:executive"}}}
 	m := &Module{
 		publications: service, publicationCommands: map[string]uicommand.Binding{"suspend": dashboardgen.GenUIActionSuspendDashboardPublication()},
 		currentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-ui"}, true },
 		currentProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:server-bound", nil },
-		currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
-			if allowed {
-				return []access.Capability{access.CapabilityResourcePublish}, nil
+		authorizeTypedDashboardAction: func(_ context.Context, principalID string, projectID, dashboardID projectgraph.ResourceID, action access.Action) (bool, error) {
+			if principalID != "principal-ui" || projectID != "project:server-bound" || dashboardID != "dashboard:executive" || action != access.ActionDashboardPublish {
+				t.Fatalf("typed publication authority = %q/%q/%q/%q", principalID, projectID, dashboardID, action)
 			}
-			return nil, nil
+			return allowed, nil
 		},
 	}
 	m.handler.PublicationMutation = m.mutatePublication

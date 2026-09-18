@@ -141,6 +141,20 @@ SELECT id, profile, issuer_principal_id::text AS issuer_principal_id,
 FROM access.grant_admin_envelope
 WHERE id = sqlc.arg(id)::text;
 
+-- name: GetGrantAdminEnvelopeForMutation :one
+SELECT id, profile, issuer_principal_id::text AS issuer_principal_id,
+       issuer_credential_class, issuer_credential_id, issuer_credential_fingerprint,
+       bound_principal_id::text AS bound_principal_id, permission_profile, permissions,
+       target_project_id, COALESCE(target_resource_kind, '') AS target_resource_kind,
+       COALESCE(target_resource_id, '') AS target_resource_id, recipient_selector,
+       role_version, issued_at, expires_at, fingerprint, idempotency_key, request_digest,
+       allow_onward_delegation, COALESCE(revoked_at, 'epoch'::timestamptz) AS revoked_at,
+       COALESCE(revoked_by_principal_id::text, ''::text)::text AS revoked_by_principal_id,
+       revocation_reason
+FROM access.grant_admin_envelope
+WHERE id = sqlc.arg(id)::text
+FOR SHARE;
+
 -- name: GetGrantAdminEnvelopeByIdempotency :one
 SELECT id
 FROM access.grant_admin_envelope

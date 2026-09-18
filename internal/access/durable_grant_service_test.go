@@ -290,6 +290,20 @@ func TestDurableGrantServiceRequiresManageAndDelegateForAdminEnvelope(t *testing
 	}
 }
 
+func TestDurableGrantServiceRevokeAdminEnvelopeForTargetResolvesExactTarget(t *testing.T) {
+	target := DurableGrantTarget{ProjectID: serviceProjectID, ResourceKind: projectgraph.KindDashboard, ResourceID: "dashboard_service"}
+	service, writer, resolver := serviceForTest(t, serviceAuthority(nil, nil, GrantCredentialClassAPIToken))
+	if err := service.RevokeGrantAdminEnvelopeForTarget(t.Context(), "admin-service", "security review", target); err != nil {
+		t.Fatalf("revoke admin envelope: %v", err)
+	}
+	if len(resolver.requests) != 1 || resolver.requests[0].Target != target {
+		t.Fatalf("resolved target = %#v, want %#v", resolver.requests, target)
+	}
+	if writer.revokeKind != DurableGrantKindAdminEnvelope || writer.revokeID != "admin-service" || writer.revokeActor != serviceIssuerID || writer.revokeReason != "security review" {
+		t.Fatalf("revoke mutation = %#v", writer)
+	}
+}
+
 func TestDurableGrantServiceIssuesExecutionGrantAndUsesDerivedCeiling(t *testing.T) {
 	target := servicePipelineTarget()
 	delegate := serviceResourcePair(t, ActionWorkloadDelegate, target)

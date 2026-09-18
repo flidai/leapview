@@ -54,18 +54,22 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/create_dashboard_draft.
 {
   "additionalProperties": false,
   "properties": {
-    "lifecycle": {
-      "additionalProperties": {},
-      "type": "object"
+    "id": {
+      "minLength": 1,
+      "type": "string"
     },
-    "revision": {
-      "additionalProperties": {},
-      "type": "object"
+    "status": {
+      "enum": [
+        "draft",
+        "published",
+        "archived"
+      ],
+      "type": "string"
     }
   },
   "required": [
-    "lifecycle",
-    "revision"
+    "id",
+    "status"
   ],
   "type": "object"
 }
