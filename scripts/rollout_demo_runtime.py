@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import pwd
 import shutil
 import subprocess
 import sys
@@ -37,9 +38,13 @@ def ready():
 
 
 def await_ready():
+    initial_restarts = int(output('systemctl', 'show', SERVICE, '--property=NRestarts', '--value') or '0')
     for _ in range(60):
         if ready():
             return
+        restarts = int(output('systemctl', 'show', SERVICE, '--property=NRestarts', '--value') or '0')
+        if restarts - initial_restarts >= 3:
+            raise RuntimeError('Runtime repeatedly exited during startup')
         time.sleep(2)
     raise RuntimeError('Runtime did not become ready within the cutover window')
 
@@ -57,6 +62,7 @@ def main():
     args = [item.decode() for item in Path('/proc', pid, 'cmdline').read_bytes().split(b'\0') if item]
     assert args[1:] == ['serve', '--production'], 'Unexpected service arguments'
     runtime_env = dict(item.decode().split('=', 1) for item in Path('/proc', pid, 'environ').read_bytes().split(b'\0') if b'=' in item)
+    runtime_env.setdefault('HOME', pwd.getpwuid(Path('/proc', pid).stat().st_uid).pw_dir)
     assert runtime_env['LEAPVIEW_HOME'] == str(HOME_PATH)
     assert ready(), 'Predecessor must be healthy'
     previous = json.loads(output(f'/proc/{pid}/exe', 'version', '--json'))
@@ -127,7 +133,7 @@ def main():
         environment_file = RELEASE / 'runtime.env'
         environment_lines = []
         for name, value in sorted(runtime_env.items()):
-            if name.startswith('LEAPVIEW_'):
+            if name.startswith('LEAPVIEW_') or name in ('HOME', 'PATH', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'SHELL', 'TMPDIR'):
                 escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('$', '\\$').replace('`', '\\`')
                 environment_lines.append(name + '="' + escaped + '"')
         write_private(environment_file, '\n'.join(environment_lines) + '\n')
