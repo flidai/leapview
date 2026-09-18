@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/semanticvalue"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -242,7 +243,7 @@ func newADR0026PostgresAccessFixture(t *testing.T) *adr0026PostgresAccessFixture
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
-	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "adr0026-qualification-secret", Login: true})
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: uuid.NewString(), Login: true})
 	h.GrantRole(t, owner, migrator)
 	database := h.NewDatabase(t, "")
 	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
