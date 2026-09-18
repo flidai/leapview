@@ -198,7 +198,12 @@ for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
   printf '%s: ' "$container"
   docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT max(version_id) FROM public.goose_db_version WHERE is_applied"' || true
   printf 'Delivery targets and active generations:\n'
-  docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT t.target_id,t.project_id,t.environment,COALESCE(p.generation_id::text,\x27\x27) FROM delivery.delivery_target t LEFT JOIN delivery.delivery_active_pointer p ON p.target_id=t.target_id ORDER BY t.target_id"' || true
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT t.target_id,t.project_id,t.environment,COALESCE(p.generation_id::text,'')
+FROM delivery.delivery_target t
+LEFT JOIN delivery.delivery_active_pointer p ON p.target_id=t.target_id
+ORDER BY t.target_id;
+SQL
   printf 'Canonical project identities:\n'
   docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT project_id FROM project.project_identity ORDER BY project_id"' || true
   printf 'Service principal credential inventory:\n'
@@ -222,6 +227,26 @@ FROM access.authorization_grant
 WHERE subject_kind='principal' AND revoked_at IS NULL
   AND subject_id IN (SELECT id::text FROM access.principal WHERE principal_type='service')
 ORDER BY 1,2,3;
+SQL
+  printf 'Target authorization policy inventory:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT p.target_id,p.project_id,p.environment,p.revision,
+       COUNT(b.id),COALESCE(string_agg(b.subject_id||':'||b.role,',' ORDER BY b.subject_id,b.role),'')
+FROM access.authorization_policy p
+LEFT JOIN access.authorization_policy_role_binding b
+  ON b.target_id=p.target_id AND b.project_id=p.project_id
+ AND b.environment=p.environment AND b.revision=p.revision
+GROUP BY p.target_id,p.project_id,p.environment,p.revision
+ORDER BY p.target_id,p.project_id,p.environment;
+SQL
+  printf 'Active generation authorization inventory:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT r.project_id,r.environment,r.generation_id,COUNT(*),
+       COALESCE(string_agg(r.subject_id||':'||r.role,',' ORDER BY r.subject_id,r.role),'')
+FROM access.authorization_role_binding r
+WHERE r.revoked_at IS NULL
+GROUP BY r.project_id,r.environment,r.generation_id
+ORDER BY r.project_id,r.environment,r.generation_id;
 SQL
 done
 printf 'Operator environment file paths:\n'
