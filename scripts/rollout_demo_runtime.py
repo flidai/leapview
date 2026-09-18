@@ -77,6 +77,14 @@ def main():
         if sep and key in ('LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL', 'LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL'):
             operation_env[key] = value
     runtime_url = urllib.parse.urlsplit(runtime_env['LEAPVIEW_POSTGRES_CONTROL_URL'])
+    if 'LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL' not in operation_env:
+        container_env = dict(item.split('=', 1) for item in json.loads(output(
+            'docker', 'inspect', '--format', '{{json .Config.Env}}', DATABASE_CONTAINER)) if '=' in item)
+        password = container_env['LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD']
+        authority = 'leapview_control_migrator:' + urllib.parse.quote(password, safe='') + '@' + runtime_url.netloc.rsplit('@', 1)[-1]
+        operation_env['LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL'] = urllib.parse.urlunsplit(runtime_url._replace(netloc=authority))
+        assert output('docker', 'exec', DATABASE_CONTAINER, 'sh', '-c',
+                      'PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD" psql --host=127.0.0.1 --username=leapview_control_migrator --dbname=leapview_control -Atc "SELECT 1"') == '1'
     migration_url = urllib.parse.urlsplit(operation_env['LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL'])
     assert (runtime_url.hostname, runtime_url.port, runtime_url.path) == (migration_url.hostname, migration_url.port, migration_url.path)
     assert runtime_url.username != migration_url.username
