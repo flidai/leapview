@@ -90,7 +90,7 @@ jobs:
             | jq -c '{apiVersion,deliveryMode,buildRevision,buildDirty,buildDevelopment}'
   qualify:
     if: inputs.action == 'qualify'
-    name: Qualify exact merged demo image
+    name: Qualify exact open-PR demo image
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
@@ -105,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in $(seq 1 80); do
-            state="$(gh api repos/flidai/leapview/actions/runs/35385617324/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
+            state="$(gh api repos/flidai/leapview/actions/runs/35403953098/jobs --jq '.jobs[] | select(.name == "Build production image") | if .status == "completed" then .conclusion else .status end')"
             case "$state" in
               success) exit 0 ;;
               failure|cancelled|skipped) echo "Canonical image build ended in $state"; exit 1 ;;
@@ -124,7 +124,7 @@ jobs:
         id: image
         run: |
           set -euo pipefail
-          tag=ghcr.io/flidai/leapview:main-67d69c97f26096521fa7633114b145c7c43480b2
+          tag=ghcr.io/flidai/leapview:candidate-8f1bd9033f97c8d31b2c74cb8f7cdf6011d210a4
           docker pull "$tag"
           image="$(docker image inspect "$tag" --format '{{json .RepoDigests}}' | jq -er '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' | head -1)"
           echo "reference=$image" >> "$GITHUB_OUTPUT"
@@ -135,7 +135,7 @@ jobs:
           image: ${{ steps.image.outputs.reference }}
           repository: ghcr.io/flidai/leapview
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: 67d69c97f26096521fa7633114b145c7c43480b2
+          source-revision: 8f1bd9033f97c8d31b2c74cb8f7cdf6011d210a4
       - name: Run complete image qualification with current token UI contract
         env:
           IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
@@ -144,7 +144,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: demo-67d69c9-qualification
+          name: demo-8f1bd9033-qualification
           path: .tmp/qualification/production-image
           if-no-files-found: ignore
   stage:
@@ -152,7 +152,7 @@ jobs:
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
-    name: Stage exact merged demo runtime
+    name: Stage exact open-PR demo runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: leapview-demo
@@ -191,7 +191,7 @@ jobs:
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
-    name: Prepare or roll out exact merged demo runtime
+    name: Prepare or roll out exact open-PR demo runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment: leapview-demo
@@ -203,7 +203,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          conclusion="$(gh api repos/flidai/leapview/actions/runs/35386840342 --jq .conclusion)"
+          conclusion="$(gh api repos/flidai/leapview/actions/runs/35403953098 --jq .conclusion)"
           test "$conclusion" = success
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db

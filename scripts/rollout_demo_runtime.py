@@ -11,9 +11,9 @@ import time
 import urllib.parse
 import urllib.request
 
-REVISION = '67d69c97f26096521fa7633114b145c7c43480b2'
-IMAGE = 'ghcr.io/flidai/leapview@sha256:c9613e6e63605b2a9a5adb1ea24e6071d0c05e432fda38316e354733f8669837'
+REVISION = '8f1bd9033f97c8d31b2c74cb8f7cdf6011d210a4'
 RELEASE = Path('/opt/leapview-demo/releases') / REVISION
+IMAGE = (RELEASE / 'immutable-image.txt').read_text().strip()
 SERVICE = 'leapview-demo-current.service'
 UNIT = Path('/etc/systemd/system') / SERVICE
 DATABASE_CONTAINER = 'leapview-postgres-3948794932-demo-current-postgres-1'
@@ -66,7 +66,7 @@ def main():
     assert runtime_env['LEAPVIEW_HOME'] == str(HOME_PATH)
     assert ready(), 'Predecessor must be healthy'
     previous = json.loads(output(f'/proc/{pid}/exe', 'version', '--json'))
-    assert previous['revision'] == '5d870e7cf5f7e174dce115c416f6cab5e8259dcf', 'Predecessor changed'
+    assert previous['revision'] == '67d69c97f26096521fa7633114b145c7c43480b2', 'Predecessor changed'
     identity = json.loads(output(str(RELEASE / 'leapview'), 'version', '--json'))
     assert identity['revision'] == REVISION and identity['dirty'] is False
     assert (RELEASE / 'immutable-image.txt').read_text().strip() == IMAGE
@@ -76,7 +76,7 @@ def main():
     assert original_fragment in (Path('/run/systemd/transient') / SERVICE, UNIT), 'Unexpected unit owner'
     if UNIT.exists():
         assert UNIT.read_text() == original_unit and str(RELEASE) not in original_unit, 'Persistent unit differs from the restored predecessor'
-    assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '19'
+    assert sql('SELECT max(version_id) FROM public.goose_db_version WHERE is_applied') == '21'
 
     operation_env = runtime_env.copy()
     for line in Path('/tmp/leapview-main/.tmp/postgres-demo-current.env').read_text().splitlines():
