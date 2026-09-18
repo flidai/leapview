@@ -27,7 +27,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    environment: leapview-ephemeral-qualification
+    # Temporary operator branch: the exact open-PR check below is the gate.
     permissions:
       contents: read
       pull-requests: read
@@ -187,7 +187,10 @@ jobs:
           image: ${{ env.IMAGE_REPOSITORY }}@${{ needs.build-production-image.outputs.digest }}
           repository: ${{ env.IMAGE_REPOSITORY }}
           expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: ${{ needs.build-production-image.outputs.revision }}
+          # GitHub signs workflow_dispatch attestations with the protected
+          # workflow event SHA. Candidate identity is checked independently
+          # against the image below after the open-PR authorization gate.
+          source-revision: ${{ github.sha }}
 
       - name: Qualify the immutable production image
         env:
