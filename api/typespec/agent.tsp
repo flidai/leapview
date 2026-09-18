@@ -163,11 +163,13 @@ alias GetAgentConfigOK = OkJson<AgentConfigResponse>;
 interface AgentConfiguration {
   @summary("Get the agent configuration")
   @get
+  @extension("x-leapview-object-scope", "instance")
   @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.read", resolver: "instance" })
   getAgentConfig(): GetAgentConfigOK | CommonErrors;
 
   @summary("Update the agent configuration")
   @patch
+  @extension("x-leapview-object-scope", "instance")
   @apigen.authz(#{ mode: "privilege", privilege: "PLATFORM_ADMIN", action: "platform.settings.update", resolver: "instance" })
   @apigen.ui("agent.config.update")
   @apigen.failsWith(InvalidAgentConfigFailure)

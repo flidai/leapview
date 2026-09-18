@@ -16,7 +16,6 @@ import (
 	previewservice "github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
-	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -81,14 +80,14 @@ type dashboardAuthoringCreateInput struct {
 	Slug          string `json:"slug,omitempty"`
 }
 
-func dashboardAuthoringCreateReceipt(result authoringservice.Result) (projectapi.ResourceCreateReceipt, error) {
+func dashboardAuthoringCreateReceipt(result authoringservice.Result) (dashboardauthoring.ResourceCreateReceipt, error) {
 	if err := result.Lifecycle.Validate(); err != nil {
-		return projectapi.ResourceCreateReceipt{}, err
+		return dashboardauthoring.ResourceCreateReceipt{}, err
 	}
 	if err := result.Revision.ValidateComplete(); err != nil {
-		return projectapi.ResourceCreateReceipt{}, err
+		return dashboardauthoring.ResourceCreateReceipt{}, err
 	}
-	return projectapi.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
+	return dashboardauthoring.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
 }
 
 // dashboardAuthoringCommandInput embeds the closed domain command so the

@@ -12,7 +12,6 @@ import (
 	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	projectapi "github.com/flidai/leapview/internal/project/api"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -102,7 +101,7 @@ func TestCreateDashboardDraftReturnsBoundedReceipt(t *testing.T) {
 	if err != nil || result.IsError {
 		t.Fatalf("create_dashboard_draft result=%#v err=%v", result, err)
 	}
-	receipt, ok := result.Content.(projectapi.ResourceCreateReceipt)
+	receipt, ok := result.Content.(dashboardauthoring.ResourceCreateReceipt)
 	if !ok {
 		t.Fatalf("create_dashboard_draft content type=%T, want project api receipt", result.Content)
 	}

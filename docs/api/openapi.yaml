@@ -604,6 +604,7 @@ paths:
         mode: privilege
         resolver: instance
         privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
     patch:
       operationId: updateAgentConfig
       summary: Update the agent configuration
@@ -910,6 +911,7 @@ paths:
         mode: privilege
         resolver: instance
         privilege: PLATFORM_ADMIN
+      x-leapview-object-scope: instance
   /api/v1/agent/conversations:
     get:
       operationId: listAgentConversations

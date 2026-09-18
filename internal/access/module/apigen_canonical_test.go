@@ -78,6 +78,39 @@ func apigenResolver(parameter string, kind projectgraph.Kind) APIGenResourceReso
 	}
 }
 
+func TestAPIGenDeliveryFamilyOutsideNativeDeliveryPathResolvesProjectNamespace(t *testing.T) {
+	contract := APIGenOperationContract{
+		OperationID: "listReleases",
+		Method:      http.MethodGet,
+		Path:        "/api/v1/projects/{project}/releases",
+		Protected:   true,
+		AuthzMode:   "privilege",
+		Action:      string(access.ActionDeliveryRead),
+		Resolver:    string(access.TypedOperationResolverDelivery),
+		Extensions: map[string]any{
+			apiGenObjectScopeExtension: "delivery",
+			"x-authz":                  map[string]any{"mode": "privilege", "privilege": string(access.CapabilityResourceRead)},
+		},
+	}
+	module := browserGuardModule(nil, Principal{ID: "principal"}, true)
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: "project_demo"},
+		map[string]APIGenOperationContract{contract.OperationID: contract},
+		APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProjectNamespace)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver, ok := authorizer.resourceResolverForContract(contract)
+	if !ok || resolver == nil {
+		t.Fatal("delivery-family project resolver was not created")
+	}
+	resources := resolver(apigenRequest(http.MethodGet, contract.Path, map[string]string{"project": "project_demo"}), "project_demo")
+	if len(resources) != 1 || resources[0].Kind() != projectgraph.KindProjectNamespace || resources[0].ID() != "project_demo" {
+		t.Fatalf("resolved resources = %#v, want exact project namespace", resources)
+	}
+}
+
 func apigenSnapshot(t *testing.T, principalID, groupID string, resourceID projectgraph.ResourceID, resourceKind projectgraph.Kind, direct, group bool) (projectgraph.ServingIdentity, accesssnapshot.AuthorizationSnapshot) {
 	t.Helper()
 	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")

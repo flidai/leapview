@@ -25,7 +25,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
-	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -62,14 +61,14 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 	return response, nil
 }
 
-func resourceCreateReceipt(result authoringservice.Result) (projectapi.ResourceCreateReceipt, error) {
+func resourceCreateReceipt(result authoringservice.Result) (authoring.ResourceCreateReceipt, error) {
 	if err := result.Lifecycle.Validate(); err != nil {
-		return projectapi.ResourceCreateReceipt{}, err
+		return authoring.ResourceCreateReceipt{}, err
 	}
 	if err := result.Revision.ValidateComplete(); err != nil {
-		return projectapi.ResourceCreateReceipt{}, err
+		return authoring.ResourceCreateReceipt{}, err
 	}
-	return projectapi.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
+	return authoring.ResourceCreateReceipt{ID: result.Lifecycle.ID.String(), Status: string(result.Lifecycle.Status)}, nil
 }
 
 // AuthoringAPI is the versioned, headless dashboard authoring transport. It

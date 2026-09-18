@@ -659,7 +659,17 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 			}
 			return a.boundResourceShareResolver(contract), true
 		}
-		if requirement.Resolver != access.TypedOperationResolverDelivery && requirement.Resolver != access.TypedOperationResolverInstance {
+		if requirement.Resolver == access.TypedOperationResolverDelivery {
+			// Native /delivery routes use the target-owned delivery authorizer.
+			// Other delivery-family APIs (releases and candidate source sync)
+			// authorize against the exact Project namespace named by their path.
+			definition, ok := a.scopes["project"]
+			if !ok || definition.resolver == nil || !strings.Contains(contract.Path, "{project}") {
+				return nil, false
+			}
+			return a.boundResourceResolver(definition, true), true
+		}
+		if requirement.Resolver != access.TypedOperationResolverInstance {
 			definition, ok := a.scopes[scope]
 			if !ok || definition.resolver == nil {
 				return nil, false
