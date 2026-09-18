@@ -29,7 +29,7 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -243,7 +243,6 @@ func TestTestExactExtensionAdmissionStagesOwnedArtifactWithCleanCache(t *testing
 // while they are moved beside their owners; production has no general
 // dependency bag.
 type assemblyConfig struct {
-	Database                *sql.DB
 	PlatformHealth          platformHealth
 	AgentSettings           agentmodule.Settings
 	AgentPersistence        *agentmodule.Persistence
@@ -296,6 +295,8 @@ type assemblyConfig struct {
 	ProjectGraph            projecthttp.GraphReader
 
 	RefreshPersistence *refreshmodule.Persistence
+	APIIdempotency     idempotency.Store
+	CursorSigning      cursorsigning.Initializer
 }
 
 // appTestHarness is the test-only composition adapter used by app-package tests.
@@ -401,10 +402,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		AccessRepo:         options.AccessRepo,
 		RefreshPersistence: options.RefreshPersistence,
 	}
-	if options.Database != nil {
-		data.APIIdempotency = idempotencysqlite.NewStore(options.Database)
-		data.CursorSigning = cursorsigning.NewEphemeralInitializer()
-	}
+	data.APIIdempotency = options.APIIdempotency
+	data.CursorSigning = options.CursorSigning
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
 		semanticCatalogAuditRecorder, _ := options.AccessRepo.(access.CanonicalAuditRecorder)
 		catalog, err := projectcatalog.NewService(

@@ -6,13 +6,10 @@ import (
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -148,13 +145,8 @@ func TestRunAuditedMutationRejectsRepositoryWithoutTransactionBeforeMutation(t *
 
 func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	ctx := t.Context()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	admin, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.com", Role: access.PlatformRoleAdmin})
+	repo := openAccessHTTPTestStore(t).repository
+	admin, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{Email: "admin@example.com", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,19 +187,15 @@ func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 
 func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 	ctx := t.Context()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	if _, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
-		ID: "principal-admin", Kind: access.PrincipalKindUser,
+	repo := openAccessHTTPTestStore(t).repository
+	admin, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
+		Kind:  access.PrincipalKindUser,
 		Email: "admin@example.com", DisplayName: "Admin",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create audit actor: %v", err)
 	}
-	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.com", Role: access.PlatformRoleAdmin}); err != nil {
+	if _, err := repo.SetPlatformRole(ctx, access.PlatformRoleInput{PrincipalID: admin.ID, Email: admin.Email, Role: access.PlatformRoleAdmin}); err != nil {
 		t.Fatalf("set audit actor role: %v", err)
 	}
 	created, err := repo.CreateLocalUser(ctx, access.LocalUserInput{
@@ -220,7 +208,7 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 		Repository:                   func() (access.Repository, error) { return repo, nil },
 		CurrentEffectiveCapabilities: allowProjectAdmin,
 		CurrentPrincipal: func(*stdhttp.Request) (Principal, bool) {
-			return Principal{ID: "principal-admin"}, true
+			return Principal{ID: admin.ID}, true
 		},
 	}
 
@@ -246,7 +234,7 @@ func TestUpdateAndDeletePrincipalPersistRequiredSuccessAudits(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list %s audits: %v", action, err)
 		}
-		if len(events) != 1 || events[0].PrincipalID != "principal-admin" || events[0].ResourceID != created.Principal.ID || events[0].Status != "success" {
+		if len(events) != 1 || events[0].PrincipalID != admin.ID || events[0].ResourceID != created.Principal.ID || events[0].Status != "success" {
 			t.Fatalf("%s audits = %#v", action, events)
 		}
 	}

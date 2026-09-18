@@ -786,16 +786,13 @@ tasks:
       - go run ./internal/app/tools/agenttooldocgen
 
   db:generate:
-    desc: Generate SQLite and PostgreSQL adapter code from checked-in schemas and queries
+    desc: Generate PostgreSQL adapter code from checked-in schemas and queries
     method: checksum
     sources:
       - Taskfile.yml
       - sqlc.yaml
       - internal/**/*.sql
     generates:
-      - internal/platform/db/db.go
-      - internal/platform/db/models.go
-      - internal/platform/db/*.sql.go
       - internal/**/internal/db/*.go
       - internal/project/postgres/internal/db/*.go
       - internal/access/postgres/internal/db/*.go
@@ -803,7 +800,6 @@ tasks:
       - internal/platform/http/cursorsigning/postgres/internal/db/*.go
       - internal/manageddata/postgres/internal/db/*.go
       - internal/platform/events/postgres/internal/db/*.go
-      - internal/platform/**/sqlite/*db/*.go
     # Match setup-ci's HTTP/1.1 workaround for checksum-service HTTP/2 stream
     # failures; transport only, with sqlc checksums and TLS integrity unchanged.
     cmds:

@@ -69,7 +69,7 @@ func TestCumulativeStackPlanAndGate(t *testing.T) {
 	git("commit", "-m", "base")
 	base := git("rev-parse", "HEAD")
 	git("checkout", "-b", "stack")
-	write("internal/access/sqlite/session.go", "backend lower layer")
+	write("internal/access/postgres/session.go", "backend lower layer")
 	git("add", ".")
 	git("commit", "-m", "lower")
 	lower := git("rev-parse", "HEAD")

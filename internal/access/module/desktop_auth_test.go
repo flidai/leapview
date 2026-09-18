@@ -2,22 +2,19 @@ package module
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/desktopauth"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -184,13 +181,12 @@ func TestDesktopRedemptionRollsBackCodeWhenSessionAuditFails(t *testing.T) {
 		"profile_id":    {desktopTestProfileID},
 		"redirect_uri":  {"http://127.0.0.1:49152/callback"},
 	}
-	if _, err := fixture.database.ExecContext(t.Context(), `
-CREATE TRIGGER reject_desktop_session_audit
-BEFORE INSERT ON audit_events
-WHEN NEW.action = 'desktop_session.created'
-BEGIN
-  SELECT RAISE(ABORT, 'forced desktop audit failure');
-END
+	if _, err := fixture.database.Exec(t.Context(), `
+CREATE OR REPLACE FUNCTION audit.reject_desktop_session_test() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'forced desktop audit failure'; END;
+$$;
+CREATE TRIGGER reject_desktop_session_audit BEFORE INSERT ON audit.audit_event
+FOR EACH ROW WHEN (NEW.action = 'desktop_session.created') EXECUTE FUNCTION audit.reject_desktop_session_test()
 `); err != nil {
 		t.Fatalf("install audit failure trigger: %v", err)
 	}
@@ -206,9 +202,9 @@ END
 	if failed.Code != http.StatusInternalServerError {
 		t.Fatalf("failed redemption status = %d, want %d", failed.Code, http.StatusInternalServerError)
 	}
-	if _, err := fixture.database.ExecContext(
+	if _, err := fixture.database.Exec(
 		t.Context(),
-		"DROP TRIGGER reject_desktop_session_audit",
+		"DROP TRIGGER reject_desktop_session_audit ON audit.audit_event",
 	); err != nil {
 		t.Fatalf("remove audit failure trigger: %v", err)
 	}
@@ -301,17 +297,13 @@ func TestDesktopAuthorizationSurvivesExistingBrowserLoginReturn(t *testing.T) {
 type desktopAuthTestFixture struct {
 	module         *Module
 	browserSession *http.Cookie
-	database       *sql.DB
+	database       *pgxpool.Pool
 }
 
 func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open platform store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	store := testStore(t)
+	repository := store.repository
 	auth := mustNewAuth(t, repository, AuthConfig{
 		DevBypass: true, CSRFKey: "0123456789abcdef0123456789abcdef", CookieSecure: true,
 	})
@@ -337,7 +329,7 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	return desktopAuthTestFixture{
 		module:         module,
 		browserSession: &http.Cookie{Name: module.auth.SessionCookieName(), Value: token},
-		database:       store.SQLDB(),
+		database:       store.pool,
 	}
 }
 

@@ -99,7 +99,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 	owner := testPlatformPrincipal(t, ctx, store, "owner@example.com", "Owner")
 	analyst := testPrincipal(t, ctx, store, "analyst@example.com", "Analyst")
 	repo := testAccessRepository(store)
-	group, err := repo.UpsertGroup(ctx, access.GroupInput{ID: "group_finance", Provider: "local", ExternalID: "finance", Name: "Finance"})
+	group, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "finance", Name: "Finance"})
 	if err != nil {
 		t.Fatalf("seed group: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestAdminPagesRenderAccessAdministrationShells(t *testing.T) {
 		{path: "/admin/principals", want: []string{"<lv-admin-page", `section="principals"`, `/updates?route=admin&amp;section=principals`, "/admin/access/command", "createPrincipal"}},
 		{path: "/admin/principals/" + analyst.ID, want: []string{"<lv-admin-page", `section="principal-detail"`, `/updates?principal=` + analyst.ID + `&amp;route=admin&amp;section=principal-detail`, "/admin/access/command", "resetPrincipalPassword"}},
 		{path: "/admin/groups", want: []string{"<lv-admin-page", `section="groups"`, `/updates?route=admin&amp;section=groups`, "/admin/access/command", "createGroup"}},
-		{path: "/admin/groups/group_finance", want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=group_finance&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
+		{path: "/admin/groups/" + group.ID, want: []string{"<lv-admin-page", `section="group-detail"`, `/updates?group=` + group.ID + `&amp;route=admin&amp;section=group-detail`, "/admin/access/command", "addGroupMember"}},
 		{path: "/admin/agent", want: []string{"<lv-admin-page", `section="agent"`, `/updates?route=admin&amp;section=agent`, "/admin/agent/config", "updateAgentConfig"}},
 		{path: "/admin/storage", want: []string{"<lv-admin-page", `section="storage"`, `/updates?route=admin&amp;section=storage`}},
 		{path: "/admin/queries", want: []string{"<lv-admin-page", `section="queries"`, `/updates?route=admin&amp;section=queries`, "/admin/queries/command"}},
@@ -231,7 +231,7 @@ func TestAdminAccessCommandCreatesGroupAndReturnsDetailRedirectSignal(t *testing
 
 	server.Routes().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/groups/group_`) {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"redirectTo":"/admin/groups/`) {
 		t.Fatalf("command response = %d %s", rec.Code, rec.Body.String())
 	}
 	groups, err := testAccessRepository(store).ListGroups(ctx)
@@ -253,7 +253,7 @@ func TestAdminAccessCommandAddsMultipleGroupMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := repo.UpsertGroup(ctx, access.GroupInput{Name: "Analysts"})
+	group, err := repo.UpsertGroup(ctx, access.GroupInput{Provider: "local", ExternalID: "analysts", Name: "Analysts"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -752,7 +752,7 @@ func TestAdminPrincipalDetailReturnsNotFoundForMissingPrincipal(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/principals/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/principals/00000000-0000-0000-0000-000000000000", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
@@ -770,7 +770,7 @@ func TestAdminGroupDetailReturnsNotFoundForMissingGroup(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/groups/missing", nil)
+	req := httptest.NewRequest(http.MethodGet, "/admin/groups/00000000-0000-0000-0000-000000000000", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)

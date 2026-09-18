@@ -1008,11 +1008,14 @@ func TestPostgresAuditIntentMutationsAtomicReplayAndRollback(t *testing.T) {
 	if err != nil || !completion.Execute {
 		t.Fatalf("multipart completion audit: %#v %v", completion, err)
 	}
-	if replay, err := r.BeginS3MultipartCompletion(t.Context(), completionInput); err != nil || replay.Execute {
-		t.Fatalf("multipart completion replay: %#v %v", replay, err)
+	if replay, err := r.BeginS3MultipartCompletion(t.Context(), completionInput); err != nil || !replay.Execute {
+		t.Fatalf("in-progress multipart completion replay: %#v %v", replay, err)
 	}
 	if _, err := r.FinishS3MultipartCompletion(t.Context(), mpInput.ID); err != nil {
 		t.Fatal(err)
+	}
+	if replay, err := r.BeginS3MultipartCompletion(t.Context(), completionInput); err != nil || replay.Execute {
+		t.Fatalf("completed multipart completion replay: %#v %v", replay, err)
 	}
 	mpAbort := mpInput
 	mpAbort.ID = "multipart_audit_abort"

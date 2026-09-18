@@ -1,19 +1,17 @@
 package module
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestLocalPasswordPolicyFailurePreservesSession(t *testing.T) {
@@ -35,7 +33,7 @@ func TestLocalPasswordChangeExpiresCookieAndRequiresFreshSignIn(t *testing.T) {
 	if response.Code != http.StatusFound || response.Header().Get("Location") != "/login" {
 		t.Fatalf("response = %d location=%q body=%s", response.Code, response.Header().Get("Location"), response.Body.String())
 	}
-	if _, err := repository.PrincipalForToken(t.Context(), session); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := repository.PrincipalForToken(t.Context(), session); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("changed password retained current session: %v", err)
 	}
 	cookies := response.Result().Cookies()
@@ -44,14 +42,9 @@ func TestLocalPasswordChangeExpiresCookieAndRequiresFreshSignIn(t *testing.T) {
 	}
 }
 
-func localPasswordAuthFixture(t *testing.T) (*accesssqlite.Repository, *Auth, access.LocalPasswordReset, string) {
+func localPasswordAuthFixture(t *testing.T) (*accesspostgres.Repository, *Auth, access.LocalPasswordReset, string) {
 	t.Helper()
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
-	if err != nil {
-		t.Fatalf("open platform store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	repository := testStore(t).repository
 	created, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{Email: "password@example.com", MustChange: true})
 	if err != nil {
 		t.Fatalf("create local user: %v", err)

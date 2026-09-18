@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/consumer"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 )
 
@@ -29,7 +28,7 @@ type integrationMetrics interface{ QueryMetrics }
 type harness struct {
 	handler http.Handler
 	server  *httptest.Server
-	store   *platform.Store
+	store   *testControlStore
 	metrics integrationMetrics
 }
 

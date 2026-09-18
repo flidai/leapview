@@ -188,7 +188,7 @@ func scalarValue(mapping *yaml.Node, key string) string {
 	return value.Value
 }
 
-func TestPrepareSQLCConfigAddsDatabaseRuleOnlyToPostgreSQL(t *testing.T) {
+func TestPrepareSQLCConfigAddsDatabaseRuleToEveryPostgreSQLStanza(t *testing.T) {
 	root := repositoryRoot(t)
 	path := prepareSQLCConfig(t, root)
 	body, err := os.ReadFile(path)
@@ -216,7 +216,7 @@ func TestPrepareSQLCConfigAddsDatabaseRuleOnlyToPostgreSQL(t *testing.T) {
 			}
 		}
 	}
-	if postgres == 0 || other == 0 {
-		t.Fatalf("config coverage PostgreSQL=%d other=%d", postgres, other)
+	if postgres == 0 || other != 0 {
+		t.Fatalf("config must contain only PostgreSQL stanzas: PostgreSQL=%d other=%d", postgres, other)
 	}
 }

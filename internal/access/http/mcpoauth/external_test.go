@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 )
@@ -43,12 +43,11 @@ func TestExternalIssuerAuthenticatesAudienceBoundMCPJWT(t *testing.T) {
 	t.Cleanup(issuerServer.Close)
 
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	pool := postgrestest.Open(t, accesspostgres.ApplySchema)
+	repo, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("mcp-oauth-test-key", 2))})
 	if err != nil {
-		t.Fatalf("open store: %v", err)
+		t.Fatalf("open access repository: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
 	external, err := mcpoauth.NewExternal(repo, mcpoauth.ExternalConfig{
 		IssuerURL: issuer, ResourceURL: testResource, HTTPClient: issuerServer.Client(),
 	})

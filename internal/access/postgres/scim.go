@@ -62,16 +62,32 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 		return access.SCIMUser{}, err
 	}
 	var principalID pgtype.UUID
-	principalID, err = accessdb.New(tx).FindSCIMPrincipalBySubject(ctx, subject)
 	pid := ""
+	if strings.TrimSpace(in.ID) != "" {
+		pid, err = uuidID("principal id", in.ID)
+		if err == nil {
+			principalID, err = pgUUID(pid)
+		}
+		if err == nil {
+			principalID, err = accessdb.New(tx).FindSCIMPrincipalByID(ctx, principalID)
+		}
+	} else {
+		principalID, err = accessdb.New(tx).FindSCIMPrincipalBySubject(ctx, subject)
+	}
 	if err == nil {
 		pid = principalUUID(principalID)
+		in.ExternalID, err = accessdb.New(tx).UpdateSCIMExternalIdentity(ctx, accessdb.UpdateSCIMExternalIdentityParams{UserName: strings.TrimSpace(in.UserName), ExternalID: strings.TrimSpace(in.ExternalID), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName), PrincipalID: principalID})
+		if err != nil {
+			return access.SCIMUser{}, err
+		}
+		if err = accessdb.New(tx).UpdateSCIMPrincipal(ctx, accessdb.UpdateSCIMPrincipalParams{ID: principalID, Status: scimStatus(in.Active), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
+			return access.SCIMUser{}, err
+		}
 	} else if err == pgx.ErrNoRows {
 		if strings.TrimSpace(in.ID) != "" {
-			pid, err = uuidID("principal id", in.ID)
-		} else {
-			pid, err = newUUID()
+			return access.SCIMUser{}, pgx.ErrNoRows
 		}
+		pid, err = newUUID()
 		if err != nil {
 			return access.SCIMUser{}, err
 		}
@@ -95,13 +111,6 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 		}
 	} else if err != nil {
 		return access.SCIMUser{}, err
-	} else {
-		if err = accessdb.New(tx).UpdateSCIMExternalIdentity(ctx, accessdb.UpdateSCIMExternalIdentityParams{UserName: strings.TrimSpace(in.UserName), ExternalID: strings.TrimSpace(in.ExternalID), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName), Subject: subject}); err != nil {
-			return access.SCIMUser{}, err
-		}
-		if err = accessdb.New(tx).UpdateSCIMPrincipal(ctx, accessdb.UpdateSCIMPrincipalParams{ID: principalID, Status: scimStatus(in.Active), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
-			return access.SCIMUser{}, err
-		}
 	}
 	if !in.Active {
 		if err = revokeSCIMPrincipalCredentials(ctx, tx, principalID); err != nil {

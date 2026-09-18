@@ -6,9 +6,9 @@ Production and development serving use one PostgreSQL control plane and one
 process-owned DuckDB `DatabaseInstance`. That DuckDB instance is the sole
 client of one PostgreSQL-backed DuckLake catalog and executes bounded serving
 reads and refresh transactions over DuckLake-managed Parquet files. Isolated
-development/evaluation fixtures may use embedded SQLite and a local DuckLake
-catalog; those adapters are test-only and are never selected by application
-composition or production serving.
+tests use isolated PostgreSQL databases or in-memory fakes. A local DuckLake
+catalog remains available for analytical evaluation; it is not a control-plane
+database.
 
 Runtime generations do not own DuckDB engines or catalog attachments. They own
 immutable compiled plans, an exact DuckLake snapshot id, a process-memory L1
@@ -18,12 +18,11 @@ retention, and rebuildability evidence.
 
 ## Storage ownership
 
-Production control-plane and DuckLake metadata live in PostgreSQL. Local and
-evaluation fixtures use the node-local layout below:
+Control-plane and production DuckLake metadata live in PostgreSQL. A local
+analytical evaluation may use the node-local layout below:
 
 ```text
 .leapview/
-  leapview.db               # local/evaluation SQLite control-plane fixture
   ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog
   data/                     # DuckLake-managed Parquet files
   artifacts/                # immutable project bundles
@@ -32,14 +31,14 @@ evaluation fixtures use the node-local layout below:
 ```
 
 PostgreSQL owns projects, releases, deployments, active serving pointers,
-authorization, durable jobs, idempotency, leases, and audit records in
-production. SQLite remains an explicit adapter for local/evaluation fixtures;
-the documentation site's immutable search index is separate from the control
-plane and generated from the embedded documentation catalog.
+authorization, durable jobs, idempotency, leases, and audit records in every
+application profile. The documentation site's immutable search index is
+separate from the control plane and generated from the embedded documentation
+catalog.
 
 DuckLake owns analytical schemas, snapshots, changesets, statistics, schema
 evolution, and physical-file manifests. Production metadata is PostgreSQL-
-backed; local/evaluation fixtures may use the local DuckLake catalog file.
+backed; local analytical evaluations may use the local DuckLake catalog file.
 Parquet owns materialized analytical data. Disposable query caches are never
 authoritative.
 
@@ -82,8 +81,7 @@ A refresh:
 6. Publishes the prepared runtime atomically after durable activation.
 
 DuckLake commit and control-plane activation are deliberately not one
-cross-store transaction. Production activation is PostgreSQL-backed; local
-and evaluation fixtures use their explicit SQLite adapter. If activation fails
+cross-store transaction. Activation is PostgreSQL-backed. If activation fails
 after the DuckLake commit, the candidate is an orphan: it is never implicitly
 active and is safe to retry or reclaim. Restart reconciliation classifies
 candidates from durable ownership, fencing, and active-pointer state rather
@@ -102,9 +100,8 @@ Maintained DuckDB connectors acquire declared external sources only inside admit
 Retention protects every snapshot referenced by an active or leased runtime generation. Only unprotected snapshots may expire; physical cleanup follows DuckLake metadata and remains distinct from snapshot expiration.
 
 Backup and restore cover the PostgreSQL control plane and PostgreSQL-backed
-DuckLake catalog in production. Local/evaluation backups cover their explicit
-SQLite and DuckDB fixture equivalents, together with Parquet data, artifacts,
-and required configuration. Recovery validates every active pointer against an
+DuckLake catalog in production, together with Parquet data, artifacts, and
+required configuration. Recovery validates every active pointer against an
 existing protected snapshot before the node becomes ready.
 
 ## Acceptance criteria

@@ -9,23 +9,19 @@ import (
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	store := openAccessHTTPTestStore(t)
+	repository := store.repository
 	local, err := repository.CreateLocalUser(t.Context(), access.LocalUserInput{
 		Email: "local-admin@example.test", DisplayName: "Local Admin",
 	})
@@ -39,7 +35,7 @@ func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "local-admin@example.test", Role: access.PlatformRoleAdmin})
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{Email: "capability-admin@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,19 +92,15 @@ func TestPrincipalAdministrationResponsesExposeSourceAwareCapabilities(t *testin
 }
 
 func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	store := openAccessHTTPTestStore(t)
+	repository := store.repository
 	external, err := repository.ResolveExternalPrincipal(t.Context(), access.ExternalIdentityInput{
 		Provider: "scim", Subject: "managed-user", Email: "managed@example.test", DisplayName: "Managed User",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{PrincipalID: "principal-admin", Email: "admin@example.test", Role: access.PlatformRoleAdmin})
+	admin, err := repository.SetPlatformRole(t.Context(), access.PlatformRoleInput{Email: "admin@example.test", Role: access.PlatformRoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,14 +126,10 @@ func TestExternalPrincipalProfileAndDeletionAreManagedByProvider(t *testing.T) {
 }
 
 func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	store := openAccessHTTPTestStore(t)
+	repository := store.repository
 	actor, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
-		ID: "admin", Kind: access.PrincipalKindUser, Email: "admin@example.test", DisplayName: "Admin",
+		Kind: access.PrincipalKindUser, Email: "admin@example.test", DisplayName: "Admin",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -161,27 +149,29 @@ func TestPrincipalLifecycleIsAuditedAndDisableRejectsCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	apiToken, _, err := repository.CreateAPITokenWithMetadata(t.Context(), access.APITokenInput{
-		PrincipalID: target.ID, Name: "before-disable",
+		PrincipalID: target.ID, Name: "before-disable", ExpiresAt: time.Now().Add(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO oauth_authoring_sessions (
-  id, kind, client_id, principal_id, target_id, project_id, capabilities_json,
+	authoringSessionID := uuid.NewString()
+	authoringCredentialID := uuid.NewString()
+	if _, err := store.pool.Exec(t.Context(), `
+INSERT INTO access.authoring_session (
+  id, kind, client_id, principal_id, target_id, project_id, capabilities,
   created_at, expires_at
-) VALUES (?, 'human_cli', 'leapview-cli', ?, 'lvinst_test', 'test', '[]', ?, ?)`,
-		"authoring_before_disable", target.ID, now.Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)); err != nil {
+) VALUES ($1, 'human_cli', 'leapview-cli', $2::uuid, 'lvinst_test', 'test', '[]'::jsonb, $3, $4)`,
+		authoringSessionID, target.ID, now, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `
-INSERT INTO oauth_authoring_credentials (
+	if _, err := store.pool.Exec(t.Context(), `
+INSERT INTO access.authoring_credential (
   id, session_id, access_token_hash, refresh_token_hash, access_expires_at,
   refresh_expires_at, active, created_at
-) VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-		"credential_before_disable", "authoring_before_disable", "access_hash_before_disable", "refresh_hash_before_disable",
-		now.Add(15*time.Minute).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339), now.Format(time.RFC3339)); err != nil {
+) VALUES ($1, $2, $3, $4, $5, $6, true, $7)`,
+		authoringCredentialID, authoringSessionID, strings.Repeat("a", 64), strings.Repeat("b", 64),
+		now.Add(15*time.Minute), now.Add(time.Hour), now); err != nil {
 		t.Fatal(err)
 	}
 	handler := Handler{
@@ -220,26 +210,26 @@ INSERT INTO oauth_authoring_credentials (
 	if enabled["blockedAt"] != nil {
 		t.Fatalf("enabled principal retained blockedAt: %v", enabled)
 	}
-	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := repository.PrincipalForToken(t.Context(), sessionToken); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("browser session revived after enable: %v", err)
 	}
-	if _, err := repository.PrincipalForAPIToken(t.Context(), apiToken); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := repository.PrincipalForAPIToken(t.Context(), apiToken); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("API token revived after enable: %v", err)
 	}
-	if _, err := repository.AuthoringCredentialByAccessTokenHash(t.Context(), "access_hash_before_disable", now.Add(time.Minute)); !errors.Is(err, access.ErrInvalidAuthoringCredential) {
+	if _, err := repository.AuthoringCredentialByAccessTokenHash(t.Context(), strings.Repeat("a", 64), now.Add(time.Minute)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("authoring access credential revived after enable: %v", err)
 	}
-	var active int
+	var active bool
 	var revokedAt sql.NullString
-	if err := store.SQLDB().QueryRowContext(t.Context(), `
+	if err := store.pool.QueryRow(t.Context(), `
 SELECT c.active, s.revoked_at
-FROM oauth_authoring_credentials c
-JOIN oauth_authoring_sessions s ON s.id = c.session_id
-WHERE c.id = ?`, "credential_before_disable").Scan(&active, &revokedAt); err != nil {
+FROM access.authoring_credential c
+JOIN access.authoring_session s ON s.id = c.session_id
+WHERE c.id = $1`, authoringCredentialID).Scan(&active, &revokedAt); err != nil {
 		t.Fatal(err)
 	}
-	if active != 0 || !revokedAt.Valid {
-		t.Fatalf("authoring credential/session after enable = active %d, revokedAt %#v", active, revokedAt)
+	if active || !revokedAt.Valid {
+		t.Fatalf("authoring credential/session after enable = active %t, revokedAt %#v", active, revokedAt)
 	}
 
 	deleteRecorder := httptest.NewRecorder()
@@ -247,8 +237,8 @@ WHERE c.id = ?`, "credential_before_disable").Scan(&active, &revokedAt); err != 
 	if deleteRecorder.Code != stdhttp.StatusNoContent {
 		t.Fatalf("delete status=%d body=%s", deleteRecorder.Code, deleteRecorder.Body.String())
 	}
-	if _, err := repository.PrincipalByID(t.Context(), target.ID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("deleted principal lookup error=%v, want sql.ErrNoRows", err)
+	if _, err := repository.PrincipalByID(t.Context(), target.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deleted principal lookup error=%v, want pgx.ErrNoRows", err)
 	}
 
 	for _, action := range []string{"principal.blocked", "principal.unblocked", "principal.deleted"} {
@@ -263,14 +253,10 @@ WHERE c.id = ?`, "credential_before_disable").Scan(&active, &revokedAt); err != 
 }
 
 func TestPrincipalLifecycleRejectsSelfDisableAndDelete(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repository := accesssqlite.NewRepository(store.SQLDB())
+	store := openAccessHTTPTestStore(t)
+	repository := store.repository
 	actor, err := repository.UpsertPrincipal(t.Context(), access.PrincipalInput{
-		ID: "admin", Kind: access.PrincipalKindUser, Email: "admin@example.test", DisplayName: "Admin",
+		Kind: access.PrincipalKindUser, Email: "admin@example.test", DisplayName: "Admin",
 	})
 	if err != nil {
 		t.Fatal(err)
