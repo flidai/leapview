@@ -5,6 +5,14 @@ import { parse } from 'yaml'
 const shards = ['core', 'reports', 'chat', 'data', 'site']
 const tasks = parse(readFileSync('Taskfile.yml', 'utf8')).tasks
 
+test('CI gate can read the independent pull-request review it enforces', () => {
+  const config = parse(readFileSync('.github/workflows/ci.yml', 'utf8'))
+  expect(config.jobs['ci-gate'].permissions).toEqual({
+    contents: 'read',
+    'pull-requests': 'read',
+  })
+})
+
 test('local frontend validation runs every bounded shard without suppressing failure', () => {
   expect(tasks['ci:lane:frontend'].cmds).toEqual(shards.map((shard) => ({
     task: 'ci:lane:frontend:shard', vars: { SHARD: shard },
