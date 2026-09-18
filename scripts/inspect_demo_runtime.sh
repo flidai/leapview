@@ -172,6 +172,7 @@ PYARGS
 printf 'Redacted recent runtime errors:\n'
 python3 - <<'PYLOG'
 import json, subprocess, re
+from pathlib import Path
 pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value']).decode().strip()
 env=dict(item.split(b'=',1) for item in open('/proc/'+pid+'/environ','rb').read().split(b'\0') if b'=' in item)
 secrets=[value.decode() for key,value in env.items() if any(word in key for word in (b'KEY',b'PASSWORD',b'TOKEN',b'URL',b'SECRET')) and len(value)>7]
@@ -184,7 +185,20 @@ for line in logs.splitlines():
         for secret in sorted(secrets,key=len,reverse=True): message=message.replace(secret,'<redacted>')
         message=re.sub(r'postgres(?:ql)?://[^\s]+','<redacted database URL>',message)
         messages.append(message)
-print('\n'.join(messages[-35:]))
+unit_path=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=FragmentPath','--value']).decode().strip()
+for line in Path(unit_path).read_text().splitlines():
+    if line.startswith(('StandardOutput=','StandardError=')):
+        destination=line.split('=',1)[1]
+        if destination.startswith(('append:/','file:/','truncate:/')):
+            log_path=destination.split(':',1)[1]
+            print('Runtime log path: '+log_path)
+            if Path(log_path).is_file():
+                for message in Path(log_path).read_text(errors='replace')[-40000:].splitlines():
+                    if any(word in message.lower() for word in ('error','failed','fatal','invalid','missing','mismatch','panic','requires','refus')):
+                        for secret in sorted(secrets,key=len,reverse=True): message=message.replace(secret,'<redacted>')
+                        message=re.sub(r'postgres(?:ql)?://[^\s]+','<redacted database URL>',message)
+                        messages.append(message)
+print('\n'.join(dict.fromkeys(messages))[-18000:])
 PYLOG
 printf 'Repository identity:\n'
 if [[ -d /tmp/leapview-main/.git ]]; then
