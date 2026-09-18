@@ -124,10 +124,7 @@ export const projectOverviewStyles = css`
   .semantic-model-summary {
     display: grid;
     gap: var(--base-size-12);
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel);
-    padding: var(--base-size-16);
+    padding-top: var(--base-size-16);
   }
 
   .semantic-model-summary-heading,
@@ -171,9 +168,6 @@ export const projectOverviewStyles = css`
     display: grid;
     min-width: 0;
     gap: var(--base-size-8);
-    border: var(--lv-border-muted);
-    border-radius: var(--lv-radius-default);
-    background: var(--lv-bg-panel-muted);
     color: var(--lv-fg-default);
     padding: var(--base-size-12);
     text-decoration: none;
