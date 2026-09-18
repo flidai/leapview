@@ -210,6 +210,19 @@ WHERE p.principal_type='service'
 GROUP BY p.id,p.display_name,p.status
 ORDER BY p.display_name;
 SQL
+  printf 'Service principal authorization inventory:\n'
+  docker exec -i "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -At' <<'SQL' || true
+SELECT subject_id,'role:'||role,capabilities::text
+FROM access.authorization_role_binding
+WHERE subject_kind='principal' AND revoked_at IS NULL
+  AND subject_id IN (SELECT id::text FROM access.principal WHERE principal_type='service')
+UNION ALL
+SELECT subject_id,'grant:'||capability,resource_id
+FROM access.authorization_grant
+WHERE subject_kind='principal' AND revoked_at IS NULL
+  AND subject_id IN (SELECT id::text FROM access.principal WHERE principal_type='service')
+ORDER BY 1,2,3;
+SQL
 done
 printf 'Operator environment file paths:\n'
 find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
