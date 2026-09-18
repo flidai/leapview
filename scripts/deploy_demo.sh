@@ -75,7 +75,7 @@ runtime_capabilities="$("$leapview" api call getCapabilities \
 runtime_revision="$(jq -er '.buildRevision | strings | select(test("^[0-9a-f]{40}$"))' <<<"$runtime_capabilities")"
 jq -e '
   .apiVersion == "v1" and
-  .deliveryMode == "native-postgres" and
+  .deliveryMode == "native_postgres" and
   .buildDirty == false and
   .buildDevelopment == false
 ' <<<"$runtime_capabilities" >/dev/null || {

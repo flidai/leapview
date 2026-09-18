@@ -82,7 +82,7 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"publish",
 		"getDeliveryCandidateStatus",
 		"getCapabilities",
-		"native-postgres",
+		"native_postgres",
 		"buildRevision",
 		"requestDeliveryPublicationApproval",
 		"approveDeliveryPublicationApproval",
