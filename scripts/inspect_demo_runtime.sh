@@ -143,6 +143,23 @@ free -h
 printf 'Readiness:\n'
 curl -fsS --max-time 15 https://demo.leapview.dev/readyz
 printf '\n'
+printf 'Selected runtime configuration:\n'
+python3 - <<'PYREMOTE'
+import os, subprocess
+pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value']).decode().strip()
+env=dict(item.split(b'=',1) for item in open('/proc/'+pid+'/environ','rb').read().split(b'\0') if b'=' in item)
+for key in sorted(env):
+    name=key.decode()
+    if name.startswith('LEAPVIEW_'):
+        safe=any(word in name for word in ['_DIR','_PATH','_HOME','_ADDR','_PORT']) and not any(word in name for word in ['PASSWORD','SECRET','TOKEN','KEY','URL'])
+        print(name+'='+ (env[key].decode() if safe else '<configured>'))
+print('process argument names: '+ ' '.join(x.decode() for x in open('/proc/'+pid+'/cmdline','rb').read().split(b'\0') if x.startswith(b'--')))
+PYREMOTE
+printf 'PostgreSQL current schema versions:\n'
+for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
+  printf '%s: ' "$container"
+  docker exec "$container" psql -U postgres -d leapview_control -Atc 'SELECT max(version_id) FROM public.goose_db_version WHERE is_applied' || true
+done
 printf 'Repository identity:\n'
 if [[ -d /tmp/leapview-main/.git ]]; then
   git -C /tmp/leapview-main rev-parse HEAD
