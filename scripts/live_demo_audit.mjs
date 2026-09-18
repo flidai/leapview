@@ -36,12 +36,13 @@ try {
     '/', '/explore', '/sources', '/models', '/semantic-models', '/pipelines', '/connections',
     '/chats', '/admin/profile', '/admin/api-tokens',
     ...dashboards.flatMap((dashboard) => dashboard.pages.map((pageID) =>
-      `/dashboards/dashboard:${dashboard.name}/pages/${pageID}`)),
+      `/dashboards/${dashboard.name}/pages/${pageID}`)),
   ]
 
   for (const route of routes) {
     const response = await page.goto(new URL(route, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
     const status = response?.status() ?? 0
+    console.log(`${status} ${route}`)
     if (status >= 500 || status === 0) failures.push(`${route}: HTTP ${status}`)
     if (status === 200 && route.includes('/dashboards/')) {
       await page.locator('lv-dashboard-page').waitFor({ state: 'attached', timeout: 30_000 })
@@ -67,8 +68,9 @@ try {
     }
   }
 
-  const filterRoute = '/dashboards/dashboard:visual-showcase/pages/filters'
-  await page.goto(new URL(filterRoute, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  const filterRoute = '/dashboards/visual-showcase/pages/filters'
+  const filterResponse = await page.goto(new URL(filterRoute, baseURL).toString(), { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  if (filterResponse?.status() !== 200) throw new Error(`${filterRoute}: HTTP ${filterResponse?.status() ?? 0}`)
   await page.waitForFunction(() => {
     const dashboard = document.querySelector('lv-dashboard-page')
     return dashboard?.status?.loading === false
