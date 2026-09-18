@@ -63,7 +63,7 @@ func TestListManagedConnectionsAuthenticatesBeforeCatalogAndFilters(t *testing.T
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
-	if !strings.Contains(recorder.Body.String(), `"id":"allowed"`) || strings.Contains(recorder.Body.String(), `"id":"denied"`) {
+	if !strings.Contains(recorder.Body.String(), `"id":"allowed"`) || !strings.Contains(recorder.Body.String(), `"projectId":"project-1"`) || strings.Contains(recorder.Body.String(), `"id":"denied"`) {
 		t.Fatalf("body = %s", recorder.Body.String())
 	}
 	if repo.listConnectionsCalls != 1 {

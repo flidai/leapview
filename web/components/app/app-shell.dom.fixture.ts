@@ -132,6 +132,7 @@ export function testDocument(includeShellScript: boolean, compact = false, histo
           </lv-app-shell>
         </main>
         ${includeShellScript ? '<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script><script type="module" src="/tmp/app-shell-under-test.js"></script>' : ''}
+        ${history ? '<script type="module">import { mergePatch } from "/static/vendor/datastar-1.0.2.js?v=dev"; window.testMergePatch = mergePatch</script>' : ''}
       </body>
     </html>
   `

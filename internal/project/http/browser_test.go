@@ -26,6 +26,7 @@ import (
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	projectui "github.com/flidai/leapview/internal/project/ui"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -1252,6 +1253,44 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	}
 	if len(edges) != 0 {
 		t.Fatalf("edges = %#v, want denied endpoint edge removed", edges)
+	}
+	// The same filtered graph feeds discovery, search, and lineage payloads.
+	// A denied peer must not reappear through the lineage edge or its label.
+	project := projectview.DevelopView{ID: "project:test", Title: "Bound project"}
+	lineage := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(httptest.NewRequest(stdhttp.MethodGet, "/models", nil)), project, assets[0], assets, edges, "lineage", "dev", "", projectui.AssetRefreshState{}, projectui.AssetVersionsState{})
+	encoded, err := json.Marshal(lineage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), denied.String()) || strings.Contains(string(encoded), "Denied") || !strings.Contains(string(encoded), allowed.String()) {
+		t.Fatalf("lineage payload crossed authorization or Project boundary: %s", encoded)
+	}
+	for _, query := range []string{"allowed", "denied"} {
+		searchResponse := httptest.NewRecorder()
+		h.ModelsSearch(searchResponse, httptest.NewRequest(stdhttp.MethodGet, "/models/search?datastar="+url.QueryEscape(`{"projectAssetQuery":"`+query+`","projectId":"project:foreign"}`), nil))
+		if searchResponse.Code != stdhttp.StatusOK || strings.Contains(searchResponse.Body.String(), denied.String()) || strings.Contains(searchResponse.Body.String(), "Denied") || (query == "allowed" && !strings.Contains(searchResponse.Body.String(), allowed.String())) {
+			t.Fatalf("model search %q crossed authorization boundary: status=%d body=%s", query, searchResponse.Code, searchResponse.Body.String())
+		}
+	}
+	bootstrap, ok := h.projectBootstrap(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/updates?area=models", nil))
+	if !ok {
+		t.Fatal("authorized discovery bootstrap failed")
+	}
+	encoded, err = json.Marshal(bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), denied.String()) || strings.Contains(string(encoded), "Denied") || !strings.Contains(string(encoded), allowed.String()) {
+		t.Fatalf("discovery bootstrap exposed denied asset: %s", encoded)
+	}
+	detail := chi.NewRouter()
+	detail.Get("/models/{asset}/{section}", h.ModelAsset)
+	deniedResponse := httptest.NewRecorder()
+	detail.ServeHTTP(deniedResponse, httptest.NewRequest(stdhttp.MethodGet, "/models/"+denied.String()+"/lineage", nil))
+	unknownResponse := httptest.NewRecorder()
+	detail.ServeHTTP(unknownResponse, httptest.NewRequest(stdhttp.MethodGet, "/models/model:missing/lineage", nil))
+	if deniedResponse.Code != unknownResponse.Code || deniedResponse.Body.String() != unknownResponse.Body.String() || strings.Contains(deniedResponse.Body.String(), denied.String()) {
+		t.Fatalf("denied detail was distinguishable from unknown: denied=%d %s unknown=%d %s", deniedResponse.Code, deniedResponse.Body.String(), unknownResponse.Code, unknownResponse.Body.String())
 	}
 }
 
