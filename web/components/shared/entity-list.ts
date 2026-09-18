@@ -889,6 +889,7 @@ class EntityList extends LitElement {
   @property({ attribute: 'min-width' }) minWidth = ''
   @property({ type: Boolean, attribute: 'client-filter' }) clientFilter = false
   @property({ type: Boolean, attribute: 'show-toolbar' }) showToolbar = true
+  @property({ type: Boolean, attribute: 'sticky-identity' }) stickyIdentity = false
   @state() private query = ''
   @state() private filter = ''
   @state() private sortColumnId = ''
@@ -917,7 +918,7 @@ class EntityList extends LitElement {
     const columns = this.resolvedColumns()
     return html`
       <style>${entityListStyles}</style>
-      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''}`} aria-label=${this.listLabel}>
+      <section class=${`entity-list ${this.compact ? 'is-compact' : ''} ${this.titleEmphasis === 'normal' ? 'is-title-normal' : ''} ${this.stickyIdentity ? 'has-sticky-identity' : ''}`} aria-label=${this.listLabel}>
         ${this.showToolbar ? html`<div class="entity-toolbar">
           <form class="entity-search" @submit=${this.preventSubmit}>
             ${lucideIcon(Search, { size: 16, strokeWidth: 1.8 })}
