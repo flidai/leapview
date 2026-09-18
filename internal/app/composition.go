@@ -11,7 +11,6 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
-	project "github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -98,7 +97,7 @@ type claimedProjectBinder interface {
 	BindClaimedProject(projectgraph.ResourceID, servingstatemodule.Environment) error
 }
 
-func bindClaimedProject(runtimeHost claimedProjectBinder, identities project.IdentityRepository, environment servingstatemodule.Environment) func(context.Context, projectgraph.ResourceID, servingstatemodule.Environment) error {
+func bindClaimedProject(runtimeHost claimedProjectBinder, identities projectmodule.IdentityRepository, environment servingstatemodule.Environment) func(context.Context, projectgraph.ResourceID, servingstatemodule.Environment) error {
 	return func(ctx context.Context, projectID projectgraph.ResourceID, claimedEnvironment servingstatemodule.Environment) error {
 		if claimedEnvironment != environment {
 			return fmt.Errorf("claimed project environment %q does not match configured environment %q", claimedEnvironment, environment)
