@@ -64,6 +64,8 @@ func TestDemoDeploymentPublishesCanonicalProject(t *testing.T) {
 		"scripts/deploy_demo.sh",
 		"Publish the canonical Olist showcase",
 		"vars.DEMO_PROJECT_ID",
+		"vars.DEMO_PUBLISHER_PRINCIPAL_ID",
+		"vars.DEMO_RELEASE_PRINCIPAL_ID",
 	} {
 		require.Contains(t, workflow, required)
 	}
