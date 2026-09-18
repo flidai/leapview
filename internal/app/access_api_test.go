@@ -161,8 +161,16 @@ func TestCurrentAPITokenRevocationIsScopedToAuthenticatedPrincipal(t *testing.T)
 		Name:         "auth",
 		Capabilities: []access.Capability{access.CapabilityResourceManage},
 	})
-	ownerSecret, ownerToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: owner.ID, Name: "owned"})
-	foreignSecret, foreignToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: foreign.ID, Name: "foreign"})
+	ownerSecret, ownerToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID:  owner.ID,
+		Name:         "owned",
+		Capabilities: []access.Capability{},
+	})
+	foreignSecret, foreignToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID:  foreign.ID,
+		Name:         "foreign",
+		Capabilities: []access.Capability{},
+	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
@@ -208,7 +216,11 @@ func TestCurrentAPITokenLegacyCreateIsRejectedAndRevokeRecordsAudit(t *testing.T
 		Name:         "auth",
 		Capabilities: []access.Capability{access.CapabilityResourceManage, access.CapabilityResourceUse},
 	})
-	_, revocableToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{PrincipalID: owner.ID, Name: "revocable"})
+	_, revocableToken := testScopedAPIToken(t, ctx, store, access.APITokenInput{
+		PrincipalID:  owner.ID,
+		Name:         "revocable",
+		Capabilities: []access.Capability{},
+	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
