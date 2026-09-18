@@ -1,0 +1,33 @@
+name: Temporary live demo audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/live-demo-audit-temp
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/setup-ci
+      - run: bun install --frozen-lockfile
+      - run: node scripts/ensure_playwright.mjs
+      - name: Audit deployed pages and filters
+        env:
+          LEAPVIEW_BASE_URL: https://demo.leapview.dev
+          DEMO_LOGIN_PASSWORD: ${{ secrets.DEMO_LOGIN_PASSWORD }}
+        run: node scripts/live_demo_audit.mjs
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: live-demo-audit
+          path: .tmp/live-demo-audit
+          if-no-files-found: error
