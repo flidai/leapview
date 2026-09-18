@@ -138,7 +138,26 @@ if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
     echo "demo recovery binary is unavailable" >&2
     exit 69
   }
+  recovery_wrapper="$temporary_directory/recover-demo-credentials.sh"
+  cat >"$recovery_wrapper" <<'RECOVER'
+#!/usr/bin/env bash
+set -euo pipefail
+pid="$(systemctl show leapview-demo-current.service --property=MainPID --value)"
+process_env() {
+  python3 -c 'import sys
+pid,key=sys.argv[1:]
+items=dict(item.split(b"=",1) for item in open("/proc/"+pid+"/environ","rb").read().split(b"\0") if b"=" in item)
+sys.stdout.write(items.get(key.encode(),b"").decode())' "$pid" "$1"
+}
+export LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL="$(process_env LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL)"
+export LEAPVIEW_TOKEN_HASH_KEY="$(process_env LEAPVIEW_TOKEN_HASH_KEY)"
+export LEAPVIEW_CSRF_KEY="$(process_env LEAPVIEW_CSRF_KEY)"
+chmod 0700 /tmp/recover-demo-credentials
+/tmp/recover-demo-credentials
+rm -f /tmp/recover-demo-credentials /tmp/recover-demo-credentials.sh
+RECOVER
   scp "${ssh_options[@]}" "$recovery_binary" "root@$demo_host:/tmp/recover-demo-credentials"
+  scp "${ssh_options[@]}" "$recovery_wrapper" "root@$demo_host:/tmp/recover-demo-credentials.sh"
 fi
 
 ssh "${ssh_options[@]}" "root@$demo_host" 'bash -se' <<'REMOTE'
@@ -249,20 +268,5 @@ if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
       {clientId:$release_id,clientSecret:$release_secret,name:"release"}
     ]}')"
   unset DEMO_PUBLISHER_CLIENT_SECRET DEMO_RELEASE_CLIENT_SECRET
-  printf '%s' "$recovery_payload" | ssh "${ssh_options[@]}" "root@$demo_host" 'bash -c '\''
-    set -euo pipefail
-    pid="$(systemctl show leapview-demo-current.service --property=MainPID --value)"
-    process_env() {
-      python3 -c '\''\''\''import sys
-pid,key=sys.argv[1:]
-items=dict(item.split(b"=",1) for item in open("/proc/"+pid+"/environ","rb").read().split(b"\\0") if b"=" in item)
-sys.stdout.write(items.get(key.encode(),b"").decode())'\''\''\'' "$pid" "$1"
-    }
-    export LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL="$(process_env LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL)"
-    export LEAPVIEW_TOKEN_HASH_KEY="$(process_env LEAPVIEW_TOKEN_HASH_KEY)"
-    export LEAPVIEW_CSRF_KEY="$(process_env LEAPVIEW_CSRF_KEY)"
-    chmod 0700 /tmp/recover-demo-credentials
-    /tmp/recover-demo-credentials
-    rm -f /tmp/recover-demo-credentials
-  '\'''
+  printf '%s' "$recovery_payload" | ssh "${ssh_options[@]}" "root@$demo_host" 'bash /tmp/recover-demo-credentials.sh'
 fi
