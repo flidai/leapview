@@ -79,6 +79,7 @@ jq -e '
   .buildDirty == false and
   .buildDevelopment == false
 ' <<<"$runtime_capabilities" >/dev/null || {
+  jq -c '{apiVersion,deliveryMode,buildRevision,buildDirty,buildDevelopment}' <<<"$runtime_capabilities" >&2
   echo "demo runtime does not satisfy the content-publication compatibility contract" >&2
   exit 1
 }
