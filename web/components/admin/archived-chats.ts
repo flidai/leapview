@@ -16,12 +16,7 @@ class LeapViewArchivedChats extends DatastarLit(LitElement) {
   static styles = css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
     .surface { display: grid; gap: var(--base-size-16); }
-    .history-actions { display: grid; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); background: var(--lv-bg-panel); }
-    .history-action { display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
-    .history-action:last-child { border-bottom: 0; }
-    .history-copy { display: grid; min-width: 0; gap: var(--base-size-2); }
-    .history-copy strong { font-weight: var(--base-text-weight-semibold); }
-    .history-copy span { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .history-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
     .toolbar { position: relative; display: flex; align-items: center; }
     .toolbar svg { position: absolute; left: 10px; color: var(--lv-fg-muted); pointer-events: none; }
     input { width: 100%; min-height: var(--control-large-size); box-sizing: border-box; border: var(--lv-border-default); border-radius: var(--lv-radius-default); padding: 0 12px 0 36px; color: var(--lv-fg-default); background: var(--lv-bg-panel); font: inherit; }
@@ -40,13 +35,13 @@ class LeapViewArchivedChats extends DatastarLit(LitElement) {
     .panel button { display: grid; width: 100%; grid-template-columns: 20px minmax(0, 1fr); }
     button:hover { background: var(--lv-bg-panel-muted); }
     button.danger:hover { color: var(--lv-fg-danger); }
-    .history-action > button { border: var(--lv-border-default); background: var(--lv-button-bg-rest); }
+    .history-actions > button { border: var(--lv-border-default); background: var(--lv-button-bg-rest); }
     button.unavailable { cursor: not-allowed; color: var(--lv-fg-muted); opacity: .6; }
     .empty, .loading, .error { padding: var(--base-size-24); color: var(--lv-fg-muted); text-align: center; }
     .error { color: var(--lv-fg-danger); }
     @media (max-width: 40rem) {
-      .history-action { grid-template-columns: minmax(0, 1fr); }
-      .history-action > button { justify-self: start; }
+      .history-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .history-actions > button { justify-content: center; }
     }
   `
 
@@ -149,14 +144,8 @@ class LeapViewArchivedChats extends DatastarLit(LitElement) {
     return html`
       <section class="surface" aria-label="Archived chats">
         <div class="history-actions" aria-label="Chat history actions">
-          <div class="history-action">
-            <div class="history-copy"><strong>Archive all chats</strong><span>Clear your sidebar while keeping every conversation available here.</span></div>
-            <button type="button" @click=${() => this.runBulkAction('archive_all')}>${lucideIcon(Archive, { size: 16 })}<span>Archive all</span></button>
-          </div>
-          <div class="history-action">
-            <div class="history-copy"><strong>Delete all chats</strong><span>Permanently delete active and archived conversations.</span></div>
-            <button class="danger" type="button" @click=${() => this.runBulkAction('delete_all')}>${lucideIcon(Trash2, { size: 16 })}<span>Delete all</span></button>
-          </div>
+          <button type="button" title="Archive every active chat" @click=${() => this.runBulkAction('archive_all')}>${lucideIcon(Archive, { size: 16 })}<span>Archive all</span></button>
+          <button class="danger" type="button" title="Permanently delete active and archived chats" @click=${() => this.runBulkAction('delete_all')}>${lucideIcon(Trash2, { size: 16 })}<span>Delete all</span></button>
         </div>
         <label class="toolbar">${lucideIcon(Search, { size: 16 })}<input type="search" aria-label="Search archived chats" placeholder="Search archived chats" .value=${this.query} @input=${(event: InputEvent) => { this.query = (event.target as HTMLInputElement).value }}></label>
         ${management.error ? html`<p class="error" role="alert">${management.error}</p>` : nothing}

@@ -32,7 +32,10 @@ test('archived chat menu enters on the first action from its trigger', async () 
       const archived = (admin.shadowRoot as ShadowRoot).querySelector('lv-archived-chats') as any
       await archived.updateComplete
       const root = archived.shadowRoot as ShadowRoot
-      const historyActions = Array.from(root.querySelectorAll('.history-action strong')).map((item) => item.textContent?.trim())
+      const historyActionButtons = Array.from(root.querySelectorAll<HTMLElement>('.history-actions button'))
+      const historyActions = historyActionButtons.map((item) => item.textContent?.trim())
+      const actionRects = historyActionButtons.map((item) => item.getBoundingClientRect())
+      const searchTop = (root.querySelector('.toolbar') as HTMLElement).getBoundingClientRect().top
       const trigger = root.querySelector('summary') as HTMLElement
       trigger.focus()
       trigger.click()
@@ -40,11 +43,19 @@ test('archived chat menu enters on the first action from its trigger', async () 
       trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       return {
         historyActions,
+        actionsShareRow: actionRects.length === 2 && Math.abs(actionRects[0].top - actionRects[1].top) < 1,
+        searchFollowsActions: actionRects.every((rect) => rect.bottom < searchTop),
         open: (root.querySelector('details') as HTMLDetailsElement).open,
         focusedAction: (root.activeElement as HTMLElement | null)?.textContent?.trim(),
       }
     })
-    expect(state).toEqual({ historyActions: ['Archive all chats', 'Delete all chats'], open: true, focusedAction: 'Select' })
+    expect(state).toEqual({
+      historyActions: ['Archive all', 'Delete all'],
+      actionsShareRow: true,
+      searchFollowsActions: true,
+      open: true,
+      focusedAction: 'Select',
+    })
   } finally {
     await page.close()
   }
