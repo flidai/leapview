@@ -181,7 +181,7 @@ messages=[]
 for line in logs.splitlines():
     item=json.loads(line)
     message=item.get('MESSAGE','')
-    if any(word in message.lower() for word in ('error','failed','fatal','invalid','missing','mismatch','panic')):
+    if item.get('_COMM') != 'systemd':
         for secret in sorted(secrets,key=len,reverse=True): message=message.replace(secret,'<redacted>')
         message=re.sub(r'postgres(?:ql)?://[^\s]+','<redacted database URL>',message)
         messages.append(message)
@@ -198,7 +198,7 @@ for line in Path(unit_path).read_text().splitlines():
                         for secret in sorted(secrets,key=len,reverse=True): message=message.replace(secret,'<redacted>')
                         message=re.sub(r'postgres(?:ql)?://[^\s]+','<redacted database URL>',message)
                         messages.append(message)
-print('\n'.join(dict.fromkeys(messages))[-18000:])
+print('\n'.join(dict.fromkeys(messages))[:18000])
 PYLOG
 printf 'Repository identity:\n'
 if [[ -d /tmp/leapview-main/.git ]]; then
