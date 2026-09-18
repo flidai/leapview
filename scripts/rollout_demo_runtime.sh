@@ -120,32 +120,12 @@ done <"$scanned_keys"
   exit 1
 }
 
+case "${DEMO_ROLLOUT_ACTION:?}" in
+  prepare) phase=--check ;;
+  deploy) phase=--apply ;;
+  *) echo 'Unsupported rollout action' >&2; exit 64 ;;
+esac
 ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=20 \
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
-  "root@$demo_host" 'bash -se' <<'REMOTE'
-set -euo pipefail
-revision=67d69c97f26096521fa7633114b145c7c43480b2
-image=ghcr.io/flidai/leapview@sha256:c9613e6e63605b2a9a5adb1ea24e6071d0c05e432fda38316e354733f8669837
-release=/opt/leapview-demo/releases/$revision
-available_kb=$(df --output=avail /opt | tail -1 | tr -d ' ')
-(( available_kb > 7000000 )) || { echo 'At least 7 GB free space required to stage image'; exit 1; }
-docker pull "$image"
-[[ "$(docker image inspect "$image" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$revision" ]]
-install -d -m 0755 "$release"
-container=$(docker create "$image")
-trap 'docker rm "$container" >/dev/null' EXIT
-docker cp "$container:/app/." "$release/"
-docker cp "$container:/usr/local/bin/leapview" "$release/leapview"
-chmod 0755 "$release/leapview"
-identity=$("$release/leapview" version --json)
-jq -e --arg revision "$revision" '.revision == $revision and .dirty == false' <<<"$identity" >/dev/null
-printf '%s\n' "$identity"
-printf '%s\n' "$image" >"$release/immutable-image.txt"
-sha256sum "$release/leapview" >"$release/leapview.sha256"
-while IFS= read -r database_container; do
-  printf 'Database sizes in %s:\n' "$database_container"
-  docker exec "$database_container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT datname, pg_size_pretty(pg_database_size(oid)) FROM pg_database"'
-done < <(docker ps --format '{{.Names}}' | grep -- '-demo-current-postgres-1$')
-printf 'Staged exact merged runtime at %s; active service unchanged\n' "$release"
-REMOTE
+  "root@$demo_host" "python3 - $phase" < "$repo_root/scripts/rollout_demo_runtime.py"
