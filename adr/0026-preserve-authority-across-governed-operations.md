@@ -79,6 +79,13 @@ candidate snapshot before physical work. Publication and rollback validate the
 persisted rich-plan evidence structurally but do not yet invoke the compound
 resolver independently.
 
+Target-to-serving projection preserves typed role profile, exact permission
+pairs, and presentation role without synthesizing a legacy role. Compilation
+and startup import validate that the persisted pair sequence is exactly the
+named role's expansion for the bound Project. This keeps bootstrap, immediate
+delivery, immutable serving generations, and PostgreSQL target-policy recovery
+on one fail-closed representation.
+
 Authorization-aware project catalog paging filters before totals and cursors,
 binds signed cursors to the query, filters, principal, security context and
 snapshot, and reauthorizes continuation pages. Real PostgreSQL lifecycle tests

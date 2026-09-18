@@ -53,6 +53,14 @@ typed API-token ceilings, and rejects typed credentials on unmapped routes.
 The deterministic operation-coverage matrix distinguishes qualified,
 mapped-pending-qualification, intentionally legacy, and unsupported paths.
 
+Project bootstrap establishes three explicit, composable assignments for the
+claiming principal: `project_admin`, `editor`, and `release_operator`. A legacy
+Owner or Admin binding may satisfy only the administrator prerequisite; it is
+preserved rather than translated, and the typed editing and release assignments
+are still recorded independently. Bootstrap verifies the exact project-bound
+role expansion returned by the server and never treats administration as a
+wildcard for resource mutation or delivery.
+
 The reusable action/target mechanics live in `pkg/permissions` behind an
 explicitly compiled, profile-pinned catalog. That package owns only opaque wire
 types, shape and catalog validation, prerequisite closure, matching,

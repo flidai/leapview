@@ -106,6 +106,11 @@ func targetAuthorizationManifestPolicy(policy access.AuthorizationPolicy) (proje
 		if err := access.ValidateAuthorizationRoleBinding(binding); err != nil {
 			return projectmanifest.AccessPolicy{}, err
 		}
+		if binding.TypedRoleBinding() {
+			if err := access.ValidateTypedRoleBindingForProject(binding, projectgraph.ResourceID(policy.Scope.ProjectID)); err != nil {
+				return projectmanifest.AccessPolicy{}, fmt.Errorf("target authorization role binding %q: %w", binding.ID, err)
+			}
+		}
 		subject := projectmanifest.Subject{Kind: string(binding.Subject.Kind)}
 		switch binding.Subject.Kind {
 		case access.SubjectKindPrincipal:
@@ -120,6 +125,9 @@ func targetAuthorizationManifestPolicy(policy access.AuthorizationPolicy) (proje
 		}
 		result.RoleBindings[binding.ID] = projectmanifest.RoleBinding{
 			ID: binding.ID, Name: binding.Name, Role: string(binding.Role), Subject: subject,
+			PermissionProfile: binding.PermissionProfile,
+			Permissions:       access.ClonePermissionPairs(binding.Permissions),
+			PermissionRole:    binding.PermissionRole,
 		}
 	}
 	return result, nil

@@ -27,24 +27,32 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid owner binding request", http.StatusBadRequest)
 		return true
 	}
-	binding, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
-	if err != nil {
-		t.Fatal(err)
+	bindings := make([]access.RoleBinding, 0, len(bootstrapBindingSpecs))
+	for _, spec := range bootstrapBindingSpecs {
+		binding, err := access.NewTypedRoleBinding(spec.id, spec.name, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, spec.role, projectgraph.ResourceID(projectID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindings = append(bindings, binding)
 	}
-	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{{
-		ID: binding.ID, Name: binding.Name, Subject: binding.Subject, PermissionRole: binding.PermissionRole, PermissionProfile: binding.PermissionProfile, Permissions: binding.Permissions,
-	}})
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 1, "policyDigest": digest,
-			"items": []any{map[string]any{
-				"id": bootstrapOwnerBindingID, "name": bootstrapOwnerBindingName, "subjectType": "principal", "subjectId": principalID,
-				"role": string(binding.PermissionRole), "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": 1, "policyDigest": digest,
-			}},
+			"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": int64(len(bindings)), "policyDigest": digest,
+			"items": func() []any {
+				items := make([]any, 0, len(bindings))
+				for _, binding := range bindings {
+					items = append(items, map[string]any{
+						"id": binding.ID, "name": binding.Name, "subjectType": "principal", "subjectId": principalID,
+						"role": string(binding.PermissionRole), "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": int64(len(bindings)), "policyDigest": digest,
+					})
+				}
+				return items
+			}(),
 			"page": map[string]any{},
 		})
 		return true
@@ -69,9 +77,70 @@ func serveBootstrapOwnerBinding(t *testing.T, w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id": input.Id, "name": *input.Name, "subjectType": input.SubjectType, "subjectId": input.SubjectId,
-		"role": input.Role, "permissionProfile": binding.PermissionProfile, "permissions": binding.Permissions, "policyRevision": 1, "policyDigest": digest,
+		"role": input.Role, "permissionProfile": bindings[0].PermissionProfile, "permissions": bindings[0].Permissions, "policyRevision": 1,
+		"policyDigest": func() string {
+			ownerDigest, _ := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings[:1])
+			return ownerDigest
+		}(),
 	})
 	return true
+}
+
+func bootstrapRoleBindingResponse(t *testing.T, binding access.RoleBinding, pairs []access.PermissionPair) accessgen.GenSchemaRoleBindingResponse {
+	t.Helper()
+	encoded, err := json.Marshal(pairs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generated []accessgen.GenSchemaPermissionPair
+	if err := json.Unmarshal(encoded, &generated); err != nil {
+		t.Fatal(err)
+	}
+	profile := accessgen.GenSchemaPermissionCatalogProfile(binding.PermissionProfile)
+	return accessgen.GenSchemaRoleBindingResponse{
+		Id: binding.ID, Name: binding.Name, SubjectType: string(binding.Subject.Kind), SubjectId: binding.Subject.ID,
+		Role: string(binding.PermissionRole), PermissionProfile: &profile, Permissions: &generated,
+		PolicyRevision: 1, PolicyDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+}
+
+func TestBootstrapTypedCreateResponseRejectsAlteredPermissionPairs(t *testing.T) {
+	const targetID, projectID, environment, principalID = "lvinst_pairs", "project:pairs", "production", "principal-pairs"
+	binding, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	altered := append([]access.PermissionPair(nil), binding.Permissions...)
+	altered[0], altered[1] = altered[1], altered[0]
+	response := bootstrapRoleBindingResponse(t, binding, altered)
+	if err := validateBootstrapOwnerBinding(response, targetID, projectID, environment, principalID); err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("altered bootstrap create response error = %v, want canonical pair rejection", err)
+	}
+}
+
+func TestBootstrapListedPolicyRejectsPermissionPairsFromAnotherProject(t *testing.T) {
+	const targetID, projectID, environment, principalID = "lvinst_pairs_list", "project:pairs-list", "production", "principal-pairs-list"
+	binding, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongProject, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID("project:other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := bootstrapRoleBindingResponse(t, binding, wrongProject.Permissions)
+	response.PolicyDigest = digest
+	policy := accessgen.GenSchemaRoleBindingListResponse{
+		TargetId: targetID, ProjectId: projectID, Environment: environment, PolicyRevision: 1, PolicyDigest: digest,
+		Items: []accessgen.GenSchemaRoleBindingResponse{response},
+	}
+	if _, err := validateBootstrapPolicy(policy, targetID, projectID, environment); err == nil || !strings.Contains(err.Error(), "not canonical") {
+		t.Fatalf("mismatched listed policy error = %v, want canonical pair rejection", err)
+	}
 }
 
 func TestBootstrapProjectPersistsAuthorityBeforeTargetRequests(t *testing.T) {
@@ -120,7 +189,7 @@ func TestBootstrapProjectPersistsAuthorityBeforeTargetRequests(t *testing.T) {
 	if err := json.Unmarshal([]byte(output.String()), &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.SchemaVersion != 1 || event.Type != "projectBootstrapped" || event.Target != server.URL || event.ProjectUID != "project:issued" || event.Environment != "production" || event.AuthorizationPolicyRevision != 1 || event.AuthorizationPolicyDigest == "" {
+	if event.SchemaVersion != 1 || event.Type != "projectBootstrapped" || event.Target != server.URL || event.ProjectUID != "project:issued" || event.Environment != "production" || event.AuthorizationPolicyRevision != 3 || event.AuthorizationPolicyDigest == "" {
 		t.Fatalf("bootstrap event = %#v", event)
 	}
 	authority, err := cliapi.NewProfileStore(configPath).ResolveProjectAuthority("project:issued", validateProjectAuthorityResourceID)
@@ -136,7 +205,20 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 	const targetID, projectID, environment, principalID = "lvinst_existing", "project:existing", "production", "principal-existing"
 	capabilities := access.ProjectRoleCapabilities(access.ProjectRoleOwner)
 	binding := access.RoleBinding{ID: "existing-owner", Name: "Existing owner", Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleOwner, Capabilities: capabilities}
-	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{binding})
+	projectAdmin, err := access.NewTypedRoleBinding(bootstrapOwnerBindingID, bootstrapOwnerBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleProjectAdmin, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	editor, err := access.NewTypedRoleBinding(bootstrapEditorBindingID, bootstrapEditorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleEditor, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseOperator, err := access.NewTypedRoleBinding(bootstrapReleaseOperatorBindingID, bootstrapReleaseOperatorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleReleaseOperator, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := []access.RoleBinding{binding, projectAdmin, editor, releaseOperator}
+	digest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, bindings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,13 +233,21 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 			_ = json.NewEncoder(w).Encode(map[string]any{"type": "about:blank", "title": "Conflict", "status": 409, "detail": "policy already exists", "code": "ROLE_BINDING_CONFLICT", "errors": []any{}, "instance": r.URL.Path, "requestId": "request-existing"})
 		case http.MethodGet:
 			getCount++
-			encodedCapabilities := make([]string, len(capabilities))
-			for index, capability := range capabilities {
-				encodedCapabilities[index] = string(capability)
+			items := make([]any, 0, len(bindings))
+			for _, item := range bindings {
+				if item.TypedRoleBinding() {
+					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 7, "policyDigest": digest})
+				} else {
+					encodedCapabilities := make([]string, len(item.Capabilities))
+					for index, capability := range item.Capabilities {
+						encodedCapabilities[index] = string(capability)
+					}
+					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.Role), "capabilities": encodedCapabilities, "policyRevision": 7, "policyDigest": digest})
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 7, "policyDigest": digest,
-				"items": []any{map[string]any{"id": binding.ID, "name": binding.Name, "subjectType": "principal", "subjectId": principalID, "role": "owner", "capabilities": encodedCapabilities, "policyRevision": 7, "policyDigest": digest}},
+				"items": items,
 				"page":  map[string]any{},
 			})
 		default:
@@ -175,6 +265,81 @@ func TestBootstrapProjectOwnerPolicyVerifiesExistingPolicyWithoutReplacingIt(t *
 	}
 }
 
+func TestBootstrapProjectOwnerPolicyAddsTypedDeliveryRolesToLegacyPolicy(t *testing.T) {
+	const targetID, projectID, environment, principalID = "lvinst_legacy", "project:legacy", "production", "principal-legacy"
+	scope := access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}
+	legacy := access.RoleBinding{ID: bootstrapOwnerBindingID, Name: bootstrapOwnerBindingName, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, Role: access.ProjectRoleAdmin, Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleAdmin)}
+	bindings := []access.RoleBinding{legacy}
+	revision := int64(7)
+	var posts []accessgen.GenSchemaRoleBindingCreateRequest
+	encodePolicy := func(w http.ResponseWriter) {
+		digest, err := access.AuthorizationPolicyDigest(scope, bindings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := make([]any, 0, len(bindings))
+		for _, item := range bindings {
+			if item.TypedRoleBinding() {
+				items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": string(item.Subject.Kind), "subjectId": item.Subject.ID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": revision, "policyDigest": digest})
+				continue
+			}
+			capabilities := make([]string, len(item.Capabilities))
+			for index, capability := range item.Capabilities {
+				capabilities[index] = string(capability)
+			}
+			items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": string(item.Subject.Kind), "subjectId": item.Subject.ID, "role": string(item.Role), "capabilities": capabilities, "policyRevision": revision, "policyDigest": digest})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": revision, "policyDigest": digest, "items": items, "page": map[string]any{}})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			encodePolicy(w)
+			return
+		}
+		var input accessgen.GenSchemaRoleBindingCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		posts = append(posts, input)
+		if input.Role == string(access.PermissionRoleProjectAdmin) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "about:blank", "title": "Conflict", "status": 409, "detail": "policy already exists", "code": "ROLE_BINDING_CONFLICT", "errors": []any{}, "instance": r.URL.Path, "requestId": "request-legacy"})
+			return
+		}
+		spec := bootstrapBindingSpecs[1]
+		if input.Role == string(access.PermissionRoleReleaseOperator) {
+			spec = bootstrapBindingSpecs[2]
+		}
+		created, err := access.NewTypedRoleBinding(spec.id, spec.name, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, spec.role, projectgraph.ResourceID(projectID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if input.ExpectedRevision != revision || input.Id != spec.id {
+			t.Errorf("create %s request = %#v at revision %d", spec.role, input, revision)
+		}
+		bindings = append(bindings, created)
+		revision++
+		digest, err := access.AuthorizationPolicyDigest(scope, bindings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": created.ID, "name": created.Name, "subjectType": string(created.Subject.Kind), "subjectId": created.Subject.ID, "role": string(created.PermissionRole), "permissionProfile": created.PermissionProfile, "permissions": created.Permissions, "policyRevision": revision, "policyDigest": digest})
+	}))
+	defer server.Close()
+
+	client := accessgen.NewGenClient(capabilityAPITransport{target: server.URL, token: "instance-admin", client: server.Client()})
+	gotRevision, _, err := bootstrapProjectOwnerPolicy(t.Context(), client, targetID, projectID, environment, principalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRevision != 9 || len(posts) != 3 || posts[0].Role != string(access.PermissionRoleProjectAdmin) || posts[1].Role != string(access.PermissionRoleEditor) || posts[2].Role != string(access.PermissionRoleReleaseOperator) {
+		t.Fatalf("bootstrap role posts = %#v, revision %d", posts, gotRevision)
+	}
+}
+
 func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) {
 	const targetID, projectID, environment, principalID = "lvinst_empty", "project:empty", "production", "principal-empty"
 	scope := access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}
@@ -187,6 +352,19 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 		t.Fatal(err)
 	}
 	ownerDigest, err := access.AuthorizationPolicyDigest(scope, []access.RoleBinding{owner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	editor, err := access.NewTypedRoleBinding(bootstrapEditorBindingID, bootstrapEditorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleEditor, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseOperator, err := access.NewTypedRoleBinding(bootstrapReleaseOperatorBindingID, bootstrapReleaseOperatorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleReleaseOperator, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalBindings := []access.RoleBinding{owner, editor, releaseOperator}
+	finalDigest, err := access.AuthorizationPolicyDigest(scope, finalBindings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +400,13 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 			items := []any{}
 			revision, digest := int64(1), emptyDigest
 			if getCount == 2 {
-				revision, digest = 2, ownerDigest
-				items = []any{map[string]any{
-					"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole),
-					"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": revision, "policyDigest": digest,
-				}}
+				revision, digest = 3, finalDigest
+				for _, item := range finalBindings {
+					items = append(items, map[string]any{
+						"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": principalID, "role": string(item.PermissionRole),
+						"permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": revision, "policyDigest": digest,
+					})
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": revision, "policyDigest": digest,
@@ -243,7 +423,7 @@ func TestBootstrapProjectOwnerPolicyRepairsCanonicalEmptyRevision(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revision != 2 || digest != ownerDigest || postCount != 2 || getCount != 2 {
+	if revision != 3 || digest != finalDigest || postCount != 2 || getCount != 2 {
 		t.Fatalf("repaired policy = revision %d digest %q requests %d/%d", revision, digest, postCount, getCount)
 	}
 }
@@ -260,6 +440,19 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 		t.Fatal(err)
 	}
 	currentDigest, err := access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, []access.RoleBinding{owner, viewer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	editor, err := access.NewTypedRoleBinding(bootstrapEditorBindingID, bootstrapEditorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleEditor, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseOperator, err := access.NewTypedRoleBinding(bootstrapReleaseOperatorBindingID, bootstrapReleaseOperatorBindingName, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: principalID}, access.PermissionRoleReleaseOperator, projectgraph.ResourceID(projectID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	currentBindings := []access.RoleBinding{owner, viewer, editor, releaseOperator}
+	currentDigest, err = access.AuthorizationPolicyDigest(access.AuthorizationPolicyScope{TargetID: targetID, ProjectID: projectID, Environment: environment}, currentBindings)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,13 +473,18 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 				"permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 1, "policyDigest": revisionOneDigest,
 			})
 		case http.MethodGet:
+			items := make([]any, 0, len(currentBindings))
+			for _, item := range currentBindings {
+				if item.TypedRoleBinding() {
+					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": item.Subject.ID, "role": string(item.PermissionRole), "permissionProfile": item.PermissionProfile, "permissions": item.Permissions, "policyRevision": 4, "policyDigest": currentDigest})
+				} else {
+					items = append(items, map[string]any{"id": item.ID, "name": item.Name, "subjectType": "principal", "subjectId": item.Subject.ID, "role": "viewer", "capabilities": encodeCapabilities(item.Capabilities), "policyRevision": 4, "policyDigest": currentDigest})
+				}
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 2, "policyDigest": currentDigest,
-				"items": []any{
-					map[string]any{"id": owner.ID, "name": owner.Name, "subjectType": "principal", "subjectId": principalID, "role": string(owner.PermissionRole), "permissionProfile": owner.PermissionProfile, "permissions": owner.Permissions, "policyRevision": 2, "policyDigest": currentDigest},
-					map[string]any{"id": viewer.ID, "name": viewer.Name, "subjectType": "principal", "subjectId": viewer.Subject.ID, "role": "viewer", "capabilities": encodeCapabilities(viewer.Capabilities), "policyRevision": 2, "policyDigest": currentDigest},
-				},
-				"page": map[string]any{},
+				"targetId": targetID, "projectId": projectID, "environment": environment, "policyRevision": 4, "policyDigest": currentDigest,
+				"items": items,
+				"page":  map[string]any{},
 			})
 		default:
 			http.NotFound(w, r)
@@ -299,8 +497,8 @@ func TestBootstrapProjectOwnerPolicyReportsCurrentHeadAfterHistoricalReplay(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if revision != 2 || digest != currentDigest {
-		t.Fatalf("bootstrap policy = revision %d digest %q, want current revision 2 digest %q", revision, digest, currentDigest)
+	if revision != 4 || digest != currentDigest {
+		t.Fatalf("bootstrap policy = revision %d digest %q, want current revision 4 digest %q", revision, digest, currentDigest)
 	}
 }
 

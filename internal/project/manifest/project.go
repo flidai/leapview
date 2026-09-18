@@ -3,6 +3,7 @@ package manifest
 import (
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -127,8 +128,14 @@ type Subject struct {
 type RoleBinding struct {
 	ID      string  `json:"id"`
 	Name    string  `json:"name"`
-	Role    string  `json:"role"`
+	Role    string  `json:"role,omitempty"`
 	Subject Subject `json:"subject"`
+	// PermissionProfile and Permissions are the typed authority for new
+	// assignments. Legacy Role remains supported for historical policy rows;
+	// the compiler never derives typed permissions from it.
+	PermissionProfile string                  `json:"permissionProfile,omitempty"`
+	Permissions       []access.PermissionPair `json:"permissions,omitempty"`
+	PermissionRole    access.PermissionRole   `json:"permissionRole,omitempty"`
 }
 type SecurableRef struct {
 	Kind string `json:"kind"`
