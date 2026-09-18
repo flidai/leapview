@@ -159,6 +159,10 @@ printf 'PostgreSQL current schema versions:\n'
 for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
   printf '%s: ' "$container"
   docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT max(version_id) FROM public.goose_db_version WHERE is_applied"' || true
+  printf 'Delivery targets and active generations:\n'
+  docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT t.target_id,t.project_id,t.environment,COALESCE(p.generation_id::text,\x27\x27) FROM delivery.delivery_target t LEFT JOIN delivery.delivery_active_pointer p ON p.target_id=t.target_id ORDER BY t.target_id"' || true
+  printf 'Canonical project identities:\n'
+  docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT project_id FROM project.project_identity ORDER BY project_id"' || true
 done
 printf 'Operator environment file paths:\n'
 find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
