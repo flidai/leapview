@@ -11,7 +11,41 @@ permissions:
   id-token: write
 
 jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: leapview-demo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: codex/dashboard-builder-audit
+      - uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/leapview
+          key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
+      - run: task generate
+      - name: Fetch demo deployment credentials
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
+        with:
+          method: oidc
+          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
+          oidc-audience: https://github.com/flidai
+          domain: https://us.infisical.com
+          project-slug: leapview
+          env-slug: prod
+          secret-path: /demo/deployment
+      - name: Publish canonical demo content
+        env:
+          DEMO_SOURCE_REVISION: 67d69c97f26096521fa7633114b145c7c43480b2
+          DEMO_TARGET: https://demo.leapview.dev
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
+        run: ./scripts/deploy_demo.sh
+
   audit:
+    needs: publish
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     environment: leapview-demo
