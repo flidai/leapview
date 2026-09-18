@@ -395,6 +395,11 @@ test('personal API tokens use capability selectors', async () => {
       }
     })
 
+    expect(await page.locator('#token-expiry').count()).toBe(0)
+    await page.locator('#token-expiry-preset').selectOption('custom')
+    await page.locator('#token-expiry').fill('2026-09-19T12:30')
+    expect(await page.locator('#token-expiry').inputValue()).toBe('2026-09-19T12:30')
+
     await page.setViewportSize({ width: 390, height: 700 })
     const mobile = await page.evaluate(async () => {
       const admin = document.querySelector('lv-admin-page') as any
