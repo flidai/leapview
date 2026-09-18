@@ -32,17 +32,19 @@ test('archived chat menu enters on the first action from its trigger', async () 
       const archived = (admin.shadowRoot as ShadowRoot).querySelector('lv-archived-chats') as any
       await archived.updateComplete
       const root = archived.shadowRoot as ShadowRoot
+      const historyActions = Array.from(root.querySelectorAll('.history-action strong')).map((item) => item.textContent?.trim())
       const trigger = root.querySelector('summary') as HTMLElement
       trigger.focus()
       trigger.click()
       await archived.updateComplete
       trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       return {
+        historyActions,
         open: (root.querySelector('details') as HTMLDetailsElement).open,
         focusedAction: (root.activeElement as HTMLElement | null)?.textContent?.trim(),
       }
     })
-    expect(state).toEqual({ open: true, focusedAction: 'Select' })
+    expect(state).toEqual({ historyActions: ['Archive all chats', 'Delete all chats'], open: true, focusedAction: 'Select' })
   } finally {
     await page.close()
   }

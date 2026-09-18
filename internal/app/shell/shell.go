@@ -226,6 +226,11 @@ func adminNavigation(access *AdminNavigationAccess) []Group {
 				{ID: "profile", Label: "Profile", Href: "/admin/profile", Icon: "user"},
 				{ID: "security", Label: "Security & sessions", Href: "/admin/security", Icon: "activity"},
 				{ID: "api-tokens", Label: "API tokens", Href: "/admin/api-tokens", Icon: "data"},
+			},
+		},
+		{
+			Label: "Chats",
+			Items: []Item{
 				{ID: "archived-chats", Label: "Archived chats", Href: "/admin/archived-chats", Icon: "history"},
 			},
 		},
