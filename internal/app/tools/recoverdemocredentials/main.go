@@ -57,8 +57,14 @@ func run(ctx context.Context) error {
 	defer pool.Close()
 	for _, item := range request.Credentials {
 		principalID, err := uuid.Parse(strings.TrimSpace(item.ClientID))
-		if err != nil || strings.TrimSpace(item.ClientSecret) == "" || strings.TrimSpace(item.Name) == "" {
-			return errors.New("deployment credential input is invalid")
+		if err != nil {
+			return fmt.Errorf("%s deployment client ID is not a canonical UUID", item.Name)
+		}
+		if strings.TrimSpace(item.ClientSecret) == "" {
+			return fmt.Errorf("%s deployment client secret is empty", item.Name)
+		}
+		if strings.TrimSpace(item.Name) == "" {
+			return errors.New("deployment credential name is empty")
 		}
 		var kind, status string
 		if err := pool.QueryRow(ctx, `SELECT principal_type,status FROM access.principal WHERE id=$1`, principalID).Scan(&kind, &status); err != nil {
