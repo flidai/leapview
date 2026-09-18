@@ -276,7 +276,8 @@ if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
     --arg publisher_secret "${DEMO_PUBLISHER_CLIENT_SECRET:?Set DEMO_PUBLISHER_CLIENT_SECRET}" \
     --arg release_id "${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}" \
     --arg release_secret "${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}" \
-    '{credentials:[
+    --arg platform_admin_mode "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" \
+    '{platformAdminMode:$platform_admin_mode,credentials:[
       {clientId:$publisher_id,clientSecret:$publisher_secret,name:"publisher"},
       {clientId:$release_id,clientSecret:$release_secret,name:"release"}
     ]}')"

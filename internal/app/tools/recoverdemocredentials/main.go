@@ -25,7 +25,8 @@ type credential struct {
 }
 
 type input struct {
-	Credentials []credential `json:"credentials"`
+	Credentials       []credential `json:"credentials"`
+	PlatformAdminMode string       `json:"platformAdminMode"`
 }
 
 var verifierParams = &argon2id.Params{Memory: 19 * 1024, Iterations: 2, Parallelism: 1, SaltLength: 16, KeyLength: 32}
@@ -103,7 +104,40 @@ func run(ctx context.Context) error {
 		}
 		fmt.Printf("restored %s credential\n", item.Name)
 	}
-	return ensureDeploymentPolicy(ctx, pool, []byte(key), request.Credentials)
+	if err := ensureDeploymentPolicy(ctx, pool, []byte(key), request.Credentials); err != nil {
+		return err
+	}
+	return updateTemporaryPlatformAdmin(ctx, pool, request.PlatformAdminMode, request.Credentials)
+}
+
+func updateTemporaryPlatformAdmin(ctx context.Context, pool *pgxpool.Pool, mode string, credentials []credential) error {
+	bindingIDs := map[string]uuid.UUID{
+		"publisher": uuid.MustParse("01a0ac00-0000-7000-8000-000000000001"),
+		"release":   uuid.MustParse("01a0ac00-0000-7000-8000-000000000002"),
+	}
+	switch mode {
+	case "", "unchanged":
+		return nil
+	case "grant":
+		for _, item := range credentials {
+			principalID := uuid.MustParse(strings.TrimSpace(item.ClientID))
+			if _, err := pool.Exec(ctx, `INSERT INTO access.platform_role_binding(id,principal_id,role) VALUES($1,$2,'platform_admin') ON CONFLICT DO NOTHING`, bindingIDs[item.Name], principalID); err != nil {
+				return fmt.Errorf("grant temporary %s platform administration: %w", item.Name, err)
+			}
+			fmt.Printf("granted temporary %s platform administration\n", item.Name)
+		}
+		return nil
+	case "revoke":
+		for _, item := range credentials {
+			if _, err := pool.Exec(ctx, `UPDATE access.platform_role_binding SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL`, bindingIDs[item.Name]); err != nil {
+				return fmt.Errorf("revoke temporary %s platform administration: %w", item.Name, err)
+			}
+			fmt.Printf("revoked temporary %s platform administration\n", item.Name)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported temporary platform admin mode %q", mode)
+	}
 }
 
 func ensureDeploymentPolicy(ctx context.Context, pool *pgxpool.Pool, fingerprintKey []byte, credentials []credential) error {
