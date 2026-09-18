@@ -1348,6 +1348,13 @@ tasks:
         -run '^TestFAI518ForwardOnlyReleaseTransitionQualification$'
         -count=1 -timeout=30m -v
 
+  qualify:ubdr:release-transition-artifact:
+    desc: Qualify a live-admitted repository release artifact through the revision-019 forward transition
+    deps:
+      - db:generate
+    cmds:
+      - bash scripts/qualify_fai518_real_artifact.sh
+
   test:go:
     desc: Run Go tests with bounded package parallelism and stable application shards
     cmds:
