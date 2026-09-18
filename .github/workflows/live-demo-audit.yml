@@ -47,16 +47,40 @@ jobs:
           project-slug: leapview
           env-slug: prod
           secret-path: /demo/deployment
+      - name: Generate bounded transition credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          publisher_token="lv_pat_$(openssl rand -hex 32)"
+          release_token="lv_pat_$(openssl rand -hex 32)"
+          echo "::add-mask::$publisher_token"
+          echo "::add-mask::$release_token"
+          {
+            echo "DEMO_RECOVERY_PUBLISHER_TOKEN_ID=$(cat /proc/sys/kernel/random/uuid)"
+            echo "DEMO_RECOVERY_PUBLISHER_PRINCIPAL_ID=01a0a9d0-898d-74b6-b699-d7284c942404"
+            echo "DEMO_RECOVERY_PUBLISHER_TOKEN=$publisher_token"
+            echo "DEMO_RECOVERY_RELEASE_TOKEN_ID=$(cat /proc/sys/kernel/random/uuid)"
+            echo "DEMO_RECOVERY_RELEASE_PRINCIPAL_ID=01a0a9dd-28f9-7277-a4ad-409260d4912d"
+            echo "DEMO_RECOVERY_RELEASE_TOKEN=$release_token"
+          } >> "$GITHUB_ENV"
       - name: Resolve runner address
         id: runner-ip
         run: echo "ip=$(curl --fail --silent --show-error https://api.ipify.org)" >> "$GITHUB_OUTPUT"
-      - name: Inspect deployment credential records
+      - name: Grant bounded transition credentials
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
           DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
+          DEMO_RECOVER_CREDENTIALS: "true"
+          DEMO_PLATFORM_ADMIN_MODE: grant-api-tokens
+          DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
         run: |
           git fetch --depth=1 origin codex/demo-rollout-67d69c9
           git show FETCH_HEAD:scripts/inspect_demo_runtime.sh > /tmp/inspect-demo-runtime.sh
+          mkdir -p internal/app/tools/recoverdemocredentials
+          git show FETCH_HEAD:internal/app/tools/recoverdemocredentials/main.go > internal/app/tools/recoverdemocredentials/main.go
+          go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
           chmod +x /tmp/inspect-demo-runtime.sh
           /tmp/inspect-demo-runtime.sh
       - name: Publish canonical demo content
@@ -81,10 +105,35 @@ jobs:
           '''
           if source.count(block) != 1:
               raise SystemExit('managed-data bootstrap block changed unexpectedly')
-          path.write_text(source.replace(block, ''))
+          exchange = '''publisher_token="$(exchange_workload_token \\
+            "$publisher_client_id" \\
+            "$publisher_client_secret" \\
+            'RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH')"
+          release_token="$(exchange_workload_token \\
+            "$release_client_id" \\
+            "$release_client_secret" \\
+            'PROJECT_ADMIN')"
+          '''
+          if source.count(exchange) != 1:
+              raise SystemExit('workload token exchange block changed unexpectedly')
+          replacement = '''publisher_token="${DEMO_RECOVERY_PUBLISHER_TOKEN:?Set DEMO_RECOVERY_PUBLISHER_TOKEN}"
+          release_token="${DEMO_RECOVERY_RELEASE_TOKEN:?Set DEMO_RECOVERY_RELEASE_TOKEN}"
+          '''
+          path.write_text(source.replace(block, '').replace(exchange, replacement))
           path.chmod(0o755)
           PY
           ./scripts/deploy_demo_recovery.sh
+      - name: Revoke bounded transition credentials
+        if: always()
+        env:
+          DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_RUNNER_IP: ${{ steps.runner-ip.outputs.ip }}
+          DEMO_RECOVER_CREDENTIALS: "true"
+          DEMO_PLATFORM_ADMIN_MODE: revoke-api-tokens
+          DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
+          DEMO_PUBLISHER_CLIENT_ID: ${{ vars.DEMO_PUBLISHER_PRINCIPAL_ID }}
+          DEMO_RELEASE_CLIENT_ID: ${{ vars.DEMO_RELEASE_PRINCIPAL_ID }}
+        run: /tmp/inspect-demo-runtime.sh
 
   audit:
     needs: publish
