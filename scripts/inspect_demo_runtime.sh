@@ -158,8 +158,17 @@ PYREMOTE
 printf 'PostgreSQL current schema versions:\n'
 for container in $(docker ps --format '{{.Names}}' | grep -- '-postgres-1$'); do
   printf '%s: ' "$container"
-  docker exec "$container" psql -U postgres -d leapview_control -Atc 'SELECT max(version_id) FROM public.goose_db_version WHERE is_applied' || true
+  docker exec "$container" sh -c 'psql -U "$POSTGRES_USER" -d leapview_control -Atc "SELECT max(version_id) FROM public.goose_db_version WHERE is_applied"' || true
 done
+printf 'Operator environment file paths:\n'
+find /tmp/leapview-main/.tmp /etc/leapview /opt/leapview -maxdepth 2 -type f -name '*env*' -print 2>/dev/null || true
+printf 'Runtime argument inventory:\n'
+python3 - <<'PYARGS'
+import subprocess
+pid=subprocess.check_output(['systemctl','show','leapview-demo-current.service','--property=MainPID','--value']).decode().strip()
+args=[s.decode() for s in open('/proc/'+pid+'/cmdline','rb').read().split(b'\0') if s]
+print('Expected serve --production arguments:', args[1:]==['serve','--production'])
+PYARGS
 printf 'Repository identity:\n'
 if [[ -d /tmp/leapview-main/.git ]]; then
   git -C /tmp/leapview-main rev-parse HEAD

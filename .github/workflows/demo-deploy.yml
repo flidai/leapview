@@ -1,17 +1,23 @@
 name: Hosted demo deployment
 on:
   workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        default: inspect
+        options: [inspect, qualify]
 permissions:
   contents: read
   id-token: write
   packages: read
   attestations: read
   actions: read
-concurrency:
-  group: leapview-hosted-demo
-  cancel-in-progress: false
 jobs:
   inspect:
+    if: inputs.action == 'inspect'
+    concurrency:
+      group: leapview-demo-operator
+      cancel-in-progress: false
     name: Inspect hosted demo runtime
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -47,6 +53,7 @@ jobs:
           export DEMO_RUNNER_IP
           bash scripts/inspect_demo_runtime.sh
   qualify:
+    if: inputs.action == 'qualify'
     name: Qualify exact merged demo image
     runs-on: ubuntu-24.04
     timeout-minutes: 150
