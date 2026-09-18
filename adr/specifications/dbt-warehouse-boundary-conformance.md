@@ -1,8 +1,8 @@
 # dbt warehouse-boundary conformance map
 
-Status: partial; local Project-boundary evidence merged, live Azure qualification pending
+Status: partial; Project-boundary evidence merged, Azure qualification workflow added but not run live
 
-Last updated: 2026-09-18 (main `a5eb76487988f7b8742dba3121fe26720664153b`)
+Last updated: 2026-09-18 (main `add1b99142cefed1c57f0650ea5f0fc004743b27`)
 
 Governing decision:
 [ADR-0019](../0019-integrate-dbt-at-the-warehouse-contract-boundary.md)
@@ -38,6 +38,10 @@ Evidence classifications used below:
 - **Merged Project-boundary evidence** means issuer bootstrap, delivery binding,
   ResourceUID/generation closure, and API fencing are present on current main;
   it does not establish live Azure qualification.
+- **Proven live Azure** requires a successful protected-default-branch run of
+  `.github/workflows/dbt-warehouse-boundary-azure-qualification.yml`, three
+  distinct OIDC identities, successful checksum-preserving reads, and the
+  expected data-plane authorization denials. No such run is recorded yet.
 
 ## Confirmation map
 
@@ -52,7 +56,7 @@ Evidence classifications used below:
 | Stable field IDs and readable labels require no physical cosmetic transform | Example Models and `semantic-models/sales.yaml` | Proven local. |
 | Optional metadata import reconciles metadata and physical state | None | Deferred by decision; this conditional confirmation does not apply until an importer is proposed. |
 | Serving and refresh require no dbt executable, repository, artifacts, or credentials | Runtime module/image architecture assertion; dbt dependencies are isolated under `examples/` and CI | Proven local by runtime/module assertions. |
-| Source read, serving write, and semantic policy boundaries remain distinct | Azure workflow, existing scoped Azure secret tests in `internal/analytics/duckdb/source_test.go`, and integration guide | Structurally validated — not live Azure; IAM scopes are operator requirements and live Azure authorization is not claimed. |
+| Source read, serving write, and semantic policy boundaries remain distinct | Azure reference and qualification workflows, `internal/platform/architecture/dbt_azure_qualification_test.go`, existing scoped Azure secret tests in `internal/analytics/duckdb/source_test.go`, and integration guide | Structurally validated — not live Azure; three distinct OIDC identities and safe negative data-plane probes are maintained, but a successful protected-main execution is still required. |
 | MetricFlow/dbt Semantic Layer definitions do not silently become LeapView definitions | No artifact parser or dbt semantic dependency exists; architecture assertion | Implemented by absence and explicit deferral. |
 | Every SemanticModel dataset resolves inside the same Project candidate/generation | `task dbt:warehouse:proof`; `TestDBTMultiSourceProjectClosure`; `TestDBTProofDeliveryPlanRequiresProductionEvidence`; `TestPostgresResourceUIDMultiSourceProjectClosure`; ADR-0018 SEM-01/SEM-02 evidence in `project-namespace-conformance.md` | Proven locally for a dbt-package-derived mart plus an independent CRM publication. The graph closes under one issuer ProjectUID and one exact generation ResourceUID inventory. Missing and ambiguous Source mappings fail before delivery. |
 | dbt output has no alternate authorization path | `TestDBTMultiSourceProjectClosure`; ADR-0017 semantic-access compiler, consumer, and PlanIR barrier suites | Proven locally. The exact dbt/CRM semantic mapping rejects unbound execution, admits a request-bound consumer, installs barriers on both dataset scans, and fails closed for denied target-owned attributes. |
@@ -104,9 +108,20 @@ retention, not recovery mutation.
 
 The local one-command path, copyable production reference, dbt-free runtime,
 and exact-candidate Project/ResourceUID/generation checks have maintained
-repository evidence above. Merged PR #643 passed its hosted `CI gate`,
-`Security gate`, and `dbt physical contract (PR)` checks; those PR results are
-not a substitute for validating a later FAI-691 documentation candidate.
+repository evidence above. Merged PR #645 passed its hosted `CI gate`,
+`Security gate`, and `dbt physical contract (PR)` checks; those checks do not
+qualify the separate live Azure boundary.
+
+The FAI-688 qualification workflow adds no runtime protocol. Its
+run/attempt/Git-SHA prefix and SHA-256 comparisons are external qualification
+evidence only. Conditional create and overwrite probes use an impossible ETag
+and require HTTP 403 with Azure's `AuthorizationPermissionMismatch` code,
+while the delete probe addresses a nonexistent object; these probes cannot
+mutate admitted producer data even if
+the tested role is accidentally broader than expected. The DuckLake probe
+writes and removes only a dedicated LeapView-owned qualification object. A
+successful protected-main run is still required before any live-cloud row can
+be marked proven.
 
 FAI-688 still requires live Azure evidence for distinct producer-write,
 Source-read, and DuckLake-write identities; effective OIDC and RBAC scopes

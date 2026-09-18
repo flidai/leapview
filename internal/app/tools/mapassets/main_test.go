@@ -13,6 +13,7 @@ import (
 
 func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
 	t.Setenv("GOTOOLCHAIN", "go1.27.1")
+	t.Setenv("GODEBUG", "asynctimerchan=1")
 	t.Setenv("LEAPVIEW_MAP_TEST_ENV", "preserved")
 	command := pmtilesCommand(context.Background(), "extract", "input", "output", "--maxzoom=6")
 	want := []string{"go", "run", "github.com/protomaps/go-pmtiles@v1.31.1", "extract", "input", "output", "--maxzoom=6"}
@@ -26,6 +27,9 @@ func TestPMTilesCommandPinsArchiveEncodingToolchain(t *testing.T) {
 	}
 	if environment["GOTOOLCHAIN"] != "go1.26.8" {
 		t.Fatalf("archive encoder toolchain = %q, want go1.26.8", environment["GOTOOLCHAIN"])
+	}
+	if environment["GODEBUG"] != "asynctimerchan=1,http2client=0" {
+		t.Fatalf("archive transport settings = %q, want inherited settings and HTTP/1.1", environment["GODEBUG"])
 	}
 	if environment["LEAPVIEW_MAP_TEST_ENV"] != "preserved" {
 		t.Fatal("archive command discarded the inherited environment")
