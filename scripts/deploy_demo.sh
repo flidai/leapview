@@ -73,11 +73,12 @@ runtime_capabilities="$("$leapview" api call getCapabilities \
   --target "$demo_target" \
   --token "$publisher_token")"
 runtime_revision="$(jq -er '.buildRevision | strings | select(test("^[0-9a-f]{40}$"))' <<<"$runtime_capabilities")"
-jq -e '
+jq -e --arg source_revision "$source_revision" '
   .apiVersion == "v1" and
   .deliveryMode == "native_postgres" and
+  .buildRevision == $source_revision and
   .buildDirty == false and
-  .buildDevelopment == false
+  .buildDevelopment == true
 ' <<<"$runtime_capabilities" >/dev/null || {
   jq -c '{apiVersion,deliveryMode,buildRevision,buildDirty,buildDevelopment}' <<<"$runtime_capabilities" >&2
   echo "demo runtime does not satisfy the content-publication compatibility contract" >&2
