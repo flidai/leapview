@@ -160,12 +160,11 @@ const methods = {
   },
 
   async createAdministratorAPIToken(params) {
-    await administratorPage.goto(new URL('/admin/api-tokens', baseURL).href, {
+    await administratorPage.goto(new URL('/admin/api-tokens/new', baseURL).href, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
     })
     await administratorPage.locator('#token-name').fill(params.name)
-    await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
     const settings = administratorPage.locator('lv-personal-settings')
     await settings.evaluate((element, detail) => {
       element.dispatchEvent(new CustomEvent('lv-personal-token-command', {

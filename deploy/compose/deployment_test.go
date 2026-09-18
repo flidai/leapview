@@ -449,6 +449,9 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
 		}
 	}
+	if !strings.Contains(worker, "new URL('/admin/api-tokens/new', baseURL)") || strings.Contains(worker, "new URL('/admin/api-tokens', baseURL)") || strings.Contains(worker, "#token-expiry") {
+		t.Error("browser worker must open the token creation route and avoid the removed raw-expiry control")
+	}
 	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
 		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")
 	}
