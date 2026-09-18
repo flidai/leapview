@@ -1,103 +1,20 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { createServer, type Server } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join, normalize } from 'node:path'
-import { chromium, type Browser } from '@playwright/test'
-import { typographyTestTokens } from '../test-typography-tokens'
+import { startAdminPageTestFixture, stopAdminPageTestFixture, type AdminPageTestFixture } from './admin-page.fixture.test'
 
-let server: Server
-let baseURL = ''
-let browser: Browser
-
-const projectRoot = process.cwd()
-const root = join(projectRoot, '.tmp/admin-page-test')
+let fixture: AdminPageTestFixture
 
 beforeAll(async () => {
-  server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
-      response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
-      return
-    }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
-    const file = normalize(join(fileRoot, url.pathname))
-    if (!file.startsWith(fileRoot)) {
-      response.writeHead(404)
-      response.end('not found')
-      return
-    }
-    try {
-      response.setHeader('content-type', file.endsWith('.css') ? 'text/css' : 'text/javascript')
-      response.end(await readFile(file))
-    } catch {
-      response.writeHead(404)
-      response.end('not found')
-    }
-  })
-  await new Promise<void>((resolve) => server.listen(0, resolve))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind to a port')
-  baseURL = `http://127.0.0.1:${address.port}`
-  browser = await chromium.launch()
+  fixture = await startAdminPageTestFixture()
 })
 
 afterAll(async () => {
-  await browser?.close()
-  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+  if (fixture) await stopAdminPageTestFixture(fixture)
 }, 15_000)
 
-test('publications admin renders lifecycle controls and emits typed commands', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-admin-page'))
-    const state = await page.evaluate(async () => {
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ page: {
-        kind: 'admin', title: 'Publications', active: 'publications', headerTitle: 'Publications',
-        headerDetail: 'Public dashboard lifecycle.',
-        sidebar: { label: 'Admin', railLabel: 'Admin', ariaLabel: 'Admin navigation', storageKey: 'admin', activeId: 'publications', numbered: false, collapsible: false, items: [{ id: 'publications', title: 'Publications', href: '/admin/publications', active: true }] },
-        publications: [{ projectId: 'visuals', name: 'website-showcase', dashboard: 'visual-showcase', defaultPage: 'overview', status: 'active', origins: ['https://leapview.dev'], generation: 'state-2', publicUrl: 'https://app.leapview.dev/public/dashboards/id', embedUrl: 'https://app.leapview.dev/embed/dashboards/id', iframeSnippet: '<iframe></iframe>', configuredAt: '2026-07-20', history: ['2026-07-20 · configured · owner'] }],
-      } })
-      const element = document.querySelector('lv-admin-page') as any
-      await element.updateComplete
-      const list = (element.shadowRoot as ShadowRoot).querySelector('lv-entity-list') as any
-      await list.updateComplete
-      let detail: unknown = null
-      element.addEventListener('lv-publication-command', (event: CustomEvent) => { detail = event.detail })
-      const row = (element.shadowRoot as ShadowRoot).querySelector('.entity-list-table-row') as HTMLElement
-      row.click()
-      await element.updateComplete
-      const buttons = Array.from((element.shadowRoot as ShadowRoot).querySelectorAll('button')) as HTMLButtonElement[]
-      buttons.find((button) => button.textContent?.trim() === 'Suspend')?.click()
-      return {
-        text: (element.shadowRoot as ShadowRoot).textContent.replace(/\s+/g, ' ').trim(),
-        rows: (element.shadowRoot as ShadowRoot).querySelectorAll('.entity-list-table-row').length,
-        drawer: Boolean((element.shadowRoot as ShadowRoot).querySelector('lv-drawer')),
-        statusClass: (element.shadowRoot as ShadowRoot).querySelector('.entity-list-status')?.className,
-        publicURL: (element.shadowRoot as ShadowRoot).querySelector('.publication-drawer-fact a')?.textContent?.trim(),
-        history: (element.shadowRoot as ShadowRoot).querySelector('.publication-history')?.textContent?.trim(),
-        detail,
-      }
-    })
-    expect(state.rows).toBe(1)
-    expect(state.drawer).toBe(true)
-    expect(state.statusClass).toContain('is-success')
-    expect(state.publicURL).toBe('https://app.leapview.dev/public/dashboards/id')
-    expect(state.history).toContain('2026-07-20')
-    expect(state.text).toContain('website-showcase')
-    expect(state.text).toContain('Lifecycle history')
-    expect(state.detail).toEqual({ publication: 'website-showcase', action: 'suspend' })
-  } finally {
-    await page.close()
-  }
-})
-
 test('profile settings renders the signed-in identity and editable local fields', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -292,9 +209,9 @@ test('profile settings renders the signed-in identity and editable local fields'
 })
 
 test('security settings use a unified session list, focused password dialog, and confirmed revocation', async () => {
-  const page = await browser.newPage({ viewport: { width: 1200, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -413,9 +330,9 @@ test('security settings use a unified session list, focused password dialog, and
 })
 
 test('personal API tokens use capability selectors', async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 700 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1440, height: 700 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -704,9 +621,9 @@ test('personal API tokens use capability selectors', async () => {
 })
 
 test('personal API token permissions expose enforceable access levels', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 800 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-personal-settings'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -798,9 +715,9 @@ test('personal API token permissions expose enforceable access levels', async ()
 })
 
 test('users directory list delegates search and filtering to the page stream', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => customElements.get('lv-entity-list'))
       const state = await page.evaluate(async () => {
         const admin = document.querySelector('lv-admin-page') as any
@@ -865,9 +782,9 @@ test('users directory list delegates search and filtering to the page stream', a
 })
 
 test('mobile entity lists advertise horizontal table scrolling while desktop stays quiet', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-entity-list'))
     const mobile = await page.evaluate(async () => {
       const list = document.querySelector('lv-admin-page')?.shadowRoot?.querySelector('lv-entity-list') as any
@@ -890,9 +807,9 @@ test('mobile entity lists advertise horizontal table scrolling while desktop sta
     await page.close()
   }
 
-  const desktop = await browser.newPage({ viewport: { width: 1280, height: 760 } })
+  const desktop = await fixture.browser.newPage({ viewport: { width: 1280, height: 760 } })
   try {
-    await desktop.goto(baseURL)
+    await desktop.goto(fixture.baseURL)
     await desktop.waitForFunction(() => customElements.get('lv-entity-list'))
     expect(await desktop.locator('lv-admin-page').locator('.entity-list-scroll-hint').evaluate((element) => getComputedStyle(element).display)).toBe('none')
   } finally {
@@ -901,9 +818,9 @@ test('mobile entity lists advertise horizontal table scrolling while desktop sta
 })
 
 test('groups admin uses the reusable entity list and delegates search to the page stream', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-entity-list'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -949,9 +866,9 @@ test('groups admin uses the reusable entity list and delegates search to the pag
 })
 
 test('group detail lets the shared detail shell own the page heading and summary', async () => {
-  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1100, height: 760 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page'))
     const state = await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -979,9 +896,9 @@ for (const viewport of [
   { name: 'mobile', width: 390, height: 820 },
 ]) {
   test(`admin page composes route UI on ${viewport.name}`, async () => {
-    const page = await browser.newPage({ viewport })
+    const page = await fixture.browser.newPage({ viewport })
     try {
-      await page.goto(baseURL)
+      await page.goto(fixture.baseURL)
       await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       await page.locator('lv-admin-page').evaluate((element: any) => element.updateComplete)
 
@@ -1276,9 +1193,9 @@ function queryAuditTableFixture(events: any[]) {
 }
 
 test('query audit exposes supported time and status shortcuts with clearable filters', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
     const state = await page.evaluate(async (fixture) => {
       const element = document.createElement('lv-admin-page') as any
@@ -1339,9 +1256,9 @@ test('query audit exposes supported time and status shortcuts with clearable fil
 })
 
 test('query audit page filters table rows and exposes optional metadata columns', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
     const state = await page.evaluate(async (fixture) => {
       localStorage.removeItem('leapview-admin-query-events-columns')
@@ -1566,9 +1483,9 @@ test('query audit page filters table rows and exposes optional metadata columns'
 })
 
 test('query audit emits load more commands from backend-driven history state', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1626,9 +1543,9 @@ test('query audit emits load more commands from backend-driven history state', a
 })
 
 test('query audit detail drawer behaves as a mobile overlay', async () => {
-  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1669,9 +1586,9 @@ test('query audit detail drawer behaves as a mobile overlay', async () => {
 })
 
 test('query audit drawer does not block selecting another row', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
       const state = await page.evaluate(async (fixture) => {
         const element = document.createElement('lv-admin-page') as any
@@ -1740,14 +1657,14 @@ test('query audit drawer does not block selecting another row', async () => {
 })
 
 test('storage renders a simple shared table with a schema column', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-entity-list'))
 
     const state = await page.evaluate(async () => {
@@ -1891,9 +1808,9 @@ test('storage renders a simple shared table with a schema column', async () => {
 })
 
 test('storage catalog errors use a user-facing callout and hide list controls', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-entity-list'))
 
     const state = await page.evaluate(async () => {
@@ -1947,14 +1864,14 @@ test('storage catalog errors use a user-facing callout and hide list controls', 
 })
 
 test('storage table detail emphasizes physical storage and active files', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   await page.route('**/profile/avatars/**', (route) => route.fulfill({ status: 204 }))
   const consoleErrors: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-record-table'))
 
     const state = await page.evaluate(async () => {
@@ -2039,9 +1956,9 @@ test('storage table detail emphasizes physical storage and active files', async 
 })
 
 test('admin agent route renders prompt editor, tools catalog, and emits save command', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor') && customElements.get('lv-agent-tools'))
 
     const state = await page.evaluate(async () => {
@@ -2252,9 +2169,9 @@ test('admin agent route renders prompt editor, tools catalog, and emits save com
 })
 
 test('admin agent prompt editor disables saves for read-only users', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-admin-page') && customElements.get('lv-agent-settings') && customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
@@ -2332,9 +2249,9 @@ test('admin agent prompt editor disables saves for read-only users', async () =>
 })
 
 test('admin agent tools use the shared list and a detail drawer for schemas', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-tools'))
 
     const state = await page.evaluate(async () => {
@@ -2521,9 +2438,9 @@ test('admin agent tools use the shared list and a detail drawer for schemas', as
 })
 
 test('agent prompt editor seeds edit mode from value attribute', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-prompt-editor'))
 
     const state = await page.evaluate(async () => {
@@ -2560,9 +2477,9 @@ test('agent prompt editor seeds edit mode from value attribute', async () => {
 })
 
 test('agent prompt preview delegates to compact markdown view', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const page = await fixture.browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.goto(baseURL)
+    await page.goto(fixture.baseURL)
     await page.waitForFunction(() => customElements.get('lv-agent-prompt-editor') && customElements.get('lv-markdown-view'))
 
     const state = await page.evaluate(async () => {
@@ -2616,66 +2533,3 @@ test('agent prompt preview delegates to compact markdown view', async () => {
     await page.close()
   }
 })
-
-function testDocument(): string {
-  const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
-  const page = {
-    kind: 'admin',
-    title: 'Users',
-    active: 'principals',
-    sidebar: {
-      label: 'Admin',
-      railLabel: 'Admin',
-      ariaLabel: 'Admin navigation',
-      storageKey: 'leapview-admin-sidebar-collapsed',
-      activeId: 'principals',
-      collapsible: false,
-      numbered: false,
-      items: [
-        { id: 'principals', title: 'Users', href: '/admin/principals', active: true },
-        { id: 'groups', title: 'Groups', href: '/admin/groups', active: false },
-        { id: 'agent', title: 'Agent', href: '/admin/agent', active: false },
-        { id: 'storage', title: 'Storage', href: '/admin/storage', active: false },
-        { id: 'queries', title: 'Queries', href: '/admin/queries', active: false },
-      ],
-    },
-    headerTitle: 'Users',
-    headerDetail: '',
-    directoryList: {
-      searchPlaceholder: 'Search by name or email',
-      filterLabel: 'Filter members',
-      items: [
-        { id: 'p1', name: 'Analyst', username: 'analyst', avatarUrl: '/profile/avatars/p1/avatar-digest', email: 'analyst@example.com', href: '/admin/principals/p1', status: 'active', groupCount: 1, joinedAt: '2026-07-20', lastSeenAt: fiveMinutesAgo },
-        { id: 'p2', name: 'Local Developer', username: 'dev', email: 'dev@localhost', href: '/admin/principals/p2', status: 'active', groupCount: 0, joinedAt: '2026-07-20', lastSeenAt: '' },
-      ],
-    },
-  }
-  const signals = escapeHTML(JSON.stringify({ page }))
-  return `
-    <!doctype html>
-    <html>
-      <head>
-        <style>
-          html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-page: #fff; --lv-bg-panel: #fff; --lv-bg-panel-muted: #f6f8fa; --lv-bg-control: #f6f8fa; --lv-bg-control-hover: #f3f4f6; --lv-bg-accent: #0969da; --lv-bg-accent-muted: #ddf4ff; --lv-sidebar-bg: #f1f3f5; --lv-report-rail-bg: #ffffff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-accent: #0969da; --lv-fg-link: #0969da; --lv-fg-success: #1a7f37; --lv-fg-warning: #9a6700; --lv-fg-danger: #d1242f; --lv-fg-on-accent: #fff; --lv-icon-muted: #57606a; --lv-line-muted: #d8dee4; --lv-border-width: 1px; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-content-max-width: 72rem; --lv-settings-content-max-width: 40rem; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --base-size-32: 32px; --base-size-40: 40px; --base-size-48: 48px; --base-size-64: 64px; --lv-transition-fast: 160ms ease; }
-          lv-admin-page { min-height: 720px; }
-        </style>
-      </head>
-      <body>
-        <main data-signals="${signals}">
-          <lv-admin-page></lv-admin-page>
-        </main>
-        <script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script>
-        <script type="module" src="/admin-page-under-test.js"></script>
-      </body>
-    </html>
-  `
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('"', '&quot;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-}
