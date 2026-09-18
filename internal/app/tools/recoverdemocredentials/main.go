@@ -19,6 +19,7 @@ import (
 )
 
 type credential struct {
+	ID           string `json:"id"`
 	ClientID     string `json:"clientId"`
 	ClientSecret string `json:"clientSecret"`
 	Name         string `json:"name"`
@@ -26,6 +27,7 @@ type credential struct {
 
 type input struct {
 	Credentials       []credential `json:"credentials"`
+	Tokens            []credential `json:"tokens"`
 	PlatformAdminMode string       `json:"platformAdminMode"`
 }
 
@@ -107,10 +109,10 @@ func run(ctx context.Context) error {
 	if err := ensureDeploymentPolicy(ctx, pool, []byte(key), request.Credentials); err != nil {
 		return err
 	}
-	return updateTemporaryPlatformAdmin(ctx, pool, request.PlatformAdminMode, request.Credentials)
+	return updateTemporaryPlatformAdmin(ctx, pool, request.PlatformAdminMode, request.Credentials, request.Tokens)
 }
 
-func updateTemporaryPlatformAdmin(ctx context.Context, pool *pgxpool.Pool, mode string, credentials []credential) error {
+func updateTemporaryPlatformAdmin(ctx context.Context, pool *pgxpool.Pool, mode string, credentials, tokens []credential) error {
 	bindingIDs := map[string]uuid.UUID{
 		"publisher": uuid.MustParse("01a0ac00-0000-7000-8000-000000000001"),
 		"release":   uuid.MustParse("01a0ac00-0000-7000-8000-000000000002"),
@@ -139,9 +141,74 @@ func updateTemporaryPlatformAdmin(ctx context.Context, pool *pgxpool.Pool, mode 
 		return updateTemporaryGenerationRoles(ctx, pool, true, credentials)
 	case "revoke-generation":
 		return updateTemporaryGenerationRoles(ctx, pool, false, credentials)
+	case "grant-api-tokens":
+		return updateTemporaryAPITokens(ctx, pool, true, tokens)
+	case "revoke-api-tokens":
+		return updateTemporaryAPITokens(ctx, pool, false, tokens)
 	default:
 		return fmt.Errorf("unsupported temporary platform admin mode %q", mode)
 	}
+}
+
+func updateTemporaryAPITokens(ctx context.Context, pool *pgxpool.Pool, grant bool, tokens []credential) error {
+	if len(tokens) != 2 {
+		return errors.New("exactly two temporary API tokens are required")
+	}
+	capabilities := map[string][]access.Capability{
+		"publisher": {access.CapabilityResourceUse, access.CapabilityResourceRead, access.CapabilityResourceEdit, access.CapabilityResourcePublish},
+		"release":   {access.CapabilityProjectAdmin},
+	}
+	key := strings.TrimSpace(os.Getenv("LEAPVIEW_TOKEN_HASH_KEY"))
+	if len(key) < 32 {
+		key = strings.TrimSpace(os.Getenv("LEAPVIEW_CSRF_KEY"))
+	}
+	for _, item := range tokens {
+		tokenID, err := uuid.Parse(strings.TrimSpace(item.ID))
+		if err != nil {
+			return fmt.Errorf("%s temporary API token ID is invalid: %w", item.Name, err)
+		}
+		principalID, err := uuid.Parse(strings.TrimSpace(item.ClientID))
+		if err != nil {
+			return fmt.Errorf("%s temporary API token principal is invalid: %w", item.Name, err)
+		}
+		if !grant {
+			if _, err := pool.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL`, tokenID); err != nil {
+				return fmt.Errorf("revoke temporary %s API token: %w", item.Name, err)
+			}
+			fmt.Printf("revoked temporary %s API token\n", item.Name)
+			continue
+		}
+		var kind, status string
+		if err := pool.QueryRow(ctx, `SELECT principal_type,status FROM access.principal WHERE id=$1`, principalID).Scan(&kind, &status); err != nil {
+			return fmt.Errorf("resolve temporary %s API token principal: %w", item.Name, err)
+		}
+		if kind != "user" || status != "active" {
+			return fmt.Errorf("temporary %s API token principal is not an active user", item.Name)
+		}
+		secret := strings.TrimSpace(item.ClientSecret)
+		if secret == "" {
+			return fmt.Errorf("temporary %s API token secret is empty", item.Name)
+		}
+		fingerprint := hmac.New(sha256.New, []byte(key))
+		_, _ = fingerprint.Write([]byte(secret))
+		verifier, err := argon2id.CreateHash(secret, verifierParams)
+		if err != nil {
+			return fmt.Errorf("hash temporary %s API token: %w", item.Name, err)
+		}
+		encodedCapabilities, err := json.Marshal(capabilities[item.Name])
+		if err != nil {
+			return fmt.Errorf("encode temporary %s API token capabilities: %w", item.Name, err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO access.api_token
+				(id,principal_id,name,description,token_fingerprint,verifier,capabilities,expires_at)
+			VALUES($1,$2,$3,'Bounded demo generation transition',$4,$5,$6::jsonb,clock_timestamp()+interval '30 minutes')`,
+			tokenID, principalID, "demo transition "+item.Name, fingerprint.Sum(nil), []byte(verifier), encodedCapabilities); err != nil {
+			return fmt.Errorf("grant temporary %s API token: %w", item.Name, err)
+		}
+		fmt.Printf("granted temporary %s API token\n", item.Name)
+	}
+	return nil
 }
 
 func updateTemporaryGenerationRoles(ctx context.Context, pool *pgxpool.Pool, grant bool, credentials []credential) error {

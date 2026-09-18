@@ -302,11 +302,20 @@ if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
     --arg release_id "${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}" \
     --arg release_secret "${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}" \
     --arg platform_admin_mode "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" \
+    --arg recovery_publisher_token_id "${DEMO_RECOVERY_PUBLISHER_TOKEN_ID:-}" \
+    --arg recovery_publisher_principal_id "${DEMO_RECOVERY_PUBLISHER_PRINCIPAL_ID:-}" \
+    --arg recovery_publisher_token "${DEMO_RECOVERY_PUBLISHER_TOKEN:-}" \
+    --arg recovery_release_token_id "${DEMO_RECOVERY_RELEASE_TOKEN_ID:-}" \
+    --arg recovery_release_principal_id "${DEMO_RECOVERY_RELEASE_PRINCIPAL_ID:-}" \
+    --arg recovery_release_token "${DEMO_RECOVERY_RELEASE_TOKEN:-}" \
     '{platformAdminMode:$platform_admin_mode,credentials:[
       {clientId:$publisher_id,clientSecret:$publisher_secret,name:"publisher"},
       {clientId:$release_id,clientSecret:$release_secret,name:"release"}
+    ],tokens:[
+      {id:$recovery_publisher_token_id,clientId:$recovery_publisher_principal_id,clientSecret:$recovery_publisher_token,name:"publisher"},
+      {id:$recovery_release_token_id,clientId:$recovery_release_principal_id,clientSecret:$recovery_release_token,name:"release"}
     ]}')"
-  unset DEMO_PUBLISHER_CLIENT_SECRET DEMO_RELEASE_CLIENT_SECRET
+  unset DEMO_PUBLISHER_CLIENT_SECRET DEMO_RELEASE_CLIENT_SECRET DEMO_RECOVERY_PUBLISHER_TOKEN DEMO_RECOVERY_RELEASE_TOKEN
   printf '%s' "$recovery_payload" | ssh "${ssh_options[@]}" "root@$demo_host" 'bash /tmp/recover-demo-credentials.sh'
   if [[ "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" == grant-generation || "${DEMO_PLATFORM_ADMIN_MODE:-unchanged}" == revoke-generation ]]; then
     ssh "${ssh_options[@]}" "root@$demo_host" 'systemctl restart leapview-demo-current.service'
