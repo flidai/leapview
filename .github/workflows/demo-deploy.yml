@@ -5,7 +5,7 @@ on:
       action:
         type: choice
         default: inspect
-        options: [inspect, qualify, stage, prepare, deploy]
+        options: [inspect, recover-credentials, qualify, stage, prepare, deploy]
 permissions:
   contents: read
   id-token: write
@@ -14,7 +14,7 @@ permissions:
   actions: read
 jobs:
   inspect:
-    if: inputs.action == 'inspect'
+    if: inputs.action == 'inspect' || inputs.action == 'recover-credentials'
     concurrency:
       group: leapview-demo-operator
       cancel-in-progress: false
@@ -24,6 +24,14 @@ jobs:
     environment: leapview-demo
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Set up recovery toolchain
+        if: inputs.action == 'recover-credentials'
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+      - name: Build bounded credential recovery helper
+        if: inputs.action == 'recover-credentials'
+        run: go build -o /tmp/recover-demo-credentials ./internal/app/tools/recoverdemocredentials
       - name: Fetch infrastructure credentials
         uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db
         with:
@@ -47,6 +55,8 @@ jobs:
       - name: Inspect runtime with pinned SSH identity
         env:
           DEMO_EXPECTED_SSH_FINGERPRINT: SHA256:JZaqjYFmZYGuJIy4Rmz+gRsrDGTZ6zNR0trob104AgY
+          DEMO_RECOVER_CREDENTIALS: ${{ inputs.action == 'recover-credentials' }}
+          DEMO_RECOVERY_BINARY: /tmp/recover-demo-credentials
         run: |
           set -euo pipefail
           DEMO_RUNNER_IP="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"

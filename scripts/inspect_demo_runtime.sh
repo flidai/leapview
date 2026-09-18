@@ -120,9 +120,28 @@ done <"$scanned_keys"
   exit 1
 }
 
-ssh -i "$identity_file" -o BatchMode=yes -o ConnectTimeout=10 \
-  -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$pinned_known_hosts" \
-  "root@$demo_host" 'bash -se' <<'REMOTE'
+ssh_options=(
+  -i "$identity_file"
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$pinned_known_hosts"
+)
+
+if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
+  command -v scp >/dev/null || {
+    echo "required command is unavailable: scp" >&2
+    exit 69
+  }
+  recovery_binary="${DEMO_RECOVERY_BINARY:?Set DEMO_RECOVERY_BINARY}"
+  [[ -x "$recovery_binary" ]] || {
+    echo "demo recovery binary is unavailable" >&2
+    exit 69
+  }
+  scp "${ssh_options[@]}" "$recovery_binary" "root@$demo_host:/tmp/recover-demo-credentials"
+fi
+
+ssh "${ssh_options[@]}" "root@$demo_host" 'bash -se' <<'REMOTE'
 set -euo pipefail
 printf 'Runtime service state: '
 systemctl is-active leapview-demo-current.service || true
@@ -218,3 +237,32 @@ if [[ -d /tmp/leapview-main/.git ]]; then
   git -C /tmp/leapview-main rev-parse HEAD
 fi
 REMOTE
+
+if [[ "${DEMO_RECOVER_CREDENTIALS:-false}" == true ]]; then
+  recovery_payload="$(jq -cn \
+    --arg publisher_id "${DEMO_PUBLISHER_CLIENT_ID:?Set DEMO_PUBLISHER_CLIENT_ID}" \
+    --arg publisher_secret "${DEMO_PUBLISHER_CLIENT_SECRET:?Set DEMO_PUBLISHER_CLIENT_SECRET}" \
+    --arg release_id "${DEMO_RELEASE_CLIENT_ID:?Set DEMO_RELEASE_CLIENT_ID}" \
+    --arg release_secret "${DEMO_RELEASE_CLIENT_SECRET:?Set DEMO_RELEASE_CLIENT_SECRET}" \
+    '{credentials:[
+      {clientId:$publisher_id,clientSecret:$publisher_secret,name:"publisher"},
+      {clientId:$release_id,clientSecret:$release_secret,name:"release"}
+    ]}')"
+  unset DEMO_PUBLISHER_CLIENT_SECRET DEMO_RELEASE_CLIENT_SECRET
+  printf '%s' "$recovery_payload" | ssh "${ssh_options[@]}" "root@$demo_host" 'bash -c '\''
+    set -euo pipefail
+    pid="$(systemctl show leapview-demo-current.service --property=MainPID --value)"
+    process_env() {
+      python3 -c '\''\''\''import sys
+pid,key=sys.argv[1:]
+items=dict(item.split(b"=",1) for item in open("/proc/"+pid+"/environ","rb").read().split(b"\\0") if b"=" in item)
+sys.stdout.write(items.get(key.encode(),b"").decode())'\''\''\'' "$pid" "$1"
+    }
+    export LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL="$(process_env LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL)"
+    export LEAPVIEW_TOKEN_HASH_KEY="$(process_env LEAPVIEW_TOKEN_HASH_KEY)"
+    export LEAPVIEW_CSRF_KEY="$(process_env LEAPVIEW_CSRF_KEY)"
+    chmod 0700 /tmp/recover-demo-credentials
+    /tmp/recover-demo-credentials
+    rm -f /tmp/recover-demo-credentials
+  '\'''
+fi

@@ -50,7 +50,7 @@ func run(ctx context.Context) error {
 	if len(key) < 32 {
 		return errors.New("runtime fingerprint key is unavailable")
 	}
-	pool, err := pgxpool.New(ctx, strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONTROL_URL")))
+	pool, err := pgxpool.New(ctx, strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL")))
 	if err != nil {
 		return fmt.Errorf("open control database: %w", err)
 	}
@@ -81,8 +81,22 @@ func run(ctx context.Context) error {
 			fmt.Printf("%s credential is already active\n", item.Name)
 			continue
 		}
-		if _, err := pool.Exec(ctx, `INSERT INTO access.service_principal_secret(id,service_principal_id,name,secret_fingerprint,verifier,expires_at) VALUES ($1,$2,$3,$4,$5,$6)`, uuid.Must(uuid.NewV7()), principalID, "demo deployment recovery", fingerprint.Sum(nil), []byte(verifier), time.Now().UTC().Add(180*24*time.Hour)); err != nil {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("begin %s credential recovery: %w", item.Name, err)
+		}
+		if _, err = tx.Exec(ctx, `SET LOCAL access.maintenance='on'`); err == nil {
+			_, err = tx.Exec(ctx, `DELETE FROM access.service_principal_secret WHERE secret_fingerprint=$1 AND (revoked_at IS NOT NULL OR expires_at <= clock_timestamp())`, fingerprint.Sum(nil))
+		}
+		if err == nil {
+			_, err = tx.Exec(ctx, `INSERT INTO access.service_principal_secret(id,service_principal_id,name,secret_fingerprint,verifier,expires_at) VALUES ($1,$2,$3,$4,$5,$6)`, uuid.Must(uuid.NewV7()), principalID, "demo deployment recovery", fingerprint.Sum(nil), []byte(verifier), time.Now().UTC().Add(180*24*time.Hour))
+		}
+		if err != nil {
+			_ = tx.Rollback(ctx)
 			return fmt.Errorf("restore %s credential: %w", item.Name, err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("commit %s credential recovery: %w", item.Name, err)
 		}
 		fmt.Printf("restored %s credential\n", item.Name)
 	}
