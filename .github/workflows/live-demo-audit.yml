@@ -37,14 +37,16 @@ jobs:
           for role in PUBLISHER RELEASE; do
             client_id_variable="DEMO_${role}_CLIENT_ID"
             client_secret_variable="DEMO_${role}_CLIENT_SECRET"
+            scope='RESOURCE_USE RESOURCE_READ RESOURCE_EDIT RESOURCE_PUBLISH'
+            if [[ "$role" == RELEASE ]]; then scope='PROJECT_ADMIN'; fi
             response="$(curl --silent --show-error --write-out $'\n%{http_code}' \
               --request POST \
               --header 'Content-Type: application/x-www-form-urlencoded' \
               --data-urlencode 'grant_type=client_credentials' \
               --data-urlencode "client_id=${!client_id_variable}" \
               --data-urlencode "client_secret=${!client_secret_variable}" \
-              --data-urlencode 'project_id=project:leapview-showcase' \
-              --data-urlencode 'scope=RESOURCE_READ' \
+              --data-urlencode 'project_id=lvproject_fI7xfxRH2qubXpUe5KcU7o6T5MOt7tHz' \
+              --data-urlencode "scope=$scope" \
               --data-urlencode 'lifetime_seconds=300' \
               https://demo.leapview.dev/oauth/token)"
             status="${response##*$'\n'}"
